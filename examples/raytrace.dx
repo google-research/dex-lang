@@ -110,12 +110,10 @@ data Object =
 Ray = (Position & Direction)
 Filter   = Color
 
--- TODO: use a record
--- num samples, num bounces, share seed?
-Params = {
-    numSamples : Nat
-  & maxBounces : Nat
-  & shareSeed  : Bool }
+struct Params =
+ numSamples : Nat
+ maxBounces : Nat
+ shareSeed  : Bool
 
 -- TODO: use a list instead, once they work
 data Scene n:Type [Ix n] = MkScene (n=>Object)
@@ -232,7 +230,7 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
   yield_accum (AddMonoid Float) \radiance.
     run_state  noFilter \filter.
      run_state initRay  \ray.
-      bounded_iter (get_at #maxBounces params) () \i.
+      bounded_iter params~maxBounces () \i.
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
@@ -247,16 +245,16 @@ def trace {n} (params:Params) (scene:Scene n) (initRay:Ray) (k:Key) : Color =
             Continue
 
 -- Assumes we're looking towards -z.
-Camera = {
-    numPix     : Nat
-  & pos        : Position  -- pinhole position
-  & halfWidth  : Float     -- sensor half-width
-  & sensorDist : Float }   -- pinhole-sensor distance
+struct Camera =
+  numPix     : Nat
+  pos        : Position  -- pinhole position
+  halfWidth  : Float     -- sensor half-width
+  sensorDist : Float     -- pinhole-sensor distance
 
 -- TODO: might be better with an anonymous dependent pair for the result
 def cameraRays (n:Nat) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
-  halfWidth = get_at #halfWidth camera
+  halfWidth = camera~halfWidth
   pixHalfWidth = halfWidth / n_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
@@ -264,20 +262,20 @@ def cameraRays (n:Nat) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
     [kx, ky] = split_key key
     x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
-    (get_at #pos camera, normalize [x, y, neg (get_at #sensorDist camera)])
+    (camera~pos, normalize [x, y, neg camera~sensorDist])
 
 def takePicture {m} (params:Params) (scene:Scene m) (camera:Camera) : Image =
-  n = get_at #numPix camera
+  n = camera~numPix
   rays = cameraRays n camera
   rootKey = new_key 0
   image = for i j.
-    pixKey = if get_at #shareSeed params
+    pixKey = if params~shareSeed
       then rootKey
       else ixkey (ixkey rootKey i) j
     sampleRayColor : Key -> Color =  \k.
       [k1, k2] = split_key k
       trace params scene (rays.i.j k1) k2
-    sampleAveraged sampleRayColor (get_at #numSamples params) pixKey
+    sampleAveraged sampleRayColor params~numSamples pixKey
   MkImage _ _ $ image / mean (for (i,j,k). image.i.j.k)
 
 '## Define the scene and render it
@@ -300,21 +298,16 @@ theScene = MkScene $
   , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
   ]
 
-defaultParams = {
-    numSamples = 50
-  , maxBounces = 10
-  , shareSeed  = True }
+defaultParams = Params~new 50 10 True
 
-defaultCamera = {
-    numPix     = 250
-  , pos        = 10.0 .* zHat
-  , halfWidth  = 0.3
-  , sensorDist = 1.0 }
+defaultCamera = Camera~new 250 (10.0 .* zHat) 0.3 1.0
+
+testCamera = Camera~new 10 (10.0 .* zHat) 0.3 1.0
 
 -- We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
 camera = if dex_test_mode ()
-  then defaultCamera |> set_at #numPix 10
+  then testCamera
   else defaultCamera
 
 -- %time
@@ -325,7 +318,7 @@ camera = if dex_test_mode ()
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-params2 = defaultParams |> set_at #numSamples 1
+params2 = Params~new 1 10 True
 (MkImage _ _ image2) = takePicture params2 theScene camera
 
 :html imshow image2

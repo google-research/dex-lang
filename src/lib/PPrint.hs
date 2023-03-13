@@ -19,7 +19,6 @@ import Control.Monad (void)
 import Data.Foldable (toList, fold)
 import Data.Functor ((<&>))
 import qualified Data.ByteString.Lazy.Char8 as B
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -33,8 +32,7 @@ import System.IO.Unsafe
 import qualified System.Environment as E
 import Numeric
 
-import ConcreteSyntax hiding (Equal)
-import ConcreteSyntax qualified as C
+import ConcreteSyntax
 import Err
 import LabeledItems
 import IRVariants
@@ -167,7 +165,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (UserEffectOp op) = prettyPrec op
-  prettyPrec (RecordVariantOp op) = prettyPrec op
+  prettyPrec (RecordOp op) = prettyPrec op
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (DAMOp op) = prettyPrec op
   prettyPrec (ProjMethod d i) = atPrec AppPrec $ "projectMethod" <+> p d <+> p i
@@ -179,19 +177,14 @@ instance IRRep r => PrettyPrec (Expr r n) where
     IndexRef i  -> pApp ref <+> "!" <+> pApp i
     ProjRef  i  -> "proj" <+> pApp ref <+> p i
 
-instance IRRep r => Pretty (RecordVariantOp (Atom r n)) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (RecordVariantOp (Atom r n)) where
+instance IRRep r => Pretty (RecordOp (Atom r n)) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (RecordOp (Atom r n)) where
   prettyPrec = \case
     RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
     RecordConsDynamic lab val rec -> atPrec LowestPrec $
       "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
     RecordSplit fields val -> atPrec AppPrec $
       "RecordSplit" <+> pArg fields <+> pArg val
-    VariantLift types val ->
-      prettyVariantLift (fmap (const ()) types) val
-    VariantSplit types val -> atPrec AppPrec $
-      "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
-                     <+> pArg val
     op -> atPrec ArgPrec $ p (show  op)
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
@@ -233,14 +226,6 @@ instance IRRep r => Pretty (NaryPiType r n) where
   pretty (NaryPiType bs effs resultTy) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
-instance Pretty (PiBinder n l) where
-  pretty (PiBinder b ty arrow) = case arrow of
-    PlainArrow    -> p (b:>ty)
-    ClassArrow Full           -> "[" <> p (b:>ty) <> "]"
-    ClassArrow (Partial idxs) -> "[" <> p (b:>ty) <+> p idxs <> "]"
-    ImplicitArrow -> "{" <> p (b:>ty) <> "}"
-    LinArrow      -> p (b:>ty)
-
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
   prettyPrec (LamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
@@ -273,7 +258,7 @@ instance Pretty (DictType n) where
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
   prettyPrec (DepPairType b rhs) =
-    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
+    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <> nest 2 (line <> p rhs)
 
 instance Pretty (EffectOpType n) where
   pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
@@ -361,19 +346,12 @@ prettyLabeledItems :: PrettyPrec a
 prettyLabeledItems items =
   prettyExtLabeledItems (Ext items (Nothing :: Maybe ())) Nothing
 
-prettyVariant :: PrettyPrec a
-  => LabeledItems () -> Label -> a -> DocPrec ann
-prettyVariant labels label value = atPrec ArgPrec $
-      "{|" <> left <+> p label <+> "=" <+> pLowest value <+> "|}"
-      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
-            plabel (l, _) = p l <> "|"
-
 forStr :: ForAnn -> Doc ann
 forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (PiType n) where
-  pretty (PiType (PiBinder b ty arr) eff body) = let
+  pretty (PiType (b:>ty) arr eff body) = let
     prettyBinder = prettyBinderHelper (b:>ty) (PairE eff body)
     prettyBody = case body of
       Pi subpi -> pretty subpi
@@ -482,8 +460,6 @@ instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 instance IRRep r => Pretty (AtomBinding r n) where
   pretty binding = case binding of
     LetBound    b -> p b
-    LamBound    b -> p b
-    PiBound     b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
     FFIFunBound s _ -> p s
@@ -497,14 +473,6 @@ instance Pretty (SpecializationSpec n) where
 instance Pretty IxMethod where
   pretty method = p $ show method
 
-instance Pretty (LamBinding n) where
-  pretty (LamBinding arr ty) =
-    "Lambda binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
-
-instance Pretty (PiBinding n) where
-  pretty (PiBinding arr ty) =
-    "Pi binding. Type:" <+> p ty <+> "  Arrow" <+> p arr
-
 instance Pretty (SolverBinding n) where
   pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty
   pretty (SkolemBound  ty  ) = "Skolem variable of type:"    <+> p ty
@@ -515,8 +483,8 @@ instance Pretty (Binding c n) where
     -- TODO: can we avoid printing needing IRRep? Presumably it's related to
     -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
     AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
-    DataDefBinding    dataDef -> pretty dataDef
-    TyConBinding      dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
+    DataDefBinding dataDef _ -> pretty dataDef
+    TyConBinding   dataDefName e -> "Type constructor:" <+> pretty dataDefName <+> (parens $ "atom:" <+> p e)
     DataConBinding    dataDefName idx e -> "Data constructor:" <+> pretty dataDefName <+> "Constructor index:" <+> pretty idx <+> (parens $ "atom:" <+> p e)
     ClassBinding    classDef -> pretty classDef
     InstanceBinding instanceDef -> pretty instanceDef
@@ -553,7 +521,7 @@ instance Pretty (DataDef n) where
     "data" <+> p name <+> (spaced $ fromNest bs) <> prettyLines cons
 
 instance Pretty (DataConDef n) where
-  pretty (DataConDef name repTy _) =
+  pretty (DataConDef name _ repTy _) =
     p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
@@ -592,11 +560,10 @@ instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
 
 instance Pretty (ModuleEnv n) where
-  pretty (ModuleEnv imports sm sc (ATM atm)) =
+  pretty (ModuleEnv imports sm sc) =
     prettyRecord [ ("Imports"         , p imports)
                  , ("Source map"      , p sm)
-                 , ("Synth candidates", p sc)
-                 , ("atom/method names", p atm) ]
+                 , ("Synth candidates", p sc) ]
 
 instance Pretty (Env n) where
   pretty (Env env1 env2) =
@@ -732,21 +699,12 @@ instance PrettyPrec (UExpr' n) where
       nest 2 (prettyLines alts)
     ULabel name -> atPrec ArgPrec $ "&" <> p name
     ULabeledRow elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "?") ": " elems
+    UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f
     URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
     URecordTy elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "&") ": " elems
-    UVariant labels label value -> prettyVariant labels label value
-    UVariantTy items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
-    UVariantLift labels value -> prettyVariantLift labels value
     UNatLit   v -> atPrec ArgPrec $ p v
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
-
-prettyVariantLift :: PrettyPrec a
-  => LabeledItems () -> a -> DocPrec ann
-prettyVariantLift labels value = atPrec ArgPrec $
-      "{|" <> left <+> "..." <> pLowest value <+> "|}"
-      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
-            plabel (l, _) = p l <> "|"
 
 prettyUFieldRowElems :: Doc ann -> Doc ann -> UFieldRowElems n -> Doc ann
 prettyUFieldRowElems separator bindwith elems =
@@ -764,6 +722,9 @@ instance Pretty (UDecl n l) where
   pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
+  pretty (UStructDecl (UStructDef nm bs fields) bTyCon) =
+    "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
+       (prettyLines fields)
   pretty (UInterface params superclasses methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p superclasses <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods
@@ -830,8 +791,6 @@ instance PrettyPrec (UPat' n l) where
     UPatUnit UnitB -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
     UPatRecord pats -> atPrec ArgPrec $ prettyUFieldRowPat "," "=" pats
-    UPatVariant labels label value -> prettyVariant labels label value
-    UPatVariantLift labels value -> prettyVariantLift labels value
     UPatTable pats -> atPrec ArgPrec $ p pats
 
 prettyUFieldRowPat :: forall n l ann. Doc ann -> Doc ann -> UFieldRowPat n l -> Doc ann
@@ -1010,12 +969,6 @@ prettyPrecNewtype con x = case (con, x) of
   (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
   (RecordCon labels, ProdVal itemList) ->
     prettyLabeledItems (restructure itemList labels) (line' <> ",") " ="
-  (VariantCon labels, SumVal _ fieldIx value) -> do
-      let (label, i) = toList (reflectLabels labels) !! fieldIx
-      let ls = LabeledItems $ case i of
-                 0 -> M.empty
-                 _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
-      prettyVariant ls label value
   (_, x') -> prettyPrec x'
 
 instance Pretty (NewtypeTyCon n) where pretty = prettyFromPrettyPrec
@@ -1024,7 +977,6 @@ instance PrettyPrec (NewtypeTyCon n) where
     Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     RecordTyCon elems -> prettyRecordTyRow elems "&"
-    VariantTyCon items -> prettyExtLabeledItems items Nothing (line <> "|") ":"
     EffectRowKind -> atPrec ArgPrec "EffKind"
     LabeledRowKindTC -> atPrec ArgPrec "Fields"
     LabelType -> atPrec ArgPrec "Label"
@@ -1227,30 +1179,26 @@ instance ToJSON Result where
           , "run_time"     .= toJSON runTime ]
         out -> ["result" .= String (fromString $ pprint out)]
 
-instance Pretty SourceBlock' where
-  pretty (EvalUDecl d) = fromString $ show d
-  pretty b = fromString $ show b
-
 -- === Concrete syntax rendering ===
 
-instance Pretty CSourceBlock' where
-  pretty (CTopDecl decl) = p decl
+instance Pretty SourceBlock' where
+  pretty (TopDecl decl) = p decl
   pretty d = fromString $ show d
 
 instance Pretty CTopDecl where
   pretty (WithSrc _ d) = p d
 
 instance Pretty CTopDecl' where
-  pretty (C.CDecl ann decl) = annDoc <> p decl
+  pretty (CSDecl ann decl) = annDoc <> p decl
     where annDoc = case ann of
             PlainLet -> mempty
             _ -> p ann <> " "
   pretty d = fromString $ show d
 
-instance Pretty C.CDecl where
+instance Pretty CSDecl where
   pretty (WithSrc _ d) = p d
 
-instance Pretty C.CDecl' where
+instance Pretty CSDecl' where
   pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
   pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
   pretty (CDef name args (Just ty) blk) =
@@ -1269,9 +1217,9 @@ instance Pretty C.CDecl' where
       _ -> " given" <+> p givens <> " "
   pretty (CExpr e) = p e
 
-instance Pretty C.CBlock where
+instance Pretty CSBlock where
   pretty (ExprBlock g) = pArg g
-  pretty (CBlock decls) = nest 2 $ prettyLines decls
+  pretty (CSBlock decls) = nest 2 $ prettyLines decls
 
 instance PrettyPrec Group where
   prettyPrec (WithSrc _ g) = prettyPrec g
@@ -1299,12 +1247,10 @@ instance PrettyPrec Group' where
 open_bracket :: Bracket -> Doc a
 open_bracket Square = "["
 open_bracket Curly  = "{"
-open_bracket CurlyPipe = "{|"
 
 close_bracket :: Bracket -> Doc a
 close_bracket Square = "]"
 close_bracket Curly  = "}"
-close_bracket CurlyPipe = "|}"
 
 instance Pretty Bin where
   pretty (WithSrc _ b) = p b
@@ -1315,6 +1261,7 @@ instance Pretty Bin' where
   pretty Ampersand = "&"
   pretty DepAmpersand = "&>"
   pretty IndexingDot = "."
+  pretty FieldAccessDot = "~"
   pretty Comma = ","
   pretty DepComma = ",>"
   pretty Colon = ":"
@@ -1324,4 +1271,4 @@ instance Pretty Bin' where
   pretty FatArrow = "=>"
   pretty Question = "?"
   pretty Pipe = "|"
-  pretty C.Equal = "="
+  pretty CSEqual = "="

@@ -1,0 +1,31 @@
+
+struct MyStruct =
+  field1 : Int
+  field2 : Float
+  field3 : String
+
+my_struct = MyStruct~new 1 2 "abc"
+
+:p my_struct~field3
+> "abc"
+
+:p my_struct~(1 + 1)
+> Syntax error: Field must be a name
+>
+> :p my_struct~(1 + 1)
+>              ^^^^^^^
+
+:p my_struct
+> (MyStruct.new 1 2. "abc")
+
+:t my_struct
+> MyStruct
+
+struct MyParametricStruct a =
+  foo  : a
+  bar  : Nat
+
+:p
+  foo = MyParametricStruct~new 1.0 1
+  foo~bar
+> 1

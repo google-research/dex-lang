@@ -71,13 +71,22 @@ data UDeclInferenceResult e n =
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
-inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  PairE def' (Abs ddbs' (ListE cbs')) <- liftInfererM $ solveLocal $ inferDataDef def
+inferTopUDecl (UStructDecl def tc) result = do
+  PairE def' (LiftE fieldNames) <- liftInfererM $ solveLocal $ inferStructDef def
   defName <- emitDataDef def'
+  forM_ (enumerate fieldNames) \(i, fieldName) -> do
+    projFun <- buildProjectionFun defName i
+    updateFieldDefs defName fieldName projFun
+  [dataCon] <- buildDataCons defName
+  updateFieldDefs defName "new" dataCon
   tc' <- emitTyConName defName =<< tyConDefAsAtom defName
-  dcs' <- forM (enumerate cbs') \(i, cbs'') ->
-    emitDataConName defName i =<< dataConDefAsAtom (Abs ddbs' cbs'') defName i
-  let subst = tc @> tc' <.> dcs @@> dcs'
+  UDeclResultDone <$> applyRename (tc @> tc') result
+inferTopUDecl (UDataDefDecl def tc dcs) result = do
+  def' <- liftInfererM (solveLocal $ inferDataDef def) >>= emitDataDef
+  tc' <- emitTyConName def' =<< tyConDefAsAtom def'
+  dcs' <- buildDataCons def'
+  dcs'' <- forM (enumerate dcs') \(i, dc) -> emitDataConName def' i dc
+  let subst = tc @> tc' <.> dcs @@> dcs''
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInterface paramBs superclasses methodTys className methodNames) result = do
   let classSourceName = uBinderSourceName className
@@ -232,7 +241,7 @@ inferEffOpType (UEffectOpType policy ty) = do
 class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m )
       => InfBuilder (m::MonadKind1) where
 
-  -- XXX: we should almost always used the zonking `buildDeclsInf` and variant,
+  -- XXX: we should almost always used the zonking `buildDeclsInf` ,
   -- except where it's not possible because the result isn't atom-substitutable,
   -- such as the source map at the top level.
   buildDeclsInfUnzonked
@@ -242,11 +251,11 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m 
     -> m n (Abs (Nest CDecl) e n)
 
   buildAbsInf
-    :: (SinkableE e, HoistableE e, RenameE e, ToBinding binding c, Color c)
+    :: (SinkableE e, HoistableE e, RenameE e, ToBinding binding (AtomNameC CoreIR))
     => EmitsInf n
-    => NameHint -> binding n
-    -> (forall l. (EmitsInf l, DExt n l) => Name c l -> m l (e l))
-    -> m n (Abs (BinderP c binding) e n)
+    => NameHint -> Arrow -> binding n
+    -> (forall l. (EmitsInf l, DExt n l) => CAtomName l -> m l (e l))
+    -> m n (Abs (BinderP (AtomNameC CoreIR) binding) e n)
 
 buildDeclsInf
   :: (SubstE AtomSubstVal e, RenameE e, Solver m, InfBuilder m)
@@ -421,8 +430,6 @@ zonkAtomBindingWithOutMap
   :: Distinct n => InfOutMap n -> AtomBinding CoreIR n -> AtomBinding CoreIR n
 zonkAtomBindingWithOutMap outMap = \case
  LetBound    e -> LetBound    $ zonkWithOutMap outMap e
- LamBound    e -> LamBound    $ zonkWithOutMap outMap e
- PiBound     e -> PiBound     $ zonkWithOutMap outMap e
  MiscBound   e -> MiscBound   $ zonkWithOutMap outMap e
  SolverBound e -> SolverBound $ zonkWithOutMap outMap e
  NoinlineFun t e -> NoinlineFun (zonkWithOutMap outMap t) (zonkWithOutMap outMap e)
@@ -569,13 +576,15 @@ instance InfBuilder (InfererM i) where
       Abs decls (PairE result s') <- extendInplaceT ab
       return (Abs decls result, hoistRequiredIfaces decls s')
 
-  buildAbsInf hint binding cont = do
+  buildAbsInf hint arr binding cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> do
       ab <- withFreshBinder hint binding \b -> do
         ab <- locallyMutableInplaceT do
-          EmitsInf <- fabricateEmitsInfEvidenceM
-          toPairE <$> runStateT1 (
-            runSubstReaderT (sink env) (runInfererM' $ cont $ sink $ binderName b)) (sink s)
+          v <- sinkM $ binderName b
+          extendInplaceTLocal (extendSynthCandidatesInf arr v) do
+            EmitsInf <- fabricateEmitsInfEvidenceM
+            toPairE <$> runStateT1 (
+              runSubstReaderT (sink env) (runInfererM' $ cont $ v)) (sink s)
         refreshAbs ab \infFrag resultWithState -> do
           case exchangeBs $ PairB b infFrag of
             HoistSuccess (PairB infFrag' b') ->
@@ -905,6 +914,30 @@ instance EnvExtender (InfererM i) where
       return (ans, hoistRequiredIfaces b s')
   {-# INLINE refreshAbs #-}
 
+-- === helpers for extending synthesis candidates ===
+
+-- TODO: we should pull synth candidates out of the Env and then we can treat it
+-- like an ordinary ready without all this ceremony.
+
+extendSynthCandidatesInf :: Arrow -> CAtomName n -> InfOutMap n -> InfOutMap n
+extendSynthCandidatesInf c v (InfOutMap env x y z w) =
+  InfOutMap (extendSynthCandidates c v env) x y z w
+{-# INLINE extendSynthCandidatesInf #-}
+
+extendSynthCandidates :: Arrow -> CAtomName n -> Env n -> Env n
+extendSynthCandidates (ClassArrow _) v (Env topEnv (ModuleEnv a b scs)) =
+  Env topEnv (ModuleEnv a b scs')
+  where scs' = scs <> SynthCandidates [v] mempty
+extendSynthCandidates _ _ env = env
+{-# INLINE extendSynthCandidates #-}
+
+extendSynthCandidatess :: Distinct n => Nest RolePiBinder n' n -> Env n -> Env n
+extendSynthCandidatess (Nest (RolePiBinder b _ arr _) rest) env =
+  extendSynthCandidatess rest env'
+  where env' = extendSynthCandidates arr (withExtEvidence rest $ sink $ binderName b) env
+extendSynthCandidatess Empty env = env
+{-# INLINE extendSynthCandidatess #-}
+
 -- === actual inference pass ===
 
 type SigmaType = CType  -- may     start with an implicit lambda
@@ -916,7 +949,7 @@ data RequiredTy (e::E) (n::S) = Check (e n)
 checkSigma :: EmitsBoth o
            => NameHint -> UExpr i -> SigmaType o -> InfererM i o (CAtom o)
 checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
-  Pi piTy@(PiType (PiBinder b _ arrow) _ _)
+  Pi piTy@(PiType (b:>_) arrow _ _)
     | arrow == ImplicitArrow || isClassArrow arrow -> case expr of
         WithSrcE _ (ULam lam@(ULamExpr arrow' _ _)) | arrow == arrow' -> checkULam lam piTy
         -- we have to add the lambda argument corresponding to the implicit pi
@@ -957,16 +990,16 @@ instantiateSigmaWithArgs f = do
 
 getImplicitArgs :: EmitsInf o => CType o -> InfererM i o [CAtom o]
 getImplicitArgs ty = case ty of
-  Pi (PiType b _ _) ->
-    getImplicitArg b >>= \case
+  Pi (PiType (_:>argTy) arr _ _) ->
+    getImplicitArg arr argTy >>= \case
       Nothing -> return []
       Just arg -> do
         appTy <- getAppType ty [arg]
         (arg:) <$> getImplicitArgs appTy
   _ -> return []
 
-getImplicitArg :: EmitsInf o => PiBinder o o' -> InfererM i o (Maybe (CAtom o))
-getImplicitArg (PiBinder _ argTy arr) = case arr of
+getImplicitArg :: EmitsInf o => Arrow -> CType o -> InfererM i o (Maybe (CAtom o))
+getImplicitArg arr argTy = case arr of
   ImplicitArrow -> Just <$> freshType argTy
   ClassArrow reqMethodAccess -> do
     ctx <- srcPosCtx <$> getErrCtx
@@ -1121,6 +1154,16 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
         x' -> return x'
     matchRequirement =<< matchPrimApp prim xs'
   ULabel name -> matchRequirement $ NewtypeTyCon $ LabelCon name
+  UFieldAccess x f -> do
+    x' <- inferFieldLHS x
+    matchRequirement =<< case x' of
+      Left tyConName -> lookupFieldName tyConName f
+      Right (tyConName, x'') -> do
+        f' <- lookupFieldName tyConName f
+        f'' <- instantiateSigma f'
+        Pi (PiType (_:>reqArgTy) _ _ _) <- getType f''
+        getType x'' >>= constrainEq reqArgTy
+        app f'' x''
   URecord elems ->
     matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)
     where
@@ -1135,7 +1178,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
         UDynField    v e -> do
           v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType)
           e' <- inferRho noHint e
-          rec' <- emitExpr . RecordVariantOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
+          rec' <- emitExpr . RecordOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
         UDynFields   v -> do
           anyFields <- freshInferenceName LabeledRowKind
@@ -1143,7 +1186,7 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
             _ -> do
-              rec' <- emitExpr . RecordVariantOp . RecordCons v' =<< resolveDelay delayedRec
+              rec' <- emitExpr . RecordOp . RecordCons v' =<< resolveDelay delayedRec
               return (Just rec', mempty)
 
       resolveDelay :: EmitsInf o
@@ -1154,30 +1197,13 @@ checkOrInferRho hint (WithSrcE pos expr) reqTy = do
           True  -> return rec
           False -> do
             dr <- getRecord delayedItems
-            emitExpr $ RecordVariantOp $ RecordCons dr rec
+            emitExpr $ RecordOp $ RecordCons dr rec
         where
           getRecord delayedItems = do
             tys <- traverse getType delayedItems
             return $ Record (void tys) $ toList delayedItems
-  UVariant labels@(LabeledItems lmap) label value -> do
-    value' <- inferRho noHint value
-    ty <- getType value'
-    unless (M.size lmap == 0 || M.size lmap == 1) $ throw TypeErr
-      "All labels in a variant literal should use the same field name."
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let items = prevTys <> labeledSingleton label ty
-    let extItems = Ext items $ Just rest
-    let i = length $ lookupLabel labels label
-    matchRequirement =<< emitExpr (RecordVariantOp $ VariantMake (VariantTy extItems) label i value')
   URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
   ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
-  UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
-  UVariantLift labels value -> do
-    row <- freshInferenceName LabeledRowKind
-    value' <- zonk =<< (checkRho noHint value $ VariantTy $ Ext NoLabeledItems $ Just row)
-    prev <- mapM (\() -> freshType TyKind) labels
-    matchRequirement =<< emitExpr (RecordVariantOp $ VariantLift prev value')
   UNatLit x -> do
     lookupSourceMap "from_unsigned_integer" >>= \case
       Nothing ->
@@ -1241,6 +1267,28 @@ inferPrimArg x = do
       _ -> throw CompilerErr "Type args to primops must be reducible"
     _ -> emitBlock xBlock
 
+inferFieldLHS
+  :: EmitsBoth o
+  => UExpr i -> InfererM i o (Either (DataDefName o) (DataDefName o, CAtom o))
+inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
+  case x of
+    UVar (InternalName _ (UTyConVar v)) -> do
+      TyConBinding defName _ <- lookupEnv =<< renameM v
+      return $ Left defName
+    _ -> do
+      x' <- inferRho noHint (WithSrcE pos x)
+      ty <- getType =<< zonk x'
+      case ty of
+        NewtypeTyCon (UserADTType _ tyName _) -> return $ Right (tyName, x')
+        ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
+
+lookupFieldName :: DataDefName o -> FieldName -> InfererM i o (CAtom o)
+lookupFieldName dataDefName (WithSrc src name) = addSrcContext src do
+  DataDefBinding (DataDef sn _ _) (FieldDefs fields) <- lookupEnv dataDefName
+  case M.lookup name fields of
+    Nothing -> throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name
+    Just x -> return x
+
 matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
 matchPrimApp = \case
  UNat                -> \case ~[]  -> return $ NewtypeTyCon Nat
@@ -1252,7 +1300,7 @@ matchPrimApp = \case
  UPrimTC  tc  -> \xs -> TC  <$> restructurePrim tc  xs
  UPrimCon con -> \xs -> Con <$> restructurePrim con xs
  UPrimOp  op         -> \xs -> ee =<< (PrimOp          <$> restructurePrim op xs)
- URecordVariantOp op -> \xs -> ee =<< (RecordVariantOp <$> restructurePrim op xs)
+ URecordOp op -> \xs -> ee =<< (RecordOp <$> restructurePrim op xs)
  UMAsk      -> \case ~[r]    -> ee $ RefOp r MAsk
  UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
  UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
@@ -1379,12 +1427,12 @@ inferNaryAppArgs
 inferNaryAppArgs [] (NaryPiType Empty _ _) _ = error "shouldn't have nullary function"
 inferNaryAppArgs [arr] (NaryPiType (Nest (b:>argTy) Empty) effs resultTy) uArgs = do
   let isDependent = binderName b `isFreeIn` PairE effs resultTy
-  (x, remaining) <- inferAppArg isDependent (PiBinder b argTy arr) uArgs
+  (x, remaining) <- inferAppArg isDependent arr (b:>argTy) uArgs
   return (x:|[], remaining)
 inferNaryAppArgs (a:arrs) (NaryPiType (Nest (b1:>b1Ty) (Nest b2 rest)) effs resultTy) uArgs = do
   let restNaryPi = NaryPiType (Nest b2 rest) effs resultTy
   let isDependent = binderName b1 `isFreeIn` restNaryPi
-  (x, uArgs') <- inferAppArg isDependent (PiBinder b1 b1Ty a) uArgs
+  (x, uArgs') <- inferAppArg isDependent a (b1:>b1Ty) uArgs
   x' <- zonk x
   restNaryPi' <- applySubst (b1 @> SubstVal x') restNaryPi
   case nonEmpty uArgs' of
@@ -1396,8 +1444,8 @@ inferNaryAppArgs _ _ _ = error "zip error"
 
 inferAppArg
   :: EmitsBoth o
-  => Bool -> PiBinder o o' -> NonEmpty (UExprArg i) -> InfererM i o (CAtom o, [UExprArg i])
-inferAppArg isDependent b@(PiBinder _ argTy _) uArgs = getImplicitArg b >>= \case
+  => Bool -> Arrow -> CBinder o o' -> NonEmpty (UExprArg i) -> InfererM i o (CAtom o, [UExprArg i])
+inferAppArg isDependent arr b@(_:>argTy) uArgs = getImplicitArg arr argTy >>= \case
   Just x -> return $ (x, toList uArgs)
   Nothing -> do
     let (appCtx, arg) :| restUArgs = uArgs
@@ -1440,13 +1488,7 @@ buildNthOrderedAlt alts scrutTy resultTy i v = do
 -- `CaseAltIndex` used in the surface IR.
 nthCaseAltIdx :: CType n -> Int -> CaseAltIndex
 nthCaseAltIdx ty i = case ty of
-  TypeCon _ _ _ -> ConAlt i
-  VariantTy (NoExt types) -> case lookup i pairedIndices of
-    Just idx -> idx
-    Nothing -> error "alt index out of range"
-    where
-      pairedIndices :: [(Int, CaseAltIndex)]
-      pairedIndices = enumerate $ [VariantAlt l idx | (l, idx, _) <- toList (withLabels types)]
+  TypeCon _ _ _ -> i
   _ -> error $ "can't pattern-match on: " <> pprint ty
 
 buildMonomorphicCase
@@ -1475,51 +1517,7 @@ buildSortedCase scrut alts resultTy = do
           let [IndexedAlt _ alt] = alts
           emitBlock =<< applyAbs alt (SubstVal $ unwrapNewtype scrut)
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
-    VariantTy (Ext types tailName) -> do
-      case filter isVariantTailAlt alts of
-        [] -> case tailName of
-          Nothing ->
-            -- We already know the type exactly, so just emit a case.
-            liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
-          Just _ -> do
-            -- Split off the types we don't know about, mapping them to a
-            -- runtime error.
-            liftEmitBuilder $ buildSplitCase types scrut resultTy
-              (\v -> do ListE alts' <- sinkM $ ListE alts
-                        resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
-              (\_ -> do resultTy' <- sinkM resultTy
-                        emitOp $ MiscOp $ ThrowError resultTy')
-        [IndexedAlt (VariantTailAlt (LabeledItems skippedItems)) tailAlt] -> do
-            -- Split off the types skipped by the tail pattern.
-            let splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
-            let left = LabeledItems $ M.intersectionWith splitLeft
-                        (fromLabeledItems types) skippedItems
-            checkNoTailOverlaps alts left
-            liftEmitBuilder $ buildSplitCase left scrut resultTy
-              (\v -> do ListE alts' <- sinkM $ ListE alts
-                        resultTy'   <- sinkM resultTy
-                        liftEmitBuilder $ buildMonomorphicCase alts' v resultTy')
-              (\v -> do tailAlt' <- sinkM tailAlt
-                        applyAbs tailAlt' (SubstVal v) >>= emitBlock )
-        _ -> throw TypeErr "Can't specify more than one variant tail pattern."
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
-
--- Make sure all of the alternatives are exclusive with the tail pattern (could
--- technically allow overlap but this is simpler). Split based on the tail
--- pattern's skipped types.
-checkNoTailOverlaps :: Fallible1 m => [IndexedAlt n] -> LabeledItems (CType n) ->  m n ()
-checkNoTailOverlaps alts (LabeledItems tys) = do
-  forM_ alts \case
-    (IndexedAlt (VariantAlt label i) _) ->
-      case M.lookup label tys of
-        Just tys' | i <= length tys' -> return ()
-        _ -> throw TypeErr "Variant explicit alternatives overlap with tail pattern."
-    _ -> return ()
-
-isVariantTailAlt :: IndexedAlt n -> Bool
-isVariantTailAlt (IndexedAlt (VariantTailAlt _) _) = True
-isVariantTailAlt _ = False
 
 -- ===
 
@@ -1611,14 +1609,17 @@ buildTyConLam
   -> m n (CAtom n)
 buildTyConLam defName arr cont = do
   DataDef sourceName paramBs _ <- lookupDataDef =<< sinkM defName
-  buildPureNaryLam (EmptyAbs $ fmapNest replacePlain paramBs) \params -> do
+  let arrs = nestToList getArr paramBs
+  buildPureNaryLam arrs (EmptyAbs $ fmapNest replacePlain paramBs) \params -> do
     cont sourceName $ DataDefParams (attachArrows paramBs params)
   where
-    replacePlain :: RolePiBinder n l -> PiBinder n l
-    replacePlain (RolePiBinder b ty binderArr _) = PiBinder b ty arr'
-      where arr' = case binderArr of
-                     PlainArrow -> arr
-                     _          -> binderArr
+    getArr :: RolePiBinder n l -> Arrow
+    getArr (RolePiBinder _ _ binderArr _) = case binderArr of
+      PlainArrow -> arr
+      _          -> binderArr
+
+    replacePlain :: RolePiBinder n l -> CBinder n l
+    replacePlain (RolePiBinder b ty _ _) = b:>ty
 
     attachArrows :: Nest RolePiBinder n l
                   -> [CAtomName l2] -> [(Arrow, CAtom l2)]
@@ -1632,27 +1633,27 @@ tyConDefAsAtom defName = liftBuilder do
   buildTyConLam defName PlainArrow \sourceName params ->
     return $ TypeCon sourceName (sink defName) params
 
-dataConDefAsAtom :: EnvReader m
-                 => Abs (Nest RolePiBinder) (EmptyAbs (Nest (Binder CoreIR))) n
-                 -> DataDefName n -> Int -> m n (CAtom n)
-dataConDefAsAtom bsAbs defName conIx = liftBuilder do
+buildDataCons :: EnvReader m => DataDefName n -> m n [CAtom n]
+buildDataCons defName = do
+  DataDef _ _ dataCons <- lookupDataDef defName
+  forM (enumerate dataCons) \(i, _) -> buildDataCon defName i
+
+buildDataCon :: EnvReader m => DataDefName n -> Int -> m n (CAtom n)
+buildDataCon defName conIx = liftBuilder do
   buildTyConLam defName ImplicitArrow \_ params -> do
     defName' <- sinkM defName
     def <- lookupDataDef defName'
     conDefs <- instantiateDataDef def params
-    let DataConDef _ conRep _ = conDefs !! conIx
-    Abs conArgBinders UnitE <- applyDataConAbs (sink bsAbs) params
-    buildPureNaryLam (EmptyAbs $ binderNestAsPiNest PlainArrow conArgBinders) \conArgs -> do
-      conProd <- buildDataCon (sink conRep) $ Var <$> conArgs
+    DataConDef _ (EmptyAbs dataBs) repTy _ <- return $ conDefs !! conIx
+    let arrs = replicate (nestLength dataBs) PlainArrow
+    buildPureNaryLam arrs (EmptyAbs dataBs) \conArgs -> do
+      conProd <- wrap (sink repTy) $ Var <$> conArgs
       return $ NewtypeCon (sink $ UserADTData defName' params) $
         case conDefs of
           []  -> error "unreachable"
           [_] -> conProd
           _   -> SumVal conTys conIx conProd
-            where conTys = sinkList $ conDefs <&> \(DataConDef _ rty _) -> rty
-
-buildDataCon :: EnvReader m => CType n -> [CAtom n] -> m n (CAtom n)
-buildDataCon repTy topArgs = wrap repTy topArgs
+            where conTys = sinkList $ conDefs <&> \(DataConDef _ _ rty _) -> rty
   where
     wrap :: EnvReader m => CType n -> [CAtom n] -> m n (CAtom n)
     wrap _ [arg] = return $ arg
@@ -1669,12 +1670,17 @@ buildDataCon repTy topArgs = wrap repTy topArgs
         ans <- wrap rty'' t
         return $ DepPair h ans dpt
         where h:t = args
-      _ -> error $ "Unexpected data con representation type: " ++ pprint repTy
+      _ -> error $ "Unexpected data con representation type: " ++ pprint rty
 
-binderNestAsPiNest :: Arrow -> Nest (Binder CoreIR) n l -> Nest PiBinder n l
-binderNestAsPiNest arr = \case
-  Empty             -> Empty
-  Nest (b:>ty) rest -> Nest (PiBinder b ty arr) $ binderNestAsPiNest arr rest
+buildProjectionFun :: EnvReader m => DataDefName n -> Int -> m n (CAtom n)
+buildProjectionFun defName i = liftBuilder do
+  buildTyConLam defName ImplicitArrow \_ params -> do
+    defName' <- sinkM defName
+    def@(DataDef sn _ _) <- lookupDataDef defName'
+    let argTy = NewtypeTyCon $ sink $ UserADTType sn defName' params
+    [DataConDef _ _ _ projs] <- instantiateDataDef def params
+    buildLam "x" PlainArrow argTy Pure \x -> do
+      normalizeNaryProj (projs!!i) (Var x)
 
 inferRole :: CType o -> Arrow -> InfererM i o ParamRole
 inferRole ty arr = case arr of
@@ -1691,17 +1697,23 @@ inferRole ty arr = case arr of
         False -> return DataParam
 {-# INLINE inferRole #-}
 
-inferDataDef
-  :: EmitsInf o => UDataDef i
-  -> InfererM i o (PairE DataDef
-      (Abs (Nest RolePiBinder) (ListE (EmptyAbs (Nest (Binder CoreIR))))) o)
+inferDataDef :: EmitsInf o => UDataDef i -> InfererM i o (DataDef o)
 inferDataDef (UDataDef tyConName paramBs dataCons) = do
-  Abs paramBs' (ListE dataConsWithBs') <-
+  Abs paramBs' (ListE dataCons') <-
     withNestedUBindersTyCon paramBs \_ -> do
       ListE <$> mapM inferDataCon dataCons
-  let (dataCons', bs') = unzip $ fromPairE <$> dataConsWithBs'
-  return $ PairE (DataDef tyConName paramBs' dataCons')
-                 (Abs paramBs' $ ListE bs')
+  return (DataDef tyConName paramBs' dataCons')
+
+inferStructDef
+  :: EmitsInf o => UStructDef i
+  -> InfererM i o (PairE DataDef (LiftE [SourceName]) o)
+inferStructDef (UStructDef tyConName paramBs fields) = do
+  let (fieldNames, fieldTys) = unzip fields
+  Abs paramBs' dataConBs <- withNestedUBindersTyCon paramBs \_ -> do
+    mapM checkUType fieldTys >>= typesAsBinderNest
+  let (repTy, projIdxs) = dataConRepTy dataConBs
+  let dataConDef = DataConDef (tyConName ++ ".new") dataConBs repTy projIdxs
+  return $ PairE (DataDef tyConName paramBs' [dataConDef]) (LiftE fieldNames)
 
 withNestedUBindersTyCon
   :: forall i i' o e. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
@@ -1718,13 +1730,11 @@ withNestedUBindersTyCon bs cont = case bs of
           cont (name':names)
     return $ Abs (Nest b' rest') body
 
-inferDataCon :: EmitsInf o
-             => (SourceName, UDataDefTrail i)
-             -> InfererM i o (PairE DataConDef (EmptyAbs (Nest (Binder CoreIR))) o)
+inferDataCon :: EmitsInf o => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
   argBs' <- checkUBinders (EmptyAbs argBs)
   let (repTy, projIdxs) = dataConRepTy argBs'
-  return $ PairE (DataConDef sourceName repTy projIdxs) argBs'
+  return $ DataConDef sourceName argBs' repTy projIdxs
 
 dataConRepTy :: EmptyAbs (Nest (Binder CoreIR)) n -> (CType n, [[Projection]])
 dataConRepTy (Abs topBs UnitE) = case topBs of
@@ -1800,23 +1810,21 @@ withSuperclassBindersRec [] cont = do
   result <- cont
   return $ Abs Empty result
 withSuperclassBindersRec (ty:rest) cont = do
-  let binding = PiBinding (ClassArrow Full) ty
-  Abs (b:>_) (Abs bs e) <- buildAbsInf noHint binding \_ -> do
+  Abs (b:>_) (Abs bs e) <- buildAbsInf noHint (ClassArrow Full) ty \_ -> do
     ListE rest' <- sinkM $ ListE rest
     withSuperclassBindersRec rest' cont
   return $ Abs (Nest b bs) e
 
 withNestedUBinders
-  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding (AtomNameC CoreIR))
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
   => Nest UAnnAtomBinder i i'
-  -> (forall l. CType l -> binding l)
   -> (forall o'. (EmitsInf o', Ext o o') => [CAtomName o'] -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (Binder CoreIR)) e o)
-withNestedUBinders bs asBinding cont = case bs of
+withNestedUBinders bs cont = case bs of
   Empty -> Abs Empty <$> cont []
   Nest b rest -> do
-    Abs b' (Abs rest' body) <- withUBinder b asBinding \name -> do
-      withNestedUBinders rest asBinding \names -> do
+    Abs b' (Abs rest' body) <- withUBinder b \name -> do
+      withNestedUBinders rest \names -> do
         name' <- sinkM name
         cont (name':names)
     return $ Abs (Nest b' rest') body
@@ -1829,26 +1837,24 @@ withRoleUBinder
 withRoleUBinder (UAnnBinder b ann) arr cont = do
   ty <- checkUType ann
   role <- inferRole ty arr
-  let binding = toBinding $ LamBinding arr ty
-  Abs (b' :> _) ans <- buildAbsInf (getNameHint b) binding \name ->
+  Abs (b' :> _) ans <- buildAbsInf (getNameHint b) arr ty \name ->
     extendSubst (b @> name) $ cont name
   return $ Abs (RolePiBinder b' ty arr role) ans
 
-withUBinder :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e, ToBinding binding (AtomNameC CoreIR))
+withUBinder :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
             => UAnnAtomBinder i i'
-            -> (CType o -> binding o)
             -> (forall o'. (EmitsInf o', Ext o o') => CAtomName o' -> InfererM i' o' (e o'))
             -> InfererM i o (Abs (Binder CoreIR) e o)
-withUBinder (UAnnBinder b ann) asBinding cont = do
+withUBinder (UAnnBinder b ann) cont = do
   ann' <- checkUType ann
-  Abs (n :> _) ans <- buildAbsInf (getNameHint b) (asBinding ann') \name ->
+  Abs (n :> _) ans <- buildAbsInf (getNameHint b) PlainArrow ann' \name ->
     extendSubst (b @> name) $ cont name
   return $ Abs (n :> ann') ans
 
 checkUBinders :: EmitsInf o
               => EmptyAbs (Nest UAnnAtomBinder) i
               -> InfererM i o (EmptyAbs (Nest (Binder CoreIR)) o)
-checkUBinders (EmptyAbs bs) = withNestedUBinders bs id \_ -> return UnitE
+checkUBinders (EmptyAbs bs) = withNestedUBinders bs \_ -> return UnitE
 checkUBinders _ = error "impossible"
 
 inferULam :: EmitsBoth o => EffectRow CoreIR o -> ULamExpr i -> InfererM i o (CAtom o)
@@ -1858,7 +1864,7 @@ inferULam effs (ULamExpr arrow (UPatAnn p ann) body) = do
     bindLamPat p v $ inferSigma noHint body
 
 checkULam :: EmitsBoth o => ULamExpr i -> PiType o -> InfererM i o (CAtom o)
-checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (PiBinder _ argTy arr) _ _) = do
+checkULam (ULamExpr _ (UPatAnn p ann) body) piTy@(PiType (_:>argTy) arr _ _) = do
   case ann of
     Nothing    -> return ()
     Just annTy -> constrainEq argTy =<< checkUType annTy
@@ -1895,7 +1901,7 @@ checkInstanceArgs (Nest (UPatAnnArrow (UPatAnn p ann) arrow) rest) cont = do
         addSrcContext pos $ extendSubst (b@>v) $
           checkInstanceArgs rest do
             cont
-      Abs (PiBinder b ty _) e <- return ab
+      Abs (b:>ty) e <- return ab
       -- it's important to do role inference after we finish everything else
       -- because we don't know what the parameter's type is until then.
       role <- inferRole argTy arrow
@@ -1909,17 +1915,16 @@ checkHandlerArgs
   :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e)
   => Nest UPatAnnArrow i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
-  -> InfererM i o (Abs (Nest PiBinder) e o)
+  -> InfererM i o (Abs (Nest RolePiBinder) e o)
 checkHandlerArgs bs cont = do
   Abs bs' result <- checkInstanceArgs bs cont
-  let bs'' = fmapNest (\(RolePiBinder b ty arr _) -> PiBinder b ty arr) bs'
-  return $ Abs bs'' result
+  return $ Abs bs' result
 
 checkHandlerBodyTyArg
   :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e)
   => UBinder (AtomNameC CoreIR) i i'
   -> (forall o'. (EmitsInf o', Ext o o') => CAtomName o' -> InfererM i' o' (e o'))
-  -> InfererM i o (Abs PiBinder e o)
+  -> InfererM i o (Abs CBinder e o)
 checkHandlerBodyTyArg b cont = do
   argTy <- freshType TyKind
   buildPiAbsInf (getNameHint b) ImplicitArrow argTy \v -> do
@@ -1987,8 +1992,8 @@ introDicts (h:t) m = do
   ab <- buildPiAbsInf (getNameHint @String "_autoq") (ClassArrow Full) h \_ -> do
     ListE t' <- sinkM $ ListE t
     introDicts t' m
-  Abs (PiBinder b ty arr) (Abs bs e) <- return ab
-  return $ Abs (Nest (RolePiBinder b ty arr DictParam) bs) e
+  Abs (b:>ty) (Abs bs e) <- return ab
+  return $ Abs (Nest (RolePiBinder b ty (ClassArrow Full) DictParam) bs) e
 
 introDictTys :: forall i o. EmitsInf o
              => [CType o]
@@ -2040,10 +2045,7 @@ constrainVarTy v tyReq = do
   varTy <- getType $ Var v
   constrainEq tyReq varTy
 
-data CaseAltIndex = ConAlt Int
-                  | VariantAlt Label Int
-                  | VariantTailAlt (LabeledItems ())
-  deriving (Eq, Show)
+type CaseAltIndex = Int
 
 checkCaseAlt :: EmitsBoth o
              => RhoType o -> CType o -> UAlt i -> InfererM i o (IndexedAlt o)
@@ -2058,14 +2060,7 @@ getCaseAltIndex :: UPat i i' -> InfererM i o CaseAltIndex
 getCaseAltIndex (WithSrcB _ pat) = case pat of
   UPatCon ~(InternalName _ conName) _ -> do
     (_, con) <- renameM conName >>= getDataCon
-    return $ ConAlt con
-  UPatVariant (LabeledItems lmap) label _ -> do
-    let i = case M.lookup label lmap of
-              Just prev -> length prev
-              Nothing -> 0
-    return (VariantAlt label i)
-  UPatVariantLift labels _ -> do
-    return (VariantTailAlt labels)
+    return con
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 checkCasePat :: EmitsBoth o
@@ -2077,7 +2072,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= getDataCon
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
-    DataConDef _ repTy idxs <- return $ cons !! con
+    DataConDef _ _ repTy idxs <- return $ cons !! con
     when (length idxs /= nestLength ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                              ++ " got " ++ show (nestLength ps)
@@ -2088,23 +2083,6 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
         ans <- normalizeNaryProj (init projs) (Var arg)
         emit $ Atom ans
       bindLamPats ps args $ cont
-  UPatVariant labels label p -> do
-    ty <- freshType TyKind
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let patTypes = prevTys <> labeledSingleton label ty
-    let extPatTypes = Ext patTypes $ Just rest
-    constrainEq scrutineeTy $ VariantTy extPatTypes
-    buildAltInf ty \x ->
-      bindLamPat p x cont
-  UPatVariantLift labels p -> do
-    prevTys <- mapM (const $ freshType TyKind) labels
-    rest <- freshInferenceName LabeledRowKind
-    let extPatTypes = Ext prevTys $ Just rest
-    constrainEq scrutineeTy $ VariantTy extPatTypes
-    let ty = VariantTy $ Ext NoLabeledItems $ Just rest
-    buildAltInf ty \x ->
-      bindLamPat p x cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
@@ -2161,7 +2139,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     (dataDefName, _) <- getDataCon =<< renameM conName
     DataDef sourceName paramBs cons <- lookupDataDef dataDefName
     case cons of
-      [DataConDef _ _ idxss] -> do
+      [DataConDef _ _ _ idxss] -> do
         when (length idxss /= nestLength ps) $ throw TypeErr $
           "Unexpected number of pattern binders. Expected " ++ show (length idxss)
                                                  ++ " got " ++ show (nestLength ps)
@@ -2199,7 +2177,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
-            ans <- emitExpr (RecordVariantOp $ RecordSplit (Var fv') (Var rv'))
+            ans <- emitExpr (RecordOp $ RecordSplit (Var fv') (Var rv'))
             [subr, rv''] <- emitUnpacked ans
             bindLamPat p subr $ bindPats c (mempty, Empty, rv'') rest
         UDynFieldPat lv p rest ->
@@ -2209,7 +2187,7 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             fieldTy <- freshType TyKind
             tailVar <- freshInferenceName LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
-            ans <- emitExpr (RecordVariantOp $ RecordSplitDynamic (Var lv') (Var rv'))
+            ans <- emitExpr (RecordOp $ RecordSplitDynamic (Var lv') (Var rv'))
             [val, rv''] <- emitUnpacked ans
             bindLamPat p val $ bindPats c (mempty, Empty, rv'') rest
 
@@ -2234,14 +2212,12 @@ bindLamPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           tailVar <- freshInferenceName LabeledRowKind
           constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
           [itemsRecord, restRecord] <- getUnpacked =<<
-            (emitExpr $ RecordVariantOp (RecordSplit
+            (emitExpr $ RecordOp (RecordSplit
               (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
               (Var r)))
           itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
           restRecordName <- emit (Atom restRecord)
           bindLamPats ps itemsNestOrdered $ f restRecordName
-  UPatVariant _ _ _   -> throw TypeErr "Variant not allowed in can't-fail pattern"
-  UPatVariantLift _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
   UPatTable ps -> do
     elemTy <- freshType TyKind
     let n = fromIntegral (nestLength ps) :: Word32
@@ -2324,18 +2300,6 @@ checkUParam k uty@(WithSrcE pos _) = do
           "Can't reduce type expression: " ++ pprint uty ++ "\n" ++
           "This might be due to a failure to find a viable interface implementation " ++
           "for: " ++ intercalate ", " (pprint <$> ds')
-
-checkExtLabeledRow :: EmitsBoth o
-                   => ExtLabeledItems (UExpr i) (UExpr i)
-                   -> InfererM i o (ExtLabeledItems (CType o) (CAtomName o))
-checkExtLabeledRow (Ext types Nothing) = do
-  types' <- mapM checkUType types
-  return $ Ext types' Nothing
-checkExtLabeledRow (Ext types (Just ext)) = do
-  types' <- mapM checkUType types
-  -- Only variables can have kind LabeledRowKind at the moment.
-  Var ext' <- checkRho noHint ext LabeledRowKind
-  return $ Ext types' $ Just ext'
 
 inferTabCon :: forall i o. EmitsBoth o
   => NameHint -> [UExpr i] -> RequiredTy RhoType o -> InfererM i o (CAtom o)
@@ -2682,7 +2646,6 @@ instance Unifiable NewtypeTyCon where
     (LabelCon s, LabelCon s') -> guard (s == s')
     (UserADTType _ c params, UserADTType _ c' params') -> guard (c == c') >> unify params params'
     (RecordTyCon  els, RecordTyCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
-    (VariantTyCon xs, VariantTyCon xs') -> unify (ExtLabeledItemsE xs) (ExtLabeledItemsE xs')
     (LabeledRowCon els, LabeledRowCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
     _ -> empty
 
@@ -2798,8 +2761,8 @@ unifyEq e1 e2 = guard =<< alphaEq e1 e2
 {-# INLINE unifyEq #-}
 
 unifyPiType :: EmitsInf n => PiType n -> PiType n -> SolverM n ()
-unifyPiType (PiType (PiBinder b1 ann1 arr1) eff1 ty1)
-            (PiType (PiBinder b2 ann2 arr2) eff2 ty2) = do
+unifyPiType (PiType (b1:>ann1) arr1 eff1 ty1)
+            (PiType (b2:>ann2) arr2 eff2 ty2) = do
   unless (arr1 == arr2) empty
   unify ann1 ann2
   v <- freshSkolemName ann1
@@ -2966,13 +2929,27 @@ synthInstanceDef instanceName (InstanceDef className bs params (InstanceBody sup
     recur ab cname iname = do
       (def, ab') <- liftExceptEnvReaderM $ refreshAbs ab
         \bs' (InstanceDefAbsBody ps scs doneMethods (m:ms)) -> do
-          m' <- synthTopBlock m
-          let doneMethods' = doneMethods ++ [m']
-          let ab' = InstanceDefAbs bs' ps scs doneMethods' ms
-          let def = InstanceDef cname bs' ps $ InstanceBody scs doneMethods'
-          return (def, ab')
+          EnvReaderT $ ReaderT \(Distinct, env) -> do
+            let env' = extendSynthCandidatess bs' env
+            flip runReaderT (Distinct, env') $ runEnvReaderT' do
+              m' <- synthTopBlock m
+              let doneMethods' = doneMethods ++ [m']
+              let ab' = InstanceDefAbs bs' ps scs doneMethods' ms
+              let def = InstanceDef cname bs' ps $ InstanceBody scs doneMethods'
+              return (def, ab')
       updateInstanceDef iname def
       recur ab' cname iname
+-- =======
+--   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
+-- synthInstanceDef (InstanceDef className bs params body) = do
+--   liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
+--     \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
+--        EnvReaderT $ ReaderT \(Distinct, env) -> do
+--          let env' = extendSynthCandidatess bs' env
+--          flip runReaderT (Distinct, env') $ runEnvReaderT' do
+--            methods' <- mapM synthTopBlock methods
+--            return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
+-- >>>>>>> main
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
@@ -2995,7 +2972,7 @@ type SynthAtom = CAtom
 
 data SynthType n =
    SynthDictType (DictType n)
- | SynthPiType (Abs PiBinder SynthType n)
+ | SynthPiType Arrow (Abs CBinder SynthType n)
    deriving (Show, Generic)
 
 data Givens n = Givens { fromGivens :: HM.HashMap (EKey SynthType n) (SynthAtom n) }
@@ -3048,10 +3025,10 @@ getSynthType x = do
 
 typeAsSynthType :: CType n -> Except (SynthType n)
 typeAsSynthType (DictTy dictTy) = return $ SynthDictType dictTy
-typeAsSynthType (Pi (PiType b@(PiBinder _ _ arrow) Pure resultTy))
+typeAsSynthType (Pi (PiType b arrow Pure resultTy))
   | arrow == ImplicitArrow || isClassArrow arrow = do
      resultTy' <- typeAsSynthType resultTy
-     return $ SynthPiType $ Abs b resultTy'
+     return $ SynthPiType arrow $ Abs b resultTy'
 typeAsSynthType ty = Failure $ Errs [Err TypeErr mempty $ "Can't synthesize terms of type: " ++ pprint ty]
 {-# SCC typeAsSynthType #-}
 
@@ -3091,7 +3068,7 @@ getSuperclassClosurePure env givens newGivens =
       synthTy <- getSynthType synthExpr
       -- TODO: Does this really create a full translation only to inspect the top?
       superclasses <- case synthTy of
-        SynthPiType _ -> return []
+        SynthPiType _ _ -> return []
         SynthDictType (DictType _ className _) -> do
           ClassDef _ _ _ (SuperclassBinders _ superclasses) _ <- lookupClassDef className
           return $ void superclasses
@@ -3099,7 +3076,7 @@ getSuperclassClosurePure env givens newGivens =
 
 synthTerm :: SynthType n -> RequiredMethodAccess -> SyntherM n (SynthAtom n)
 synthTerm ty reqMethodAccess = confuseGHC >>= \_ -> case ty of
-  SynthPiType (Abs (PiBinder b argTy arr) resultTy) ->
+  SynthPiType arr (Abs (b:>argTy) resultTy) ->
     withFreshBinder (getNameHint b) argTy \b' -> do
       let v = binderName b'
       resultTy' <- applyRename (b@>v) resultTy
@@ -3198,7 +3175,7 @@ getInstanceType instanceName = do
       Empty -> SynthDictType $ DictType classSourceName className params
       Nest (RolePiBinder b ty arr _) rest ->
         let restTy = go rest classSourceName className params
-        in SynthPiType $ Abs (PiBinder b ty arr) restTy
+        in SynthPiType arr $ Abs (b:>ty) restTy
 {-# SCC getInstanceType #-}
 
 instantiateSynthArgs :: DictType n -> SynthType n -> SyntherM n [CAtom n]
@@ -3217,7 +3194,7 @@ instantiateSynthArgsRec
   => [Atom CoreIR n] -> DictType n -> SubstFrag AtomSubstVal n l n
   -> SynthType l -> SolverM n [CAtom n]
 instantiateSynthArgsRec prevArgsRec dictTy subst synthTy = case synthTy of
-  SynthPiType (Abs (PiBinder b argTy arrow) resultTy) -> do
+  SynthPiType arrow (Abs (b:>argTy) resultTy) -> do
     argTy' <- applySubst subst argTy
     param <- case arrow of
       ImplicitArrow -> Var <$> freshInferenceName argTy'
@@ -3262,13 +3239,38 @@ instance HoistableState DictSynthTraverserS where
   hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
-  traverseAtom a@(DictHole (AlwaysEqual ctx) ty access) = do
-    ty' <- cheapNormalize =<< traverseAtom ty
-    ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty' access
-    case ans of
-      Failure errs -> put (DictSynthTraverserS errs) >> substM a
-      Success d    -> return d
-  traverseAtom atom = traverseAtomDefault atom
+  traverseAtom atom = case atom of
+    DictHole (AlwaysEqual ctx) ty access -> do
+      ty' <- cheapNormalize =<< traverseAtom ty
+      ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty' access
+      case ans of
+        Failure errs -> put (DictSynthTraverserS errs) >> substM atom
+        Success d    -> return d
+    Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
+      ty' <- tge ty
+      withFreshBinder (getNameHint b) ty' \b' -> do
+        effs' <- extendRenamer (bEff@>binderName b') $ substM effs
+        extendSynthCandidatesDict arr (binderName b') do
+          extendRenamer (b@>binderName b') do
+            body' <- tge body
+            return $ Lam (UnaryLamExpr b' body') arr (Abs b' effs')
+    Pi (PiType (b:>ty) arr eff resultTy) -> do
+      ty' <- tge ty
+      withFreshBinder (getNameHint b) ty' \b' -> do
+        extendSynthCandidatesDict arr (binderName b') do
+          extendRenamer (b@>binderName b') $
+            Pi <$> (PiType b' arr <$> substM eff <*> tge resultTy)
+    _ -> traverseAtomDefault atom
+    where tge :: (GenericallyTraversableE r e, GenericTraverser r f s)
+              => e i -> GenericTraverserM r f s i o (e o)
+          tge = traverseGenericE
+
+extendSynthCandidatesDict :: Arrow -> CAtomName n -> DictSynthTraverserM i n a -> DictSynthTraverserM i n a
+extendSynthCandidatesDict c v cont =
+  GenericTraverserM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> DoubleBuilderT do
+    extendDoubleInplaceTLocal (extendSynthCandidates c v) $ runDoubleBuilderT' $
+      runStateT1 (runSubstReaderT env $ runGenericTraverserM' cont) s
+{-# INLINE extendSynthCandidatesDict #-}
 
 -- === Inference-specific builder patterns ===
 
@@ -3308,7 +3310,7 @@ buildLamInf
   -> InfererM i n (CAtom n)
 buildLamInf hint arr ty fEff fBody = do
   Abs (b:>_) (body `PairE` effs) <-
-    buildAbsInf hint (LamBinding arr ty) \v -> do
+    buildAbsInf hint arr ty \v -> do
       effs <- fEff v
       body <- withAllowedEffects effs $ buildBlockInf $ sinkM v >>= fBody
       return $ body `PairE` effs
@@ -3318,12 +3320,12 @@ buildPiAbsInf
   :: (EmitsInf n, SinkableE e, RenameE e, HoistableE e)
   => NameHint -> Arrow -> CType n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (e l))
-  -> InfererM i n (Abs PiBinder e n)
+  -> InfererM i n (Abs CBinder e n)
 buildPiAbsInf hint arr ty body = do
   Abs (b:>_) resultTy <-
-    buildAbsInf hint (PiBinding arr ty) \v ->
+    buildAbsInf hint arr ty \v ->
       withoutEffects $ body v
-  return $ Abs (PiBinder b ty arr) resultTy
+  return $ Abs (b:>ty) resultTy
 
 buildPiInf
   :: EmitsInf n
@@ -3332,11 +3334,11 @@ buildPiInf
   -> InfererM i n (PiType n)
 buildPiInf hint arr ty body = do
   Abs (b:>_) (PairE effs resultTy) <-
-    buildAbsInf hint (PiBinding arr ty) \v ->
+    buildAbsInf hint arr ty \v ->
       withoutEffects do
         (effs, resultTy) <- body v
         return $ PairE effs resultTy
-  return $ PiType (PiBinder b ty arr) effs resultTy
+  return $ PiType (b:>ty) arr effs resultTy
 
 buildTabPiInf
   :: EmitsInf n
@@ -3345,7 +3347,7 @@ buildTabPiInf
   -> InfererM i n (TabPiType CoreIR n)
 buildTabPiInf hint ty body = do
   Abs (b:>_) resultTy <-
-    buildAbsInf hint ty \v ->
+    buildAbsInf hint PlainArrow ty \v ->
       withoutEffects $ body v
   return $ TabPiType (b:>ty) resultTy
 
@@ -3355,7 +3357,7 @@ buildDepPairTyInf
   -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (CType l))
   -> InfererM i n (DepPairType CoreIR n)
 buildDepPairTyInf hint ty body = do
-  Abs (b:>_) resultTy <- buildAbsInf hint ty body
+  Abs (b:>_) resultTy <- buildAbsInf hint PlainArrow ty body
   return $ DepPairType (b :> ty) resultTy
 
 buildAltInf
@@ -3364,7 +3366,7 @@ buildAltInf
   -> (forall l. (EmitsBoth l, Ext n l) => CAtomName l -> InfererM i l (CAtom l))
   -> InfererM i n (Alt CoreIR n)
 buildAltInf ty body = do
-  buildAbsInf noHint ty \v ->
+  buildAbsInf noHint PlainArrow ty \v ->
     buildBlockInf do
       Distinct <- getDistinct
       body $ sink v
@@ -3430,11 +3432,11 @@ instance BindsEnv InfOutFrag where
   toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag
 
 instance GenericE SynthType where
-  type RepE SynthType = EitherE2 DictType (Abs PiBinder SynthType)
+  type RepE SynthType = EitherE2 DictType (PairE (LiftE Arrow) (Abs CBinder SynthType))
   fromE (SynthDictType d) = Case0 d
-  fromE (SynthPiType   t) = Case1 t
+  fromE (SynthPiType arrow t) = Case1 (PairE (LiftE arrow) t)
   toE (Case0 d) = SynthDictType d
-  toE (Case1 t) = SynthPiType t
+  toE (Case1 (PairE (LiftE arrow) t)) = SynthPiType arrow t
   toE _ = error "impossible"
 
 instance AlphaEqE       SynthType

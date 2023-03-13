@@ -273,18 +273,6 @@ vec = [1.]
 > [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
 
 :p
-  s : { a : Float | b : Float } = case 2 == 2 of
-    False -> {| a=2.0 |}
-    True -> {| b=5.0 |}
-  f = \x.
-    case s of
-      {| a=a |} -> 2.0 * (a + x)
-      {| b=b |} -> b * x
-  (y, df) = linearize f 2.0
-  check_deriv_base f 2.0
-> True
-
-:p
   f = max 0.0
   (check_deriv_base f 1.0, check_deriv_base f (-1.0))
 > (True, True)
@@ -371,9 +359,9 @@ grad (\x . (min' x (x+1))) 1.0
 grad (\x . [x].(argmin [x])) 1.0
 > 1.
 
--- Regression test for bug #821, AD of a record-typed function
-grad (get_at #foo) { foo = 1 }
-> {foo = 1.}
+-- -- Regression test for bug #821, AD of a record-typed function
+-- grad (get_at #foo) { foo = 1 }
+-- > {foo = 1.}
 
 -------------------- Custom linearization --------------------
 

@@ -25,6 +25,7 @@ import qualified Data.ByteString as BS
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
+import Data.String (fromString)
 import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
@@ -47,6 +48,7 @@ import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends)
 import CheckType (checkTypesM)
 #endif
 import Core
+import ConcreteSyntax
 import CheapReduction
 import Err
 import IRVariants
@@ -73,7 +75,8 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import Util (Tree (..), measureSeconds, File (..), readFileWithHash)
+import Util ( Tree (..), measureSeconds, File (..), readFileWithHash
+            , SnocList (..), tryUnsnoc, snoc, toSnocList)
 
 -- === top-level monad ===
 
@@ -201,7 +204,7 @@ catchLogsAndErrs m = do
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlockP _ _ _ _ (Misc (ImportModule name)) -> do
+    SourceBlock _ _ _ _ (Misc (ImportModule name)) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
@@ -231,7 +234,10 @@ evalSourceBlock mname block = do
      return $ Result logs maybeErr
   case resultErrs result of
     Failure _ -> case sbContents block of
-      EvalUDecl decl -> emitSourceMap $ uDeclErrSourceMap mname decl
+      TopDecl decl -> do
+        case runFallibleM (parseDecl decl) of
+          Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
+          Failure _ -> return ()
       _ -> return ()
     _ -> return ()
   return $ filterLogs block $ addResultCtx block result
@@ -240,8 +246,10 @@ evalSourceBlock mname block = do
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
 evalSourceBlock' mname block = case sbContents block of
-  EvalUDecl decl -> execUDecl mname decl
-  Command cmd expr -> case cmd of
+  TopDecl decl -> parseDecl decl >>= execUDecl mname
+  Command cmd expr' -> do
+   expr <- parseBlock expr'
+   case cmd of
     -- TODO: we should filter the top-level emissions we produce in this path
     -- we want cache entries but we don't want dead names.
     EvalExpr fmt -> when (mname == Main) case fmt of
@@ -272,8 +280,9 @@ evalSourceBlock' mname block = case sbContents block of
       val <- evalUExpr expr
       ty <- cheapNormalize =<< getType val
       logTop $ TextOut $ pprintCanonicalized ty
-  DeclareForeign fname (UAnnBinder b uty) -> do
-    ty <- evalUType uty
+  DeclareForeign fname dexName cTy -> do
+    let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
+    ty <- evalUType =<< parseExpr cTy
     asFFIFunType ty >>= \case
       Nothing -> throw TypeErr
         "FFI functions must be n-ary first order functions with the IO effect"
@@ -285,7 +294,8 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname zeros expr -> do
+  DeclareCustomLinearization fname zeros g -> do
+    expr <- parseExpr g
     lookupSourceMap fname >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
       Just (UAtomVar fname') -> do
@@ -322,7 +332,6 @@ evalSourceBlock' mname block = case sbContents block of
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
-  BadSyntax e -> throwErrs e
   Misc m -> case m of
     GetNameType v -> do
       ty <- cheapNormalize =<< sourceNameType v
@@ -453,7 +462,7 @@ evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <-
     localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs _ <-
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs <-
     return $ fragLocalModuleEnv moduleEnvFrag
   let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag {
         fragLocalModuleEnv = mempty }
@@ -622,7 +631,7 @@ compileTopLevelFun hint fSimp = do
   fOpt <- simpOptimizations fSimp
   fLower <- lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction StandardCC flOpt
+  fImp <- checkPass ImpPass $ toImpFunction StandardCC flOpt
   fObj <- toCFunction hint fImp
   void $ loadObject fObj
   return $ TopFunLowerings fObj
@@ -933,13 +942,13 @@ instance Generic TopStateEx where
 
 getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, Int, CType n)
 getLinearizationType fname zeros fType = do
-  liftExcept . runFallibleM =<< liftEnvReaderT (go fType REmpty [] fType)
+  liftExcept . runFallibleM =<< liftEnvReaderT (go fType (toSnocList []) REmpty [] fType)
  where
-  go :: CType n -> RNest PiBinder n l
+  go :: CType n -> SnocList Arrow -> RNest CBinder n l
      -> [CType l] -> CType l
      -> EnvReaderT FallibleM l (Int, Int, CType n)
-  go fullTy implicitArgs revArgTys = \case
-    Pi (PiType pbinder@(PiBinder binder a arr) eff b') -> do
+  go fullTy arrs implicitArgs revArgTys = \case
+    Pi (PiType pbinder@(binder:>a) arr eff b') -> do
       case eff of
         Pure -> return ()
         _ -> throw TypeErr $
@@ -951,7 +960,7 @@ getLinearizationType fname zeros fType = do
               "arguments. However, the type of " ++ pprint fname ++
               "is:\n\n" ++ pprint fullTy
             refreshAbs (Abs pbinder b') \pbinder' b'' ->
-              go fullTy (RNest implicitArgs pbinder') [] b''
+              go fullTy (snoc arrs arr) (RNest implicitArgs pbinder') [] b''
       case arr of
         ClassArrow _ -> implicit
         ImplicitArrow -> implicit
@@ -961,7 +970,7 @@ getLinearizationType fname zeros fType = do
             HoistFailure _ -> throw TypeErr $
               "Custom linearization cannot be defined for dependent " ++
               "functions" ++ but
-          go fullTy implicitArgs (a:revArgTys) b
+          go fullTy arrs implicitArgs (a:revArgTys) b
         LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
     resultTy -> do
       when (null revArgTys) $ throw TypeErr $
@@ -993,10 +1002,13 @@ getLinearizationType fname zeros fType = do
       tanFunTy <- foldM prependTangent resultTyTan revArgTys
       let nImplicit = nestLength $ unRNest implicitArgs
       let nExplicit = length revArgTys
-      finalTy <- prependImplicit implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
+      finalTy <- prependImplicit arrs implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
       return (nImplicit, nExplicit, finalTy)
     where
       but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-      prependImplicit :: RNest PiBinder n l -> CType l -> CType n
-      prependImplicit REmpty ty = ty
-      prependImplicit (RNest bs b) ty = prependImplicit bs (Pi (PiType b Pure ty ))
+      prependImplicit :: SnocList Arrow -> RNest CBinder n l -> CType l -> CType n
+      prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
+        (Nothing, REmpty) -> ty
+        (Just (arrsRest, arr), RNest bs b) ->
+          prependImplicit arrsRest bs (Pi (PiType b arr Pure ty ))
+        _ -> error "zip error"

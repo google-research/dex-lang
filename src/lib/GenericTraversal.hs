@@ -19,7 +19,6 @@ import Builder
 import Core
 import Err
 import IRVariants
-import LabeledItems
 import MTL1
 import Name
 import Subst
@@ -93,7 +92,7 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
       Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
     TabCon d' <$> tge ty <*> mapM tge xs
   ProjMethod d i -> ProjMethod <$> tge d <*> pure i
-  RecordVariantOp op -> RecordVariantOp <$> mapM tge op
+  RecordOp op -> RecordOp <$> mapM tge op
   DAMOp op -> DAMOp <$> case op of
     Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
     RememberDest d body  -> RememberDest <$> tge d <*> tge body
@@ -108,17 +107,17 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (LamBinding arr ty') \(b':>_) -> do
+    withFreshBinder (getNameHint b) ty' \b' -> do
       effs' <- extendRenamer (bEff@>binderName b') $ substM effs
       extendRenamer (b@>binderName b') do
         body' <- tge body
-        return $ Lam (UnaryLamExpr (b':>ty') body') arr (Abs (b':>ty') effs')
+        return $ Lam (UnaryLamExpr b' body') arr (Abs b' effs')
   Lam _ _ _ -> error "expected a unary lambda expression"
-  Pi (PiType (PiBinder b ty arr) eff resultTy) -> do
+  Pi (PiType (b:>ty) arr eff resultTy) -> do
     ty' <- tge ty
-    withFreshBinder (getNameHint b) (PiBinding arr ty') \(b':>_) -> do
+    withFreshBinder (getNameHint b) ty' \b' -> do
       extendRenamer (b@>binderName b') $
-        Pi <$> (PiType (PiBinder b' ty' arr) <$> substM eff <*> tge resultTy)
+        Pi <$> (PiType b' arr <$> substM eff <*> tge resultTy)
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
@@ -138,18 +137,6 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
   DictHole s ty access -> DictHole s <$> tge ty <*> pure access
   SimpInCore _ -> substM atom
-
-traverseExtLabeledItems
-  :: forall r f s i o.
-     GenericTraverser r f s
-  => ExtLabeledItems (Atom r i) (AtomName r i)
-  -> GenericTraverserM r f s i o (ExtLabeledItems (Atom r o) (AtomName r o))
-traverseExtLabeledItems (Ext items rest) = do
-  items' <- mapM tge items
-  rest' <- flip traverse rest \r -> substM (Var r :: Atom r i) >>= \case
-    Var r' -> return r'
-    _ -> error "Not implemented"
-  return $ Ext items' rest'
 
 tge :: (GenericallyTraversableE r e, GenericTraverser r f s)
     => e i -> GenericTraverserM r f s i o (e o)
@@ -237,7 +224,6 @@ instance GenericallyTraversableE CoreIR NewtypeTyCon where
     UserADTType s d p -> UserADTType s <$> substM d <*> tge p
     LabeledRowCon tys -> LabeledRowCon <$> tge tys
     RecordTyCon tys   -> RecordTyCon <$> tge tys
-    VariantTyCon ext  -> VariantTyCon <$> traverseExtLabeledItems ext
     LabelCon s        -> return $ LabelCon s
     LabelType         -> return LabelType
     LabeledRowKindTC  -> return LabeledRowKindTC
@@ -248,7 +234,6 @@ instance GenericallyTraversableE CoreIR NewtypeTyCon where
 instance GenericallyTraversableE CoreIR NewtypeCon where
   traverseGenericE = \case
     RecordCon  items     -> return $ RecordCon items
-    VariantCon items     -> return $ VariantCon items
     UserADTData d params -> UserADTData <$> substM d <*> tge params
     NatCon               -> return NatCon
     FinCon n             -> FinCon <$> tge n

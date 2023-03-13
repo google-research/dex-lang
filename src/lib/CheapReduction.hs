@@ -444,7 +444,6 @@ unwrapNewtypeType = \case
   Nat                   -> return (NatCon, IdxRepTy)
   Fin n                 -> return (FinCon n, NatTy)
   StaticRecordTyCon tys    -> return (RecordCon  (void tys), ProdTy (toList tys))
-  VariantTyCon (NoExt tys) -> return (VariantCon (void tys), SumTy  (toList tys))
   UserADTType _ defName params -> do
     def <- lookupDataDef defName
     ty' <- dataDefRep <$> instantiateDataDef def params
@@ -465,9 +464,8 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) (DataDefParams params) = do
-  let dataDefParams' = DataDefParams [(arr, x) | (arr, x) <- params]
-  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) dataDefParams'
+instantiateDataDef (DataDef _ bs cons) params = do
+  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
 {-# INLINE instantiateDataDef #-}
 
 applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, EnvReader m)
@@ -481,8 +479,8 @@ applyDataConAbs (Abs bs e) (DataDefParams xs) =
 dataDefRep :: [DataConDef n] -> CType n
 dataDefRep = \case
   [] -> error "unreachable"  -- There's no representation for a void type
-  [DataConDef _ ty _] -> ty
-  tys -> SumTy $ tys <&> \(DataConDef _ ty _) -> ty
+  [DataConDef _ _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ _ ty _) -> ty
 
 instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
 instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
@@ -588,7 +586,6 @@ instance SubstE AtomSubstVal EffectOpType
 instance SubstE AtomSubstVal IExpr
 instance IRRep r => SubstE AtomSubstVal (RepVal r)
 instance SubstE AtomSubstVal DataDefParams
-instance SubstE AtomSubstVal DataDef
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance SubstE AtomSubstVal UserEffectOp
@@ -597,18 +594,13 @@ instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
 instance IRRep r => SubstE AtomSubstVal (Block r)
-instance SubstE AtomSubstVal InstanceDef
 instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal MethodType
 instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
-instance SubstE AtomSubstVal LamBinding
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
 instance IRRep r => SubstE AtomSubstVal (DestBlock r)
-instance SubstE AtomSubstVal PiBinding
-instance SubstB AtomSubstVal PiBinder
 instance SubstE AtomSubstVal PiType
-instance SubstB AtomSubstVal RolePiBinder
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)
 instance IRRep r => SubstE AtomSubstVal (NaryPiType r)
 instance IRRep r => SubstE AtomSubstVal (DepPairType r)
@@ -619,6 +611,10 @@ instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
+
+instance SubstB AtomSubstVal RolePiBinder where
+  substB env (RolePiBinder b ty arr role) cont =
+    substB env (b:>ty) \env' (b':>ty') -> cont env' $ RolePiBinder b' ty' arr role
 
 -- XXX: we need a special instance here because `SuperclassBinder` have all
 -- their types at the level of the top binder, rather than interleaving them

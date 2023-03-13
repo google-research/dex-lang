@@ -26,8 +26,8 @@ import PPrint (toJSONStr, printResult)
 import TopLevel
 import Err
 import Name
-import ConcreteSyntax (keyWordStrs)
-import AbstractSyntax (parseTopDeclRepl, preludeImportBlock)
+import AbstractSyntax (parseTopDeclRepl)
+import ConcreteSyntax (keyWordStrs, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
 import Live.Terminal (runTerminal)

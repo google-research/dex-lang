@@ -32,7 +32,6 @@ import GHC.Exts (inline)
 
 import GHC.Generics (Generic (..))
 
-import LabeledItems
 import Occurrence
 import IRVariants
 
@@ -65,7 +64,7 @@ data MemOp e =
  | PtrStore e e
    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data RecordVariantOp e =
+data RecordOp e =
  -- Concatenate two records.
    RecordCons e e
  -- Split off a labeled row from the front of the record.
@@ -75,19 +74,6 @@ data RecordVariantOp e =
  | RecordConsDynamic e e e
  -- Splits a label from the record.
  | RecordSplitDynamic e e
- -- Extend a variant with empty alternatives (on the left).
- -- Left arg contains the types of the empty alternatives to add.
- | VariantLift  (LabeledItems e) e
- -- Split {a:A | b:B | ...rest} into (effectively) {a:A | b:B} | {|...rest}.
- -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
- -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
- | VariantSplit (LabeledItems e) e
- -- type, label, how deeply shadowed, payload
- | VariantMake e Label Int e
- -- Ask which constructor was used, as its Word8 index
- -- Converts sum types returned by primitives to variant-types that
- -- can be scrutinized in the surface language.
- | SumToVariant e
    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -326,7 +312,7 @@ instance Store a => Store (PrimOp    a)
 instance Store a => Store (MemOp     a)
 instance Store a => Store (VectorOp  a)
 instance Store a => Store (MiscOp    a)
-instance Store a => Store (RecordVariantOp a)
+instance Store a => Store (RecordOp a)
 
 instance Hashable RWS
 instance Hashable Direction
@@ -349,4 +335,4 @@ instance Hashable a => Hashable (PrimOp    a)
 instance Hashable a => Hashable (MemOp     a)
 instance Hashable a => Hashable (VectorOp  a)
 instance Hashable a => Hashable (MiscOp    a)
-instance Hashable a => Hashable (RecordVariantOp a)
+instance Hashable a => Hashable (RecordOp a)

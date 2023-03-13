@@ -531,40 +531,6 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
   x
 > (Right 1.2)
 
-def wbToEither {a b} : Iso {weights:a | biases:b} (a|b) =
-  fwd = \v.  case v of
-    {|weights=x|} -> Left x
-    {|biases=x|}  -> Right x
-  bwd = \v. case v of
-    Left x  -> {|weights=x|}
-    Right x -> {|biases=x|}
-  MkIso {fwd, bwd}
-
-instance Ix {weights:n | biases:m} given {n m} [Ix n, Ix m]
-  size = size n + size m
-  ordinal = ordinal <<< app_iso wbToEither
-  unsafe_from_ordinal = unsafe_from_ordinal _ >>> rev_iso wbToEither
-
--- Sum types as flattened index sets!
-def Weights (n:Type) (m:Type) [Ix n, Ix m] : Type = n=>m=>Float
-def Biases  (n:Type)          [Ix n]       : Type = n=>Float
-def Params  (n:Type) (m:Type) [Ix n, Ix m] : Type = {weights:(n&m) | biases:n}=>Float
-
-w = for i:(Fin 2). for j:(Fin 3). (n_to_f (ordinal i)) * 3.0 + (n_to_f (ordinal j))
-b = for j:(Fin 2). neg (n_to_f (ordinal j) + 1.0)
-
-def flatten {n m} ((w,b):(Weights n m & Biases n)): Params n m =
-  for idx. case idx of
-    {| weights = (i,j) |} -> w.i.j
-    {| biases  = i     |} -> b.i
-
-def unflatten {n m} (params:Params n m) : (Weights n m & Biases n) =
-  ( for i. for j. params.({| weights = (i,j)|})
-  , for i.        params.({| biases  = i    |}))
-
-:p unflatten (flatten (w, b)) == (w, b)
-> True
-
 :p [1,2,3] == [1,2,3]
 > True
 

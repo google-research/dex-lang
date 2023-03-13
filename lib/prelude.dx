@@ -1277,30 +1277,6 @@ def apply_n {a} [Data a] (n:Nat) (x:a) (f:a -> a) : a =
   yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 
-'### Linear Algebra
-
-def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
-  dx = (high - low) / n_to_f (size n)
-  for i:n. low + n_to_f (ordinal i) * dx
-
-def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
-def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
-def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
-
--- matmul. Better symbol to use? `@`?
--- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
-def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
-  for i k. fsum for j. x.i.j * y.j.k
-
-def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
-def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
-
-def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
-  fsum for (i,j). x.i * mat.i.j * y.j
-
-def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
-  for i j. select (ordinal i == ordinal j) one zero
-
 '## cumulative sum
 TODO: Move this to be with reductions?
 It's a kind of `scan`.
@@ -1447,112 +1423,18 @@ def append {a h} [AccumMonoid h (List a), Data a]
   (list: Ref h (List a)) (x:a) : {Accum h} Unit =
     list += AsList _ [x]
 
-'## Isomorphisms
-
-data Iso a b = MkIso { fwd: a -> b & bwd: b -> a }
-
-def app_iso {a b} (iso: Iso a b) (x:a) : b =
-  (MkIso {fwd, bwd}) = iso
-  fwd x
-
-def flip_iso {a b} (iso: Iso a b) : Iso b a =
-  (MkIso {fwd, bwd}) = iso
-  MkIso {fwd=bwd, bwd=fwd}
-
-def rev_iso {a b} (iso: Iso a b) (x:b) : a = app_iso (flip_iso iso) x
-
-def id_iso {a} : Iso a a = MkIso {fwd=id, bwd=id}
-
-def (&>>) {a b c} (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
-  (MkIso {fwd=fwd1, bwd=bwd1}) = iso1
-  (MkIso {fwd=fwd2, bwd=bwd2}) = iso2
-  MkIso {fwd=(fwd1 >>> fwd2), bwd=(bwd1 <<< bwd2)}
-
-def (<<&) {a b c} (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 &>> iso2
-
-'### Lens-like accessors
-note: `#foo is an Iso {foo: a & ...b} (a & {&...b}))`
-
-def get_at  {a b c} (iso: Iso a (b & c)) : a -> b = fst <<< app_iso iso
-def pop_at  {a b c} (iso: Iso a (b & c)) : a -> c = snd <<< app_iso iso
-def push_at {a b c} (iso: Iso a (b & c)) (x:b) (r:c) : a = rev_iso iso (x, r)
-def set_at  {a b c} (iso: Iso a (b & c)) (x:b) (r:a) : a =
-  push_at iso x $ pop_at iso r
-
-'### Prism-like accessors
-note: `#?foo is an Iso {foo: a | ...b} (a | {|...b}))`
-
-def match_with {a b c} (iso: Iso a (b | c)) (x: a) : Maybe b =
-  case app_iso iso x of
-    Left x -> Just x
-    Right _ -> Nothing
-def build_with {a b c} (iso: Iso a (b | c)) (x: b) : a = rev_iso iso $ Left x
-
-def swap_pair_iso {a b} : Iso (a & b) (b & a) =
-  MkIso {fwd = \(a, b). (b, a), bwd = \(b, a). (a, b)}
-
-'### Complement lens
-Complement the focus of a lens-like isomorphism
-
-def except_lens {a b c} (iso: Iso a (b & c)) : Iso a (c & b) = iso &>> swap_pair_iso
-
-def swap_either_iso {a b} : Iso (a | b) (b | a) =
-  fwd = \x. case x of
-    Left l -> Right l
-    Right r -> Left r
-  bwd = \x. case x of
-    Left r -> Right r
-    Right l -> Left l
-  MkIso {fwd, bwd}
-
-'### Complement prism
-Complement the focus of a prism-like isomorphism
-
-def except_prism {a b c} : Iso a (b | c) -> Iso a (c | b) = \iso. iso &>> swap_either_iso
-
--- Use a lens-like iso to split a 1d table into a 2d table
-def over_lens {a b c v} [Ix b, Ix c] (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
-  for i j. tab.(rev_iso iso (i, j))
-
-'### Zipper
-Zipper isomorphisms to easily specify many record/variant fields:
-```
-#&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
-#|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
-```
-
-' Convert a record zipper isomorphism to a normal lens-like isomorphism
-by using `splitR &>> iso`
-
-def split_r {a} : Iso a ({&} & a) = MkIso {fwd = \x. ({}, x), bwd = \({}, x). x}
-
-def over_fields {a b c v} [Ix b, Ix c]
-      (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  over_lens (split_r &>> iso) tab
-
-'Convert a variant zipper isomorphism to a normal prism-like isomorphism
-by using `splitV &>> iso`
-
-def split_v {a} : Iso a ({ | } | a) =
-  MkIso {fwd = \x. Right x, bwd = \v. case v of Right x -> x}
-
-def slice_fields {a b c v} [Ix b] (iso: Iso ({ | } | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (build_with $ split_v &>> iso) tab
-
 -- TODO: replace `slice` with this?
 def post_slice {a n} (xs:n=>a) (start:Post n) (end:Post n) : List a =
   slice_size = unsafe_nat_diff (ordinal end) (ordinal start)
   to_list for i:(Fin slice_size).
     xs.(unsafe_from_ordinal n (ordinal i + ordinal start))
 
-'## Dynamic buffer
+-- '## Dynamic buffer
 
--- TODO: would be nice to be able to use records here
-data DynBuffer a =
-  MkDynBuffer {
-      size    : Ptr Nat
-    & maxSize : Ptr Nat
-    & buffer  : Ptr (Ptr a) }
+struct DynBuffer a =
+  size    : Ptr Nat
+  max_size : Ptr Nat
+  buffer  : Ptr (Ptr a)
 
 def with_dynamic_buffer {a b} [Storable a]
       (action: DynBuffer a -> {IO} b) : {IO} b =
@@ -1563,27 +1445,24 @@ def with_dynamic_buffer {a b} [Storable a]
   store maxSizePtr initMaxSize
   bufferPtr <- with_alloc 1
   store bufferPtr $ malloc initMaxSize
-  result = action $ MkDynBuffer {
-      size    = sizePtr
-    , maxSize = maxSizePtr
-    , buffer  = bufferPtr }
+  result = action $ DynBuffer~new sizePtr maxSizePtr bufferPtr
   free $ load bufferPtr
   result
 
 def maybe_increase_buffer_size {a} [Storable a]
-      ((MkDynBuffer db): DynBuffer a) (sizeDelta:Nat) : {IO} Unit =
-  size    = load $ get_at #size    db
-  maxSize = load $ get_at #maxSize db
-  bufPtr  = load $ get_at #buffer  db
+      (db : DynBuffer a) (sizeDelta:Nat) : {IO} Unit =
+  size     = load db~size
+  max_size = load db~max_size
+  bufPtr   = load db~buffer
   newSize = sizeDelta + size
-  if newSize > maxSize then
+  if newSize > max_size then
     -- TODO: maybe this should use integer arithmetic?
     newMaxSize = f_to_n $ pow 2.0 (ceil $ log2 $ n_to_f newSize)
     newBufPtr = malloc newMaxSize
     memcpy newBufPtr bufPtr size
     free bufPtr
-    store (get_at #maxSize db) newMaxSize
-    store (get_at #buffer  db) newBufPtr
+    store db~max_size newMaxSize
+    store db~buffer   newBufPtr
 
 def add_at_nat_ptr (ptr: Ptr Nat) (n:Nat) : {IO} Unit =
   store ptr (load ptr + n)
@@ -1592,17 +1471,15 @@ def extend_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) (new:List a) : {IO} Unit =
   (AsList n xs) = new
   maybe_increase_buffer_size buf n
-  (MkDynBuffer db) = buf
-  bufPtr = load $ get_at #buffer db
-  size   = load $ get_at #size db
+  bufPtr = load buf~buffer
+  size   = load buf~size
   store_table (bufPtr +>> size) xs
-  add_at_nat_ptr (get_at #size db) n
+  add_at_nat_ptr buf~size n
 
 def load_dynamic_buffer {a} [Storable a]
       (buf: DynBuffer a) : {IO} (List a) =
-  (MkDynBuffer db) = buf
-  bufPtr = load $ get_at #buffer db
-  size   = load $ get_at #size db
+  bufPtr = load buf~buffer
+  size   = load buf~size
   AsList size $ table_from_ptr _ bufPtr
 
 def push_dynamic_buffer {a} [Storable a]
@@ -2464,10 +2341,7 @@ TODO: move `error` and `todo` to here.
 
 def catch {a eff} (f:Unit -> {Except|eff} a) : {|eff} Maybe a =
   f' : (Unit -> {Except|eff} a) = \_. f ()
-  ans = %catchException f'
-  case %sumToVariant ans of
-    {|c=()   |} -> Nothing
-    {|c|c=val|} -> Just val
+  %catchException f'
 
 def throw {a} (_:Unit) : {Except} a =
   %throwException a
@@ -2616,3 +2490,91 @@ def coerce_table {n a} [Data a] (m:Type) [Ix m] (x:n=>a) : m => a =
   if size m == size n
     then unsafe_coerce (m=>a) x
     else error "mismatched sizes in table coercion"
+
+'### Linear Algebra
+
+def linspace (n:Type) [Ix n] (low:Float) (high:Float) : n=>Float =
+  dx = (high - low) / n_to_f (size n)
+  for i:n. low + n_to_f (ordinal i) * dx
+
+def transpose {n m a} (x:n=>m=>a) : m=>n=>a = for i j. x.j.i
+def vdot {n} (x:n=>Float) (y:n=>Float) : Float = fsum for i. x.i * y.i
+def dot {n v} [VSpace v] (s:n=>Float) (vs:n=>v) : v = sum for j. s.j .* vs.j
+
+def naive_matmul {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
+  for i k. fsum for j. x.i.j * y.j.k
+
+-- A `FullTileIx` type represents `tile_ix`th full tile (of size
+-- `tile_size`) iterating over the index set `n`.
+-- This type is only well formed when tile_ix * tile_size < size n.
+data FullTileIx (n:Type) [Ix n] (tile_size:Nat) (tile_ix:Nat) =
+  UnsafeFullTileIx (Fin tile_size)
+
+instance Ix (FullTileIx n tile_size tile_ix) given {n} {tile_size:Nat} {tile_ix:Nat}
+  size = tile_size
+  ordinal = \(UnsafeFullTileIx i). ordinal i
+  unsafe_from_ordinal = \i. (UnsafeFullTileIx $ unsafe_from_ordinal _ i)
+
+instance Subset (FullTileIx n tile_size tile_ix) n given {n} {tile_size:Nat} {tile_ix:Nat}
+  inject' = \(UnsafeFullTileIx i). unsafe_from_ordinal _ $ tile_size * tile_ix + ordinal i
+  project' = \ix. todo
+  unsafe_project' = \ix. todo
+
+-- A `CodaIx` type represents the last few elements of the index set `n`,
+-- as might be left over after iterating by tiles.
+-- This type is only well formed when size n == coda_offset + coda_size
+data CodaIx (n:Type) [Ix n] (coda_offset:Nat) (coda_size:Nat) =
+  UnsafeCodaIx (Fin coda_size)
+
+instance Ix (CodaIx n coda_offset coda_size) given {n} {coda_offset:Nat} {coda_size:Nat}
+  size = coda_size
+  ordinal = \(UnsafeCodaIx i). ordinal i
+  unsafe_from_ordinal = \i. (UnsafeCodaIx $ unsafe_from_ordinal _ i)
+
+instance Subset (CodaIx n coda_offset coda_size) n given {n} {coda_offset:Nat} {coda_size:Nat}
+  inject' = \(UnsafeCodaIx i). unsafe_from_ordinal _ $ coda_offset + ordinal i
+  project' = \ix. todo
+  unsafe_project' = \ix. todo
+
+-- TODO Can we have a function that takes implicit or class arguments
+-- last?  Status quo crashes with a pattern match failure in
+-- Inference.checkSigma
+def tile {eff} (n:Type) [Ix n]
+    (tile_size: Nat)
+    (body: ((m:Type) -> Ix m ?=> Subset m n ?=> Unit -> {|eff} Unit))
+    : {|eff} Unit =
+  num_tiles = size n `idiv` tile_size
+  coda_size = size n `rem` tile_size
+  coda_offset = num_tiles * tile_size
+  for_ tile_ix:(Fin num_tiles).
+    tile_ix' = ordinal tile_ix
+    body (FullTileIx n tile_size tile_ix') ()
+  body (CodaIx n coda_offset coda_size) ()
+
+-- matmul. Better symbol to use? `@`?
+-- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
+def (**) {l m n} [Ix n] (x: l=>m=>Float) (y: m=>n=>Float) : (l=>n=>Float) =
+  -- Tile sizes picked for axch's laptop
+  l_tile_size = 32
+  n_tile_size = 128
+  m_tile_size = 8
+  yield_accum (AddMonoid Float) \result.
+    tile l l_tile_size \l_set _.
+      tile n n_tile_size \n_set _.
+        tile m m_tile_size \m_set _.
+          for_ l_offset:l_set.
+            l_ix = inject l l_offset
+            for_ n_offset:n_set.
+              n_ix = inject _ n_offset
+              for_ m_offset:m_set.
+                m_ix = inject _ m_offset
+                result!l_ix!n_ix += x.l_ix.m_ix * y.m_ix.n_ix
+
+def (**.) {n m} (mat: n=>m=>Float) (v: m=>Float) : (n=>Float) = for i. vdot mat.i v
+def (.**) {n m} (v: m=>Float) (mat: n=>m=>Float) : (n=>Float) = mat **. v
+
+def inner {n m} (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
+  fsum for (i,j). x.i * mat.i.j * y.j
+
+def eye {n a} [Add a, Mul a, Ix n] : n=>n=>a =
+  for i j. select (ordinal i == ordinal j) one zero

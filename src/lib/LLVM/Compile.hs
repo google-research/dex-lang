@@ -43,6 +43,7 @@ import Types.Source
 
 data LLVMOptLevel = OptALittle       -- -O1
                   | OptAggressively  -- -O3, incl. auto vectorization
+  deriving Show
 
 compileLLVM :: PassLogger -> LLVMOptLevel -> L.Module -> String -> IO BS.ByteString
 compileLLVM logger opt ast exportName = do

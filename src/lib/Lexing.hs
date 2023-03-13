@@ -70,7 +70,7 @@ checkNotKeyword p = try $ do
 {-# INLINE checkNotKeyword #-}
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
-             | DataKW | InterfaceKW
+             | DataKW | StructKW | InterfaceKW
              | InstanceKW | GivenKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
@@ -91,6 +91,7 @@ keyWordToken = \case
   ElseKW          -> "else"
   OfKW            -> "of"
   DataKW          -> "data"
+  StructKW        -> "struct"
   InterfaceKW     -> "interface"
   InstanceKW      -> "instance"
   NamedInstanceKW -> "named-instance"

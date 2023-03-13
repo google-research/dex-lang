@@ -45,96 +45,65 @@
 -- for example to permit grouping parens in more places, that much
 -- easier.
 
-module AbstractSyntax (
-  parseUModule, parseUModuleDeps,
-  finishUModuleParse, preludeImportBlock,
-  parseTopDeclRepl) where
+module AbstractSyntax (parseExpr, parseDecl, parseBlock, parseTopDeclRepl) where
 
 import Control.Monad (forM, when, liftM2)
 import Data.Functor
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe
 import Data.Set qualified as S
-import Data.String (IsString, fromString)
+import Data.String (fromString)
 import Data.Text (Text)
-import Data.Text.Encoding qualified as T
 
-import ConcreteSyntax hiding (sourceBlock)
-import ConcreteSyntax qualified as C
+import ConcreteSyntax
 import Err
-import LabeledItems
 import Name
 import PPrint ()
 import IRVariants
-import Types.Primitives hiding (Equal)
+import Types.Primitives
 import Types.Source
-import Util
 
--- TODO: implement this more efficiently rather than just parsing the whole
--- thing and then extracting the deps.
-parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
-parseUModuleDeps name file = deps
-  where UModule _ deps _ = parseUModule name $ T.decodeUtf8 $ fContents file
-{-# SCC parseUModuleDeps #-}
+-- === Converting concrete syntax to abstract syntax ===
 
-finishUModuleParse :: UModulePartialParse -> UModule
-finishUModuleParse (UModulePartialParse name _ file) =
-  parseUModule name (T.decodeUtf8 $ fContents file)
+parseExpr :: Fallible m => Group -> m (UExpr VoidS)
+parseExpr e = liftSyntaxM $ expr e
 
-parseUModule :: ModuleSourceName -> Text -> UModule
-parseUModule name s = do
-  let blocks = (mustParseit s C.sourceBlocks)
-  let blocks' = (map sourceBlock blocks)
-  let blocks'' = if name == Prelude
-        then blocks'
-        else preludeImportBlock : blocks'
-  let imports = flip foldMap blocks'' \b -> case sbContents b of
-                  (Misc (ImportModule moduleName)) -> [moduleName]
-                  _ -> []
-  UModule name imports blocks''
-{-# SCC parseUModule #-}
+parseDecl :: Fallible m => CTopDecl -> m (UDecl VoidS VoidS)
+parseDecl d = liftSyntaxM $ topDecl d
 
-preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlockP 0 0 LogNothing ""
-  $ Misc $ ImportModule Prelude
+parseBlock :: Fallible m => CSBlock -> m (UExpr VoidS)
+parseBlock b = liftSyntaxM $ block b
+
+liftSyntaxM :: Fallible m => SyntaxM a -> m a
+liftSyntaxM cont = liftExcept $ runFallibleM cont
 
 parseTopDeclRepl :: Text -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
-  BadSyntax _ -> Nothing
-  _ -> Just b
-  where b = sourceBlock $ mustParseit s C.sourceBlock
+  _ -> case runFallibleM (checkSourceBlockParses $ sbContents b) of
+    Success _ -> Just b
+    Failure _ -> Nothing
+  where b = mustParseSourceBlock s
 {-# SCC parseTopDeclRepl #-}
+
+checkSourceBlockParses :: SourceBlock' -> SyntaxM ()
+checkSourceBlockParses = \case
+  TopDecl (WithSrc _ (CSDecl ann (ExprDecl e)))-> do
+    when (ann /= PlainLet) $ fail "Cannot annotate expressions"
+    void $ expr e
+  TopDecl d -> void $ topDecl d
+  Command _ b -> void $ block b
+  DeclareForeign _ _ ty -> void $ expr ty
+  DeclareCustomLinearization _ _ body -> void $ expr body
+  Misc _ -> return ()
+  UnParseable _ _ -> return ()
 
 -- === Converting concrete syntax to abstract syntax ===
 
 type SyntaxM = FallibleM
 
-sourceBlock :: CSourceBlock -> SourceBlock
-sourceBlock SourceBlockP {..} = SourceBlockP {sbContents = contents', ..} where
-  contents' = runSyntaxM $ addSrcTextContext sbOffset sbText $ sourceBlock' sbContents
-
-runSyntaxM :: SyntaxM SourceBlock' -> SourceBlock'
-runSyntaxM act = case runFallibleM act of
-  (Success b) -> b
-  (Failure e) -> BadSyntax e
-
-sourceBlock' :: CSourceBlock' -> SyntaxM SourceBlock'
-sourceBlock' (CTopDecl (WithSrc _ (CDecl ann (ExprDecl e)))) = do
-  when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-  Command (EvalExpr (Printed Nothing)) <$> expr e
-sourceBlock' (CTopDecl d) = EvalUDecl <$> topDecl d
-sourceBlock' (CCommand typ b) = Command typ <$> block b
-sourceBlock' (CDeclareForeign foreignName dexName ty) =
-  DeclareForeign foreignName . UAnnBinder (fromString dexName) <$> expr ty
-sourceBlock' (CDeclareCustomLinearization fun zeros body) =
-  DeclareCustomLinearization fun zeros <$> expr body
-sourceBlock' (CMisc m) = return $ Misc m
-sourceBlock' (CUnParseable eof s) = return $ UnParseable eof s
-
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
-  topDecl' (CDecl ann d) = decl ann d
+  topDecl' (CSDecl ann d) = decl ann d
   topDecl' (CData name args constructors) = do
     binders <- toNest . concat <$> mapM dataArg args
     constructors' <- mapM dataCon constructors
@@ -143,6 +112,10 @@ topDecl = dropSrc topDecl' where
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
+  topDecl' (CStruct name args fields) = do
+    binders <- toNest . concat <$> mapM dataArg args
+    fields' <- mapM fieldCon fields
+    return $ UStructDecl (UStructDef name binders fields') (fromString name)
   topDecl' (CInterface supers self methods) = do
     supers' <- mapM expr supers
     (name, params) <- tyCon self
@@ -185,6 +158,9 @@ tyCon = generalCon $ binOptR Colon
 dataCon :: NameAndArgs -> SyntaxM (UConDef VoidS VoidS)
 dataCon = generalCon $ binOptL Colon
 
+fieldCon :: NameAndType -> SyntaxM (SourceName, UType VoidS)
+fieldCon (name, ty) = (name,) <$> expr ty
+
 -- generalCon is the common part of tyCon and dataCon.
 generalCon :: (Group -> (Maybe Group, Maybe Group))
            -> NameAndArgs
@@ -213,14 +189,14 @@ multiIfaceBinder = dropSrc \case
   g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc Nothing g)
   _ -> fail "Invalid class constraint list; expecting one or more bracketed groups"
 
-effectOpDef :: (SourceName, Maybe UResumePolicy, CBlock) -> SyntaxM (UEffectOpDef VoidS)
+effectOpDef :: (SourceName, Maybe UResumePolicy, CSBlock) -> SyntaxM (UEffectOpDef VoidS)
 effectOpDef (v, Nothing, rhs) =
   case v of
     "return" -> UReturnOpDef <$> block rhs
     _ -> error "impossible"
 effectOpDef (v, Just rp, rhs) = UEffectOpDef rp (fromString v) <$> block rhs
 
-decl :: LetAnn -> CDecl -> SyntaxM (UDecl VoidS VoidS)
+decl :: LetAnn -> CSDecl -> SyntaxM (UDecl VoidS VoidS)
 decl ann = dropSrc decl' where
   decl' (CLet binder body) = ULet ann <$> patOptAnn binder <*> block body
   decl' (CBind _ _) = throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
@@ -292,11 +268,8 @@ pat = propagateSrcB pat' where
     return $ UPatDepPair $ PairB lhs' rhs'
   pat' (CBracket Curly g) = case g of
     (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
-    _ -> UPatRecord <$> (fieldRowPatList Equal $ nary Comma g)
+    _ -> UPatRecord <$> (fieldRowPatList CSEqual $ nary Comma g)
   pat' (CBracket Square g) = UPatTable . toNest <$> (mapM pat $ nary Comma g)
-  pat' (CBracket CurlyPipe g) = variant (nary Pipe g) >>= \case
-    Left (labels, label, g') -> UPatVariant labels label <$> pat g'
-    Right (labels, g') -> UPatVariantLift labels <$> pat g'
   -- A single name in parens is also interpreted as a nullary
   -- constructor to match
   pat' (CParens (ExprBlock g)) = dropSrcB <$> casePat g
@@ -409,20 +382,20 @@ effect (Identifier "IO") = return UIOEffect
 effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
-method :: (SourceName, CBlock) -> SyntaxM (UMethodDef VoidS)
+method :: (SourceName, CSBlock) -> SyntaxM (UMethodDef VoidS)
 method (name, body) = UMethodDef (fromString name) <$> block body
 
-block :: CBlock -> SyntaxM (UExpr VoidS)
-block (CBlock []) = throw SyntaxErr "Block must end in expression"
-block (CBlock [ExprDecl g]) = expr g
-block (CBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
+block :: CSBlock -> SyntaxM (UExpr VoidS)
+block (CSBlock []) = throw SyntaxErr "Block must end in expression"
+block (CSBlock [ExprDecl g]) = expr g
+block (CSBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
   binder' <- patOptAnn binder
   rhs' <- block rhs
-  body <- block $ CBlock ds
+  body <- block $ CSBlock ds
   return $ WithSrcE pos $ UApp rhs' $ ns $ ULam $ ULamExpr PlainArrow binder' body
-block (CBlock (d@(WithSrc pos _):ds)) = do
+block (CSBlock (d@(WithSrc pos _):ds)) = do
   d' <- decl PlainLet d
-  e' <- block $ CBlock ds
+  e' <- block $ CSBlock ds
   return $ WithSrcE pos $ UDecl $ UDeclExpr d' e'
 
 -- === Concrete to abstract syntax of expressions ===
@@ -447,14 +420,17 @@ expr = propagateSrcE expr' where
   -- should be detected upstream, before calling expr.
   expr' (CBracket Square g) = UTabCon <$> (mapM expr $ nary Comma g)
   expr' (CBracket Curly  g) = labeledExprs g
-  expr' (CBracket CurlyPipe g) = variant (nary Pipe g) >>= \case
-    Left (labels, label, g') -> UVariant labels label <$> expr g'
-    Right (labels, g') -> UVariantLift labels <$> expr g'
   expr' (CBin (WithSrc opSrc op) lhs rhs) =
     case op of
       Juxtapose     -> apply mkApp
       Dollar        -> apply mkApp
       IndexingDot   -> apply mkTabApp
+      FieldAccessDot -> do
+        lhs' <- expr lhs
+        WithSrc src rhs' <- return rhs
+        addSrcContext src $ case rhs' of
+          CIdentifier name -> return $ UFieldAccess lhs' (WithSrc src name)
+          _ -> throw SyntaxErr "Field must be a name"
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       (EvalBinOp s) -> evalOp s
       Ampersand     -> evalOp "(&)"
@@ -464,7 +440,7 @@ expr = propagateSrcE expr' where
       Comma         -> evalOp "(,)"
       DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       Pipe          -> evalOp "(|)"
-      Equal         -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
+      CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Question      -> throw SyntaxErr "Question mark separates labeled row elements, is not a standalone operator"
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
       FatArrow      -> do
@@ -545,99 +521,6 @@ unitExpr = UPrim (UPrimCon $ ProdCon []) []
 
 labelExpr :: LabelPrefix -> String -> UExpr' VoidS
 labelExpr PlainLabel str = ULabel str
-labelExpr RecordIsoLabel field =
-  UApp (ns "MkIso") $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-          (uPatRecordLit [(field, "x")] (Just "r"))
-        $ (ns "(,)") `mkApp` (ns "x") `mkApp` (ns "r"))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ toPairB "x" "r")
-        $ ns $ URecord [UStaticField field "x", UDynFields "r"])
-      ]
-labelExpr VariantIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-              $ "Left" `mkApp` "x"
-          , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-              $ "Right" `mkApp` "r"
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["x"]))
-              $ ns $ UVariant NoLabeledItems field $ "x"
-          , alt (nsB $ UPatCon "Right" (toNest ["r"]))
-              $ ns $ UVariantLift (labeledSingleton field ()) $ "r"
-          ])
-      ]
-labelExpr RecordZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [] (Just "l"))
-          (uPatRecordLit [(field, "x")] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields "l"])
-          `mkApp` (ns $ URecord [UDynFields "r"]))
-      , UStaticField "bwd" (lam
-        (nsB $ UPatPair $ PairB
-          (uPatRecordLit [(field, "x")] (Just "l"))
-          (uPatRecordLit [] (Just "r")))
-        $ "(,)"
-          `mkApp` (ns $ URecord [UDynFields "l"])
-          `mkApp` (ns $ URecord [UStaticField field "x", UDynFields"r"]))
-      ]
-labelExpr VariantZipIsoLabel field =
-  UApp "MkIso" $
-    ns $ URecord
-      [ UStaticField "fwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["l"]))
-              $ "Left" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) $ "l")
-          , alt (nsB $ UPatCon "Right" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Left" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ()) "r")
-                  $ "Right" `mkApp` "r"
-              ]
-          ])
-      , UStaticField "bwd" (lam "v" $ ns $ UCase "v"
-          [ alt (nsB $ UPatCon "Left" (toNest ["w"]))
-              $ ns $ UCase "w"
-              [ alt (nsB $ UPatVariant NoLabeledItems field "x")
-                  $ "Right" `mkApp` (ns $
-                      UVariant NoLabeledItems field $ "x")
-              , alt (nsB $ UPatVariantLift (labeledSingleton field ())
-                                           "r")
-                  $ "Left" `mkApp` "r"
-              ]
-          , alt (nsB $ UPatCon "Right" (toNest ["l"]))
-              $ "Right" `mkApp` (ns $
-                  UVariantLift (labeledSingleton field ()) "l")
-          ])
-      ]
-
-uPatRecordLit :: [(String, UPat VoidS VoidS)] -> Maybe (UPat VoidS VoidS) -> UPat VoidS VoidS
-uPatRecordLit labelsPats ext = nsB $ UPatRecord $ foldr addLabel extPat labelsPats
-  where
-    extPat = case ext of
-      Nothing                          -> UEmptyRowPat
-      Just (WithSrcB _ (UPatBinder b)) -> URemFieldsPat b
-      _                                -> error "unexpected ext pattern"
-    addLabel (l, p) rest = UStaticFieldPat l p rest
-
--- Explicitly specify types for `lam` and `alt` to prevent
--- ambiguous type variable errors referring to the inner scopes
--- defined thereby.
-lam :: UPat VoidS VoidS -> UExpr VoidS -> WithSrcE UExpr' VoidS
-lam p b = ns $ ULam $ ULamExpr PlainArrow (UPatAnn p Nothing) b
-
-alt :: UPat VoidS VoidS -> UExpr VoidS -> UAlt VoidS
-alt = UAlt
 
 labeledExprs :: Group -> SyntaxM (UExpr' VoidS)
 -- We treat {} as an empty record, despite its ambiguity.
@@ -648,25 +531,14 @@ labeledExprs (WithSrc _ CEmpty) = return $ URecord []
 -- comma means record value, colon means record type, question means
 -- labeled row, and pipe means variant type.
 labeledExprs g@(Binary Comma _ _) =
-  URecord <$> (fieldRowList Equal $ nary Comma g)
+  URecord <$> (fieldRowList CSEqual $ nary Comma g)
 labeledExprs g@(Binary Ampersand _ _) =
   URecordTy <$> (fieldRowList Colon $ nary Ampersand g)
 labeledExprs g@(Binary Question _ _) =
   ULabeledRow <$> (fieldRowList Colon $ nary Question g)
-labeledExprs g@(Binary Pipe _ _) =
-  UVariantTy <$> ((fieldRowList Colon $ nary Pipe g) >>= fix) where
-    fix :: UFieldRowElems VoidS -> SyntaxM (ExtLabeledItems (UExpr VoidS) (UExpr VoidS))
-    fix [] = return $ NoExt NoLabeledItems
-    fix (UStaticField name e:rest) = prefixExtLabeledItems (labeledSingleton name e) <$> fix rest
-    fix (UDynField _ _:_) = throw SyntaxErr "Variant types do not allow computed fields"
-    fix (UDynFields e:rest) = do
-      rest' <- fix rest
-      case rest' of
-        NoExt items -> return $ Ext items $ Just e
-        _ -> throw SyntaxErr "Variant types for not allow two default fields ..."
 -- If we have a singleton, we can try to disambiguate by the internal
 -- separator.  Equal always means record.
-labeledExprs g@(Binary Equal _ _) = URecord . (:[]) <$> oneField Equal g
+labeledExprs g@(Binary CSEqual _ _) = URecord . (:[]) <$> oneField CSEqual g
 -- URecordTy, ULabeledRow, and UVariantTy all use colon as the
 -- internal separator, so a singleton is ambiguous.  Like the previous
 -- parser, we disambiguate in favor of records.
@@ -702,19 +574,6 @@ oneField bind = \case
 
 fieldPun :: SrcPosCtx -> String -> UFieldRowElem VoidS
 fieldPun src field = UStaticField (fromString field) (WithSrcE src $ fromString field)
-
-variant :: [Group] -> SyntaxM (Either (LabeledItems (), Label, Group) (LabeledItems (), Group))
-variant [] = throw SyntaxErr "Illegal empty variant"
-variant (g:gs) = do
-  let (first, final) = unsnocNonempty (g:|gs)
-  first' <- foldr (<>) NoLabeledItems . map (flip labeledSingleton ())
-    <$> mapM (identifier "variant field label") first
-  case final of
-    (Binary Equal lhs rhs) -> do
-      lhs' <- identifier "variant field label" lhs
-      return $ Left (first', lhs', rhs)
-    (Prefix "..." rhs) -> return $ Right (first', rhs)
-    _ -> throw SyntaxErr "Last field of variant must be a labeled field foo=bar or a remainder ...bar"
 
 -- === Builders ===
 
@@ -765,14 +624,6 @@ propagateSrcB act (WithSrc src x) = addSrcContext src (WithSrcB src <$> act x)
 
 dropSrcB :: WithSrcB binder n l -> binder n l
 dropSrcB (WithSrcB _ x) = x
-
-toPairB :: forall a b. (IsString (a VoidS VoidS), IsString (b VoidS VoidS))
-           => String -> String -> PairB a b VoidS VoidS
-toPairB s1 s2 = PairB parse1 parse2 where
-  parse1 :: a VoidS VoidS
-  parse1 = fromString s1
-  parse2 :: b VoidS VoidS
-  parse2 = fromString s2
 
 joinSrcE :: WithSrcE a1 n1 -> WithSrcE a2 n2 -> a3 n3 -> WithSrcE a3 n3
 joinSrcE (WithSrcE p1 _) (WithSrcE p2 _) x = WithSrcE (joinPos p1 p2) x

@@ -18,7 +18,6 @@ import QueryType
 import Name
 import Subst
 import MTL1
-import LabeledItems
 import Types.Primitives
 
 generalizeIxDict :: EnvReader m => Atom CoreIR n -> m n (Generalized CoreIR CAtom n)
@@ -37,7 +36,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   where
     go :: CType i -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Pi (PiType (PiBinder b ty arr) _ resultTy)) (arg:args) = do
+    go (Pi (PiType (b:>ty) arr _ resultTy)) (arg:args) = do
       ty' <- substM ty
       arg' <- case ty' of
         TyKind -> liftSubstReaderT $ generalizeType arg
@@ -148,9 +147,6 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     LabeledRowKindTC -> return LabeledRowKindTC
     LabelType        -> return LabelType
     RecordTyCon elems -> RecordTyCon  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
-    VariantTyCon ~(Ext elems Nothing) -> do
-      elems' <- traverse (f TypeParam TyKind) elems
-      return $ VariantTyCon $ Ext elems' Nothing
     UserADTType sn def (DataDefParams arrParams) -> do
       Abs roleBinders UnitE <- getDataDefRoleBinders def
       let (arrs, params) = unzip arrParams

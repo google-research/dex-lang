@@ -206,7 +206,7 @@ example-names := \
   mandelbrot pi sierpinski rejection-sampler \
   regression brownian_motion particle-swarm-optimizer \
   ode-integrator mcmc ctc raytrace particle-filter \
-  isomorphisms fluidsim \
+  fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
   latex linear-maps dither mcts md
@@ -219,7 +219,7 @@ ifeq ($(shell uname -s),Linux)
   example-names += levenshtein-distance
 endif
 
-test-names = uexpr-tests print-tests adt-tests type-tests cast-tests eval-tests show-tests \
+test-names = uexpr-tests print-tests adt-tests type-tests struct-tests cast-tests eval-tests show-tests \
              read-tests shadow-tests monad-tests io-tests exception-tests sort-tests \
              standalone-function-tests \
              ad-tests parser-tests serialize-tests parser-combinator-tests \

@@ -17,7 +17,6 @@ import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
 import Err
-import LabeledItems
 import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
@@ -225,14 +224,10 @@ instance SourceRenamableE UExpr' where
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
     UPrim p xs -> UPrim p <$> mapM sourceRenameE xs
     ULabel name -> return $ ULabel name
+    UFieldAccess x f -> UFieldAccess <$> sourceRenameE x <*> pure f
     URecord elems -> URecord <$> mapM sourceRenameE elems
-    UVariant types label val ->
-      UVariant types <$> return label <*> sourceRenameE val
-    UVariantLift labels val -> UVariantLift labels <$> sourceRenameE val
     ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
     URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
-    UVariantTy (Ext tys ext) -> UVariantTy <$>
-      (Ext <$> mapM sourceRenameE tys <*> mapM sourceRenameE ext)
     UNatLit   x -> return $ UNatLit x
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
@@ -279,6 +274,10 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
         sourceRenameUBinderNest UDataConVar dataConNames \dataConNames' ->
            cont $ UDataDefDecl dataDef' tyConName' dataConNames'
+    UStructDecl structDef tyConName -> do
+      structDef' <- sourceRenameE structDef
+      sourceRenameUBinder UTyConVar tyConName \tyConName' ->
+         cont $ UStructDecl structDef' tyConName'
     UInterface paramBs superclasses methodTys className methodNames -> do
       Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
         sourceRenameB paramBs \paramBs' -> do
@@ -378,6 +377,14 @@ instance SourceRenamableE UDataDef where
         return (dataConName, argBs')
       return $ UDataDef tyConName paramBs' dataCons'
 
+instance SourceRenamableE UStructDef where
+  sourceRenameE (UStructDef tyConName paramBs fields) = do
+    sourceRenameB paramBs \paramBs' -> do
+      fields' <- forM fields \(fieldName, ty) -> do
+        ty' <- sourceRenameE ty
+        return (fieldName, ty')
+      return $ UStructDef tyConName paramBs' fields'
+
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->
     return $ UDataDefTrail args'
@@ -460,12 +467,6 @@ instance SourceRenamablePat UPat' where
           cont sibs'' $ UPatDepPair $ PairB p1' p2'
     UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
     UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
-    UPatVariant labels label p ->
-      sourceRenamePat sibs p \sibs' p' ->
-        cont sibs' $ UPatVariant labels label p'
-    UPatVariantLift labels p ->
-      sourceRenamePat sibs p \sibs' p' ->
-        cont sibs' $ UPatVariantLift labels p'
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
 
 instance SourceRenamablePat UFieldRowPat where
@@ -538,6 +539,8 @@ instance HasSourceNames UDecl where
     ULet _ (UPatAnn pat _) _ -> sourceNames pat
     UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
+    UStructDecl _ ~(UBindSource tyConName) -> do
+      S.singleton tyConName
     UInterface _ _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName -> sourceNames instanceName
@@ -553,8 +556,6 @@ instance HasSourceNames UPat where
     UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatUnit UnitB -> mempty
     UPatRecord p -> sourceNames p
-    UPatVariant _ _ p -> sourceNames p
-    UPatVariantLift _ p -> sourceNames p
     UPatTable ps -> sourceNames ps
 
 instance HasSourceNames UFieldRowPat where

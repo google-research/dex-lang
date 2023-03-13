@@ -313,15 +313,3 @@ data MySum2 =
 :p concat $ for i:(Fin 2). to_list [(Just [0,0,0], Just [0,0,0]),
                                     (Just [0,0,0], Just [0,0,0])]
 > (AsList 4 [((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0])), ((Just [0, 0, 0]), (Just [0, 0, 0]))])
-
--- bug #818.  Yes, get_at is backwards.  That was what it took to
--- tickle the bug at the time.
-def fadd (x: Float) (y: Float) : Float = x + y
-:t (\p. fadd (get_at p #foo) (get_at p #bar))
-> Type error:
-> Expected: (Iso {foo: a & ...b} (a & {&...b}))
->   Actual: (Iso {bar: c & ...d} (c & {&...d}))
-> (Solving for: [a, b, c, d])
->
-> :t (\p. fadd (get_at p #foo) (get_at p #bar))
->                                        ^^^^

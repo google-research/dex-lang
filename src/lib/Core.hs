@@ -210,13 +210,6 @@ instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonD
         Nest (b:>a) $ zipNest bs $ sinkList anns
       zipNest _ _ = error "Mismatched lengths in NonDepNest"
 
-instance BindsEnv PiBinder where
-  toEnvFrag :: Distinct l => PiBinder n l -> EnvFrag n l
-  toEnvFrag (PiBinder b ty arr) =
-    withExtEvidence b do
-      let binding = toBinding $ sink $ PiBinding arr ty
-      EnvFrag (RecSubstFrag $ b @> binding)
-
 instance IRRep r => BindsEnv (Decl r) where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
   {-# INLINE toEnvFrag #-}
@@ -229,7 +222,7 @@ instance BindsEnv EnvFrag where
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv RolePiBinder where
-  toEnvFrag (RolePiBinder b ty arr _) = toEnvFrag (PiBinder b ty arr)
+  toEnvFrag (RolePiBinder b ty _ _) = toEnvFrag (b:>ty)
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (RecSubstFrag Binding) where
@@ -325,7 +318,7 @@ lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding obj m -> retu
 {-# INLINE lookupFunObjCode #-}
 
 lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
-lookupDataDef name = lookupEnv name >>= \case DataDefBinding x -> return x
+lookupDataDef name = lookupEnv name >>= \case DataDefBinding x _ -> return x
 {-# INLINE lookupDataDef #-}
 
 lookupClassDef :: EnvReader m => ClassName n -> m n (ClassDef n)
@@ -393,15 +386,6 @@ withFreshBinders (binding:rest) cont = do
       cont (Nest b bs)
            (sink (binderName b) : vs)
 
-piBinderAsBinder :: PiBinder n l -> Binder CoreIR n l
-piBinderAsBinder (PiBinder b ty _) = b:>ty
-
-plainPiBinder :: Binder CoreIR n l -> PiBinder n l
-plainPiBinder (b:>ty) = PiBinder b ty PlainArrow
-
-classPiBinder :: Binder CoreIR n l -> PiBinder n l
-classPiBinder (b:>ty) = PiBinder b ty (ClassArrow Full)
-
 getLambdaDicts :: EnvReader m => m n [AtomName CoreIR n]
 getLambdaDicts = do
   env <- withEnv moduleEnv
@@ -414,21 +398,12 @@ getInstanceDicts name = do
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
 
-getMethodName :: EnvReader m => AtomName CoreIR n -> m n (Maybe (MethodName n))
-getMethodName name = do
-  env <- withEnv moduleEnv
-  let ATM xs = envAtomToMethodNames env
-  case filter (\x -> fst x == name) xs of
-    [] -> return Nothing
-    [(_, mname)] -> return $ Just mname
-    _ -> error ""
-
 nonDepPiType :: ScopeReader m
              => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (PiType n)
 nonDepPiType arr argTy eff resultTy =
   toConstAbs (PairE eff resultTy) >>= \case
     Abs b (PairE eff' resultTy') ->
-      return $ PiType (PiBinder b argTy arr) eff' resultTy'
+      return $ PiType (b:>argTy) arr eff' resultTy'
 
 nonDepTabPiType :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (TabPiType r n)
 nonDepTabPiType argTy resultTy =
@@ -436,14 +411,14 @@ nonDepTabPiType argTy resultTy =
     Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
 
 considerNonDepPiType :: PiType n -> Maybe (Arrow, CType n, EffectRow CoreIR n, CType n)
-considerNonDepPiType (PiType (PiBinder b argTy arr) eff resultTy) = do
+considerNonDepPiType (PiType (b:>argTy) arr eff resultTy) = do
   HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return (arr, argTy, eff', resultTy')
 
 fromNonDepPiType :: (IRRep r, ScopeReader m, MonadFail1 m)
                  => Arrow -> Type r n -> m n (Type r n, EffectRow r n, Type r n)
 fromNonDepPiType arr ty = do
-  Pi (PiType (PiBinder b argTy arr') eff resultTy) <- return ty
+  Pi (PiType (b:>argTy) arr' eff resultTy) <- return ty
   unless (arr == arr') $ fail "arrow type mismatch"
   HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
   return $ (argTy, eff', resultTy')
@@ -455,7 +430,7 @@ fromNonDepTabType ty = do
   return (ixTy, resultTy')
 
 nonDepDataConTys :: DataConDef n -> Maybe [CType n]
-nonDepDataConTys (DataConDef _ repTy idxs) =
+nonDepDataConTys (DataConDef _ _ repTy idxs) =
   case repTy of
     ProdTy tys | length idxs == length tys -> Just tys
     _ -> Nothing
@@ -577,11 +552,11 @@ fromNaryForExpr maxDepth = \case
 fromNaryPiType :: Int -> Type r n -> Maybe (NaryPiType r n)
 fromNaryPiType n _ | n <= 0 = error "expected positive number of args"
 fromNaryPiType 1 ty = case ty of
-  Pi (PiType (PiBinder b argTy _) effs resultTy) -> Just $ NaryPiType (Nest (b:>argTy) Empty) effs resultTy
+  Pi (PiType b _ effs resultTy) -> Just $ NaryPiType (Nest b Empty) effs resultTy
   _ -> Nothing
-fromNaryPiType n (Pi (PiType (PiBinder b1 argTy1 _) Pure piTy)) = do
+fromNaryPiType n (Pi (PiType b1 _ Pure piTy)) = do
   NaryPiType (Nest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ NaryPiType (Nest (b1:>argTy1) (Nest b2 bs)) effs resultTy
+  Just $ NaryPiType (Nest b1 (Nest b2 bs)) effs resultTy
 fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type r n] -> Type r n

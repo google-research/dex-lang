@@ -59,6 +59,116 @@ pattern SISourceName n = SourceOrInternalName (SourceName n)
 pattern SIInternalName :: SourceName -> Name c n -> SourceOrInternalName c n
 pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 
+-- === Concrete syntax ===
+-- The grouping-level syntax of the source language
+
+type CTopDecl = WithSrc CTopDecl'
+data CTopDecl'
+  = CSDecl LetAnn CSDecl
+  | CData SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
+      [NameAndArgs] -- Constructor names and argument sets
+  | CStruct SourceName -- Type constructor name
+      [Group] -- Arguments, including class constraints
+      [(SourceName, Group)] -- Field names and types
+  | CInterface [Group] -- Superclasses
+      NameAndArgs -- Class name and arguments
+      -- Method declarations: name, arguments, type.  TODO: Allow operators?
+      [(Group, Group)]
+  | CEffectDecl SourceName [(SourceName, UResumePolicy, Group)]
+  | CHandlerDecl SourceName -- Handler name
+      SourceName -- Effect name
+      SourceName -- Body type parameter
+      Group -- Handler arguments
+      Group -- Handler type annotation
+      [(SourceName, Maybe UResumePolicy, CSBlock)] -- Handler methods
+  deriving (Show, Generic)
+
+type NameAndArgs = (SourceName, [Group])
+type NameAndType = (SourceName, Group)
+
+type CSDecl = WithSrc CSDecl'
+data CSDecl'
+  = CLet Group CSBlock
+  -- Arrow binder <-
+  | CBind Group CSBlock
+  -- name, args, type, body.  The header should contain the parameters,
+  -- optional effects, and return type
+  | CDef SourceName Group (Maybe Group) CSBlock
+  -- header, givens (may be empty), methods, optional name.  The header should contain
+  -- the prerequisites, class name, and class arguments.
+  | CInstance Group Group
+      [(SourceName, CSBlock)] -- Method definitions
+      (Maybe SourceName) -- Optional name of instance
+  | CExpr Group
+  deriving (Show, Generic)
+
+type Group = WithSrc Group'
+data Group'
+  = CEmpty
+  | CIdentifier SourceName
+  | CPrim PrimName [Group]
+  | CNat Word64
+  | CInt Int
+  | CString String
+  | CChar Char
+  | CFloat Double
+  | CHole
+  | CLabel LabelPrefix String
+  | CParens CSBlock
+  | CBracket Bracket Group
+  -- Encode various separators of lists (like commas) as infix
+  -- operators in their own right (with defined precedence!) at this
+  -- level.  We will enforce correct structure in the translation to
+  -- abstract syntax.
+  | CBin Bin Group Group
+  | CPrefix SourceName Group -- covers unary - and unary + among others
+  | CPostfix SourceName Group
+  | CLambda [Group] CSBlock  -- The arguments do not have Juxtapose at the top level
+  | CFor ForKind [Group] CSBlock -- also for_, rof, rof_
+  | CCase Group [(Group, CSBlock)] -- scrutinee, alternatives
+  | CIf Group CSBlock (Maybe CSBlock)
+  | CDo CSBlock
+  deriving (Show, Generic)
+
+type Bin = WithSrc Bin'
+data Bin'
+  = Juxtapose
+  | EvalBinOp String
+  | Ampersand
+  | DepAmpersand
+  | IndexingDot
+  | FieldAccessDot
+  | Comma
+  | DepComma
+  | Colon
+  | DoubleColon
+  | Dollar
+  | Arrow Arrow
+  | FatArrow  -- =>
+  | Question
+  | Pipe
+  | CSEqual
+  deriving (Eq, Ord, Show, Generic)
+
+-- We can add others, like @{ or [| or whatever
+data Bracket = Square | Curly
+  deriving (Show, Generic)
+
+data LabelPrefix = PlainLabel
+  deriving (Show, Generic)
+
+data ForKind
+  = KFor
+  | KFor_
+  | KRof
+  | KRof_
+  deriving (Show, Generic)
+
+-- `CSBlock` instead of `CBlock` because the latter is an alias for `Block CoreIR`.
+data CSBlock = CSBlock [CSDecl] -- last decl should be a CExpr
+  deriving (Show, Generic)
+
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
@@ -115,12 +225,10 @@ data UExpr' (n::S) =
  | UTabCon [UExpr n]
  | UPrim PrimName [UExpr n]
  | ULabel String
+ | UFieldAccess (UExpr n) FieldName
  | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
- | UVariant (LabeledItems ()) Label (UExpr n)        -- {|a|b| a=x |}
- | UVariantLift (LabeledItems ()) (UExpr n)          -- {|a|b| ...rest |}
  | ULabeledRow (UFieldRowElems n)                    -- {@v:X ? a:Y ? b:Z ? ...rest}
  | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
- | UVariantTy (ExtLabeledItems (UExpr n) (UExpr n))  -- {a:X | b:Y | ...rest}
  | UNatLit   Word64
  | UIntLit   Int
  | UFloatLit Double
@@ -132,6 +240,8 @@ data UFieldRowElem (n::S)
   | UDynField    (SourceNameOr UVar n) (UExpr n)
   | UDynFields   (UExpr n)
   deriving (Show)
+
+type FieldName = WithSrc String
 
 data ULamExpr (n::S) where
   ULamExpr :: Arrow -> UPatAnn n l -> UExpr l -> ULamExpr n
@@ -150,14 +260,19 @@ data UDeclExpr (n::S) where
 
 type UConDef (n::S) (l::S) = (SourceName, Nest (UAnnBinder (AtomNameC CoreIR)) n l)
 
--- TODO Why are the type and data constructor names SourceName, rather
--- than being scoped names of the proper color of their own?
 data UDataDef (n::S) where
   UDataDef
-    :: SourceName
+    :: SourceName  -- source name for pretty printing
     -> Nest (UAnnBinderArrow (AtomNameC CoreIR)) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
+
+data UStructDef (n::S) where
+  UStructDef
+    :: SourceName   -- source name for pretty printing
+    -> Nest (UAnnBinderArrow (AtomNameC CoreIR)) n l
+    -> [(SourceName, UType l)]  -- named payloads
+    -> UStructDef n
 
 data UDataDefTrail (l::S) where
   UDataDefTrail :: Nest (UAnnBinder (AtomNameC CoreIR)) l l' -> UDataDefTrail l
@@ -168,6 +283,10 @@ data UDecl (n::S) (l::S) where
     :: UDataDef n                          -- actual definition
     -> UBinder TyConNameC n l'             -- type constructor name
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
+    -> UDecl n l
+  UStructDecl
+    :: UStructDef n                        -- actual definition
+    -> UBinder TyConNameC n l              -- type constructor name
     -> UDecl n l
   UInterface
     :: Nest (UAnnBinder (AtomNameC CoreIR)) n p     -- parameter binders
@@ -270,8 +389,6 @@ data UPat' (n::S) (l::S) =
  | UPatUnit (UnitB n l)
  -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
  | UPatRecord (UFieldRowPat n l)
- | UPatVariant (LabeledItems ()) Label (UPat n l)   -- {|a|b| a=x |}
- | UPatVariantLift (LabeledItems ()) (UPat n l)     -- {|a|b| ...rest |}
  | UPatTable (Nest UPat n l)
   deriving (Show)
 
@@ -279,6 +396,9 @@ pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
 -- === Source context helpers ===
+
+data WithSrc a = WithSrc SrcPosCtx a
+  deriving (Show, Functor)
 
 data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
   deriving (Show)
@@ -329,34 +449,28 @@ data UModule = UModule
 
 type SourceName = String
 
-data SourceBlockP a = SourceBlockP
+data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
   , sbLogLevel :: LogLevel
   , sbText     :: Text
-  , sbContents :: a }
+  , sbContents :: SourceBlock' }
   deriving (Show, Generic)
-
-type SourceBlock = SourceBlockP SourceBlock'
 
 type ReachedEOF = Bool
 
 data SymbolicZeros = SymbolicZeros | InstantiateZeros
                      deriving (Generic, Eq, Show)
 
-data SourceBlock' =
-   EvalUDecl (UDecl VoidS VoidS)
- | Command CmdName (UExpr VoidS)
- | DeclareForeign SourceName (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
- | DeclareCustomLinearization SourceName SymbolicZeros (UExpr VoidS)
- | Misc SourceBlockMisc
- | UnParseable ReachedEOF String  -- Grouping failure like `x + * y`.
- | BadSyntax Errs  -- Well-grouped nonsense like `x : Int : Float`.
+data SourceBlock'
+  = TopDecl CTopDecl
+  | Command CmdName CSBlock
+  | DeclareForeign SourceName SourceName Group
+  | DeclareCustomLinearization SourceName SymbolicZeros Group
+  | Misc SourceBlockMisc
+  | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
--- This stuff is done when successfully parsed as concrete syntax, and
--- does not participate in the concrete->abstract interpretation in
--- AbstractSyntax.hs.
 data SourceBlockMisc
   = GetNameType SourceName
   | ImportModule ModuleSourceName
@@ -414,7 +528,7 @@ data PrimName =
     UPrimTC  (PrimTC CoreIR ())
   | UPrimCon (PrimCon CoreIR ())
   | UPrimOp  (PrimOp ())
-  | URecordVariantOp (RecordVariantOp ())
+  | URecordOp (RecordOp ())
   | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
@@ -626,6 +740,7 @@ deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
 deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
+deriving instance Show (UStructDef n)
 deriving instance Show (UDecl n l)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)

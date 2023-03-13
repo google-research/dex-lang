@@ -1643,6 +1643,17 @@ instance ( ExtOutMap b d1, OutFrag d1
   unsafeGetScope = liftDoubleInplaceT unsafeGetScope
   {-# INLINE unsafeGetScope #-}
 
+extendDoubleInplaceTLocal
+  :: (ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2, Monad m)
+  => (b n -> b n)
+  -> DoubleInplaceT b d1 d2 m n a
+  -> DoubleInplaceT b d1 d2 m n a
+extendDoubleInplaceTLocal f cont =
+  UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
+    UnsafeMakeInplaceT \env d2 ->
+      unsafeRunInplaceT (runStateT (unsafeRunDoubleInplaceT cont) (topScope, d1Prev)) (f env) d2
+{-# INLINE extendDoubleInplaceTLocal #-}
+
 -- === name hints ===
 
 instance HasNameHint (BinderP c ann n l) where
@@ -3116,7 +3127,7 @@ instance Monad HoistExcept where
 -- === extra data structures ===
 
 newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
-                                 deriving (Eq, Semigroup, Monoid)
+                                 deriving (Eq, Semigroup, Monoid, Store)
 
 hoistFilterNameMap :: BindsNames b => b n l -> NameMap c a l -> NameMap c a n
 hoistFilterNameMap b (UnsafeNameMap raw) =
@@ -3155,7 +3166,7 @@ mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
 {-# INLINE mapNameMap #-}
 
 newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
-  deriving (Eq, Semigroup, Monoid)
+  deriving (Eq, Semigroup, Monoid, Store)
 
 -- Filters out the entry(ies) for the binder being hoisted above,
 -- and hoists the values of the remaining entries.
@@ -3198,6 +3209,12 @@ mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
 
 instance SinkableE e => SinkableE (NameMapE c e) where
   sinkingProofE = undefined
+
+instance RenameE e => RenameE (NameMapE c e) where
+  renameE = undefined
+
+instance HoistableE e => HoistableE (NameMapE c e) where
+  freeVarsE = undefined
 
 -- === E-kinded IR coercions ===
 
