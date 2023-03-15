@@ -62,6 +62,7 @@ library
                      , Inference
                      , Inline
                      , IRVariants
+                     , JAX.Concrete
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA
@@ -314,8 +315,12 @@ test-suite spec
                      , mtl
                      , QuickCheck
                      , text
+                     , aeson
+                     , aeson-pretty
+                     , bytestring
                      , dex
   other-modules:       ConstantCastingSpec
+                     , JaxADTSpec
                      , OccAnalysisSpec
                      , OccurrenceSpec
                      , RawNameSpec
