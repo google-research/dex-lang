@@ -8,10 +8,12 @@ import json
 import unittest
 
 import jax
+import jax.numpy as jnp
 import dex.interop.jax.jaxpr_json as jj
 
 def check_round_trip(jaxpr):
-  dump_str = json.dumps(jj.dump_jaxpr(jaxpr), indent=2)
+  dictified = jj.dump_jaxpr(jaxpr)
+  dump_str = json.dumps(dictified, indent=2)
   reconstituted = json.loads(dump_str)
   jaxpr_recon = jj.load_jaxpr(reconstituted)
   assert str(jaxpr) == str(jaxpr_recon)
@@ -26,6 +28,11 @@ class JaxprJsonTest(unittest.TestCase):
     f = lambda x: jax.numpy.sin(x + 1) + 3
     check_round_trip(jax.make_jaxpr(f)(3.))
 
-  # TODO Test non-scalar shapes
+  def test_scan(self):
+    def f(xs):
+      return jax.lax.scan(lambda tot, z: (tot + z, tot), 0., xs)
+    check_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
+
+  # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)
-  # TODO Test funny primitives like scan
+  # TODO Test more funny primitives like scan (scan itself works)

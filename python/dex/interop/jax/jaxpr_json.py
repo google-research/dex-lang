@@ -5,10 +5,9 @@
 # https://developers.google.com/open-source/licenses/bsd
 
 import json
-import numpy as np
 import jax
+import numpy as np
 from jax._src import core
-from jax._src.lax import lax
 
 def dump_jaxpr(jaxpr: core.ClosedJaxpr) -> dict:
   # TODO Serialize effects
@@ -42,15 +41,27 @@ def dump_aval(a):
   # TODO Support other needful members of the AbstractValue hierarchy,
   # not just ShapedArray.
   # TODO Support weak_type, named_shape
-  return dict(shape=a.shape, dtype=core._short_dtype_name(a.dtype))
+  return dict(shape=a.shape, dtype=dump_dtype(a.dtype))
+
+def dump_dtype(dtype):
+  return core._short_dtype_name(dtype)
 
 def dump_eqn(e):
   # TODO Support effects
   # TODO Support source info
-  return dict(primitive=e.primitive.name,
-              params=e.params,
+  name = e.primitive.name
+  return dict(primitive=name,
+              params=dump_params(name, e.params),
               invars=[dump_atom(x) for x in e.invars],
               outvars=[dump_var(v) for v in e.outvars])
+
+def dump_params(name, params):
+  result = params.copy()
+  if name == 'scan':
+    result['jaxpr'] = dump_jaxpr(params['jaxpr'])
+  if name == 'convert_element_type':
+    result['new_dtype'] = dump_dtype(params['new_dtype'])
+  return result
 
 def load_jaxpr(d) -> core.ClosedJaxpr:
   return load_jaxpr_local({}, d)
@@ -83,27 +94,45 @@ def load_lit(d):
 
 # TODO Support the full range of JAX dtypes
 short_dtype_names = dict(
-    f32 = np.float32,
-    f64 = np.float64,
-    i32 = np.int32,
-    i64 = np.int64)
+    f32 = np.dtype('float32'),
+    f64 = np.dtype('float64'),
+    i32 = np.dtype('int32'),
+    i64 = np.dtype('int64'))
+
+def load_dtype(obj):
+  return short_dtype_names[obj]
 
 # TODO Collect the complete set of JAX primitives properly
 def jax_primitives():
   result = {}
-  for name in dir(lax):
-    obj = getattr(lax, name)
-    if isinstance(obj, core.Primitive):
-      result[obj.name] = obj
+  def process_module(mod):
+    for name in dir(mod):
+      obj = getattr(mod, name)
+      if isinstance(obj, core.Primitive):
+        result[obj.name] = obj
+  from jax._src.lax import lax
+  process_module(lax)
+  from jax._src.lax.control_flow import loops
+  process_module(loops)
   return result
 
 primitives = jax_primitives()
 
 def load_aval(d):
-  return core.ShapedArray(d['shape'], short_dtype_names[d['dtype']])
+  return core.ShapedArray(d['shape'], load_dtype(d['dtype']))
 
 def load_eqn(var_map, d):
   prim = primitives[d['primitive']]
   invars = [load_atom(var_map, x) for x in d['invars']]
   outvars = [load_var(var_map, v) for v in d['outvars']]
-  return core.JaxprEqn(invars, outvars, prim, d['params'], core.no_effects, None)
+  params = load_params(var_map, d['primitive'], d['params'])
+  return core.JaxprEqn(invars, outvars, prim, params, core.no_effects, None)
+
+def load_params(var_map, name, d):
+  result = d.copy()
+  if name == 'scan':
+    result['jaxpr'] = load_jaxpr_local(var_map, d['jaxpr'])
+    result['linear'] = tuple(d['linear'])
+  if name == 'convert_element_type':
+    result['new_dtype'] = load_dtype(d['new_dtype'])
+  return result
