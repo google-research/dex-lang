@@ -21,17 +21,22 @@ def dump_jaxpr(jaxpr: core.ClosedJaxpr) -> dict:
               consts=jaxpr.consts
               )
 
-
 def dump_atom(x):
-  # TODO tag
   if type(x) is core.Var:
-    return dump_var(x)
-  else:
-    raise NotImplementedError
+    return dict(var=dump_var(x))
+  elif type(x) is core.Literal:
+    return dict(lit=dump_lit(x))
+  # TODO DropVar ?
 
 def dump_var(v):
   # Option: remove count and suffix to shrink the size of the generated json.
   return dict(name=id(v), count=v.count, suffix=v.suffix, ty=dump_aval(v.aval))
+
+def dump_lit(x):
+  # TODO The type annotation in core.Literal allows the value of a
+  # literal to be an arbitrary Python object.  Are they all actually
+  # JSON-dumpable?
+  return dict(val=x.val, ty=dump_aval(x.aval))
 
 def dump_aval(a):
   # TODO Support other needful members of the AbstractValue hierarchy,
@@ -59,8 +64,12 @@ def load_jaxpr_local(var_map, d):
   return core.ClosedJaxpr(jaxpr, d['consts'])
 
 def load_atom(var_map, d):
-  # TODO literals
-  return load_var(var_map, d)
+  if 'var' in d:
+    return load_var(var_map, d['var'])
+  elif 'lit' in d:
+    return load_lit(d['lit'])
+  else:
+    raise TypeError("Malformed serialized jax atom", d)
 
 def load_var(var_map, d):
   if d['name'] not in var_map:
@@ -68,6 +77,9 @@ def load_var(var_map, d):
     var = core.Var(d['count'], d['suffix'], aval)
     var_map[d['name']] = var
   return var_map[d['name']]
+
+def load_lit(d):
+  return core.Literal(d['val'], load_aval(d['ty']))
 
 # TODO Support the full range of JAX dtypes
 short_dtype_names = dict(
