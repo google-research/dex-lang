@@ -4,11 +4,14 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE DuplicateRecordFields #-}
+
 module JAX.Concrete where
 
 import GHC.Generics (Generic (..))
 
-import Data.Aeson (ToJSON, FromJSON)
+import Data.Aeson
+import Data.Aeson.Types qualified as A
 
 type NumConsts = Int
 type NumCarry = Int
@@ -26,14 +29,14 @@ data Primitive =
   -- | others!
   deriving (Generic)
 
-data EltType = F64 | F32 -- others
+data DType = F64 | F32 | I64 | I32 -- others
   deriving (Generic)
 
 data DimSizeDeBrujin = LitDimSize Int
   | RefDimSizeInput Int  -- "de Brujin" index but counted from the left of the list
   | RefDimSizeOutput Int -- same
   deriving (Generic)
-data JArgType = JArrayDeBrujin EltType [DimSizeDeBrujin]
+data JArgType = JArrayDeBrujin DType [DimSizeDeBrujin]
 -- On the output, can refer to input binders and preceding things in the output
   deriving (Generic)
 data JFuncType = JFunc [JArgType] JEffects [JArgType]
@@ -45,28 +48,33 @@ data DimSizeName = DimSizeName JAtom -- | polynomials? indexing operations?
   deriving (Generic)
 data JVarType = JArrayName
   { shape :: [DimSizeName]
-  , dtype :: EltType
+  , dtype :: DType
   }
   deriving (Generic)
 data JEffects = IO | Read Int | Write Int | Append Int
   deriving (Generic)
 
-data JAtom = JVar JVar
-           | JLitInt Int
-           -- | others
+data JAtom = JVariable JVar
+           | JLiteral JLit
+           -- DropVar?
   deriving (Generic)
 
-data JVar = JVariable
-  { name :: String
+data JVar = JVar
+  { name :: Int
+  , count :: Int
+  , suffix :: String
   , ty :: JVarType
   }
   deriving (Generic)
 
-data Binder = Binder String JVarType
+data JLit = JLit
+  { val :: Int -- TODO What's the real type?
+  , ty :: JVarType
+  }
   deriving (Generic)
 
 data JDecl = JDecl
-  { outVars :: [Binder]
+  { outVars :: [JVar]
   , primitive :: Primitive
   , inAtoms :: [JAtom]
   }
@@ -84,35 +92,63 @@ data JDecl = JDecl
 --  * dynamic shapes
 
 data Jaxpr = Jaxpr
-  { invars  :: [Binder]
+  { invars  :: [JVar]
   , outvars :: [JAtom]
   , eqns    :: [JDecl]
   }
   deriving (Generic)
 
-instance ToJSON JAtom
+instance ToJSON JAtom where
+  toJSON (JVariable var) = object ["var" .= var]
+  toJSON (JLiteral  lit) = object ["lit" .= lit]
+
+instance FromJSON JAtom where
+  parseJSON = \case
+    o@(A.Object obj) -> do
+      obj .:? "var" >>= \case
+        Just var -> JVariable <$> A.parseJSON var
+        Nothing -> do
+          obj .:? "lit" >>= \case
+            Just lit -> JLiteral <$> A.parseJSON lit
+            Nothing -> wrong o
+    invalid -> wrong invalid
+    where
+      wrong invalid = A.prependFailure "parsing atom failed, " $
+        A.typeMismatch "object with a var or lit key" invalid
+
+instance ToJSON DType where
+  toJSON F64 = A.String "f64"
+  toJSON F32 = A.String "f32"
+  toJSON I64 = A.String "i64"
+  toJSON I32 = A.String "i32"
+
+instance FromJSON DType where
+  parseJSON (A.String "f64") = pure F64
+  parseJSON (A.String "f32") = pure F32
+  parseJSON (A.String "i64") = pure I64
+  parseJSON (A.String "i32") = pure I32
+  parseJSON invalid = A.prependFailure "parsing dtype failed, " $
+    A.typeMismatch "dtype string" invalid
+
 instance ToJSON JVar
-instance ToJSON Binder
+instance ToJSON JLit
 instance ToJSON JVarType
 instance ToJSON JEffects
 instance ToJSON DimSizeName
 instance ToJSON JFuncType
 instance ToJSON Primitive
-instance ToJSON EltType
 instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
 instance ToJSON Jaxpr
 instance ToJSON JDecl
 
-instance FromJSON JAtom
 instance FromJSON JVar
-instance FromJSON Binder
+instance FromJSON JLit
 instance FromJSON JVarType
 instance FromJSON JEffects
 instance FromJSON DimSizeName
 instance FromJSON JFuncType
 instance FromJSON Primitive
-instance FromJSON EltType
 instance FromJSON DimSizeDeBrujin
 instance FromJSON JArgType
 instance FromJSON Jaxpr
