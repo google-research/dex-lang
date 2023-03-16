@@ -94,6 +94,8 @@ unload     = dex_func('dexUnload',  HsContextPtr, NativeFunction, None)
 getFunctionSignature  = dex_func('dexGetFunctionSignature', HsContextPtr, NativeFunction, NativeFunctionSignaturePtr)
 freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
+roundtripJaxprJson = dex_func('dexRoundtripJaxprJson', ctypes.c_char_p, ctypes.c_char_p)
+
 xlaCpuTrampoline = lib.dexXLACPUTrampoline
 
 init()

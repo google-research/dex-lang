@@ -269,10 +269,12 @@ foreign-library Dex
   type:                native-shared
   other-modules:       Dex.Foreign.API
                      , Dex.Foreign.Context
+                     , Dex.Foreign.JAX
                      , Dex.Foreign.JIT
                      , Dex.Foreign.Serialize
                      , Dex.Foreign.Util
   build-depends:       dex
+                     , aeson
                      , base
                      , bytestring
                      , containers

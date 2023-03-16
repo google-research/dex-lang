@@ -9,6 +9,7 @@ import unittest
 
 import jax
 import jax.numpy as jnp
+from dex import api
 import dex.interop.jax.jaxpr_json as jj
 
 def check_round_trip(jaxpr):
@@ -32,6 +33,13 @@ class JaxprJsonTest(unittest.TestCase):
     def f(xs):
       return jax.lax.scan(lambda tot, z: (tot + z, tot), 0., xs)
     check_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
+
+  def test_haskell_roundtrip(self):
+    jaxpr = jax.make_jaxpr(jax.numpy.sin)(3.)
+    dictified = jj.dump_jaxpr(jaxpr)
+    dump_str = json.dumps(dictified, indent=2)
+    returned = api.from_cstr(api.roundtripJaxprJson(api.as_cstr(dump_str)))
+    assert dump_str == returned
 
   # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)

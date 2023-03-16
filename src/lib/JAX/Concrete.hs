@@ -8,7 +8,7 @@ module JAX.Concrete where
 
 import GHC.Generics (Generic (..))
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (ToJSON, FromJSON)
 
 type NumConsts = Int
 type NumCarry = Int
@@ -103,3 +103,17 @@ instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
 instance ToJSON Jaxpr
 instance ToJSON JDecl
+
+instance FromJSON JAtom
+instance FromJSON JVar
+instance FromJSON Binder
+instance FromJSON JVarType
+instance FromJSON JEffects
+instance FromJSON DimSizeName
+instance FromJSON JFuncType
+instance FromJSON Primitive
+instance FromJSON EltType
+instance FromJSON DimSizeDeBrujin
+instance FromJSON JArgType
+instance FromJSON Jaxpr
+instance FromJSON JDecl
