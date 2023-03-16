@@ -13,20 +13,28 @@ import GHC.Generics (Generic (..))
 import Data.Aeson
 import Data.Aeson.Types qualified as A
 
-type NumConsts = Int
-type NumCarry = Int
-type Unroll = Int -- how many copies of the body to replicate
-
 data Primitive =
     Sin | Cos | Add | Mul
-  | Scan Bool -- reverse
-         Int  -- length
-         Jaxpr -- body
-         NumConsts
-         NumCarry
-         [Bool] -- which arguments are we linear wrt?
-         Unroll
-  -- | others!
+  | Scan ScanParams
+  | ConvertElementType ConvertElementTypeParams
+  -- others!
+  deriving (Generic)
+
+data ScanParams = ScanParams
+  { reverse :: Bool
+  , length :: Int
+  , jaxpr :: ClosedJaxpr -- The scan body
+  , num_consts :: Int
+  , num_carry :: Int
+  , linear :: [Bool] -- which arguments are we linear wrt?
+  , unroll :: Int -- how many copies of the body to replicate
+  }
+  deriving (Generic)
+
+data ConvertElementTypeParams = ConvertElementTypeParams
+  { new_dtype :: DType
+  , weak_type :: Bool
+  }
   deriving (Generic)
 
 data DType = F64 | F32 | I64 | I32 -- others
@@ -46,7 +54,8 @@ data JFuncType = JFunc [JArgType] JEffects [JArgType]
 -- being typed by this JEffects datum
   deriving (Generic)
 
-data DimSizeName = DimSizeName JAtom -- | polynomials? indexing operations?
+-- TODO Variable references, polynomials, etc
+data DimSizeName = DimSize Int
   deriving (Generic)
 
 data JVarType = JArrayName
@@ -72,7 +81,7 @@ data JVar = JVar
   deriving (Generic)
 
 data JLit = JLit
-  { val :: Int -- TODO What's the real type?
+  { val :: A.Value -- TODO What's the real type?
   , ty :: JVarType
   }
   deriving (Generic)
@@ -121,6 +130,8 @@ dumpPrimitive :: Primitive -> (String, A.Value)
 dumpPrimitive = \case
   Add -> ("add", object [])
   Sin -> ("sin", object [])
+  Scan params -> ("scan", A.toJSON params)
+  ConvertElementType params -> ("convert_element_type", A.toJSON params)
 
 instance FromJSON JEqn where
   parseJSON = \case
@@ -131,12 +142,14 @@ instance FromJSON JEqn where
       prim <- parsePrimitive primName =<< obj .: "params"
       return $ JEqn outvars prim invars
     invalid -> A.prependFailure "parsing eqn failed, " $
-      A.typeMismatch "object" invalid
+      A.typeMismatch "Object" invalid
 
 parsePrimitive :: String -> A.Value -> A.Parser Primitive
 parsePrimitive name params = case name of
   "add" -> return Add
   "sin" -> return Sin
+  "scan" -> Scan <$> parseJSON params
+  "convert_element_type" -> ConvertElementType <$> parseJSON params
   _ -> fail $ "Unknown primitive " ++ name
 
 instance ToJSON JAtom where
@@ -155,7 +168,7 @@ instance FromJSON JAtom where
     invalid -> wrong invalid
     where
       wrong invalid = A.prependFailure "parsing atom failed, " $
-        A.typeMismatch "object with a var or lit key" invalid
+        A.typeMismatch "Object with a var or lit key" invalid
 
 instance ToJSON DType where
   toJSON F64 = A.String "f64"
@@ -182,6 +195,8 @@ instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
 instance ToJSON ClosedJaxpr
 instance ToJSON Jaxpr
+instance ToJSON ScanParams
+instance ToJSON ConvertElementTypeParams
 
 instance FromJSON JVar
 instance FromJSON JLit
@@ -194,3 +209,5 @@ instance FromJSON DimSizeDeBrujin
 instance FromJSON JArgType
 instance FromJSON ClosedJaxpr
 instance FromJSON Jaxpr
+instance FromJSON ScanParams
+instance FromJSON ConvertElementTypeParams

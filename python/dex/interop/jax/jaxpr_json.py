@@ -63,6 +63,7 @@ def dump_params(name, params):
   result = params.copy()
   if name == 'scan':
     result['jaxpr'] = dump_jaxpr(params['jaxpr'])
+    result['linear'] = list(params['linear'])
   if name == 'convert_element_type':
     result['new_dtype'] = dump_dtype(params['new_dtype'])
   return result
@@ -99,7 +100,8 @@ def load_var(var_map, d):
 def load_lit(d):
   return core.Literal(d['val'], load_aval(d['ty']))
 
-# TODO Support the full range of JAX dtypes
+# TODO Support the full range of JAX dtypes:
+# numpy dtypes, bint, bfloat16
 short_dtype_names = dict(
     f32 = np.dtype('float32'),
     f64 = np.dtype('float64'),

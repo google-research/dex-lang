@@ -40,7 +40,7 @@ class JaxprJsonTest(unittest.TestCase):
 
   def test_json_scan(self):
     def f(xs):
-      return jax.lax.scan(lambda tot, z: (tot + z, tot), 0., xs)
+      return jax.lax.scan(lambda tot, z: (tot + z, tot), 0.25, xs)
     check_json_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
 
   def test_haskell_one_prim(self):
@@ -51,6 +51,12 @@ class JaxprJsonTest(unittest.TestCase):
     f = lambda x: jax.numpy.sin(x + 1) + 3
     check_haskell_round_trip(jax.make_jaxpr(f)(3.))
 
+  def test_haskell_scan(self):
+    def f(xs):
+      return jax.lax.scan(lambda tot, z: (tot + z, tot), 0.25, xs)
+    check_haskell_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
+
   # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)
+  # - How do I make a jaxpr with such a thing in it?
   # TODO Test more funny primitives like scan (scan itself works)
