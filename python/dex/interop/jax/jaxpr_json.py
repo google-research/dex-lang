@@ -12,12 +12,16 @@ from jax._src import core
 def dump_jaxpr(jaxpr: core.ClosedJaxpr) -> dict:
   # TODO Serialize effects
   assert jaxpr.effects == core.no_effects
-  # Ignoring debug info
-  return dict(invars=[dump_var(v) for v in jaxpr.jaxpr.invars],
-              outvars=[dump_atom(x) for x in jaxpr.jaxpr.outvars],
-              eqns=[dump_eqn(e) for e in jaxpr.jaxpr.eqns],
-              constvars=[dump_var(v) for v in jaxpr.jaxpr.constvars],
+  return dict(jaxpr=dump_open_jaxpr(jaxpr.jaxpr),
               consts=jaxpr.consts
+              )
+
+def dump_open_jaxpr(jaxpr: core.Jaxpr) -> dict:
+  # Ignoring debug info
+  return dict(invars=[dump_var(v) for v in jaxpr.invars],
+              outvars=[dump_atom(x) for x in jaxpr.outvars],
+              eqns=[dump_eqn(e) for e in jaxpr.eqns],
+              constvars=[dump_var(v) for v in jaxpr.constvars]
               )
 
 def dump_atom(x):
@@ -41,7 +45,7 @@ def dump_aval(a):
   # TODO Support other needful members of the AbstractValue hierarchy,
   # not just ShapedArray.
   # TODO Support weak_type, named_shape
-  return dict(shape=a.shape, dtype=dump_dtype(a.dtype))
+  return dict(shape=list(a.shape), dtype=dump_dtype(a.dtype))
 
 def dump_dtype(dtype):
   return core._short_dtype_name(dtype)
@@ -67,12 +71,15 @@ def load_jaxpr(d) -> core.ClosedJaxpr:
   return load_jaxpr_local({}, d)
 
 def load_jaxpr_local(var_map, d):
+  jaxpr = load_open_jaxpr(var_map, d['jaxpr'])
+  return core.ClosedJaxpr(jaxpr, d['consts'])
+
+def load_open_jaxpr(var_map, d):
   invars = [load_var(var_map, v) for v in d['invars']]
   outvars = [load_atom(var_map, v) for v in d['outvars']]
   eqns = [load_eqn(var_map, v) for v in d['eqns']]
   constvars = [load_var(var_map, v) for v in d['constvars']]
-  jaxpr = core.Jaxpr(constvars, invars, outvars, eqns)
-  return core.ClosedJaxpr(jaxpr, d['consts'])
+  return core.Jaxpr(constvars, invars, outvars, eqns)
 
 def load_atom(var_map, d):
   if 'var' in d:
@@ -119,7 +126,7 @@ def jax_primitives():
 primitives = jax_primitives()
 
 def load_aval(d):
-  return core.ShapedArray(d['shape'], load_dtype(d['dtype']))
+  return core.ShapedArray(tuple(d['shape']), load_dtype(d['dtype']))
 
 def load_eqn(var_map, d):
   prim = primitives[d['primitive']]

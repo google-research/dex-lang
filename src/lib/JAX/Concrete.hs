@@ -36,9 +36,11 @@ data DimSizeDeBrujin = LitDimSize Int
   | RefDimSizeInput Int  -- "de Brujin" index but counted from the left of the list
   | RefDimSizeOutput Int -- same
   deriving (Generic)
+
 data JArgType = JArrayDeBrujin DType [DimSizeDeBrujin]
 -- On the output, can refer to input binders and preceding things in the output
   deriving (Generic)
+
 data JFuncType = JFunc [JArgType] JEffects [JArgType]
 -- The ints just count from the beginning of the list of inputs of the jaxpr
 -- being typed by this JEffects datum
@@ -46,11 +48,13 @@ data JFuncType = JFunc [JArgType] JEffects [JArgType]
 
 data DimSizeName = DimSizeName JAtom -- | polynomials? indexing operations?
   deriving (Generic)
+
 data JVarType = JArrayName
   { shape :: [DimSizeName]
   , dtype :: DType
   }
   deriving (Generic)
+
 data JEffects = IO | Read Int | Write Int | Append Int
   deriving (Generic)
 
@@ -73,10 +77,10 @@ data JLit = JLit
   }
   deriving (Generic)
 
-data JDecl = JDecl
-  { outVars :: [JVar]
+data JEqn = JEqn
+  { outvars :: [JVar]
   , primitive :: Primitive
-  , inAtoms :: [JAtom]
+  , invars :: [JAtom]
   }
   deriving (Generic)
 
@@ -92,11 +96,46 @@ data JDecl = JDecl
 --  * dynamic shapes
 
 data Jaxpr = Jaxpr
-  { invars  :: [JVar]
-  , outvars :: [JAtom]
-  , eqns    :: [JDecl]
+  { invars    :: [JVar]
+  , constvars :: [JVar]
+  , outvars   :: [JAtom]
+  , eqns      :: [JEqn]
   }
   deriving (Generic)
+
+data ClosedJaxpr = ClosedJaxpr
+  { jaxpr :: Jaxpr
+  , consts :: [A.Value]
+  }
+  deriving (Generic)
+
+instance ToJSON JEqn where
+  toJSON JEqn {..} = object
+    [ "primitive" .= name
+    , "params" .= params
+    , "invars" .= A.toJSON invars
+    , "outvars" .= A.toJSON outvars
+    ] where (name, params) = dumpPrimitive primitive
+
+dumpPrimitive :: Primitive -> (String, A.Value)
+dumpPrimitive = \case
+  Sin -> ("sin", object [])
+
+instance FromJSON JEqn where
+  parseJSON = \case
+    (A.Object obj) -> do
+      invars <- obj .: "invars"
+      outvars <- obj .: "outvars"
+      primName <- obj .: "primitive"
+      prim <- parsePrimitive primName =<< obj .: "params"
+      return $ JEqn outvars prim invars
+    invalid -> A.prependFailure "parsing eqn failed, " $
+      A.typeMismatch "object" invalid
+
+parsePrimitive :: String -> A.Value -> A.Parser Primitive
+parsePrimitive name params = case name of
+  "sin" -> return Sin
+  _ -> fail $ "Unknown primitive " ++ name
 
 instance ToJSON JAtom where
   toJSON (JVariable var) = object ["var" .= var]
@@ -139,8 +178,8 @@ instance ToJSON JFuncType
 instance ToJSON Primitive
 instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
+instance ToJSON ClosedJaxpr
 instance ToJSON Jaxpr
-instance ToJSON JDecl
 
 instance FromJSON JVar
 instance FromJSON JLit
@@ -151,5 +190,5 @@ instance FromJSON JFuncType
 instance FromJSON Primitive
 instance FromJSON DimSizeDeBrujin
 instance FromJSON JArgType
+instance FromJSON ClosedJaxpr
 instance FromJSON Jaxpr
-instance FromJSON JDecl

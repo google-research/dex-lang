@@ -15,7 +15,7 @@ import JAX.Concrete
 dexRoundtripJaxprJson :: CString -> IO CString
 dexRoundtripJaxprJson jsonPtr = do
   json <- B.pack <$> peekCString jsonPtr
-  let maybeJaxpr :: Either String Jaxpr = eitherDecode' json
+  let maybeJaxpr :: Either String ClosedJaxpr = eitherDecode' json
   case maybeJaxpr of
     Right jaxpr -> do
       let redumped = encode jaxpr
