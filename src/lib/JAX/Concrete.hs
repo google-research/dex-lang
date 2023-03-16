@@ -119,6 +119,7 @@ instance ToJSON JEqn where
 
 dumpPrimitive :: Primitive -> (String, A.Value)
 dumpPrimitive = \case
+  Add -> ("add", object [])
   Sin -> ("sin", object [])
 
 instance FromJSON JEqn where
@@ -134,6 +135,7 @@ instance FromJSON JEqn where
 
 parsePrimitive :: String -> A.Value -> A.Parser Primitive
 parsePrimitive name params = case name of
+  "add" -> return Add
   "sin" -> return Sin
   _ -> fail $ "Unknown primitive " ++ name
 

@@ -12,37 +12,44 @@ import jax.numpy as jnp
 from dex import api
 import dex.interop.jax.jaxpr_json as jj
 
-def check_round_trip(jaxpr):
+def check_json_round_trip(jaxpr):
   dictified = jj.dump_jaxpr(jaxpr)
   dump_str = json.dumps(dictified, indent=2)
   reconstituted = json.loads(dump_str)
   jaxpr_recon = jj.load_jaxpr(reconstituted)
   assert str(jaxpr) == str(jaxpr_recon)
 
+def check_haskell_round_trip(jaxpr):
+  dictified = jj.dump_jaxpr(jaxpr)
+  dump_str = json.dumps(dictified, indent=2)
+  returned = api.from_cstr(api.roundtripJaxprJson(api.as_cstr(dump_str)))
+  try:
+    assert dictified == json.loads(returned)
+  except json.decoder.JSONDecodeError:
+    assert False, returned
+
 class JaxprJsonTest(unittest.TestCase):
 
-  def test_one_prim(self):
+  def test_json_one_prim(self):
     jaxpr = jax.make_jaxpr(jax.numpy.sin)(3.)
-    check_round_trip(jaxpr)
+    check_json_round_trip(jaxpr)
 
-  def test_literal(self):
+  def test_json_literal(self):
     f = lambda x: jax.numpy.sin(x + 1) + 3
-    check_round_trip(jax.make_jaxpr(f)(3.))
+    check_json_round_trip(jax.make_jaxpr(f)(3.))
 
-  def test_scan(self):
+  def test_json_scan(self):
     def f(xs):
       return jax.lax.scan(lambda tot, z: (tot + z, tot), 0., xs)
-    check_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
+    check_json_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
 
-  def test_haskell_roundtrip(self):
+  def test_haskell_one_prim(self):
     jaxpr = jax.make_jaxpr(jax.numpy.sin)(3.)
-    dictified = jj.dump_jaxpr(jaxpr)
-    dump_str = json.dumps(dictified, indent=2)
-    returned = api.from_cstr(api.roundtripJaxprJson(api.as_cstr(dump_str)))
-    try:
-      assert dictified == json.loads(returned)
-    except json.decoder.JSONDecodeError:
-      assert False, returned
+    check_haskell_round_trip(jaxpr)
+
+  def test_haskell_literal(self):
+    f = lambda x: jax.numpy.sin(x + 1) + 3
+    check_haskell_round_trip(jax.make_jaxpr(f)(3.))
 
   # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)
