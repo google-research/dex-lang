@@ -6,6 +6,7 @@
 
 module JAX.ToSimp where
 
+import Control.Category ((>>>))
 import GHC.Base (NonEmpty(..))
 
 import Builder
@@ -25,12 +26,57 @@ newtype JaxSimpM (i::S) (o::S) a = JaxSimpM
            , SubstReader AtomSubstVal, Fallible
            , Builder SimpIR, ScopableBuilder SimpIR)
 
-simplifyEqn :: Emits o => JEqn i i' -> JaxSimpM i' o a -> JaxSimpM i o a
-simplifyEqn eqn cont = do
+simplifyJaxpr :: Jaxpr -> JaxSimpM VoidS o (LamExpr SimpIR o)
+simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
+  simplifyJBinders invars \invarsB -> do
+    simplifyJBinders constvars \constvarsB -> do
+      body <- buildBlock do
+        simplifyEqns eqns do
+          outs <- (map fst) <$> mapM simplifyAtom outvars
+          return $ Con $ P.ProdCon $ outs
+      return $ LamExpr (invarsB >>> constvarsB) body
+
+simplifyJBinders
+  :: Nest JBinder i i'
+  -> (forall o'. DExt o o' => Nest SBinder o o' -> JaxSimpM i' o' a)
+  -> JaxSimpM i o a
+simplifyJBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+simplifyJBinders (Nest jb jbs) cont = case jb of
+  JBindSource _ _ -> error "Unexpected source name after resolution"
+  JBind (JSourceName {suffix=suffix}) jTy b -> do
+    ty <- simplifyJTy jTy
+    withFreshBinder (getNameHint suffix) ty \b' -> do
+      extendSubst (b @> Rename (binderName b')) do
+        simplifyJBinders jbs \bs' -> cont (Nest b' bs')
+
+simplifyJTy :: JVarType -> JaxSimpM i o (SType o)
+simplifyJTy JArrayName{..} = go shape $ simplifyDType dtype where
+  go [] ty = return ty
+  go ((DimSize sz):rest) ty = do
+    rest' <- go rest ty
+    finIxTy sz ==> rest'
+
+simplifyDType :: DType -> Type r n
+simplifyDType = \case
+  F64 -> BaseTy $ P.Scalar P.Float64Type
+  F32 -> BaseTy $ P.Scalar P.Float32Type
+  I64 -> BaseTy $ P.Scalar P.Int64Type
+  I32 -> BaseTy $ P.Scalar P.Int32Type
+
+simplifyEqns :: Emits o => Nest JEqn i i' -> JaxSimpM i' o a -> JaxSimpM i o a
+simplifyEqns eqn cont = do
   s  <- getSubst
-  s' <- simplifyEqnSubst s eqn
+  s' <- simplifyEqnsSubst s eqn
   withSubst s' cont
-{-# INLINE simplifyEqn #-}
+{-# INLINE simplifyEqns #-}
+
+simplifyEqnsSubst :: Emits o
+  => Subst AtomSubstVal l o -> Nest JEqn l i'
+  -> JaxSimpM i o (Subst AtomSubstVal i' o)
+simplifyEqnsSubst !s Empty = return s
+simplifyEqnsSubst !s (Nest eqn rest) = do
+  s' <- simplifyEqnSubst s eqn
+  simplifyEqnsSubst s' rest
 
 simplifyEqnSubst :: Emits o
   => Subst AtomSubstVal l o -> JEqn l i' -> JaxSimpM i o (Subst AtomSubstVal i' o)
@@ -70,6 +116,3 @@ unary_expand_rank op arg JArrayName {..} = go arg shape where
     (DimSize sz:rest) -> buildFor noHint P.Fwd (finIxTy sz) \i -> do
       ixed <- emitExprToAtom $ TabApp (sink arg') (Var i :| [])
       go ixed rest
-
-finIxTy :: Int -> IxType r n
-finIxTy n = IxType IdxRepTy (IxDictRawFin (IdxRepVal $ fromIntegral n))

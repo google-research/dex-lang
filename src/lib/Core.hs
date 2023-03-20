@@ -451,6 +451,12 @@ a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 (==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
 
+finTabTyCore :: EnvReader m => CAtom n -> CType n -> m n (CType n)
+finTabTyCore n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
+
+finIxTy :: Int -> IxType r n
+finIxTy n = IxType IdxRepTy (IxDictRawFin (IdxRepVal $ fromIntegral n))
+
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, PiType, respectively) up to the given maxDepth, and return the
 -- discovered binders packed as the nary structure (NaryLamExpr or NaryPiType),
