@@ -13,30 +13,53 @@ import Test.Hspec
 
 import Name
 import JAX.Concrete
+import JAX.ToSimp
+import Runtime
+import TopLevel
+import Types.Imp
+import Types.Primitives hiding (Sin)
+import Types.Source hiding (SourceName)
 
 x_nm, y_nm :: JSourceName
 x_nm = JSourceName 0 0 "x"
 y_nm = JSourceName 1 0 "y"
 
+float :: JVarType
+float = (JArrayName [] F32)
+
 ten_vec :: JVarType
 ten_vec = (JArrayName [DimSize 10] F32)
 
-a_jaxpr :: Jaxpr
-a_jaxpr = Jaxpr
-  (Nest (JBindSource x_nm ten_vec) Empty)
+a_jaxpr :: JVarType -> Jaxpr VoidS
+a_jaxpr ty = Jaxpr
+  (Nest (JBindSource x_nm ty) Empty)
   Empty
   (Nest (JEqn
-    (Nest (JBindSource y_nm ten_vec) Empty)
+    (Nest (JBindSource y_nm ty) Empty)
     Sin
-    [JVariable $ JVar (SourceName x_nm) ten_vec]) Empty)
-  [JVariable $ JVar (SourceName y_nm) ten_vec]
+    [JVariable $ JVar (SourceName x_nm) ty]) Empty)
+  [JVariable $ JVar (SourceName y_nm) ty]
+
+compile :: Jaxpr VoidS -> IO LLVMCallable
+compile jaxpr = do
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize PrintCodegen
+  env <- initTopState
+  fst <$> runTopperM cfg env do
+    -- TODO Implement GenericE for jaxprs, derive SinkableE, and properly sink
+    -- the jaxpr instead of just coercing it.
+    jSimp <- liftJaxSimpM $ simplifyJaxpr (unsafeCoerceE jaxpr)
+    compileTopLevelFun (EntryFunCC CUDANotRequired) jSimp >>= packageLLVMCallable
 
 spec :: Spec
 spec = do
   describe "JaxADT" do
     it "round-trips to json" do
       -- putStrLn $ B.unpack $ encodePretty a_jaxpr
-      let first = encode a_jaxpr
-      let (Just decoded) = (decode first :: Maybe Jaxpr)
+      let first = encode $ a_jaxpr ten_vec
+      let (Just decoded) = (decode first :: Maybe (Jaxpr VoidS))
       let second = encode decoded
       second `shouldBe` first
+    it "executes" do
+      jLLVM <- compile $ a_jaxpr float
+      result <- callEntryFun jLLVM [Float32Lit 3.0]
+      result `shouldBe` [Float32Lit $ sin 3.0]

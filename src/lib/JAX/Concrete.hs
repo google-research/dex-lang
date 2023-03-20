@@ -131,16 +131,16 @@ data JEqn (n::S) (l::S) = JEqn
 --  * effects
 --  * dynamic shapes
 
-data Jaxpr where
+data Jaxpr (n::S) where
   Jaxpr ::
-    Nest JBinder 'VoidS n -- invars
-    -> Nest JBinder n l -- constvars
+    Nest JBinder n n' -- invars
+    -> Nest JBinder n' l -- constvars
     -> Nest JEqn l o -- eqns
     -> [JAtom o] -- outvars
-    -> Jaxpr
+    -> Jaxpr n
 
 data ClosedJaxpr = ClosedJaxpr
-  { jaxpr :: Jaxpr
+  { jaxpr :: Jaxpr VoidS
   , consts :: [A.Value]
   }
   deriving (Generic)
@@ -245,17 +245,17 @@ instance FromJSON DType where
   parseJSON invalid = A.prependFailure "parsing dtype failed, " $
     A.typeMismatch "dtype string" invalid
 
-instance ToJSON Jaxpr where
+instance ToJSON (Jaxpr n) where
   toJSON (Jaxpr invars constvars eqns outvars) = object
     [ "invars" .= nestToList' jBinderVar invars
     , "constvars" .= nestToList' jBinderVar constvars
     , "eqns" .= nestToList' voidify eqns
     , "outvars" .= outvars
     ] where
-    voidify :: JEqn n l -> JEqn VoidS VoidS
+    voidify :: forall n' l. JEqn n' l -> JEqn VoidS VoidS
     voidify = unsafeCoerceB
 
-instance FromJSON Jaxpr where
+instance FromJSON (Jaxpr VoidS) where
   parseJSON = \case
     (A.Object obj) -> do
       invars <- obj .: "invars"

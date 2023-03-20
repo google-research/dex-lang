@@ -26,7 +26,11 @@ newtype JaxSimpM (i::S) (o::S) a = JaxSimpM
            , SubstReader AtomSubstVal, Fallible
            , Builder SimpIR, ScopableBuilder SimpIR)
 
-simplifyJaxpr :: Jaxpr -> JaxSimpM VoidS o (LamExpr SimpIR o)
+liftJaxSimpM :: (EnvReader m) => JaxSimpM n n (e n) -> m n (e n)
+liftJaxSimpM act = liftBuilder $ runSubstReaderT idSubst $ runJaxSimpM act
+{-# INLINE liftJaxSimpM #-}
+
+simplifyJaxpr :: Jaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
 simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
   simplifyJBinders invars \invarsB -> do
     simplifyJBinders constvars \constvarsB -> do
