@@ -12,6 +12,8 @@ import Foreign.C
 
 import JAX.Concrete
 
+-- TODO newCString just mallocs the string; we have to
+-- arrange for the caller to free it.
 dexRoundtripJaxprJson :: CString -> IO CString
 dexRoundtripJaxprJson jsonPtr = do
   json <- B.pack <$> peekCString jsonPtr

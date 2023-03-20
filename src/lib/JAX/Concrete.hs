@@ -17,7 +17,7 @@ import IRVariants
 import Name
 
 data Primitive =
-    Sin | Cos | Add | Mul
+    Sin | Add
   | Scan ScanParams
   | ConvertElementType ConvertElementTypeParams
   -- others!
@@ -101,6 +101,12 @@ data JLit = JLit
 data JBinder (n::S) (l::S) where
   JBindSource :: JSourceName -> JVarType -> JBinder n n
   JBind :: JSourceName -> JVarType -> NameBinder (AtomNameC SimpIR) n l -> JBinder n l
+
+instance BindsAtMostOneName JBinder (AtomNameC SimpIR) where
+  b @> x = case b of
+    JBindSource _ _ -> error "Unexpected source binder after parsing"
+    JBind _ _ b' -> singletonSubst b' x
+  {-# INLINE (@>) #-}
 
 jBinderVar :: JBinder n l -> JVar 'VoidS
 jBinderVar = \case

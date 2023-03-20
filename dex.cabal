@@ -63,6 +63,7 @@ library
                      , Inline
                      , IRVariants
                      , JAX.Concrete
+                     , JAX.ToSimp
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA
