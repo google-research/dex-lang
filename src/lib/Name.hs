@@ -686,6 +686,10 @@ nestToNames :: (Distinct l, Ext n l, BindsOneName b c, BindsNames b)
             => Nest b n l -> [Name c l]
 nestToNames bs = nestToList (sink . binderName) bs
 
+nestToList' :: (forall n' l'. b n' l' -> a) -> Nest b n l -> [a]
+nestToList' _ Empty = []
+nestToList' f (Nest b rest) = f b : nestToList' f rest
+
 splitNestAt :: Int -> Nest b n l -> PairB (Nest b) (Nest b) n l
 splitNestAt 0 bs = PairB Empty bs
 splitNestAt _  Empty = error "split index too high"

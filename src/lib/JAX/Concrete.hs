@@ -13,6 +13,9 @@ import GHC.Generics (Generic (..))
 import Data.Aeson
 import Data.Aeson.Types qualified as A
 
+import IRVariants
+import Name
+
 data Primitive =
     Sin | Cos | Add | Mul
   | Scan ScanParams
@@ -67,15 +70,24 @@ data JVarType = JArrayName
 data JEffects = IO | Read Int | Write Int | Append Int
   deriving (Generic)
 
-data JAtom = JVariable JVar
-           | JLiteral JLit
+data JAtom (n::S) =
+    JVariable (JVar n)
+  | JLiteral JLit
            -- DropVar?
   deriving (Generic)
 
-data JVar = JVar
+data JSourceName = JSourceName
   { name :: Int
   , count :: Int
   , suffix :: String
+  }
+
+data JSourceNameOr (a::E) (n::S) where
+  SourceName :: JSourceName -> JSourceNameOr a 'VoidS
+  InternalName :: JSourceName -> a n -> JSourceNameOr a n
+
+data JVar (n::S) = JVar
+  { sourceName :: JSourceNameOr (Name (AtomNameC SimpIR)) n
   , ty :: JVarType
   }
   deriving (Generic)
@@ -86,10 +98,19 @@ data JLit = JLit
   }
   deriving (Generic)
 
-data JEqn = JEqn
-  { outvars :: [JVar]
+data JBinder (n::S) (l::S) where
+  JBindSource :: JSourceName -> JVarType -> JBinder n n
+  JBind :: JSourceName -> JVarType -> NameBinder (AtomNameC SimpIR) n l -> JBinder n l
+
+jBinderVar :: JBinder n l -> JVar 'VoidS
+jBinderVar = \case
+  JBindSource src ty -> JVar (SourceName src) ty
+  JBind src ty _ -> JVar (SourceName src) ty
+
+data JEqn (n::S) (l::S) = JEqn
+  { outvars :: Nest JBinder n l
   , primitive :: Primitive
-  , invars :: [JAtom]
+  , invars :: [JAtom n]
   }
   deriving (Generic)
 
@@ -104,13 +125,13 @@ data JEqn = JEqn
 --  * effects
 --  * dynamic shapes
 
-data Jaxpr = Jaxpr
-  { invars    :: [JVar]
-  , constvars :: [JVar]
-  , outvars   :: [JAtom]
-  , eqns      :: [JEqn]
-  }
-  deriving (Generic)
+data Jaxpr where
+  Jaxpr ::
+    Nest JBinder 'VoidS n -- invars
+    -> Nest JBinder n l -- constvars
+    -> Nest JEqn l o -- eqns
+    -> [JAtom o] -- outvars
+    -> Jaxpr
 
 data ClosedJaxpr = ClosedJaxpr
   { jaxpr :: Jaxpr
@@ -118,12 +139,35 @@ data ClosedJaxpr = ClosedJaxpr
   }
   deriving (Generic)
 
-instance ToJSON JEqn where
+instance ToJSON (JVar n) where
+  toJSON JVar {..} = object
+    [ "name" .= name
+    , "count" .= count
+    , "suffix" .= suffix
+    , "ty" .= ty
+    ] where JSourceName {..} = case sourceName of
+              SourceName nm -> nm
+              InternalName nm _ -> nm
+
+instance FromJSON (JVar VoidS) where
+  parseJSON = \case
+    (A.Object obj) -> do
+      name <- obj .: "name"
+      count <- obj .: "count"
+      suffix <- obj .: "suffix"
+      ty <- obj .: "ty"
+      return JVar { sourceName = SourceName $ JSourceName {..}
+                  , ty = ty
+                  }
+    invalid -> A.prependFailure "parsing var failed, " $
+      A.typeMismatch "Object" invalid
+
+instance ToJSON (JEqn n l) where
   toJSON JEqn {..} = object
     [ "primitive" .= name
     , "params" .= params
     , "invars" .= A.toJSON invars
-    , "outvars" .= A.toJSON outvars
+    , "outvars" .= A.toJSON (nestToList' jBinderVar outvars)
     ] where (name, params) = dumpPrimitive primitive
 
 dumpPrimitive :: Primitive -> (String, A.Value)
@@ -133,16 +177,27 @@ dumpPrimitive = \case
   Scan params -> ("scan", A.toJSON params)
   ConvertElementType params -> ("convert_element_type", A.toJSON params)
 
-instance FromJSON JEqn where
+instance FromJSON (JEqn 'VoidS 'VoidS) where
   parseJSON = \case
     (A.Object obj) -> do
       invars <- obj .: "invars"
       outvars <- obj .: "outvars"
       primName <- obj .: "primitive"
       prim <- parsePrimitive primName =<< obj .: "params"
-      return $ JEqn outvars prim invars
+      return $ JEqn (varsAsBinders outvars) prim invars
     invalid -> A.prependFailure "parsing eqn failed, " $
       A.typeMismatch "Object" invalid
+
+voidNest :: [b 'VoidS 'VoidS] -> Nest b 'VoidS 'VoidS
+voidNest = foldr Nest Empty
+
+varsAsBinders :: [JVar 'VoidS] -> Nest JBinder 'VoidS 'VoidS
+varsAsBinders = voidNest . map varAsBinder
+
+varAsBinder :: JVar 'VoidS -> JBinder 'VoidS 'VoidS
+varAsBinder JVar{..} = case sourceName of
+  SourceName srcName -> JBindSource srcName ty
+  InternalName _ _ -> error "Unexpected internal name during parsing"
 
 parsePrimitive :: String -> A.Value -> A.Parser Primitive
 parsePrimitive name params = case name of
@@ -152,11 +207,11 @@ parsePrimitive name params = case name of
   "convert_element_type" -> ConvertElementType <$> parseJSON params
   _ -> fail $ "Unknown primitive " ++ name
 
-instance ToJSON JAtom where
+instance ToJSON (JAtom n) where
   toJSON (JVariable var) = object ["var" .= var]
   toJSON (JLiteral  lit) = object ["lit" .= lit]
 
-instance FromJSON JAtom where
+instance FromJSON (JAtom VoidS) where
   parseJSON = \case
     o@(A.Object obj) -> do
       obj .:? "var" >>= \case
@@ -184,7 +239,28 @@ instance FromJSON DType where
   parseJSON invalid = A.prependFailure "parsing dtype failed, " $
     A.typeMismatch "dtype string" invalid
 
-instance ToJSON JVar
+instance ToJSON Jaxpr where
+  toJSON (Jaxpr invars constvars eqns outvars) = object
+    [ "invars" .= nestToList' jBinderVar invars
+    , "constvars" .= nestToList' jBinderVar constvars
+    , "eqns" .= nestToList' voidify eqns
+    , "outvars" .= outvars
+    ] where
+    voidify :: JEqn n l -> JEqn VoidS VoidS
+    voidify = unsafeCoerceB
+
+instance FromJSON Jaxpr where
+  parseJSON = \case
+    (A.Object obj) -> do
+      invars <- obj .: "invars"
+      constvars <- obj .: "constvars"
+      eqns <- obj .: "eqns"
+      outvars <- obj .: "outvars"
+      return $ Jaxpr (varsAsBinders invars) (varsAsBinders constvars)
+        (voidNest eqns) outvars
+    invalid -> A.prependFailure "parsing jaxpr failed, " $
+      A.typeMismatch "Object" invalid
+
 instance ToJSON JLit
 instance ToJSON JVarType
 instance ToJSON JEffects
@@ -194,11 +270,9 @@ instance ToJSON Primitive
 instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
 instance ToJSON ClosedJaxpr
-instance ToJSON Jaxpr
 instance ToJSON ScanParams
 instance ToJSON ConvertElementTypeParams
 
-instance FromJSON JVar
 instance FromJSON JLit
 instance FromJSON JVarType
 instance FromJSON JEffects
@@ -208,6 +282,5 @@ instance FromJSON Primitive
 instance FromJSON DimSizeDeBrujin
 instance FromJSON JArgType
 instance FromJSON ClosedJaxpr
-instance FromJSON Jaxpr
 instance FromJSON ScanParams
 instance FromJSON ConvertElementTypeParams
