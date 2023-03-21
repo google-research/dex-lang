@@ -13,6 +13,7 @@ import Test.Hspec
 
 import Name
 import JAX.Concrete
+import JAX.Rename
 import JAX.ToSimp
 import Runtime
 import TopLevel
@@ -47,7 +48,9 @@ compile jaxpr = do
   fst <$> runTopperM cfg env do
     -- TODO Implement GenericE for jaxprs, derive SinkableE, and properly sink
     -- the jaxpr instead of just coercing it.
-    jSimp <- liftJaxSimpM $ simplifyJaxpr (unsafeCoerceE jaxpr)
+    Distinct <- getDistinct
+    jRename <- liftRenameM $ renameJaxpr (unsafeCoerceE jaxpr)
+    jSimp <- liftJaxSimpM $ simplifyJaxpr jRename
     compileTopLevelFun (EntryFunCC CUDANotRequired) jSimp >>= packageLLVMCallable
 
 spec :: Spec

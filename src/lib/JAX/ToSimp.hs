@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module JAX.ToSimp where
+module JAX.ToSimp (liftJaxSimpM, simplifyJaxpr) where
 
 import Control.Category ((>>>))
 import GHC.Base (NonEmpty(..))
@@ -107,13 +107,13 @@ simplifyPrim :: Emits o
   => [(SAtom o, JVarType)] -> Primitive -> JaxSimpM i o [SAtom o]
 simplifyPrim args prim = case (prim, args) of
   (Sin, [(arg, ty)]) -> do
-    res <- unary_expand_rank P.Sin arg ty
+    res <- unaryExpandRank P.Sin arg ty
     return [res]
   _ -> undefined
 
-unary_expand_rank :: forall i o. Emits o
+unaryExpandRank :: forall i o. Emits o
   => P.UnOp -> SAtom o -> JVarType -> JaxSimpM i o (SAtom o)
-unary_expand_rank op arg JArrayName {..} = go arg shape where
+unaryExpandRank op arg JArrayName {..} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
     [] -> emitExprToAtom $ PrimOp (P.UnOp op arg')

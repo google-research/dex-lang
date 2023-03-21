@@ -81,6 +81,10 @@ data JSourceName = JSourceName
   , count :: Int
   , suffix :: String
   }
+  deriving (Eq, Ord, Show)
+
+instance HasNameHint JSourceName where
+  getNameHint JSourceName{suffix=suffix} = getNameHint suffix
 
 data JSourceNameOr (a::E) (n::S) where
   SourceName :: JSourceName -> JSourceNameOr a 'VoidS
