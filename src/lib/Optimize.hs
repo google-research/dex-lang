@@ -17,7 +17,6 @@ import Data.Word
 import Data.Bits
 import Data.Bits.Floating
 import Data.List
-import Data.List.NonEmpty qualified as NE
 import Control.Monad
 import Control.Monad.State.Strict
 import GHC.Float
@@ -185,7 +184,7 @@ foldCast sTy l = case sTy of
 peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of
   PrimOp op -> fmap PrimOp <$> peepholeOp op
-  TabApp (Var t) (IdxRepVal ord NE.:| []) ->
+  TabApp (Var t) [IdxRepVal ord] ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding ann _ (TabCon Nothing tabTy elems))
         | ann /= NoInlineLet && isFinTabTy tabTy->
@@ -234,7 +233,7 @@ instance GenericTraverser SimpIR UnitB ULS where
                 vals <- dropSubst $ forM (iota n) \i -> do
                   extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
                 inc $ fromIntegral n  -- To account for the TabCon we emit below
-                getNaryLamExprType body' >>= \case
+                getLamExprType body' >>= \case
                   PiType (UnaryNest (tb:>_)) _ valTy -> do
                     let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                     let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy

@@ -18,14 +18,19 @@ import Text.Megaparsec.Debug
 
 import Err
 import LabeledItems
-import Types.Source
+import Types.Primitives
 
 data ParseCtx = ParseCtx { curIndent :: Int
-                         , canBreak  :: Bool }
+                         , whitespaceConsumption  :: WhitespaceConsumption }
 type Parser = ReaderT ParseCtx (Parsec Void Text)
 
+data WhitespaceConsumption =
+    ConsumeNothing
+ |  ConsumeAllExceptLineBreaks
+ |  ConsumeAll
+
 parseit :: Text -> Parser a -> Except a
-parseit s p = case parse (runReaderT p (ParseCtx 0 False)) "" s of
+parseit s p = case parse (runReaderT p (ParseCtx 0 ConsumeAllExceptLineBreaks)) "" s of
   Left e  -> throw ParseErr $ errorBundlePretty e
   Right x -> return x
 
@@ -71,7 +76,7 @@ checkNotKeyword p = try $ do
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | DataKW | StructKW | InterfaceKW
-             | InstanceKW | GivenKW
+             | InstanceKW | GivenKW | SatisfyingKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
@@ -96,6 +101,7 @@ keyWordToken = \case
   InstanceKW      -> "instance"
   NamedInstanceKW -> "named-instance"
   GivenKW         -> "given"
+  SatisfyingKW    -> "satisfying"
   DoKW            -> "do"
   ImportKW        -> "import"
   ForeignKW       -> "foreign"
@@ -149,7 +155,7 @@ knownSymStrs :: HS.HashSet String
 knownSymStrs = HS.fromList
   [ ".", ":", "::", "!", "=", "-", "+", "||", "&&"
   , "$", "&", "&>", "|", ",", ",>", "<-", "+=", ":="
-  , "->", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
+  , "->", "->>", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
   , "..", "<..", "..<", "..<", "<..<", "?", "#", "##", "#?", "#&", "#|", "@"]
 
 -- string must be in `knownSymStrs`
@@ -214,18 +220,28 @@ outputLines :: Parser ()
 outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> ((eol >> return ()) <|> eof))
 
 space :: Parser ()
-space = do
-  consumeNewLines <- asks canBreak
-  if consumeNewLines
-    then space1
-    else void $ takeWhile1P (Just "white space") (`elem` (" \t" :: String))
+space = asks whitespaceConsumption >>= \case
+  ConsumeNothing -> fail ""
+  ConsumeAllExceptLineBreaks -> void $ takeWhile1P (Just "white space") (`elem` (" \t" :: String))
+  ConsumeAll -> space1
+
+withConsumption :: WhitespaceConsumption -> Parser a -> Parser a
+withConsumption c p = localConsumption p \_ -> c
+{-# INLINE withConsumption #-}
+
+localConsumption :: Parser a -> (WhitespaceConsumption -> WhitespaceConsumption) -> Parser a
+localConsumption p update =
+  local (\ctx -> ctx { whitespaceConsumption = update $ whitespaceConsumption ctx }) p
+{-# INLINE localConsumption #-}
 
 mayBreak :: Parser a -> Parser a
-mayBreak p = local (\ctx -> ctx { canBreak = True }) p
+mayBreak = withConsumption ConsumeAll
 {-# INLINE mayBreak #-}
 
 mayNotBreak :: Parser a -> Parser a
-mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
+mayNotBreak p = localConsumption p \case
+  ConsumeAll -> ConsumeAllExceptLineBreaks
+  c -> c
 {-# INLINE mayNotBreak #-}
 
 optionalMonoid :: Monoid a => Parser a -> Parser a

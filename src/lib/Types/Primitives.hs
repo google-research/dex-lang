@@ -20,12 +20,13 @@
 
 module Types.Primitives where
 
+import Name
 import qualified Data.ByteString       as BS
+import Control.Monad
 import Data.Int
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import GHC.Exts (inline)
@@ -34,6 +35,9 @@ import GHC.Generics (Generic (..))
 
 import Occurrence
 import IRVariants
+import Util (zipErr)
+
+type SourceName = String
 
 data PrimTC (r::IR) (e:: *) where
   BaseType         :: BaseType       -> PrimTC r e
@@ -148,22 +152,29 @@ type ForAnn = Direction
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data Arrow =
-   PlainArrow
- | ImplicitArrow
- | ClassArrow
- | LinArrow
-   deriving (Show, Eq, Ord, Generic)
+-- TODO: add optional argument
+data InferenceMechanism = Unify | Synth  deriving (Show, Eq, Ord, Generic)
+data Explicitness =
+    Explicit
+  | Inferred (Maybe SourceName) InferenceMechanism  deriving (Show, Eq, Ord, Generic)
+data AppExplicitness = ExplicitApp | ImplicitApp  deriving (Show, Generic, Eq)
 
-plainArrows :: [(Arrow, a)] -> [a]
-plainArrows = map snd . filter (\(arr, _) -> arr == PlainArrow)
+data WithExpl (b::B) (n::S) (l::S) =
+  WithExpl { getExpl :: Explicitness , withoutExpl :: b n l }
+  deriving (Show, Generic)
 
-instance Pretty Arrow where
-  pretty arr = case arr of
-    PlainArrow     -> "->"
-    LinArrow       -> "--o"
-    ImplicitArrow  -> "?->"
-    ClassArrow     -> "?=>"
+unzipExpls :: Nest (WithExpl b) n l -> ([Explicitness], Nest b n l)
+unzipExpls Empty = ([], Empty)
+unzipExpls (Nest (WithExpl expl b) rest) = (expl:expls, Nest b bs)
+  where (expls, bs) = unzipExpls rest
+
+zipExpls :: [Explicitness] -> Nest b n l -> Nest (WithExpl b) n l
+zipExpls [] Empty = Empty
+zipExpls (expl:expls) (Nest b bs) = Nest (WithExpl expl b) (zipExpls expls bs)
+zipExpls _ _ = error "zip error"
+
+addExpls :: Explicitness -> Nest b n l -> Nest (WithExpl b) n l
+addExpls expl bs = fmapNest (\b -> WithExpl expl b) bs
 
 data LetAnn =
   -- Binding with no additional information
@@ -286,7 +297,6 @@ emptyLit = \case
 
 -- === Typeclass instances ===
 
-instance Store Arrow
 instance Store LetAnn
 instance Store RWS
 instance Store Direction
@@ -297,6 +307,9 @@ instance Store BaseType
 instance Store LitVal
 instance Store ScalarBaseType
 instance Store Device
+instance Store Explicitness
+instance Store AppExplicitness
+instance Store InferenceMechanism
 
 instance Store a => Store (PrimCon r a)
 instance Store a => Store (PrimTC  r a)
@@ -318,7 +331,9 @@ instance Hashable LitVal
 instance Hashable ScalarBaseType
 instance Hashable Device
 instance Hashable LetAnn
-instance Hashable Arrow
+instance Hashable Explicitness
+instance Hashable AppExplicitness
+instance Hashable InferenceMechanism
 
 instance Hashable a => Hashable (PrimCon r a)
 instance Hashable a => Hashable (PrimTC  r a)
@@ -327,3 +342,39 @@ instance Hashable a => Hashable (MemOp     a)
 instance Hashable a => Hashable (VectorOp  a)
 instance Hashable a => Hashable (MiscOp    a)
 instance Hashable a => Hashable (RecordOp a)
+instance Store (b n l) => Store (WithExpl b n l)
+
+instance (Color c, BindsOneName b c) => BindsOneName (WithExpl b) c where
+  binderName (WithExpl _ b) = binderName b
+  asNameBinder (WithExpl _ b) = asNameBinder b
+
+instance (Color c, BindsAtMostOneName b c) => BindsAtMostOneName (WithExpl b) c where
+  WithExpl _ b @> x = b @> x
+  {-# INLINE (@>) #-}
+
+instance AlphaEqB b => AlphaEqB (WithExpl b) where
+  withAlphaEqB (WithExpl a1 b1) (WithExpl a2 b2) cont = do
+    unless (a1 == a2) zipErr
+    withAlphaEqB b1 b2 cont
+
+instance AlphaHashableB b => AlphaHashableB (WithExpl b) where
+  hashWithSaltB env salt (WithExpl expl b) = do
+    let h = hashWithSalt salt expl
+    hashWithSaltB env h b
+
+instance BindsNames b => ProvesExt  (WithExpl b) where
+instance BindsNames b => BindsNames (WithExpl b) where
+  toScopeFrag (WithExpl _ b) = toScopeFrag b
+
+instance (SinkableB b) => SinkableB (WithExpl b) where
+  sinkingProofB fresh (WithExpl a b) cont =
+    sinkingProofB fresh b \fresh' b' ->
+      cont fresh' (WithExpl a b')
+
+instance (BindsNames b, RenameB b) => RenameB (WithExpl b) where
+  renameB env (WithExpl a b) cont =
+      renameB env b \env' b' ->
+        cont env' $ WithExpl a b'
+
+instance HoistableB b => HoistableB (WithExpl b) where
+  freeVarsB (WithExpl _ b) = freeVarsB b

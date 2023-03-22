@@ -10,10 +10,10 @@
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
     ("\\w+:"                 . font-lock-comment-face)
     ("^:\\w*"                . font-lock-preprocessor-face)
-    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|\\bstruct\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|\\binstance\\b\\|\\bgiven\\b\\|\\bdo\\b\\|\\bview\\b\\|\\bimport\\b\\|\\bforeign\\b" .
+    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|\\bstruct\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|\\binstance\\b\\|\\bgiven\\b\\|\\bdo\\b\\|\\bview\\b\\|\\bimport\\b\\|\\bforeign\\b\\|\\bsatisfying\\b" .
            font-lock-keyword-face)
     ("--o"                               . font-lock-variable-name-face)
-    ("[-.,!$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)
+    ("[-.,!;$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"     . font-lock-type-face)
     ("^@[[:alnum:]]*\\b"     . font-lock-keyword-face)
     ))

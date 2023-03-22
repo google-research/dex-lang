@@ -24,7 +24,8 @@ import Name
 import Subst
 import QueryType
 import Types.Core
-import Util (onSndM, foldMapM)
+import Types.Primitives
+import Util (foldMapM)
 
 liftGenericTraverserM :: (EnvReader m, IRRep r) => s n -> GenericTraverserM r UnitB s n n a -> m n (a, s n)
 liftGenericTraverserM s m =
@@ -91,7 +92,7 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
       Nothing -> return Nothing
       Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
     TabCon d' <$> tge ty <*> mapM tge xs
-  ProjMethod d i -> ProjMethod <$> tge d <*> pure i
+  ApplyMethod d i xs -> ApplyMethod <$> tge d <*> pure i <*> mapM tge xs
   RecordOp op -> RecordOp <$> mapM tge op
   DAMOp op -> DAMOp <$> case op of
     Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
@@ -105,19 +106,8 @@ traverseAtomDefault
   GenericTraverser r f s => Atom r i -> GenericTraverserM r f s i o (Atom r o)
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
-  Lam (CoreLamExpr (UnaryLamExpr (b:>ty) body) arr (Abs bEff effs)) -> do
-    ty' <- tge ty
-    withFreshBinder (getNameHint b) ty' \b' -> do
-      effs' <- extendRenamer (bEff@>binderName b') $ substM effs
-      extendRenamer (b@>binderName b') do
-        body' <- tge body
-        return $ Lam (CoreLamExpr (UnaryLamExpr b' body') arr (Abs b' effs'))
-  Lam _ -> error "expected a unary lambda expression"
-  Pi (CorePiType (b:>ty) arr eff resultTy) -> do
-    ty' <- tge ty
-    withFreshBinder (getNameHint b) ty' \b' -> do
-      extendRenamer (b@>binderName b') $
-        Pi <$> (CorePiType b' arr <$> substM eff <*> tge resultTy)
+  Lam lamExpr -> Lam <$> tge lamExpr
+  Pi piTy -> Pi <$> tge piTy
   TabPi (TabPiType (b:>ty) resultTy) -> do
     ty' <- tge ty
     withFreshBinder (getNameHint b) ty' \b' -> do
@@ -145,6 +135,15 @@ tge = traverseGenericE
 class GenericallyTraversableE (r::IR) (e::E) | e -> r where
   traverseGenericE :: GenericTraverser r f s => e i -> GenericTraverserM r f s i o (e o)
 
+instance GenericallyTraversableE CoreIR CoreLamExpr where
+  traverseGenericE (CoreLamExpr piTy lam) = CoreLamExpr <$> tge piTy <*> tge lam
+
+instance GenericallyTraversableE CoreIR CorePiType where
+  traverseGenericE (CorePiType appExpl bs effs body) = do
+    let (expls, bs') = unzipExpls bs
+    traverseBinderNest bs' \bs'' ->
+      CorePiType appExpl (zipExpls expls bs'') <$> substM effs <*> tge body
+
 instance IRRep r => GenericallyTraversableE r (Atom r) where
   traverseGenericE = traverseAtom
 
@@ -160,9 +159,9 @@ instance GenericallyTraversableE CoreIR FieldRowElems where
       DynField  labVar ty -> DynField labVar <$> tge ty
       DynFields rowVar    -> return $ DynFields rowVar
 
-instance GenericallyTraversableE CoreIR DataDefParams where
-  traverseGenericE (DataDefParams params) =
-    DataDefParams <$> mapM (onSndM tge) params
+instance GenericallyTraversableE CoreIR TyConParams where
+  traverseGenericE (TyConParams infs params) =
+    TyConParams infs <$> mapM tge params
 
 instance IRRep r => GenericallyTraversableE r (DepPairType r) where
   traverseGenericE (DepPairType (b:>lty) rty) = do

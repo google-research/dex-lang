@@ -75,8 +75,7 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import Util ( Tree (..), measureSeconds, File (..), readFileWithHash
-            , SnocList (..), tryUnsnoc, snoc, toSnocList)
+import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
 
 -- === top-level monad ===
 
@@ -180,9 +179,9 @@ evalSourceText
   => Text -> (SourceBlock -> IO ()) -> (Result -> IO Bool)
   -> m n [(SourceBlock, Result)]
 evalSourceText source beginCallback endCallback = do
-  let (UModule mname deps sourceBlocks) = parseUModule Main source
+  let (UModule mname deps sbs) = parseUModule Main source
   mapM_ ensureModuleLoaded deps
-  evalSourceBlocks mname sourceBlocks
+  evalSourceBlocks mname sbs
   where
     evalSourceBlocks mname = \case
       [] -> return []
@@ -314,19 +313,13 @@ evalSourceBlock' mname block = case sbContents block of
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
         fType <- getType fname'
-        (nimplicit, nexplicit, linFunTy) <- getLinearizationType fname zeros fType
+        (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
             implTy <- getType impl
             throw TypeErr $ unlines
-              [ "Expected the custom linearization to have type:"
-              , ""
-              , pprint linFunTy
-              , ""
-              , "but it has type:"
-              , ""
-              , pprint implTy
-              ]
+              [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
+              , "but it has type:" , "" , pprint implTy]
           Success () -> return ()
         emitAtomRules fname' $ CustomLinearize nimplicit nexplicit zeros impl
       Just _ -> throw TypeErr
@@ -345,7 +338,7 @@ evalSourceBlock' mname block = case sbContents block of
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
     addTypeAnn e = WithSrcE Nothing . UTypeAnn e
     addShowAny :: UExpr n -> UExpr n
-    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") e
+    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") [e] []
     referTo :: SourceName -> UExpr n
     referTo = WithSrcE Nothing . UVar . SourceName
 
@@ -549,7 +542,7 @@ evalBlock typed = do
   -- In most cases it should be easiest to add new passes to simpOptimizations or
   -- loweredOptimizations, below, because those are reused in all three places.
   checkEffects Pure typed
-  synthed <- checkPass SynthPass $ synthTopBlock typed
+  synthed <- checkPass SynthPass $ synthTopE typed
   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
   SimplifiedBlock simp recon <- return simplifiedBlock
   checkEffects Pure simp
@@ -938,77 +931,33 @@ instance Generic TopStateEx where
     case fabricateDistinctEvidence :: DistinctEvidence UnsafeS of
       Distinct -> uncurry TopStateEx (to rep :: (Env UnsafeS, RuntimeEnv))
 
--- === helper for custom linearization rules ===
-
-getLinearizationType :: (Fallible1 m, EnvReader m) => SourceName -> SymbolicZeros -> CType n -> m n (Int, Int, CType n)
-getLinearizationType fname zeros fType = do
-  liftExcept . runFallibleM =<< liftEnvReaderT (go fType (toSnocList []) REmpty [] fType)
- where
-  go :: CType n -> SnocList Arrow -> RNest CBinder n l
-     -> [CType l] -> CType l
-     -> EnvReaderT FallibleM l (Int, Int, CType n)
-  go fullTy arrs implicitArgs revArgTys = \case
-    Pi (CorePiType pbinder@(binder:>a) arr eff b') -> do
-      case eff of
-        Pure -> return ()
-        _ -> throw TypeErr $
-         "Custom linearization can only be defined for pure functions" ++ but
-      let implicit = do
-            unless (null revArgTys) $ throw TypeErr $
-              "To define a custom linearization, all implicit and class " ++
-              "arguments of a function have to precede all explicit " ++
-              "arguments. However, the type of " ++ pprint fname ++
-              "is:\n\n" ++ pprint fullTy
-            refreshAbs (Abs pbinder b') \pbinder' b'' ->
-              go fullTy (snoc arrs arr) (RNest implicitArgs pbinder') [] b''
-      case arr of
-        ClassArrow -> implicit
-        ImplicitArrow -> implicit
-        PlainArrow -> do
-          b <- case hoist binder b' of
-            HoistSuccess b -> return b
-            HoistFailure _ -> throw TypeErr $
-              "Custom linearization cannot be defined for dependent " ++
-              "functions" ++ but
-          go fullTy arrs implicitArgs (a:revArgTys) b
-        LinArrow -> throw NotImplementedErr "Unexpected linear arrow"
-    resultTy -> do
-      when (null revArgTys) $ throw TypeErr $
-        "Custom linearization can only be defined for functions" ++ but
-      resultTyTan <- maybeTangentType resultTy >>= \case
+getLinearizationType :: SymbolicZeros -> CType n -> EnvReaderT Except n (Int, Int, CType n)
+getLinearizationType zeros = \case
+  Pi (CorePiType ExplicitApp bs Pure resultTy) -> do
+    (numIs, numEs) <- getNumImplicits $ fst $ unzipExpls bs
+    refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
+      PairB _ bsE <- return $ splitNestAt numIs bs'
+      let explicitArgTys = nestToList (\b -> sink $ binderType b) bsE
+      argTanTys <- forM explicitArgTys \t -> maybeTangentType t >>= \case
+        Just tty -> case zeros of
+          InstantiateZeros -> return tty
+          SymbolicZeros    -> symbolicTangentTy tty
+        Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint t
+      resultTanTy <- maybeTangentType resultTy' >>= \case
         Just rtt -> return rtt
-        Nothing  -> throw TypeErr $ unlines
-          [ "The type of the result of " ++ pprint fname ++ " is:"
-          , ""
-          , "  " ++ pprint resultTy
-          , ""
-          , "but it does not have a well-defined tangent space."
-          ]
-      let prependTangent linTail ty =
-            maybeTangentType ty >>= \case
-              Just tty -> case zeros of
-                InstantiateZeros -> tty --> linTail
-                SymbolicZeros -> do
-                  wrappedTTy <- symbolicTangentTy tty
-                  wrappedTTy --> linTail
-              Nothing  -> throw TypeErr $ unlines
-                [ "The type of one of the arguments of " ++ pprint fname ++
-                  " is:"
-                , ""
-                , "  " ++ pprint ty
-                , ""
-                , "but it doesn't have a well-defined tangent space."
-                ]
-      tanFunTy <- foldM prependTangent resultTyTan revArgTys
-      let nImplicit = nestLength $ unRNest implicitArgs
-      let nExplicit = length revArgTys
-      finalTy <- prependImplicit arrs implicitArgs <$> foldM (flip (-->)) (PairTy resultTy tanFunTy) revArgTys
-      return (nImplicit, nExplicit, finalTy)
-    where
-      but = ", but " ++ pprint fname ++ " has type " ++ pprint fullTy
-      prependImplicit :: SnocList Arrow -> RNest CBinder n l -> CType l -> CType n
-      prependImplicit arrsTop bsTop ty = case (tryUnsnoc arrsTop, bsTop) of
-        (Nothing, REmpty) -> ty
-        (Just (arrsRest, arr), RNest bs b) ->
-          prependImplicit arrsRest bs (Pi (CorePiType b arr Pure ty ))
-        _ -> error "zip error"
+        Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
+      tanFunTy <- Pi <$> nonDepPiType argTanTys Pure resultTanTy
+      let fullTy = CorePiType ExplicitApp bs' Pure (PairTy resultTy' tanFunTy)
+      return (numIs, numEs, Pi fullTy)
+  _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
+  where
+    getNumImplicits :: Fallible m => [Explicitness] -> m (Int, Int)
+    getNumImplicits = \case
+      [] -> return (0, 0)
+      expl:expls -> do
+        (ni, ne) <- getNumImplicits expls
+        case expl of
+          Inferred _ _ -> return (ni + 1, ne)
+          Explicit -> case ni of
+            0 -> return (0, ne + 1)
+            _ -> throw TypeErr "All implicit args must precede implicit args"

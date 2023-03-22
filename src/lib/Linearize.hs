@@ -177,7 +177,7 @@ tangentFunAsLambda
 tangentFunAsLambda cont = do
   ActivePrimals primalVars _ <- getActivePrimals
   tangentTys <- getTangentArgTys primalVars
-  buildNaryLamExpr tangentTys \tangentVars -> do
+  buildLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
 getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomName n] -> m n (EmptyAbs (Nest SBinder) n)

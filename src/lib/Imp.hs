@@ -46,10 +46,14 @@ import Types.Imp
 import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
+-- used for top-level entry function. This implements the wrapper function
+-- that can call internal (`StandardCC`) functions, allocating the buffers for
+-- the results and returning them using multiple-return-value Imp function.
 blockToImpFunction :: EnvReader m
   => Backend -> CallingConvention -> DestBlock SimpIR n -> m n (ImpFunction n)
 blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
 
+-- used for internal functions only
 toImpFunction
   :: EnvReader m
   => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)

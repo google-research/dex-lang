@@ -6,19 +6,7 @@
 
 {-# LANGUAGE MagicHash #-}
 
-module Util (IsBool (..), group, ungroup, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
-             scanM, composeN, mapMaybe, forMFilter, uncons, repeated, splitAtExact,
-             transitiveClosure, transitiveClosureM,
-             showErr, listDiff, splitMap, enumerate, iota, restructure,
-             onFst, onSnd, onFstM, onSndM, findReplace, swapAt, uncurry3,
-             measureSeconds, sameConstructor,
-             bindM2, foldMapM, lookupWithIdx, (...), zipWithT, for, getAlternative,
-             Zippable (..), zipWithZ_, zipErr, forMZipped, forMZipped_,
-             whenM, unsnocNonempty, anyM,
-             File (..), FileHash, FileContents, addHash, readFileWithHash,
-             SnocList (..), snoc, unsnoc, toSnocList, emptySnocList, Tree (..), zipTrees,
-             liftMaybe, tryUnsnoc) where
+module Util where
 
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
@@ -271,6 +259,12 @@ anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 anyM f xs = do
   conds <- mapM f xs
   return $ any id conds
+
+fromMaybeM :: Monad m => Maybe a -> b -> (a -> m b) -> m b
+fromMaybeM optVal defaultVal cont = case optVal of
+  Just x -> cont x
+  Nothing -> return defaultVal
+{-# INLINE fromMaybeM #-}
 
 liftMaybe :: Alternative m => Maybe a -> m a
 liftMaybe Nothing = empty

@@ -16,10 +16,7 @@ import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
 import Data.Maybe (isJust)
-import Data.Foldable (toList)
-import Data.Functor ((<&>))
 import Data.Graph (graphFromEdges, topSort)
-import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import Foreign.Ptr
 
@@ -290,7 +287,7 @@ emitTopLet hint letAnn expr = do
 
 emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> LamExpr SimpIR n -> m n (TopFunName n)
 emitTopFunBinding hint def f = do
-  ty <- getNaryLamExprType f
+  ty <- getLamExprType f
   emitBinding hint $ TopFunBinding $ DexTopFun def ty f Waiting
 
 updateTopFunStatus :: (Mut n, TopBuilder m) => TopFunName n -> EvalStatus (TopFunLowerings n) -> m n ()
@@ -664,90 +661,26 @@ makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE makeBlockFromDecls #-}
 
-buildPureLam :: (ScopableBuilder CoreIR m)
-             => NameHint -> Arrow -> CType n
-             -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
-             -> m n (CAtom n)
-buildPureLam hint arr ty body = do
-  buildLamGeneral hint arr ty (const $ return Pure) \v -> do
-    Distinct <- getDistinct
-    body v
+nullaryAtomicCoreLam :: EnvReader m => CAtom n -> m n (CoreLamExpr n)
+nullaryAtomicCoreLam = undefined
 
-buildLam
+coreLamExpr :: EnvReader m => AppExplicitness
+            -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CBlock) n
+            -> m n (CoreLamExpr n)
+coreLamExpr appExpl ab = liftEnvReaderM do
+  refreshAbs ab \bs' (PairE effs' body') -> do
+    resultTy <- getType body'
+    let bs'' = fmapNest withoutExpl bs'
+    return $ CoreLamExpr (CorePiType appExpl bs' effs' resultTy) (LamExpr bs'' body')
+
+buildCoreLam
   :: ScopableBuilder CoreIR m
-  => NameHint -> Arrow -> CType n -> EffectRow CoreIR n
-  -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
-  -> m n (CAtom n)
-buildLam hint arr ty eff body = buildLamGeneral hint arr ty (const $ sinkM eff) body
-
-buildNullaryPi
-  :: CBuilder m
-  => EffectRow CoreIR n -> (forall l. DExt n l => m l (CType l)) -> m n (CType n)
-buildNullaryPi effs cont =
-  Pi <$> buildPi noHint PlainArrow UnitTy \_ -> do
-    resultTy <- cont
-    return (sink effs, resultTy)
-
-buildLamGeneral
-  :: ScopableBuilder CoreIR m
-  => NameHint -> Arrow -> CType n
-  -> (forall l.           DExt n l  => AtomName CoreIR l -> m l (EffectRow CoreIR l))
-  -> (forall l. (Emits l, DExt n l) => AtomName CoreIR l -> m l (CAtom l))
-  -> m n (CAtom n)
-buildLamGeneral hint arr ty fEff fBody = do
-  withFreshBinder hint ty \b -> do
-    let v = binderName b
-    effs <- fEff v
-    body <- buildBlock $ fBody $ sink v
-    return $ Lam (CoreLamExpr (UnaryLamExpr b body) arr (Abs b effs))
-
--- Body must be an Atom because otherwise the nullary case would require
--- emitting decls into the enclosing scope.
-buildPureNaryLam :: ScopableBuilder CoreIR m
-                 => [Arrow] -> EmptyAbs (Nest CBinder) n
-                 -> (forall l. DExt n l => [AtomName CoreIR l] -> m l (CAtom l))
-                 -> m n (CAtom n)
-buildPureNaryLam [] (EmptyAbs Empty) cont = do
-  Distinct <- getDistinct
-  cont []
-buildPureNaryLam (arr:arrs) (EmptyAbs (Nest (b:>ty) rest)) cont = do
-  buildPureLam (getNameHint b) arr ty \x -> do
-    rest' <- applyRename (b@>x) $ EmptyAbs rest
-    buildPureNaryLam arrs rest' \xs -> do
-      x' <- sinkM x
-      cont (x':xs)
-buildPureNaryLam _ _ _ = error "impossible"
-
-buildPi :: (Fallible1 m, CBuilder m)
-        => NameHint -> Arrow -> CType n
-        -> (forall l. DExt n l => AtomName CoreIR l -> m l (EffectRow CoreIR l, CType l))
-        -> m n (CorePiType n)
-buildPi hint arr ty body =
-  withFreshBinder hint ty \(b:>_) -> do
-    (effs, resultTy) <- body $ binderName b
-    return $ CorePiType (b:>ty) arr effs resultTy
-
-buildNaryPi
-  :: CBuilder m
-  => EmptyAbs (Nest (Binder CoreIR)) n
-  -> (forall l. (Distinct l, DExt n l) => [AtomName CoreIR l] -> m l (CType l))
-  -> m n (CType n)
-buildNaryPi (Abs Empty UnitE) cont = do
-  Distinct <- getDistinct
-  cont []
-buildNaryPi (Abs (Nest (b:>ty) bs) UnitE) cont = do
-  Pi <$> buildPi (getNameHint b) PlainArrow ty \v -> do
-    bs' <- applyRename (b@>v) $ EmptyAbs bs
-    piTy <- buildNaryPi bs' \vs -> cont $ sink v : vs
-    return (Pure, piTy)
-
-buildNonDepPi :: EnvReader m => NameHint -> Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
-buildNonDepPi hint arr argTy effs resultTy = liftBuilder do
-  argTy' <- sinkM argTy
-  buildPi hint arr argTy' \_ -> do
-    resultTy' <- sinkM resultTy
-    effs'     <- sinkM effs
-    return (effs', resultTy')
+  => CorePiType n
+  -> (forall l. (Emits l, DExt n l) => [CAtomName l] -> m l (CAtom l))
+  -> m n (CoreLamExpr n)
+buildCoreLam piTy@(CorePiType _ bs _ _) cont = do
+  lam <- buildLamExpr (EmptyAbs $ fmapNest withoutExpl bs) cont
+  return $ CoreLamExpr piTy lam
 
 buildAbs
   :: (EnvReader m, EnvExtender m, SinkableE e, ToBinding binding c, Color c)
@@ -768,16 +701,6 @@ varsAsBinderNest (v:vs) = do
   Abs b (Abs bs UnitE) <- return $ abstractFreeVar v rest
   return $ EmptyAbs (Nest (b:>ty) bs)
 
-typesAsBinderNest :: (EnvReader m, IRRep r) => [Type r n] -> m n (EmptyAbs (Nest (Binder r)) n)
-typesAsBinderNest types = liftEnvReaderM $ go types
-  where
-    go :: forall r n. IRRep r => [Type r n] -> EnvReaderM n (EmptyAbs (Nest (Binder r)) n)
-    go tys = case tys of
-      [] -> return $ Abs Empty UnitE
-      ty:rest -> withFreshBinder noHint ty \b -> do
-        Abs bs UnitE <- go $ map sink rest
-        return $ Abs (Nest b bs) UnitE
-
 typesFromNonDepBinderNest
   :: (EnvReader m, Fallible1 m, IRRep r)
   => Nest (Binder r) n l -> m n [Type r n]
@@ -795,28 +718,6 @@ singletonBinderNest hint ann = do
   Abs b _ <- return $ newName hint
   return $ EmptyAbs (Nest (b:>ann) Empty)
 
-buildNaryAbs
-  :: ( ScopableBuilder r m, SinkableE e, RenameE e, SubstE AtomSubstVal e, HoistableE e
-     , BindsOneAtomName r b, BindsEnv b, RenameB b)
-  => EmptyAbs (Nest b) n
-  -> (forall l. DExt n l => [AtomName r l] -> m l (e l))
-  -> m n (Abs (Nest b) e n)
-buildNaryAbs (Abs n UnitE) body = do
-  a <- liftBuilder $ buildNaryAbsRec [] n
-  refreshAbs a \freshNest (ListE freshNames) ->
-    Abs freshNest <$> body freshNames
-{-# INLINE buildNaryAbs #-}
-
-buildNaryAbsRec
-  :: (BindsOneAtomName r b, BindsEnv b, RenameB b, IRRep r)
-  => [AtomName r n] -> Nest b n l -> BuilderM r n (Abs (Nest b) (ListE (AtomName r)) n)
-buildNaryAbsRec ns x = confuseGHCBuilder >>= \_ -> case x of
-  Empty -> return $ Abs Empty $ ListE $ reverse ns
-  Nest b bs -> do
-    refreshAbs (Abs b (EmptyAbs bs)) \b' (EmptyAbs bs') -> do
-      Abs bs'' ns'' <- buildNaryAbsRec (binderName b' : sinkList ns) bs'
-      return $ Abs (Nest b' bs'') ns''
-
 buildUnaryLamExpr
   :: (ScopableBuilder r m)
   => NameHint -> Type r n
@@ -824,7 +725,7 @@ buildUnaryLamExpr
   -> m n (LamExpr r n)
 buildUnaryLamExpr hint ty cont = do
   bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest b)
-  buildNaryLamExpr bs \[v] -> cont v
+  buildLamExpr bs \[v] -> cont v
 
 buildBinaryLamExpr
   :: (ScopableBuilder r m)
@@ -834,41 +735,36 @@ buildBinaryLamExpr
 buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
   bs <- withFreshBinder h1 t1 \b1 -> withFreshBinder h2 (sink t2) \b2 ->
     return $ EmptyAbs $ BinaryNest b1 b2
-  buildNaryLamExpr bs \[v1, v2] -> cont v1 v2
+  buildLamExpr bs \[v1, v2] -> cont v1 v2
 
-asNaryLam :: EnvReader m => PiType CoreIR n -> Atom CoreIR n -> m n (LamExpr CoreIR n)
-asNaryLam ty f = liftBuilder do
-  buildNaryLamExprFromPi ty \xs ->
-    naryApp (sink f) (map Var $ toList xs)
-
-buildNonDepNaryLamExpr
+buildNonDepLamExpr
   :: ScopableBuilder r m
   => [Type r n]
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildNonDepNaryLamExpr tys cont = do
-  bs <- typesAsBinderNest tys
-  buildNaryLamExpr bs cont
+buildNonDepLamExpr tys cont = do
+  bs <- typesAsBinderNest tys UnitE
+  buildLamExpr bs cont
 
-buildNaryLamExpr
+buildLamExpr
   :: ScopableBuilder r m
   => (EmptyAbs (Nest (Binder r)) n)
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildNaryLamExpr (Abs bs UnitE) cont = case bs of
+buildLamExpr (Abs bs UnitE) cont = case bs of
   Empty -> LamExpr Empty <$> buildBlock (cont [])
   Nest b rest -> do
     Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
       rest' <- applyRename (b@>v) $ EmptyAbs rest
-      buildNaryLamExpr rest' \vs -> cont $ sink v : vs
+      buildLamExpr rest' \vs -> cont $ sink v : vs
     return $ LamExpr (Nest b' bs') body'
 
-buildNaryLamExprFromPi
+buildLamExprFromPi
   :: ScopableBuilder r m
   => PiType r n
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomName r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildNaryLamExprFromPi (PiType bs _ _) cont = buildNaryLamExpr (EmptyAbs bs) cont
+buildLamExprFromPi (PiType bs _ _) cont = buildLamExpr (EmptyAbs bs) cont
 
 buildAlt
   :: ScopableBuilder r m
@@ -1066,9 +962,8 @@ addTangent x y = do
 symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
 symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
-    TyConBinding dataDefName _ <- lookupEnv symTanName
-    return $ TypeCon "SymbolicTangent" dataDefName $
-      DataDefParams [(PlainArrow, elTy)]
+    return $ TypeCon "SymbolicTangent" symTanName $
+      TyConParams [Explicit] [elTy]
   Nothing -> throw UnboundVarErr $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
@@ -1084,77 +979,9 @@ symbolicTangentNonZero val = do
 
 -- === builder versions of common top-level emissions ===
 
-emitDataDef :: (Mut n, TopBuilder m) => DataDef n -> m n (DataDefName n)
-emitDataDef dataDef@(DataDef sourceName _ _) =
-  emitBinding hint $ DataDefBinding dataDef mempty
-  where hint = getNameHint sourceName
-
-updateFieldDefs :: (Mut n, TopBuilder m) => DataDefName n -> SourceName -> CAtom n -> m n ()
+updateFieldDefs :: (Mut n, TopBuilder m) => TyConName n -> SourceName -> FieldDef n -> m n ()
 updateFieldDefs defName sourceName val =
   emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(defName, sourceName, val)]}
-
-emitEffectDef :: (Mut n, TopBuilder m) => EffectDef n -> m n (EffectName n)
-emitEffectDef effectDef@(EffectDef name _) =
-  emitBinding (getNameHint name) $ EffectBinding effectDef
-
-emitHandlerDef :: (Mut n, TopBuilder m) => SourceName -> HandlerDef n -> m n (HandlerName n)
-emitHandlerDef name handlerDef =
-  emitBinding (getNameHint name) $ HandlerBinding handlerDef
-
-emitEffectOpDef :: (Mut n, TopBuilder m) => EffectName n -> Int -> SourceName -> m n (Name EffectOpNameC n)
-emitEffectOpDef effName i opName = do
-  let hint = getNameHint opName
-  let opDef = EffectOpDef effName (OpIdx i)
-  emitBinding hint $ EffectOpBinding opDef
-
-emitClassDef :: (Mut n, TopBuilder m) => ClassDef n -> m n (Name ClassNameC n)
-emitClassDef classDef@(ClassDef name _ _ _ _) =
-  emitBinding (getNameHint name) $ ClassBinding classDef
-
-emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
-emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
-  emitBinding (getNameHint className) $ InstanceBinding instanceDef
-
-emitDataConName :: (Mut n, TopBuilder m) => DataDefName n -> Int -> CAtom n -> m n (Name DataConNameC n)
-emitDataConName dataDefName conIdx conAtom = do
-  DataDef _ _ dataCons <- lookupDataDef dataDefName
-  let (DataConDef name _ _ _) = dataCons !! conIdx
-  emitBinding (getNameHint name) $ DataConBinding dataDefName conIdx conAtom
-
-emitMethod
-  :: (Mut n, TopBuilder m)
-  => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
-emitMethod hint classDef explicit idx = do
-  getter <- makeMethodGetter classDef explicit idx
-  f <- Var <$> emitTopLet hint PlainLet (Atom getter)
-  emitBinding hint $ MethodBinding classDef idx f
-
-makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (CAtom n)
-makeMethodGetter className explicit methodIdx = liftBuilder do
-  className' <- sinkM className
-  ClassDef sourceName _ paramBs _ _ <- getClassDef className'
-  let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
-  buildPureNaryLam arrows (EmptyAbs $ asPiBinders paramBs) \params -> do
-    let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
-    buildPureLam noHint ClassArrow dictTy \dict ->
-      emitExpr $ ProjMethod (Var dict) methodIdx
-  where
-    asPiBinders :: Nest RolePiBinder i i' -> Nest CBinder i i'
-    asPiBinders = fmapNest \(RolePiBinder b ty _ _) -> b:>ty
-
-emitTyConName :: (Mut n, TopBuilder m) => DataDefName n -> CAtom n -> m n (Name TyConNameC n)
-emitTyConName dataDefName tyConAtom = do
-  emitBinding (getNameHint dataDefName) $ TyConBinding dataDefName tyConAtom
-
-getDataCon :: EnvReader m => Name DataConNameC n -> m n (DataDefName n, Int)
-getDataCon v = do
-  ~(DataConBinding defName idx _) <- lookupEnv v
-  return (defName, idx)
-
-getClassDef :: EnvReader m => Name ClassNameC n -> m n (ClassDef n)
-getClassDef classDefName = do
-  ~(ClassBinding classDef) <- lookupEnv classDefName
-  return classDef
 
 -- === builder versions of common local ops ===
 
@@ -1275,7 +1102,7 @@ unwrapNewtype x = ProjectElt UnwrapNewtype x
 {-# INLINE unwrapNewtype #-}
 
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
-app x i = Var <$> emit (App x (i:|[]))
+app x i = Var <$> emit (App x [i])
 
 naryApp :: (CBuilder m, Emits n) => CAtom n -> [CAtom n] -> m n (CAtom n)
 naryApp = naryAppHinted noHint
@@ -1296,12 +1123,10 @@ naryTopAppInlined f xs = do
 
 naryAppHinted :: (CBuilder m, Emits n)
   => NameHint -> CAtom n -> [CAtom n] -> m n (CAtom n)
-naryAppHinted hint f xs = case nonEmpty xs of
-  Nothing -> return f
-  Just xs' -> Var <$> emitHinted hint (App f xs')
+naryAppHinted hint f xs = Var <$> emitHinted hint (App f xs)
 
 tabApp :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-tabApp x i = Var <$> emit (TabApp x (i:|[]))
+tabApp x i = Var <$> emit (TabApp x [i])
 
 naryTabApp :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryTabApp = naryTabAppHinted noHint
@@ -1309,9 +1134,7 @@ naryTabApp = naryTabAppHinted noHint
 
 naryTabAppHinted :: (Builder r m, Emits n)
   => NameHint -> Atom r n -> [Atom r n] -> m n (Atom r n)
-naryTabAppHinted hint f xs = case nonEmpty xs of
-  Nothing -> return f
-  Just xs' -> Var <$> emitHinted hint (TabApp f xs')
+naryTabAppHinted hint f xs = Var <$> emitHinted hint (TabApp f xs)
 
 indexRef :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 indexRef ref i = emitExpr $ RefOp ref $ IndexRef i
@@ -1356,33 +1179,12 @@ ordinal (IxType _ dict) idx = applyIxMethod dict Ordinal [idx]
 indexSetSize :: (SBuilder m, Emits n) => IxType SimpIR n -> m n (SAtom n)
 indexSetSize (IxType _ dict) = applyIxMethod dict Size []
 
--- This works with `Nat` instead of `IndexRepTy` because it's used alongside
--- user-defined instances.
-projectIxFinMethod :: EnvReader m => IxMethod -> CAtom n -> m n (CAtom n)
-projectIxFinMethod method n = liftBuilder do
-  case method of
-    Size -> return n  -- result : Nat
-    Ordinal -> buildPureLam noHint PlainArrow (NewtypeTyCon $ Fin n) \ix ->
-      return $ unwrapNewtype (Var ix) -- result : Nat
-    UnsafeFromOrdinal -> buildPureLam noHint PlainArrow NatTy \ix ->
-      return $ NewtypeCon (FinCon $ sink n) (Var ix)
-
 -- === core versions of index set type class ===
 
-applyIxMethodCore :: (CBuilder m, Emits n) => IxDict CoreIR n -> IxMethod -> [CAtom n] -> m n (CAtom n)
-applyIxMethodCore (IxDictAtom dict) method args = do
-  methodImpl <- emitExpr $ ProjMethod dict $ fromEnum method
-  naryApp methodImpl args
-applyIxMethodCore _ _ _ = error "not implemented"
-
-unsafeFromOrdinalCore :: (CBuilder m, Emits n) => IxType CoreIR n -> CAtom n -> m n (CAtom n)
-unsafeFromOrdinalCore (IxType _ dict) i = applyIxMethodCore dict UnsafeFromOrdinal [i]
-
-ordinalCore :: (CBuilder m, Emits n) => IxType CoreIR n -> CAtom n -> m n (CAtom n)
-ordinalCore (IxType _ dict) idx = applyIxMethodCore dict Ordinal [idx]
-
-indexSetSizeCore :: (CBuilder m, Emits n) => IxType CoreIR n -> m n (CAtom n)
-indexSetSizeCore (IxType _ dict) = applyIxMethodCore dict Size []
+applyIxMethodCore :: (CBuilder m, Emits n) => IxMethod -> IxType CoreIR n -> [CAtom n] -> m n (CAtom n)
+applyIxMethodCore method (IxType _ (IxDictAtom dict)) args = do
+  emitExpr $ ApplyMethod dict (fromEnum method) args
+applyIxMethodCore _ _ _ = error "not an ix type"
 
 -- === pseudo-prelude ===
 

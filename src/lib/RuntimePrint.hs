@@ -107,14 +107,14 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
     LabeledRowCon _  -> notAType
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (DataDefParams [(PlainArrow, Word8Ty)]) -> do
+    UserADTType "List" _ (TyConParams [Explicit] [Word8Ty]) -> do
       charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
     UserADTType _ defName params -> do
-      def <- lookupDataDef defName
-      cons <- instantiateDataDef def params
+      def <- lookupTyCon defName
+      cons <- instantiateTyConDef def params
       case cons of
         [con] -> showDataCon con $ unwrapNewtype atom
         _ -> void $ buildCase atom UnitTy \i arg -> do
@@ -199,11 +199,10 @@ withBuffer cont = do
       body <- buildBlock do
         cont $ sink $ Var $ binderName b
         return UnitVal
-      let eff1 = Abs h Pure
-      let eff2 = Abs b eff
-      return $ Lam (CoreLamExpr
-         (UnaryLamExpr h (AtomicBlock (Lam (CoreLamExpr (UnaryLamExpr b body) PlainArrow eff2))))
-         ImplicitArrow eff1)
+      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
+      let piTy = CorePiType ExplicitApp piBinders eff UnitTy
+      let lam = LamExpr (BinaryNest h b) body
+      return $ Lam $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
@@ -216,7 +215,7 @@ extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
   RefTy h _ <- getType buf
   TabTy (_:>ixTy) _ <- getType tab
-  n <- indexSetSizeCore ixTy
+  n <- applyIxMethodCore Size ixTy []
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
@@ -245,17 +244,16 @@ applyPreludeFunction name args = do
   naryApp f args
 
 strType :: EnvReader m => m n (CType n)
-strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]
+strType = constructPreludeType "List" $ TyConParams [Explicit] [CharRepTy]
 
 finTabTy :: EnvReader m => CAtom n -> CType n -> m n (CType n)
 finTabTy n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
 
-constructPreludeType :: EnvReader m => String -> DataDefParams n -> m n (CType n)
+constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of
-      UTyConVar v -> lookupEnv v >>= \case
-        TyConBinding def _ -> return $ TypeCon sourceName def params
+      UTyConVar v -> return $ TypeCon sourceName v params
       _ -> notfound
     Nothing -> notfound
  where notfound = error $ "Type constructor not defined: " ++ sourceName
@@ -269,6 +267,6 @@ forEachTabElt tab cont = do
   TabTy (_:>ixTy) _ <- getType tab
   void $ buildFor "i" Fwd ixTy \i -> do
     x <- tabApp (sink tab) (Var i)
-    i' <- ordinalCore (sink ixTy) (Var i)
+    i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]
     cont i' x
     return $ UnitVal

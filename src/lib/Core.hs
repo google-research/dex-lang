@@ -221,8 +221,12 @@ instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
 
+instance BindsEnv b => BindsEnv (WithExpl b) where
+  toEnvFrag (WithExpl _ b) = toEnvFrag b
+  {-# INLINE toEnvFrag #-}
+
 instance BindsEnv RolePiBinder where
-  toEnvFrag (RolePiBinder b ty _ _) = toEnvFrag (b:>ty)
+  toEnvFrag (RolePiBinder _ b) = toEnvFrag b
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv (RecSubstFrag Binding) where
@@ -317,17 +321,27 @@ lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (FunObjCode, Linktime
 lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding obj m -> return (obj, m)
 {-# INLINE lookupFunObjCode #-}
 
-lookupDataDef :: EnvReader m => DataDefName n -> m n (DataDef n)
-lookupDataDef name = lookupEnv name >>= \case DataDefBinding x _ -> return x
-{-# INLINE lookupDataDef #-}
+lookupTyCon :: EnvReader m => TyConName n -> m n (TyConDef n)
+lookupTyCon name = lookupEnv name >>= \case TyConBinding x _ -> return x
+{-# INLINE lookupTyCon #-}
+
+lookupDataCon :: EnvReader m => Name DataConNameC n -> m n (TyConName n, Int)
+lookupDataCon v = do
+  ~(DataConBinding defName idx) <- lookupEnv v
+  return (defName, idx)
+{-# INLINE lookupDataCon #-}
 
 lookupClassDef :: EnvReader m => ClassName n -> m n (ClassDef n)
 lookupClassDef name = lookupEnv name >>= \case ClassBinding x -> return x
 {-# INLINE lookupClassDef #-}
 
 lookupInstanceDef :: EnvReader m => InstanceName n -> m n (InstanceDef n)
-lookupInstanceDef name = lookupEnv name >>= \case InstanceBinding x -> return x
+lookupInstanceDef name = lookupEnv name >>= \case InstanceBinding x _ -> return x
 {-# INLINE lookupInstanceDef #-}
+
+lookupInstanceTy :: EnvReader m => InstanceName n -> m n (CorePiType n)
+lookupInstanceTy name = lookupEnv name >>= \case InstanceBinding _ ty -> return ty
+{-# INLINE lookupInstanceTy #-}
 
 lookupEffectDef :: EnvReader m => EffectName n -> m n (EffectDef n)
 lookupEffectDef name = lookupEnv name >>= \case EffectBinding x -> return x
@@ -398,55 +412,30 @@ getInstanceDicts name = do
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
 
-nonDepPiType :: ScopeReader m
-             => Arrow -> CType n -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
-nonDepPiType arr argTy eff resultTy =
-  toConstAbs (PairE eff resultTy) >>= \case
-    Abs b (PairE eff' resultTy') ->
-      return $ CorePiType (b:>argTy) arr eff' resultTy'
+nonDepPiType :: EnvReader m
+             => [CType n] -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
+nonDepPiType argTys eff resultTy = do
+  Abs bs (PairE eff' resultTy') <- typesAsBinderNest argTys (PairE eff resultTy)
+  let bs' = fmapNest (WithExpl Explicit) bs
+  return $ CorePiType ExplicitApp bs' eff' resultTy'
+
+typesAsBinderNest
+  :: forall m r n e. (EnvReader m, IRRep r, SinkableE e)
+  => [Type r n] -> e n -> m n (Abs (Nest (Binder r)) e n)
+typesAsBinderNest types body =
+  getDistinct >>= \Distinct -> liftEnvReaderM $ go types
+  where
+    go :: forall l.  DExt n l => [Type r l] -> EnvReaderM l (Abs (Nest (Binder r)) e l)
+    go = \case
+      [] -> Abs Empty <$> sinkM body
+      ty:rest -> withFreshBinder noHint ty \b -> do
+        Abs bs body' <- go $ map sink rest
+        return $ Abs (Nest b bs) body'
 
 nonDepTabPiType :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (TabPiType r n)
 nonDepTabPiType argTy resultTy =
   toConstAbs resultTy >>= \case
     Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
-
-considerNonDepPiType :: CorePiType n -> Maybe (Arrow, CType n, EffectRow CoreIR n, CType n)
-considerNonDepPiType (CorePiType (b:>argTy) arr eff resultTy) = do
-  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
-  return (arr, argTy, eff', resultTy')
-
-fromNonDepPiType :: (IRRep r, ScopeReader m, MonadFail1 m)
-                 => Arrow -> Type r n -> m n (Type r n, EffectRow r n, Type r n)
-fromNonDepPiType arr ty = do
-  Pi (CorePiType (b:>argTy) arr' eff resultTy) <- return ty
-  unless (arr == arr') $ fail "arrow type mismatch"
-  HoistSuccess (PairE eff' resultTy') <- return $ hoist b (PairE eff resultTy)
-  return $ (argTy, eff', resultTy')
-
-fromNonDepTabType :: (IRRep r, ScopeReader m, MonadFail1 m) => Type r n -> m n (IxType r n, Type r n)
-fromNonDepTabType ty = do
-  TabPi (TabPiType (b :> ixTy) resultTy) <- return ty
-  HoistSuccess resultTy' <- return $ hoist b resultTy
-  return (ixTy, resultTy')
-
-nonDepDataConTys :: DataConDef n -> Maybe [CType n]
-nonDepDataConTys (DataConDef _ _ repTy idxs) =
-  case repTy of
-    ProdTy tys | length idxs == length tys -> Just tys
-    _ -> Nothing
-
-infixr 1 ?-->
-infixr 1 -->
-infixr 1 --@
-
-(?-->) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a ?--> b = Pi <$> nonDepPiType ImplicitArrow a Pure b
-
-(-->) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a --> b = Pi <$> nonDepPiType PlainArrow a Pure b
-
-(--@) :: ScopeReader m => CType n -> CType n -> m n (CType n)
-a --@ b = Pi <$> nonDepPiType LinArrow a Pure b
 
 (==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
@@ -475,43 +464,6 @@ liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
 destBlockEffects :: IRRep r => DestBlock r n -> EffectRow r n
 destBlockEffects (DestBlock destb block) =
   ignoreHoistFailure $ hoist destb $ blockEffects block
-
-lamExprToAtom :: LamExpr CoreIR n -> Arrow -> Maybe (EffAbs n) -> Atom CoreIR n
-lamExprToAtom lam@(UnaryLamExpr b block) arr maybeEffAbs =
-  Lam (CoreLamExpr lam arr effAbs)
-  where effAbs = case maybeEffAbs of
-          Just e -> e
-          Nothing -> Abs b $ blockEffects block
-lamExprToAtom _ _ _ = error "not a unary lambda expression"
-
-naryLamExprToAtom :: LamExpr CoreIR n -> [Arrow] -> CAtom n
-naryLamExprToAtom lam@(LamExpr (Nest b bs) body) (arr:arrs) = case bs of
-  Empty -> lamExprToAtom lam arr Nothing
-  _ -> do
-    let rest = naryLamExprToAtom (LamExpr bs body) arrs
-    Lam (CoreLamExpr (UnaryLamExpr b (AtomicBlock rest)) arr (Abs b Pure))
-naryLamExprToAtom _ _ = error "unexpected nullary lambda expression"
-
--- first argument is the number of args expected
-fromNaryLamExact :: Int -> Atom r n -> Maybe (LamExpr r n)
-fromNaryLamExact exactDepth _ | exactDepth <= 0 = error "expected positive number of args"
-fromNaryLamExact exactDepth lam = do
-  (realDepth, naryLam) <- fromNaryLam exactDepth lam
-  guard $ realDepth == exactDepth
-  return naryLam
-
-fromNaryLam :: Int -> Atom r n -> Maybe (Int, LamExpr r n)
-fromNaryLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
-fromNaryLam maxDepth = \case
-  Lam (CoreLamExpr (LamExpr (Nest b Empty) body) _ (Abs _ effs)) ->
-    extend <|> (Just (1, LamExpr (Nest b Empty) body))
-    where
-      extend = case (effs, body) of
-        (Pure, AtomicBlock lam) | maxDepth > 1 -> do
-          (d, LamExpr bs body2) <- fromNaryLam (maxDepth - 1) lam
-          return $ (d + 1, LamExpr (Nest b bs) body2)
-        _ -> Nothing
-  _ -> Nothing
 
 type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
 
@@ -548,17 +500,6 @@ fromNaryForExpr maxDepth = \case
         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
         return (d + 1, LamExpr (Nest b bs) body2)
   _ -> Nothing
-
--- first argument is the number of args expected
-fromNaryPiType :: Int -> Type r n -> Maybe (PiType r n)
-fromNaryPiType n _ | n <= 0 = error "expected positive number of args"
-fromNaryPiType 1 ty = case ty of
-  Pi (CorePiType b _ effs resultTy) -> Just $ PiType (Nest b Empty) effs resultTy
-  _ -> Nothing
-fromNaryPiType n (Pi (CorePiType b1 _ Pure piTy)) = do
-  PiType (Nest b2 bs) effs resultTy <- fromNaryPiType (n-1) piTy
-  Just $ PiType (Nest b1 (Nest b2 bs)) effs resultTy
-fromNaryPiType _ _ = Nothing
 
 mkConsListTy :: [Type r n] -> Type r n
 mkConsListTy = foldr PairTy UnitTy

@@ -17,7 +17,6 @@ import Foreign.C.String
 import Foreign.Ptr
 
 import Builder
-import CheckType (asFirstOrderFunction)
 import Core
 import Err
 import IRVariants
@@ -40,17 +39,17 @@ exportFunctions = error "Not implemented"
 prepareFunctionForExport
   :: (Mut n, Topper m) => CallingConvention -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
 prepareFunctionForExport cc f = do
-  (arrs, naryPi) <- getType f >>= asFirstOrderFunction >>= \case
-    Nothing  -> throw TypeErr "Only first-order functions can be exported"
-    Just npi -> return npi
+  naryPi <- getType f >>= \case
+    Pi piTy -> return piTy
+    _ -> throw TypeErr "Only first-order functions can be exported"
   closedNaryPi <- case hoistToTop naryPi of
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess npi -> return npi
-  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig arrs closedNaryPi of
+  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
     Success sig -> return sig
     Failure err -> throwErrs err
-  f' <- asNaryLam naryPi f
+  CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
   fSimp <- simplifyTopFunction f'
   fOpt <- simpOptimizations fSimp
   fLower <- lowerFullySequential fOpt
@@ -60,35 +59,33 @@ prepareFunctionForExport cc f = do
 
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => [Arrow] -> PiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig arrs (PiType tbs effs resultTy) = do
+                      => CorePiType n -> m n (ExportedSignature n)
+    naryPiToExportSig (CorePiType _ tbs effs resultTy) = do
         case effs of
           Pure -> return ()
           _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] arrs tbs resultTy
+        goArgs Empty [] tbs resultTy
       where
         goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [CAtomName l'] -> [Arrow] -> Nest (Binder CoreIR) l' l
+               => Nest ExportArg n l' -> [CAtomName l'] -> Nest (WithExpl CBinder) l' l
                -> CType l -> m l' (ExportedSignature n)
-        goArgs argSig argVs argArrs piBs piRes = case (argArrs, piBs) of
-          ([], Empty) -> goResult piRes \resSig ->
+        goArgs argSig argVs piBs piRes = case piBs of
+          Empty -> goResult piRes \resSig ->
             return $ ExportedSignature argSig resSig $ case cc of
               StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
               XLACC      -> []
               _ -> error $ "calling convention not supported: " ++ show cc
-          (arrow:arrows, Nest b bs) -> do
+          Nest (WithExpl expl b) bs -> do
             refreshAbs (Abs b (Abs bs piRes)) \(v:>ty) (Abs bs' piRes') -> do
-              let invalidArrow = throw TypeErr
+              let invalidExplicitness = throw TypeErr
                                    "Exported functions can only have regular and implicit arrow types"
-              vis <- case arrow of
-                PlainArrow    -> return ExplicitArg
-                ImplicitArrow -> return ImplicitArg
-                ClassArrow    -> invalidArrow
-                LinArrow      -> invalidArrow
+              vis <- case expl of
+                Explicit       -> return ExplicitArg
+                Inferred _ Unify -> return ImplicitArg
+                Inferred _ Synth -> invalidExplicitness
               ety <- toExportType ty
               goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
-                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) arrows bs' piRes'
-          _ -> error "zip error"
+                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
 
         goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
                  => CType l
@@ -129,7 +126,6 @@ prepareFunctionForExport cc f = do
               HoistSuccess a' -> go (shape ++ [dim]) a'
               HoistFailure _  -> Nothing
           _ -> Nothing
-
 {-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}
 

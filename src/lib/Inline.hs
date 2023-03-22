@@ -248,7 +248,7 @@ preInlineUnconditionally = \case
 -- instead of emitting the binding.
 data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
-  TabAppCtx :: NE.NonEmpty (SAtom i) -> Subst InlineSubstVal i o
+  TabAppCtx :: [SAtom i] -> Subst InlineSubstVal i o
             -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
   EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
@@ -334,11 +334,11 @@ reconstruct ctx e = case ctx of
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
-  => Context SExpr e o -> SExpr o -> NE.NonEmpty (SAtom i) -> InlineM i o (e o)
+  => Context SExpr e o -> SExpr o -> [SAtom i] -> InlineM i o (e o)
 reconstructTabApp ctx expr ixs =
-  case fromNaryForExpr (NE.length ixs) expr of
+  case fromNaryForExpr (length ixs) expr of
     Just (bsCount, LamExpr bs (Block _ decls result)) -> do
-      let (ixsPref, ixsRest) = NE.splitAt bsCount ixs
+      let (ixsPref, ixsRest) = splitAt bsCount ixs
       -- Note: There's a decision here.  Is it ok to inline the atoms in
       -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
       -- carry them in `DoneEx`, or suspend them in `SuspEx`?  (If not, we can
@@ -378,9 +378,7 @@ reconstructTabApp ctx expr ixs =
         -- emitting a rename, _which will inhibit downstream inlining_ because a
         -- rename is not indexable.
         inlineDecls decls do
-          let ctx' = case NE.nonEmpty ixsRest of
-                Just rest' -> TabAppCtx rest' s ctx
-                Nothing -> ctx
+          let ctx' = TabAppCtx ixsRest s ctx
           inlineAtom ctx' result
     Nothing -> do
       array' <- emitExprToAtom expr
@@ -389,12 +387,6 @@ reconstructTabApp ctx expr ixs =
 
 -- === The generic instances ===
 
-instance Inlinable (Name DataDefNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name ClassNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name InstanceNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
 instance Inlinable (Name PtrNameC) where
   inline ctx n = substM n >>= reconstruct ctx
 instance Inlinable (Name EffectNameC) where

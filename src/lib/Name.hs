@@ -294,6 +294,16 @@ data RNest (binder::B) (n::S) (l::S) where
   RNest  :: RNest binder n h -> binder h l -> RNest binder n l
   REmpty ::                                   RNest binder n n
 
+prependAbs :: Abs b (Abs (Nest b) e) n -> Abs (Nest b) e n
+prependAbs (Abs b (Abs bs e)) = Abs (Nest b bs) e
+
+concatAbs :: Abs (Nest b) (Abs (Nest b) e) n -> Abs (Nest b) e n
+concatAbs (Abs b1 (Abs b2 e)) = Abs (b1 >>> b2) e
+
+uncurryAbs :: (forall l. b n l -> e l -> a) -> Abs b e n -> a
+uncurryAbs f (Abs b e) = f b e
+{-# INLINE uncurryAbs #-}
+
 unRNest :: RNest b n l -> Nest b n l
 unRNest rn = unRNestOnto Empty rn
 {-# INLINE unRNest #-}
@@ -565,7 +575,7 @@ instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
 -- -- === various convenience utilities ===
 
 infixr 7 @>
-class BindsAtMostOneName (b::B) (c::C) | b -> c where
+class BindsNames b => BindsAtMostOneName (b::B) (c::C) | b -> c where
   (@>) :: b i i' -> v c o -> SubstFrag v i i' o
 
 class BindsAtMostOneName (b::B) (c::C)
@@ -622,6 +632,11 @@ fmapNest :: (forall ii ii'. b ii ii' -> b' ii ii')
 fmapNest _ Empty = Empty
 fmapNest f (Nest b rest) = Nest (f b) $ fmapNest f rest
 
+forNest :: Nest b  i i'
+        -> (forall ii ii'. b ii ii' -> b' ii ii')
+        -> Nest b' i i'
+forNest n f = fmapNest f n
+
 zipWithNest :: Nest b  n l -> [a]
             -> (forall n1 n2. b n1 n2 -> a -> b' n1 n2)
             -> Nest b' n l
@@ -674,7 +689,7 @@ nestLength Empty = 0
 nestLength (Nest _ rest) = 1 + nestLength rest
 
 nestToList :: BindsNames b
-           => (forall n' l'. (Ext n' l', Ext l' l) => b n' l' -> a)
+           => (forall n' l'. (Ext n' l', Ext l' l, Ext n' l) => b n' l' -> a)
            -> Nest b n l -> [a]
 nestToList _ Empty = []
 nestToList f (Nest b rest) = b' : nestToList f rest
@@ -1360,13 +1375,17 @@ getOutMapInplaceT = UnsafeMakeInplaceT \env decls ->
 -- === in-place scope updating monad -- mutable stuff ===
 
 extendInplaceTLocal
-  :: (ExtOutMap b d, Monad m)
+  :: (ExtOutMap b d, OutFrag d, Monad m)
   => (b n -> b n)
   -> InplaceT b d m n a
   -> InplaceT b d m n a
 extendInplaceTLocal f cont =
-  UnsafeMakeInplaceT \env decls ->
-    unsafeRunInplaceT cont (f env) decls
+  UnsafeMakeInplaceT \env decls -> do
+    (ans, newDecls, _) <- unsafeRunInplaceT cont (f env) emptyOutFrag
+    withFabricatedDistinct @UnsafeS $
+      return ( ans
+             , catOutFrags decls $ unsafeCoerceB newDecls
+             , extendOutMap env $ unsafeCoerceB newDecls)
 {-# INLINE extendInplaceTLocal #-}
 
 extendInplaceT
@@ -1684,7 +1703,6 @@ class Color (c::C) where
   getColorRep :: C
 
 instance IRRep r => Color (AtomNameC r) where getColorRep = AtomNameC $ getIRRep @r
-instance Color DataDefNameC    where getColorRep = DataDefNameC
 instance Color TyConNameC      where getColorRep = TyConNameC
 instance Color DataConNameC    where getColorRep = DataConNameC
 instance Color ClassNameC      where getColorRep = ClassNameC
@@ -1707,7 +1725,6 @@ interpretColor :: C -> (forall c. Color c => ColorProxy c -> a) -> a
 interpretColor c cont = case c of
   AtomNameC CoreIR -> cont $ ColorProxy @(AtomNameC CoreIR)
   AtomNameC SimpIR -> cont $ ColorProxy @(AtomNameC SimpIR)
-  DataDefNameC    -> cont $ ColorProxy @DataDefNameC
   TyConNameC      -> cont $ ColorProxy @TyConNameC
   DataConNameC    -> cont $ ColorProxy @DataConNameC
   ClassNameC      -> cont $ ColorProxy @ClassNameC
@@ -2355,7 +2372,6 @@ data S = (:=>:) S S
 -- Name "color" ("type", "kind", etc. already taken)
 data C =
     AtomNameC !IR
-  | DataDefNameC
   | TyConNameC
   | DataConNameC
   | ClassNameC
@@ -2738,6 +2754,24 @@ exchangeBs (PairB b1 b2) =
   where
     UnsafeMakeScopeFrag frag = toScopeFrag b1
     fvs2 = freeVarsB b2
+
+partitionBinders
+  :: forall b b1 b2 m n l
+  . (SinkableB b2, HoistableB b1, BindsNames b2, Fallible m, Distinct l) => Nest b n l
+  -> (forall n' l'. b n' l' -> m (EitherB b1 b2 n' l'))
+  -> m (PairB (Nest b1) (Nest b2) n l)
+partitionBinders bs assignBinder = go bs where
+  go :: Distinct l' => Nest b n' l' -> m (PairB (Nest b1) (Nest b2) n' l')
+  go = \case
+    Empty -> return $ PairB Empty Empty
+    Nest b rest -> do
+      PairB bs1 bs2 <- go rest
+      assignBinder b >>= \case
+        LeftB  b1 -> return $ PairB (Nest b1 bs1) bs2
+        RightB b2 -> withSubscopeDistinct bs2
+          case exchangeBs (PairB b2 bs1) of
+            HoistSuccess (PairB bs1' b2') -> return $ PairB bs1' (Nest b2' bs2)
+            HoistFailure vs -> throw EscapedNameErr $ (pprint vs)
 
 -- NameBinder has no free vars, so there's no risk associated with hoisting.
 -- The scope is completely distinct, so their exchange doesn't create any accidental

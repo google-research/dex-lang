@@ -14,7 +14,7 @@ import Test.Hspec
 import ConcreteSyntax (parseUModule)
 import AbstractSyntax (parseBlock)
 import Err
-import Inference (inferTopUExpr, synthTopBlock)
+import Inference (inferTopUExpr, synthTopE)
 import Name
 import OccAnalysis
 import Occurrence
@@ -43,7 +43,7 @@ uExprToBlock :: (Topper m, Mut n) => UExpr 'VoidS -> m n (SBlock n)
 uExprToBlock expr = do
   renamed <- renameSourceNamesUExpr expr
   typed <- inferTopUExpr renamed
-  synthed <- synthTopBlock typed
+  synthed <- synthTopE typed
   (SimplifiedBlock block (CoerceRecon _)) <- simplifyTopBlock synthed
   return block
 

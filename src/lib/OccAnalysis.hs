@@ -9,7 +9,6 @@ module OccAnalysis (analyzeOccurrences) where
 import Control.Monad.State.Strict
 import Data.Functor
 import Data.List (foldl')
-import Data.List.NonEmpty qualified as NE
 import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
@@ -218,11 +217,7 @@ class HasOCC (e::E) where
 instance HasOCC (AtomName SimpIR) where
   occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo One a)) $> n
   {-# INLINE occ #-}
-instance HasOCC (Name HandlerNameC ) where occ _ n = return n
-instance HasOCC (Name DataDefNameC ) where occ _ n = return n
 instance HasOCC (Name EffectNameC  ) where occ _ n = return n
-instance HasOCC (Name InstanceNameC) where occ _ n = return n
-instance HasOCC (Name ClassNameC   ) where occ _ n = return n
 instance HasOCC (Name TopFunNameC  ) where occ _ n = return n
 instance HasOCC (Name SpecializedDictNameC) where occ _ n = return n
 
@@ -311,10 +306,10 @@ instance HasOCC (DeclBinding SimpIR) where
 
 instance HasOCC SExpr where
   occ a expr = case expr of
-    (TabApp array (NE.toList -> ixs)) -> do
+    (TabApp array ixs) -> do
       (a', ixs') <- go a ixs
       array' <- occ a' array
-      return $ TabApp array' $ NE.fromList ixs'
+      return $ TabApp array' ixs'
     (Case scrut alts ty effs) -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut

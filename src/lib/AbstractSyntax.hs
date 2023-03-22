@@ -47,9 +47,10 @@
 
 module AbstractSyntax (parseExpr, parseDecl, parseBlock, parseTopDeclRepl) where
 
-import Control.Monad (forM, when, liftM2)
+import Control.Category ((>>>))
+import Control.Monad (forM, when)
 import Data.Functor
-import Data.Maybe
+import Data.Either
 import Data.Set qualified as S
 import Data.String (fromString)
 import Data.Text (Text)
@@ -58,9 +59,9 @@ import ConcreteSyntax
 import Err
 import Name
 import PPrint ()
-import IRVariants
 import Types.Primitives
 import Types.Source
+import Util
 
 -- === Converting concrete syntax to abstract syntax ===
 
@@ -87,7 +88,7 @@ parseTopDeclRepl s = case sbContents b of
 
 checkSourceBlockParses :: SourceBlock' -> SyntaxM ()
 checkSourceBlockParses = \case
-  TopDecl (WithSrc _ (CSDecl ann (ExprDecl e)))-> do
+  TopDecl (WithSrc _ (CSDecl ann (CExpr e)))-> do
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
     void $ expr e
   TopDecl d -> void $ topDecl d
@@ -103,150 +104,129 @@ type SyntaxM = FallibleM
 
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
-  topDecl' (CSDecl ann d) = decl ann d
-  topDecl' (CData name args constructors) = do
-    binders <- toNest . concat <$> mapM dataArg args
-    constructors' <- mapM dataCon constructors
+  topDecl' (CSDecl ann d) = decl ann (WithSrc Nothing d)
+  topDecl' (CData name tyConParams constructors) = do
+    tyConParams' <- aExplicitParams tyConParams
+    constructors' <- forM constructors \(v, ps) -> do
+      ps' <- toNest <$> mapM tyOptBinder ps
+      return (v, ps')
     return $ UDataDefDecl
-      (UDataDef name binders $
+      (UDataDef name tyConParams' $
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
-  topDecl' (CStruct name args fields) = do
-    binders <- toNest . concat <$> mapM dataArg args
-    fields' <- mapM fieldCon fields
-    return $ UStructDecl (UStructDef name binders fields') (fromString name)
-  topDecl' (CInterface supers self methods) = do
-    supers' <- mapM expr supers
-    (name, params) <- tyCon self
-    (methodNames, methodTys) <- unzip <$> forM methods \(nms, ty) -> do
-      (nm:nms') <- mapM (identifier "interface method name or argument") $ nary Juxtapose nms
+  topDecl' (CStruct name params fields) = do
+    params' <- aExplicitParams params
+    fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
+    return $ UStructDecl (UStructDef name params' fields') (fromString name)
+  topDecl' (CInterface name params methods) = do
+    params' <- aExplicitParams params
+    (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
       ty' <- expr ty
-      return (fromString nm, UMethodType (Left nms') ty')
-    let methodNames' = toNest methodNames
-    return $ UInterface params supers' methodTys
-      (fromString name) methodNames'
-  topDecl' (CEffectDecl name methods) = do
-    let (methodNames, methodPolicies, methodTys) = unzip3 methods
-    methodTys' <- mapM expr methodTys
-    return $ UEffectDecl (zipWith UEffectOpType methodPolicies methodTys')
-      (fromString name) (toNest $ map fromString methodNames)
-  topDecl' (CHandlerDecl hName effName bodyTyArg args ty methods) = do
-    let bodyTyArg' = fromString bodyTyArg
-    args' <- concat <$> (mapM argument $ nary Juxtapose args)
-    (effs, returnTy) <- optEffects $ effectsToTop ty
-    methods' <- mapM effectOpDef methods
-    return $ UHandlerDecl (fromString effName) bodyTyArg' (toNest args')
-      effs returnTy methods' (fromString hName)
+      return (fromString methodName, ty')
+    return $ UInterface params' methodTys (fromString name) (toNest methodNames)
+  topDecl' (CEffectDecl _ _) = error "not implemented"
+  topDecl' (CHandlerDecl _ _ _ _ _ _) = error "not implemented"
 
-dataArg :: Group -> SyntaxM [(UAnnBinderArrow (AtomNameC CoreIR)) 'VoidS 'VoidS]
-dataArg = \case
-  g@(WithSrc _ (CBracket Square _)) -> map classUAnnBinder <$> multiIfaceBinder g
-  arg -> do
-    binder <- optAnnotatedBinder $ (binOptR Colon) arg
-    return $ [plainUAnnBinder binder]
-
--- This corresponds to tyConDef in the original parser.
--- tyCon differs from dataCon in how they treat a binding without an
--- annotation.  tyCon interprets it as a name that is implicitly of
--- type TypeKind, and dataCon interprets it as a type that isn't bound
--- to a name.
-tyCon :: NameAndArgs -> SyntaxM (UConDef VoidS VoidS)
-tyCon = generalCon $ binOptR Colon
-
--- This corresponds to dataConDef in the original parser.
-dataCon :: NameAndArgs -> SyntaxM (UConDef VoidS VoidS)
-dataCon = generalCon $ binOptL Colon
-
-fieldCon :: NameAndType -> SyntaxM (SourceName, UType VoidS)
-fieldCon (name, ty) = (name,) <$> expr ty
-
--- generalCon is the common part of tyCon and dataCon.
-generalCon :: (Group -> (Maybe Group, Maybe Group))
-           -> NameAndArgs
-           -> SyntaxM (UConDef VoidS VoidS)
-generalCon binOpt (name, args) = do
-  args' <- mapM (optAnnotatedBinder . binOpt) args
-  return $ (name, toNest args')
-
--- The arguments are the left- and right-hand sides of a binder
--- annotation.  Each is, in different contexts, optional.  If the
--- binder is missing, assume UIgnore; if the anntation is missing,
--- assume TypeKind.
-optAnnotatedBinder :: (Maybe Group, Maybe Group)
-                   -> SyntaxM (UAnnBinder (AtomNameC CoreIR) VoidS VoidS)
-optAnnotatedBinder (lhs, rhs) = do
-  lhs' <- mapM (identifier "type-annotated binder") lhs
-  rhs' <- mapM expr rhs
-  return $ UAnnBinder (maybe UIgnore fromString lhs')
-    $ fromMaybe tyKind rhs'
-  where tyKind = ns $ UPrim (UPrimTC TypeKind) []
-
-multiIfaceBinder :: Group -> SyntaxM [UAnnBinder (AtomNameC CoreIR) VoidS VoidS]
-multiIfaceBinder = dropSrc \case
-  (CBracket Square g) -> do tys <- mapM expr $ nary Comma g
-                            return $ map (UAnnBinder UIgnore) tys
-  g@(CBin (WithSrc _ Juxtapose) _ _) -> concat <$> mapM multiIfaceBinder (nary Juxtapose $ WithSrc Nothing g)
-  _ -> fail "Invalid class constraint list; expecting one or more bracketed groups"
-
-effectOpDef :: (SourceName, Maybe UResumePolicy, CSBlock) -> SyntaxM (UEffectOpDef VoidS)
-effectOpDef (v, Nothing, rhs) =
-  case v of
-    "return" -> UReturnOpDef <$> block rhs
-    _ -> error "impossible"
-effectOpDef (v, Just rp, rhs) = UEffectOpDef rp (fromString v) <$> block rhs
+uExprAsDecl :: UExpr VoidS -> UDecl VoidS VoidS
+uExprAsDecl e = ULet PlainLet (nsB UPatIgnore) Nothing e
 
 decl :: LetAnn -> CSDecl -> SyntaxM (UDecl VoidS VoidS)
-decl ann = dropSrc decl' where
-  decl' (CLet binder body) = ULet ann <$> patOptAnn binder <*> block body
-  decl' (CBind _ _) = throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
-  decl' (CDef name params maybeTy body) = do
-    params' <- concat <$> (mapM argument $ nary Juxtapose params)
-    case maybeTy of
-      Just ty -> do
-        (effs, returnTy) <- optEffects $ effectsToTop ty
-        when (null params' && effs /= UPure) $ throw SyntaxErr "Nullary def can't have effects"
-        let funTy = buildPiType params' effs returnTy
-        let lamBinders = params' <&> \(UPatAnnArrow (UPatAnn p _) arr) -> (UPatAnnArrow (UPatAnn p Nothing) arr)
-        body' <- block body
-        return $ ULet ann (UPatAnn (fromString name) (Just funTy)) $ buildLam lamBinders body'
-      Nothing -> do
-        body' <- block body
-        return $ ULet ann (UPatAnn (fromString name) Nothing) $ buildLam params' body'
-  decl' (CInstance header givens methods instName) = do
-    givens' <- concat <$> (mapM argument $ nary Juxtapose givens)
-    let msg = "As of October 2022, instance declarations use `given` for the binders and superclasses\n" ++
-          "For example, `instance Add (a & b) given {a b} [Add a, Add b]`"
-    clName' <- addContext msg $
-      identifier "class name in instance declaration" clName
-    args' <- mapM expr args
-    methods' <- mapM method methods
-    let instName' = case instName of
-          Nothing  -> NothingB
-          (Just n) -> JustB $ fromString n
-    return $ UInstance (fromString clName') (toNest givens') args' methods' instName'
-    where
-      (clName:args) = nary Juxtapose header
-  decl' (CExpr g) = ULet ann (UPatAnn (nsB UPatIgnore) Nothing) <$> expr g
+decl ann = dropSrc \case
+  CLet binder body -> do
+    (p, ty) <- patOptAnn binder
+    ULet ann p ty <$> block body
+  CBind _ _ -> throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
+  CDefDecl def -> do
+    (name, lam) <- aDef def
+    return $ ULet ann (fromString name) Nothing (ns $ ULam lam)
+  CExpr g -> uExprAsDecl <$> expr g
+  CInstanceDecl def -> aInstanceDef def
+  CPass -> return UPass
 
--- Binder pattern with an optional type annotation
-patOptAnn :: Group -> SyntaxM (UPatAnn VoidS VoidS)
-patOptAnn (Binary Colon lhs typeAnn) = UPatAnn <$> pat lhs <*> (Just <$> expr typeAnn)
-patOptAnn (WithSrc _ (CParens (ExprBlock g))) = patOptAnn g
-patOptAnn g = flip UPatAnn Nothing <$> pat g
+aInstanceDef :: CInstanceDef -> SyntaxM (UDecl VoidS VoidS)
+aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParams) = do
+  let clName' = fromString clName
+  args' <- mapM expr args
+  givens' <- toNest <$> fromMaybeM givens [] aGivens
+  methods' <- mapM aMethod methods
+  case instNameAndParams of
+    Nothing -> return $ UInstance clName' givens' args' methods' NothingB ImplicitApp
+    Just (instName, optParams) -> do
+      let instName' = JustB $ fromString instName
+      case optParams of
+        Just params -> do
+          params' <- aExplicitParams params
+          return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
+        Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
+
+aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
+aDef (CDef name defParams resultTy givens body) = do
+  (expl, explicitParams, effs) <- case defParams of
+    ExplicitCDef params effs -> do
+      params' <- aExplicitParams params
+      effs'   <- mapM aEffects effs
+      return (ExplicitApp, params', effs')
+    ImplicitCDef -> return (ImplicitApp, Empty, Nothing)
+  resultTy' <- mapM expr resultTy
+  implicitParams <- toNest <$> fromMaybeM givens [] aGivens
+  let params = implicitParams >>> explicitParams
+  body' <- block body
+  return (name, ULamExpr params expl effs resultTy' body')
+
+aExplicitParams :: ExplicitParams -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
+aExplicitParams gs = generalBinders DataParam Explicit gs
+
+aGivens :: GivenClause -> SyntaxM [WithExpl UOptAnnBinder VoidS VoidS]
+aGivens (implicits, optConstraints) = do
+  implicits' <- mapM (generalBinder DataParam (Inferred Nothing Unify)) implicits
+  constraints <- fromMaybeM optConstraints [] \gs -> do
+    mapM (generalBinder TypeParam (Inferred Nothing Synth)) gs
+  return $ implicits' <> constraints
+
+generalBinders
+  :: ParamStyle -> Explicitness -> [Group]
+  -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
+generalBinders paramStyle expl params = toNest . concat <$>
+  forM params \case
+    WithSrc _ (CGivens gs) -> aGivens gs
+    p -> (:[]) <$> generalBinder paramStyle expl p
+
+generalBinder :: ParamStyle -> Explicitness -> Group
+              -> SyntaxM (WithExpl UOptAnnBinder VoidS VoidS)
+generalBinder paramStyle expl g = case expl of
+  Inferred _ Synth -> WithExpl expl <$> tyOptBinder g
+  Inferred _ Unify -> do
+    b <- binderOptTy g
+    expl' <- return case b of
+      UAnnBinder (UBindSource s) _ _ -> Inferred (Just s) Unify
+      _ -> expl
+    return $ WithExpl expl' b
+  Explicit -> WithExpl expl <$> case paramStyle of
+    TypeParam -> tyOptBinder g
+    DataParam -> binderOptTy g
+
+  -- Binder pattern with an optional type annotation
+patOptAnn :: Group -> SyntaxM (UPat VoidS VoidS, Maybe (UType VoidS))
+patOptAnn (Binary Colon lhs typeAnn) = (,) <$> pat lhs <*> (Just <$> expr typeAnn)
+patOptAnn (WithSrc _ (CParens [g])) = patOptAnn g
+patOptAnn g = (,Nothing) <$> pat g
+
+uBinder :: Group -> SyntaxM (UBinder c VoidS VoidS)
+uBinder (WithSrc src b) = addSrcContext src $ case b of
+  CHole -> return UIgnore
+  CIdentifier name -> return $ fromString name
+  _ -> throw SyntaxErr "Binder must be an identifier or `_`"
 
 -- Type annotation with an optional binder pattern
-tyOptPat :: Group -> SyntaxM (UPatAnn VoidS VoidS)
+tyOptPat :: Group -> SyntaxM (UOptAnnBinder VoidS VoidS)
 tyOptPat = \case
   -- Named type
-  (Binary Colon lhs typeAnn) -> UPatAnn <$> pat lhs <*> (Just <$> expr typeAnn)
-  -- Pattern in grouping parens.
-  -- An anonymous tuple type (foo & bar) will group as parens around a
-  -- Binary Ampersand, which will fall through to the anonymous case
-  -- as desired.
-  (WithSrc _ (CParens (ExprBlock g))) -> tyOptPat g
+  Binary Colon lhs typeAnn -> UAnnBinder <$> uBinder lhs <*> (UAnn <$> expr typeAnn) <*> pure []
+  -- Binder in grouping parens.
+  WithSrc _ (CParens [g]) -> tyOptPat g
   -- Anonymous type
-  g -> UPatAnn (nsB $ UPatBinder UIgnore) . Just <$> expr g
+  g -> UAnnBinder UIgnore <$> (UAnn <$> expr g) <*> pure []
 
 -- Pattern of a case binder.  This treats bare names specially, in
 -- that they become (nullary) constructors to match rather than names
@@ -258,43 +238,33 @@ casePat = \case
 
 pat :: Group -> SyntaxM (UPat VoidS VoidS)
 pat = propagateSrcB pat' where
-  pat' (CBin (WithSrc _ Comma) lhs rhs) = do
-    lhs' <- pat lhs
-    rhs' <- pat rhs
-    return $ UPatPair $ PairB lhs' rhs'
   pat' (CBin (WithSrc _ DepComma) lhs rhs) = do
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatDepPair $ PairB lhs' rhs'
-  pat' (CBracket Curly g) = case g of
-    (WithSrc _ CEmpty) -> return $ UPatRecord UEmptyRowPat
-    _ -> UPatRecord <$> (fieldRowPatList CSEqual $ nary Comma g)
-  pat' (CBracket Square g) = UPatTable . toNest <$> (mapM pat $ nary Comma g)
-  -- A single name in parens is also interpreted as a nullary
-  -- constructor to match
-  pat' (CParens (ExprBlock g)) = dropSrcB <$> casePat g
-  pat' CEmpty = return $ UPatUnit UnitB
+  pat' (CBraces   gs) = UPatRecord <$> fieldRowPatList CSEqual gs
+  pat' (CBrackets gs) = UPatTable . toNest <$> (mapM pat gs)
+  -- TODO: use Python-style trailing comma (like `(x,y,)`) for singleton tuples
+  pat' (CParens [g]) = dropSrcB <$> casePat g
+  pat' (CParens gs) = UPatProd . toNest <$> mapM pat gs
   pat' CHole = return $ UPatBinder UIgnore
   pat' (CIdentifier name) = return $ UPatBinder $ fromString name
-  pat' (CBin (WithSrc _ Juxtapose) lhs rhs) = do
-    -- Juxtapose associates to the left, so this is how we get the
-    -- first sub-group in the tree.
-    -- TODO: This makes all juxtaposed patterns mean "constructor name
-    -- followed by patterns for arguments".  This is sensible inside
-    -- parens, but it's possible for the concrete syntax to produce
-    -- juxtaposed patterns outside parens as well, for example `def
-    -- foo (a b:Int)`.  Do we want to treat those differently?
-    let (name:args) = nary Juxtapose $ Binary Juxtapose lhs rhs
-    name' <- identifier "pattern constructor name" name
-    args' <- toNest <$> mapM pat args
-    return $ UPatCon (fromString name') args'
+  pat' (CBin (WithSrc _ JuxtaposeWithSpace) lhs rhs) = do
+    name <- identifier "pattern constructor name" lhs
+    arg <- pat rhs
+    return $ UPatCon (fromString name) (UnaryNest arg)
+  pat' (CBin (WithSrc _ JuxtaposeNoSpace) lhs rhs) = do
+    name <- identifier "pattern constructor name" lhs
+    case rhs of
+      WithSrc _ (CParens gs) -> UPatCon (fromString name) . toNest <$> mapM pat gs
+      _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
   pat' _ = throw SyntaxErr "Illegal pattern"
 
 fieldRowPatList :: Bin' -> [Group] -> SyntaxM (UFieldRowPat VoidS VoidS)
 fieldRowPatList bind groups = go groups UEmptyRowPat where
   go [] rest = return rest
   go (g:gs) rest = case g of
-    (Binary binder lhs rhs) | binder == bind -> do
+    Binary binder lhs rhs | binder == bind -> do
       header <- case lhs of
         (Prefix "@..." field) -> UDynFieldsPat . fromString <$>
           identifier "record pattern dynamic remainder name" field
@@ -303,96 +273,107 @@ fieldRowPatList bind groups = go groups UEmptyRowPat where
         field -> UStaticFieldPat <$> identifier "record pattern field" field
       rhs' <- pat rhs
       header rhs' <$> go gs rest
-    (Prefix "..." field) -> case gs of
+    Prefix "..." field -> case gs of
       [] -> case field of
         (WithSrc _ CEmpty) -> return $ URemFieldsPat UIgnore
         (WithSrc _ CHole) -> return $ URemFieldsPat UIgnore
         name -> URemFieldsPat . fromString
           <$> identifier "record pattern remainder name" name
       _ -> throw SyntaxErr "Ellipsis-pattern must be last"
-    (WithSrc _ (CParens (ExprBlock g'))) -> go (g':gs) rest
+    WithSrc _ (CParens [g']) -> go (g':gs) rest
     field@(WithSrc src _) -> do
       field' <- identifier "record pattern field pun" field
       UStaticFieldPat (fromString field') (WithSrcB src $ fromString field') <$> go gs rest
 
--- The single argument case supports one annotated binder per set of
--- brackets.  The list version supports a list of binders, which are
--- either anonymous, in the case of class constraints (square brackets)
--- or not type annoated, in the other cases.
--- TODO: Why not just allow name / type annotations in the list
--- versions as well?
-argument :: Group -> SyntaxM [UPatAnnArrow VoidS VoidS]
-argument (Bracketed Curly g) = case g of
-  (Binary Colon name typ) -> singleArgument ImplicitArrow name typ
-  _ -> do
-    pats <- mapM pat $ nary Juxtapose g
-    return $ map (\x -> UPatAnnArrow (UPatAnn x Nothing) ImplicitArrow) pats
-argument (Bracketed Square g) = case g of
-  (Binary Colon name typ) -> singleArgument ClassArrow name typ
-  _ -> do
-    tys <- mapM expr $ nary Comma g
-    return $ map (\ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow) tys
-argument (WithSrc _ (CParens (ExprBlock g))) = explicitArgument g
-argument g = explicitArgument g
+data ParamStyle
+ = TypeParam  -- binder optional, used in pi types
+ | DataParam  -- type optional  , used in lambda
 
-singleArgument :: Arrow -> Group -> Group -> SyntaxM [UPatAnnArrow VoidS VoidS]
-singleArgument arr name typ = do
-  name' <- pat name
-  typ' <- expr typ
-  return $ [UPatAnnArrow (UPatAnn name' (Just typ')) arr]
+tyOptBinder :: Group -> SyntaxM (UAnnBinder req VoidS VoidS)
+tyOptBinder = \case
+  Binary Pipe  _ _     -> throw SyntaxErr "Unexpected constraint"
+  Binary Colon name ty -> do
+    b <- uBinder name
+    ann <- UAnn <$> expr ty
+    return $ UAnnBinder b ann []
+  g -> do
+    ty <- expr g
+    return $ UAnnBinder UIgnore (UAnn ty) []
 
-explicitArgument :: Group -> SyntaxM [UPatAnnArrow VoidS VoidS]
-explicitArgument g = case g of
-  (Binary Colon name typ) -> singleArgument PlainArrow name typ
-  _ -> do
-    x <- pat g
-    return $ [UPatAnnArrow (UPatAnn x Nothing) PlainArrow]
+binderOptTy :: Group -> SyntaxM (UOptAnnBinder VoidS VoidS)
+binderOptTy g = do
+  (g', constraints) <- trailingConstraints g
+  case g' of
+    Binary Colon name ty -> do
+      b <- uBinder name
+      ann <- UAnn <$> expr ty
+      return $ UAnnBinder b ann constraints
+    _ -> do
+      b <- uBinder g'
+      return $ UAnnBinder b UNoAnn constraints
+
+trailingConstraints :: Group -> SyntaxM (Group, [UConstraint VoidS])
+trailingConstraints gTop = go [] gTop where
+  go :: [UConstraint VoidS] -> Group -> SyntaxM (Group, [UConstraint VoidS])
+  go cs = \case
+    Binary Pipe lhs c -> do
+      c' <- expr c
+      go (c':cs) lhs
+    g -> return (g, cs)
+
+argList :: [Group] -> SyntaxM ([UExpr VoidS], [UNamedArg VoidS])
+argList gs = partitionEithers <$> mapM singleArg gs
+
+singleArg :: Group -> SyntaxM (Either (UExpr VoidS) (UNamedArg VoidS))
+singleArg = \case
+  WithSrc src (CBin (WithSrc _ CSEqual) lhs rhs) -> addSrcContext src $ Right <$>
+    ((,) <$> identifier "named argument" lhs <*> expr rhs)
+  g -> Left <$> expr g
 
 identifier :: String -> Group -> SyntaxM SourceName
 identifier ctx = dropSrc identifier' where
   identifier' (CIdentifier name) = return name
   identifier' _ = throw SyntaxErr $ "Expected " ++ ctx ++ " to be an identifier"
 
-optEffects :: Group -> SyntaxM (UEffectRow VoidS, UExpr VoidS)
-optEffects g = case g of
-  (Binary Juxtapose (Bracketed Curly effs) ty) ->
-    (,) <$> effects effs <*> expr ty
-  _ -> (UPure,) <$> expr g
-
-effects :: Group -> SyntaxM (UEffectRow VoidS)
-effects g = do
-  rhs' <- mapM (identifier "effect row remainder variable") rhs
-  lhs' <- mapM effect $ nary Comma lhs
-  return $ UEffectRow (S.fromList lhs') $ fmap fromString rhs'
-  where
-    (lhs, rhs) = case g of
-      (Binary Pipe l r) -> (l, Just r)
-      l -> (l, Nothing)
+aEffects :: ([Group], Maybe Group) -> SyntaxM (UEffectRow VoidS)
+aEffects (effs, optEffTail) = do
+  lhs <- mapM effect effs
+  rhs <- forM optEffTail \effTail ->
+    fromString <$> identifier "effect row remainder variable" effTail
+  return $ UEffectRow (S.fromList lhs) rhs
 
 effect :: Group -> SyntaxM (UEffect VoidS)
-effect (WithSrc _ (CParens (ExprBlock g))) = effect g
-effect (Binary Juxtapose (Identifier "Read") (Identifier h)) =
+effect (WithSrc _ (CParens [g])) = effect g
+effect (Binary JuxtaposeWithSpace (Identifier "Read") (Identifier h)) =
   return $ URWSEffect Reader $ fromString h
-effect (Binary Juxtapose (Identifier "Accum") (Identifier h)) =
+effect (Binary JuxtaposeWithSpace (Identifier "Accum") (Identifier h)) =
   return $ URWSEffect Writer $ fromString h
-effect (Binary Juxtapose (Identifier "State") (Identifier h)) =
+effect (Binary JuxtaposeWithSpace (Identifier "State") (Identifier h)) =
   return $ URWSEffect State $ fromString h
 effect (Identifier "Except") = return UExceptionEffect
 effect (Identifier "IO") = return UIOEffect
 effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
-method :: (SourceName, CSBlock) -> SyntaxM (UMethodDef VoidS)
-method (name, body) = UMethodDef (fromString name) <$> block body
+aMethod :: CSDecl -> SyntaxM (UMethodDef VoidS)
+aMethod (WithSrc src d) = addSrcContext src case d of
+  CDefDecl def -> do
+    (name, lam) <- aDef def
+    return $ UMethodDef (fromString name) lam
+  CLet (WithSrc _ (CIdentifier name)) rhs -> do
+    rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
+    return $ UMethodDef (fromString name) rhs'
+  _ -> throw SyntaxErr "Unexpected method definition. Expected `def` or `x = ...`."
 
 block :: CSBlock -> SyntaxM (UExpr VoidS)
 block (CSBlock []) = throw SyntaxErr "Block must end in expression"
-block (CSBlock [ExprDecl g]) = expr g
-block (CSBlock ((WithSrc pos (CBind binder rhs)):ds)) = do
-  binder' <- patOptAnn binder
+block (ExprBlock g) = expr g
+block (CSBlock ((WithSrc pos (CBind b rhs)):ds)) = do
+  WithExpl _ b' <- generalBinder DataParam Explicit b
   rhs' <- block rhs
   body <- block $ CSBlock ds
-  return $ WithSrcE pos $ UApp rhs' $ ns $ ULam $ ULamExpr PlainArrow binder' body
+  let lam = ULam $ ULamExpr (UnaryNest (WithExpl Explicit b')) ExplicitApp Nothing Nothing body
+  return $ WithSrcE pos $ extendAppRight rhs' (ns lam)
 block (CSBlock (d@(WithSrc pos _):ds)) = do
   d' <- decl PlainLet d
   e' <- block $ CSBlock ds
@@ -408,87 +389,103 @@ expr = propagateSrcE expr' where
   expr' (CPrim prim xs)     = UPrim prim <$> mapM expr xs
   expr' (CNat word)         = return $ UNatLit word
   expr' (CInt int)          = return $ UIntLit int
-  expr' (CString str)       = return $ UApp (fromString "to_list")
-    $ ns $ UTabCon $ map (ns . charExpr) str
+  expr' (CString str)       = return $ explicitApp (fromString "to_list")
+    [ns $ UTabCon $ map (ns . charExpr) str]
   expr' (CChar char)        = return $ charExpr char
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
   expr' (CLabel prefix str) = return $ labelExpr prefix str
-  expr' (CParens (ExprBlock (WithSrc _ CEmpty))) = return unitExpr
-  expr' (CParens blk)       = dropSrcE <$> block blk
+  expr' (CParens [g])       = dropSrcE <$> expr g
+  expr' (CParens gs) = UPrim UTuple <$> mapM expr gs
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
-  expr' (CBracket Square g) = UTabCon <$> (mapM expr $ nary Comma g)
-  expr' (CBracket Curly  g) = labeledExprs g
+  expr' (CBrackets gs) = UTabCon <$> mapM expr gs
+  expr' (CBraces _) = throw SyntaxErr $ "Unexpected effects"
+  expr' (CGivens _) = throw SyntaxErr $ "Unexpected `given` clause"
+  expr' (CArrow lhs effs rhs) = do
+    case lhs of
+      WithSrc _ (CParens gs) -> do
+        bs <- generalBinders TypeParam Explicit gs
+        effs' <- fromMaybeM effs UPure aEffects
+        resultTy <- expr rhs
+        return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
+      _ -> throw SyntaxErr "Argument types should be in parentheses"
+  expr' (CDo b) = dropSrcE <$> block b
+  -- Binders (e.g., in pi types) should not hit this case
   expr' (CBin (WithSrc opSrc op) lhs rhs) =
     case op of
-      Juxtapose     -> apply mkApp
-      Dollar        -> apply mkApp
-      IndexingDot   -> apply mkTabApp
-      FieldAccessDot -> do
+      JuxtaposeNoSpace -> do
+        f <- expr lhs
+        case rhs of
+          WithSrc _ (CParens args) -> do
+            (posArgs, namedArgs) <- argList args
+            return $ UApp f posArgs namedArgs
+          WithSrc _ (CBrackets args) -> do
+            args' <- mapM expr args
+            return $ UTabApp f args'
+          _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
+      JuxtaposeWithSpace -> extendAppRight <$> expr lhs <*> expr rhs
+      Dollar             -> extendAppRight <$> expr lhs <*> expr rhs
+      Pipe               -> extendAppLeft  <$> expr lhs <*> expr rhs
+      Dot -> do
         lhs' <- expr lhs
         WithSrc src rhs' <- return rhs
         addSrcContext src $ case rhs' of
           CIdentifier name -> return $ UFieldAccess lhs' (WithSrc src name)
           _ -> throw SyntaxErr "Field must be a name"
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
-      (EvalBinOp s) -> evalOp s
-      Ampersand     -> evalOp "(&)"
+      EvalBinOp s -> evalOp s
       DepAmpersand  -> do
         lhs' <- tyOptPat lhs
         UDepPairTy . (UDepPairType lhs') <$> expr rhs
-      Comma         -> evalOp "(,)"
       DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
-      Pipe          -> evalOp "(|)"
       CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
-      Question      -> throw SyntaxErr "Question mark separates labeled row elements, is not a standalone operator"
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
+      ImplicitArrow -> case lhs of
+        WithSrc _ (CParens gs) -> do
+          bs <- generalBinders TypeParam Explicit gs
+          resultTy <- expr rhs
+          return $ UPi $ UPiExpr bs ImplicitApp UPure resultTy
+        _ -> throw SyntaxErr "Argument types should be in parentheses"
       FatArrow      -> do
         lhs' <- tyOptPat lhs
         UTabPi . (UTabPiExpr lhs') <$> expr rhs
-      Arrow arr     -> do
-        lhs' <- tyOptPat lhs
-        (effs, ty) <- optEffects $ effectsToTop rhs
-        return $ UPi $ UPiExpr arr lhs' effs ty
     where
       evalOp s = do
-        app1 <- mkApp (WithSrcE opSrc (fromString s)) <$> expr lhs
-        UApp app1 <$> expr rhs
-      apply kind = do
+        let f = WithSrcE opSrc (fromString s)
         lhs' <- expr lhs
-        dropSrcE . (kind lhs') <$> expr rhs
+        rhs' <- expr rhs
+        return $ explicitApp f [lhs', rhs']
   expr' (CPrefix name g) =
     case name of
       ".." -> range "RangeTo" <$> expr g
       "..<" -> range "RangeToExc" <$> expr g
-      "+" -> dropSrcE <$> expr g <&> \case
+      "+" -> (dropSrcE <$> expr g) <&> \case
         UNatLit   i -> UIntLit   (fromIntegral i)
         UIntLit   i -> UIntLit   i
         UFloatLit i -> UFloatLit i
         e -> e
-      "-" -> dropSrcE <$> expr g <&> \case
-        UNatLit   i -> UIntLit   (-(fromIntegral i))
-        UIntLit   i -> UIntLit   (-i)
-        UFloatLit i -> UFloatLit (-i)
-        -- TODO propagate source info form `expr g` to the nested
-        -- expression `e`, instead of writing `ns e`.
-        e -> dropSrcE $ mkApp (ns "neg") $ ns e
+      "-" -> expr g <&> \case
+        WithSrcE _ (UNatLit   i) -> UIntLit   (-(fromIntegral i))
+        WithSrcE _ (UIntLit   i) -> UIntLit   (-i)
+        WithSrcE _ (UFloatLit i) -> UFloatLit (-i)
+        e -> unaryApp "neg" e
       _ -> throw SyntaxErr $ "Prefix (" ++ name ++ ") not legal as a bare expression"
     where
-      range :: SourceName -> UExpr VoidS -> UExpr' VoidS
-      range rangeName lim =
-        UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
+      range :: UExpr VoidS -> UExpr VoidS -> UExpr' VoidS
+      range rangeName lim = explicitApp rangeName [ns UHole, lim]
   expr' (CPostfix name g) =
     case name of
       ".." -> range "RangeFrom" <$> expr g
       "<.." -> range "RangeFromExc" <$> expr g
       _ -> throw SyntaxErr $ "Postfix (" ++ name ++ ") not legal as a bare expression"
     where
-      range :: SourceName -> UExpr VoidS -> UExpr' VoidS
-      range rangeName lim =
-        UApp (mkApp (ns $ fromString rangeName) (ns UHole)) lim
-  expr' (CLambda args body) =
-    dropSrcE <$> liftM2 buildLam (concat <$> mapM argument args) (block body)
+      range :: UExpr VoidS -> UExpr VoidS -> UExpr' VoidS
+      range rangeName lim = explicitApp rangeName [ns UHole, lim]
+  expr' (CLambda params body) = do
+    params' <- aExplicitParams params
+    body' <- block body
+    return $ ULam $ ULamExpr params' ExplicitApp Nothing Nothing body'
   expr' (CFor kind indices body) = do
     let (dir, trailingUnit) = case kind of
           KFor  -> (Fwd, False)
@@ -496,9 +493,9 @@ expr = propagateSrcE expr' where
           KRof  -> (Rev, False)
           KRof_ -> (Rev, True)
     -- TODO: Can we fetch the source position from the error context, to feed into `buildFor`?
-    e <- buildFor (0, 0) dir <$> mapM patOptAnn indices <*> block body
+    e <- buildFor (0, 0) dir <$> mapM binderOptTy indices <*> block body
     if trailingUnit
-      then return $ UDecl $ UDeclExpr (ULet PlainLet (UPatAnn (nsB UPatIgnore) Nothing) e) $ ns $ unitExpr
+      then return $ UDecl $ UDeclExpr (ULet PlainLet (nsB UPatIgnore) Nothing e) $ ns $ unitExpr
       else return $ dropSrcE e
   expr' (CCase scrut alts) = UCase <$> (expr scrut) <*> mapM alternative alts
     where alternative (match, body) = UAlt <$> casePat match <*> block body
@@ -511,7 +508,6 @@ expr = propagateSrcE expr' where
     return $ UCase p'
       [ UAlt (nsB $ UPatCon "True"  Empty) c'
       , UAlt (nsB $ UPatCon "False" Empty) a']
-  expr' (CDo blk) = ULam . (ULamExpr PlainArrow (UPatAnn (nsB $ UPatUnit UnitB) Nothing)) <$> block blk
 
 charExpr :: Char -> (UExpr' VoidS)
 charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
@@ -522,84 +518,29 @@ unitExpr = UPrim (UPrimCon $ ProdCon []) []
 labelExpr :: LabelPrefix -> String -> UExpr' VoidS
 labelExpr PlainLabel str = ULabel str
 
-labeledExprs :: Group -> SyntaxM (UExpr' VoidS)
--- We treat {} as an empty record, despite its ambiguity.
-labeledExprs (WithSrc _ CEmpty) = return $ URecord []
--- Comma, ampersand, question mark, and pipe imply multi-element
--- lists, or a list where an extra separator was used for
--- disambiguation.  In any case, within curly braces they are unique:
--- comma means record value, colon means record type, question means
--- labeled row, and pipe means variant type.
-labeledExprs g@(Binary Comma _ _) =
-  URecord <$> (fieldRowList CSEqual $ nary Comma g)
-labeledExprs g@(Binary Ampersand _ _) =
-  URecordTy <$> (fieldRowList Colon $ nary Ampersand g)
-labeledExprs g@(Binary Question _ _) =
-  ULabeledRow <$> (fieldRowList Colon $ nary Question g)
--- If we have a singleton, we can try to disambiguate by the internal
--- separator.  Equal always means record.
-labeledExprs g@(Binary CSEqual _ _) = URecord . (:[]) <$> oneField CSEqual g
--- URecordTy, ULabeledRow, and UVariantTy all use colon as the
--- internal separator, so a singleton is ambiguous.  Like the previous
--- parser, we disambiguate in favor of records.
-labeledExprs g@(Binary Colon _ _) = URecordTy . (:[]) <$> oneField Colon g
--- A bare identifier also parsed in the old parser, as a record value
--- with a single field pun.
-labeledExprs (WithSrc src (CIdentifier name)) = return $ URecord $ [fieldPun src name]
-labeledExprs _ = throw SyntaxErr "Ambiguous curly-brace expression; needs a , & ? or | to disambiguate"
-
--- This is a near-duplicate to fieldRowPatList, but deduplicating
--- would require (i) a class to pick the constructors to use (e.g.,
--- UDynField vs UDynFieldPat) and (ii) switching between places where
--- the two structures require subexpressions or subpatterns or
--- identifiers.
-fieldRowList :: Bin' -> [Group] -> SyntaxM (UFieldRowElems VoidS)
-fieldRowList bind groups = mapM (oneField bind) groups
-
-oneField :: Bin' -> Group -> SyntaxM (UFieldRowElem VoidS)
-oneField bind = \case
-  (Binary binder lhs rhs) | binder == bind -> do
-    header <- case lhs of
-      (Prefix "@" field) -> UDynField . fromString
-        <$> identifier "variable holding dynamic record field" field
-      field -> UStaticField <$> identifier "record field" field
-    rhs' <- expr rhs
-    return $ header rhs'
-  (Prefix "..." field) -> UDynFields <$> expr field
-  (WithSrc _ (CParens (ExprBlock g'))) -> oneField bind g'
-  (WithSrc src (CIdentifier field')) -> return $ fieldPun src field'
-  (WithSrc src _) -> addSrcContext src $ throw SyntaxErr
-    $ "Bad field spec.  Expected an explicit field `label " ++ pprint bind ++ " expr`, "
-    ++ "a remaining fields expression `... expr`, or a label-field pun `label`."
-
-fieldPun :: SrcPosCtx -> String -> UFieldRowElem VoidS
-fieldPun src field = UStaticField (fromString field) (WithSrcE src $ fromString field)
-
 -- === Builders ===
 
-buildPiType :: [UPatAnnArrow VoidS VoidS] -> UEffectRow VoidS -> UType VoidS -> UType VoidS
-buildPiType [] UPure ty = ty
-buildPiType [] _ _ = error "shouldn't be possible"
-buildPiType (UPatAnnArrow p arr : bs) eff resTy = ns case bs of
-  [] -> UPi $ UPiExpr arr p eff resTy
-  _  -> UPi $ UPiExpr arr p UPure $ buildPiType bs eff resTy
-
 -- TODO Does this generalize?  Swap list for Nest?
-buildLam :: [UPatAnnArrow VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
-buildLam binders body@(WithSrcE pos _) = case binders of
-  [] -> body
-  -- TODO: join with source position of binders too
-  (UPatAnnArrow b arr):bs -> WithSrcE (joinPos pos' pos) $ ULam lamb
-     where UPatAnn (WithSrcB pos' _) _ = b
-           lamb = ULamExpr arr b $ buildLam bs body
-
--- TODO Does this generalize?  Swap list for Nest?
-buildFor :: SrcPos -> Direction -> [UPatAnn VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
+buildFor :: SrcPos -> Direction -> [UOptAnnBinder VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
   [] -> body
   b:bs -> WithSrcE (Just pos) $ UFor dir $ UForExpr b $ buildFor pos dir bs body
 
 -- === Helpers ===
+
+extendAppRight :: UExpr n -> UExpr n -> UExpr' n
+extendAppRight (WithSrcE _ (UApp f args kwargs)) x = UApp f (args ++ [x]) kwargs
+extendAppRight f x = unaryApp f x
+
+extendAppLeft :: UExpr n -> UExpr n -> UExpr' n
+extendAppLeft x (WithSrcE _ (UApp f args kwargs)) = UApp f (x:args) kwargs
+extendAppLeft x f = unaryApp f x
+
+unaryApp :: UExpr n -> UExpr n -> UExpr' n
+unaryApp f x = UApp f [x] []
+
+explicitApp :: UExpr n -> [UExpr n] -> UExpr' n
+explicitApp f xs = UApp f xs []
 
 ns :: (a n) -> WithSrcE a n
 ns = WithSrcE Nothing
@@ -624,25 +565,3 @@ propagateSrcB act (WithSrc src x) = addSrcContext src (WithSrcB src <$> act x)
 
 dropSrcB :: WithSrcB binder n l -> binder n l
 dropSrcB (WithSrcB _ x) = x
-
-joinSrcE :: WithSrcE a1 n1 -> WithSrcE a2 n2 -> a3 n3 -> WithSrcE a3 n3
-joinSrcE (WithSrcE p1 _) (WithSrcE p2 _) x = WithSrcE (joinPos p1 p2) x
-
-mkApp :: UExpr (n::S) -> UExpr n -> UExpr n
-mkApp f x = joinSrcE f x $ UApp f x
-
-mkTabApp :: UExpr (n::S) -> UExpr n -> UExpr n
-mkTabApp f x = joinSrcE f x $ UTabApp f x
-
--- If Group is a Binary tree, check the leftmost leaf.  If that leaf
--- is curly braces and its operator is Juxtapose, reassociate the tree
--- to bring it to the top.  This re-groups a term like {IO} n=>a as
--- {IO} (n=>a), instead of ({IO} n)=>a, which is how it parses
--- otherwise.
-effectsToTop :: Group -> Group
-effectsToTop g@(Binary Juxtapose (Bracketed Curly _) _) = g
-effectsToTop g@(WithSrc pos (CBin op lhs rhs)) = case effectsToTop lhs of
-  (WithSrc _ (CBin j@(WithSrc _ Juxtapose) br@(Bracketed Curly _) subRhs)) ->
-    WithSrc pos (CBin j br (WithSrc (jointPos subRhs rhs) (CBin op subRhs rhs)))
-  _ -> g
-effectsToTop g = g

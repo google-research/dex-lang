@@ -9,8 +9,8 @@
 
 module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
-  , DictTypeHoistStatus (..), normalizeProj, asNaryProj, normalizeNaryProj
-  , depPairLeftTy, instantiateDataDef, applyDataConAbs
+  , normalizeProj, asNaryProj, normalizeNaryProj
+  , depPairLeftTy, instantiateTyConDef
   , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun)
@@ -25,7 +25,6 @@ import Data.Functor.Identity
 import Data.Functor ((<&>))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict as M
-import Data.Maybe
 import GHC.Exts (inline)
 
 import Subst
@@ -56,17 +55,15 @@ type NiceE r e = (HoistableE e, SinkableE e, SubstE AtomSubstVal e, RenameE e, I
 
 cheapReduce :: forall r e' e m n
              . (EnvReader m, CheaplyReducibleE r e e', NiceE r e, NiceE r e')
-            => e n -> m n (Maybe (e' n), DictTypeHoistStatus, [Type r n])
+            => e n -> m n (Maybe (e' n))
 cheapReduce e = liftCheapReducerM idSubst $ cheapReduceE e
 {-# INLINE cheapReduce #-}
 {-# SCC cheapReduce #-}
 
--- Third result contains the set of dictionary types that failed to synthesize
--- during traversal of the supplied decls.
 cheapReduceWithDecls
   :: forall r e' e m n l
    . ( CheaplyReducibleE r e e', NiceE r e', NiceE r e, EnvReader m )
-  => Nest (Decl r) n l -> e l -> m n (Maybe (e' n), DictTypeHoistStatus, [Type r n])
+  => Nest (Decl r) n l -> e l -> m n (Maybe (e' n))
 cheapReduceWithDecls decls result = do
   Abs decls' result' <- sinkM $ Abs decls result
   liftCheapReducerM idSubst $
@@ -77,7 +74,7 @@ cheapReduceWithDecls decls result = do
 
 cheapNormalize :: (EnvReader m, CheaplyReducibleE r e e, NiceE r e) => e n -> m n (e n)
 cheapNormalize a = cheapReduce a >>= \case
-  (Just ans, _, _) -> return ans
+  Just ans -> return ans
   _ -> error "couldn't normalize expression"
 {-# INLINE cheapNormalize #-}
 
@@ -87,9 +84,8 @@ newtype CheapReducerM (r::IR) (i :: S) (o :: S) (a :: *) =
   CheapReducerM
     (SubstReaderT AtomSubstVal
       (MaybeT1
-        (WriterT1 (FailedDictTypes r)
-          (ScopedT1 (MapE (AtomName r) (MaybeE (Atom r)))
-            (EnvReaderT Identity)))) i o a)
+        (ScopedT1 (MapE (AtomName r) (MaybeE (Atom r)))
+          (EnvReaderT Identity))) i o a)
   deriving (Functor, Applicative, Monad, Alternative)
 
 deriving instance IRRep r => ScopeReader (CheapReducerM r i)
@@ -97,45 +93,24 @@ deriving instance IRRep r => EnvReader (CheapReducerM r i)
 deriving instance IRRep r => EnvExtender (CheapReducerM r i)
 deriving instance IRRep r => SubstReader AtomSubstVal (CheapReducerM r)
 
--- The `NothingE` case indicates dictionaries couldn't be hoisted
-newtype FailedDictTypes (r::IR) (n::S) = FailedDictTypes (ESet (MaybeE (Type r)) n)
-        deriving (SinkableE, HoistableE, Semigroup, Monoid)
-data DictTypeHoistStatus = DictTypeHoistFailure | DictTypeHoistSuccess
-
-instance IRRep r => HoistableState (FailedDictTypes r) where
-  hoistState _ b (FailedDictTypes ds) =
-    FailedDictTypes $ eSetFromList $
-      for (eSetToList ds) \d -> case hoist b d of
-        HoistSuccess d' -> d'
-        HoistFailure _  -> NothingE
-
 class ( Alternative2 m, SubstReader AtomSubstVal m
       , EnvReader2 m, EnvExtender2 m) => CheapReducer m r | m -> r where
-  reportSynthesisFail :: Type r o -> m i o ()
   updateCache :: AtomName r o -> Maybe (Atom r o) -> m i o ()
   lookupCache :: AtomName r o -> m i o (Maybe (Maybe (Atom r o)))
 
 instance IRRep r => CheapReducer (CheapReducerM r) r where
-  reportSynthesisFail ty = CheapReducerM $ SubstReaderT $ lift $ lift11 $
-    tell $ FailedDictTypes $ eSetSingleton (JustE ty)
-  updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
+  updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $
     modify (MapE . M.insert v (toMaybeE u) . fromMapE)
-  lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $ lift11 $
+  lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $
     fmap fromMaybeE <$> gets (M.lookup v . fromMapE)
 
-liftCheapReducerM :: (EnvReader m, IRRep r)
-                  => Subst AtomSubstVal i o -> CheapReducerM r i o a
-                  -> m o (Maybe a, DictTypeHoistStatus, [Type r o])
+liftCheapReducerM
+  :: (EnvReader m, IRRep r)
+  => Subst AtomSubstVal i o -> CheapReducerM r i o a
+  -> m o (Maybe a)
 liftCheapReducerM subst (CheapReducerM m) = do
-  (result, FailedDictTypes tySet) <-
-    liftM runIdentity $ liftEnvReaderT $ runScopedT1
-      (runWriterT1 $ runMaybeT1 $ runSubstReaderT subst m) mempty
-  let maybeTys = eSetToList tySet
-  let tys = catMaybes $ map fromMaybeE maybeTys
-  let hoistStatus = if any (\case NothingE -> True; _ -> False) maybeTys
-                      then DictTypeHoistFailure
-                      else DictTypeHoistSuccess
-  return (result, hoistStatus, tys)
+  liftM runIdentity $ liftEnvReaderT $ runScopedT1
+    (runMaybeT1 $ runSubstReaderT subst m) mempty
 {-# INLINE liftCheapReducerM #-}
 
 cheapReduceFromSubst :: NiceE CoreIR e => e i -> CheapReducerM CoreIR i o (e o)
@@ -223,9 +198,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
       ty <- cheapReduceE ty'
       runFallibleT1 (trySynthTerm ty) >>= \case
         Success d -> return d
-        Failure _ -> do
-          reportSynthesisFail ty
-          return $ DictHole ctx ty
+        Failure _ -> return $ DictHole ctx ty
     TabPi (TabPiType (b:>ixTy) resultTy) -> do
       ixTy' <- cheapReduceE ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do
@@ -260,16 +233,15 @@ instance CheaplyReducibleE CoreIR DictExpr CAtom where
           let InstanceBody superclasses _ = body
           applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
         child' -> return $ DictCon $ SuperclassProj child' superclassIx
-    InstantiatedGiven f xs -> do
-      cheapReduceE (App f xs) <|> justSubst
+    InstantiatedGiven f xs -> cheapReduceE (App f $ toList xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
     DataData ty      -> DictCon . DataData <$> cheapReduceE ty
     where justSubst = DictCon <$> substM d
 
-instance CheaplyReducibleE CoreIR DataDefParams DataDefParams where
-  cheapReduceE (DataDefParams ps) =
-    DataDefParams <$> mapM (onSndM cheapReduceE) ps
+instance CheaplyReducibleE CoreIR TyConParams TyConParams where
+  cheapReduceE (TyConParams infs ps) =
+    TyConParams infs <$> mapM cheapReduceE ps
 
 instance (CheaplyReducibleE r e e', NiceE r e') => CheaplyReducibleE r (Abs (Nest (Decl r)) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
@@ -281,13 +253,9 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
   cheapReduceE expr = confuseGHC >>= \_ -> case expr of
     Atom atom -> cheapReduceE atom
     App f' xs' -> do
+      xs <- mapM cheapReduceE xs'
       f <- cheapReduceE f'
-      case fromNaryLamExact (length xs') f of
-        Just (LamExpr bs body) -> do
-          xs <- mapM cheapReduceE xs'
-          let subst = bs @@> fmap SubstVal xs
-          dropSubst $ extendSubst subst $ cheapReduceE body
-        _ -> empty
+      cheapReduceApp f xs
     -- TODO: Make sure that this wraps correctly
     -- TODO: Other casts?
     PrimOp (MiscOp (CastOp ty' val')) -> do
@@ -299,15 +267,25 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
             Con (Lit (Word64Lit v)) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
             _ -> empty
         _ -> empty
-    ProjMethod dict i -> do
+    ApplyMethod dict i explicitArgs -> do
+      explicitArgs' <- mapM cheapReduceE explicitArgs
       cheapReduceE dict >>= \case
         DictCon (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
           InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
           let method = methods !! i
-          extendSubst (bs@@>(SubstVal <$> args')) $ cheapReduceE method
+          extendSubst (bs@@>(SubstVal <$> args')) do
+            method' <- cheapReduceE method
+            cheapReduceApp method' explicitArgs'
         _ -> empty
     _ -> empty
+
+cheapReduceApp :: CAtom o -> [CAtom o] -> CheapReducerM CoreIR i o (CAtom o)
+cheapReduceApp f xs = case f of
+  Lam (CoreLamExpr _ (LamExpr bs body)) -> do
+    let subst = bs @@> fmap SubstVal xs
+    dropSubst $ extendSubst subst $ cheapReduceE body
+  _ -> empty
 
 instance IRRep r => CheaplyReducibleE r (IxType r) (IxType r) where
   cheapReduceE (IxType t d) = IxType <$> cheapReduceE t <*> cheapReduceE d
@@ -445,8 +423,8 @@ unwrapNewtypeType = \case
   Fin n                 -> return (FinCon n, NatTy)
   StaticRecordTyCon tys    -> return (RecordCon  (void tys), ProdTy (toList tys))
   UserADTType _ defName params -> do
-    def <- lookupDataDef defName
-    ty' <- dataDefRep <$> instantiateDataDef def params
+    def <- lookupTyCon defName
+    ty' <- dataDefRep <$> instantiateTyConDef def params
     return (UserADTData defName params, ty')
   ty -> error $ "Shouldn't be projecting: " ++ pprint ty
 {-# INLINE unwrapNewtypeType #-}
@@ -463,16 +441,10 @@ wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
 wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
-instantiateDataDef :: EnvReader m => DataDef n -> DataDefParams n -> m n [DataConDef n]
-instantiateDataDef (DataDef _ bs cons) params = do
-  fromListE <$> applyDataConAbs (Abs bs $ ListE cons) params
-{-# INLINE instantiateDataDef #-}
-
-applyDataConAbs :: (SubstE AtomSubstVal e, SinkableE e, EnvReader m)
-                => Abs (Nest RolePiBinder) e n -> DataDefParams n -> m n (e n)
-applyDataConAbs (Abs bs e) (DataDefParams xs) =
-  applySubst (bs @@> (SubstVal <$> map snd xs)) e
-{-# INLINE applyDataConAbs #-}
+instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n [DataConDef n]
+instantiateTyConDef (TyConDef _ bs cons) (TyConParams _ xs) = do
+  fromListE <$> applySubst (bs @@> (SubstVal <$> xs)) (ListE cons)
+{-# INLINE instantiateTyConDef #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -585,7 +557,7 @@ instance SubstE AtomSubstVal EffectDef
 instance SubstE AtomSubstVal EffectOpType
 instance SubstE AtomSubstVal IExpr
 instance IRRep r => SubstE AtomSubstVal (RepVal r)
-instance SubstE AtomSubstVal DataDefParams
+instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance SubstE AtomSubstVal UserEffectOp
@@ -595,7 +567,6 @@ instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
 instance IRRep r => SubstE AtomSubstVal (Block r)
 instance SubstE AtomSubstVal InstanceBody
-instance SubstE AtomSubstVal MethodType
 instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
@@ -612,29 +583,4 @@ instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
-
-instance SubstB AtomSubstVal RolePiBinder where
-  substB env (RolePiBinder b ty arr role) cont =
-    substB env (b:>ty) \env' (b':>ty') -> cont env' $ RolePiBinder b' ty' arr role
-
--- XXX: we need a special instance here because `SuperclassBinder` have all
--- their types at the level of the top binder, rather than interleaving them
--- with the binders. We should make a `BindersNest` type for that pattern
--- instead.
-instance SubstB AtomSubstVal SuperclassBinders where
-  substB envSubst (SuperclassBinders bsTop tsTop) contTop = do
-    let tsTop' = map (substE envSubst) tsTop
-    go envSubst bsTop tsTop' \envSubst' bsTop' -> contTop envSubst' $ SuperclassBinders bsTop' tsTop'
-    where
-      go :: (Distinct o, FromName v, SinkableV v)
-         => (Env o, Subst v i o)
-         -> Nest (AtomNameBinder CoreIR) i i' -> [Type CoreIR o]
-         -> (forall o'. Distinct o' => (Env o', Subst v i' o') -> Nest (AtomNameBinder CoreIR) o o' -> a)
-         -> a
-      go (env, subst) Empty [] cont = cont (env, subst) Empty
-      go (env, subst) (Nest b bs) (t:ts) cont = do
-        withFresh (getNameHint b) (toScope env) \b' -> do
-          let env' = env `extendOutMap` toEnvFrag (b':>t)
-          let subst' = sink subst <>> b @> (fromName $ binderName b')
-          go (env', subst') bs (map sink ts) \envSubst'' bs' -> cont envSubst'' (Nest b' bs')
-      go _ _ _ _ = error "zip error"
+instance SubstE AtomSubstVal FieldDef

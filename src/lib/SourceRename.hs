@@ -22,6 +22,7 @@ import Core (EnvReader (..), withEnv, lookupSourceMapPure)
 import PPrint ()
 import IRVariants
 import Types.Source
+import Types.Primitives
 import Types.Core (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
@@ -170,38 +171,27 @@ instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) 
 instance SourceRenamableB (UBinder (AtomNameC CoreIR)) where
   sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
-instance SourceRenamableB UPatAnn where
-  sourceRenameB (UPatAnn b ann) cont = do
-    ann' <- mapM sourceRenameE ann
-    sourceRenameB b \b' ->
-      cont $ UPatAnn b' ann'
+instance SourceRenamableE (UAnn req) where
+  sourceRenameE UNoAnn = return UNoAnn
+  sourceRenameE (UAnn ann) = UAnn <$> sourceRenameE ann
 
-instance SourceRenamableB (UAnnBinder (AtomNameC CoreIR)) where
-  sourceRenameB (UAnnBinder b ann) cont = do
+instance SourceRenamableB (UAnnBinder req) where
+  sourceRenameB (UAnnBinder b ann cs) cont = do
     ann' <- sourceRenameE ann
+    cs'  <- mapM sourceRenameE cs
     sourceRenameB b \b' ->
-      cont $ UAnnBinder b' ann'
-
-instance SourceRenamableB (UAnnBinderArrow (AtomNameC CoreIR)) where
-  sourceRenameB (UAnnBinderArrow b ann arr) cont = do
-    ann' <- sourceRenameE ann
-    sourceRenameB b \b' ->
-      cont $ UAnnBinderArrow b' ann' arr
-
-instance SourceRenamableB UPatAnnArrow where
-  sourceRenameB (UPatAnnArrow b arrow) cont =
-    sourceRenameB b \b' -> cont $ UPatAnnArrow b' arrow
+      cont $ UAnnBinder b' ann' cs'
 
 instance SourceRenamableE UExpr' where
   sourceRenameE expr = setMayShadow True case expr of
     UVar v -> UVar <$> sourceRenameE v
-    ULam (ULamExpr arr pat body) ->
-      sourceRenameB pat \pat' ->
-        ULam <$> ULamExpr arr pat' <$> sourceRenameE body
-    UPi (UPiExpr arr pat eff body) ->
-      sourceRenameB pat \pat' ->
-        UPi <$> (UPiExpr arr pat' <$> sourceRenameE eff <*> sourceRenameE body)
-    UApp f x -> UApp <$> sourceRenameE f <*> sourceRenameE x
+    ULam lam -> ULam <$> sourceRenameE lam
+    UPi (UPiExpr pats appExpl eff body) ->
+      sourceRenameB pats \pats' ->
+        UPi <$> (UPiExpr pats' <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
+    UApp f xs ys -> UApp <$> sourceRenameE f
+       <*> forM xs sourceRenameE
+       <*> forM ys (\(name, y) -> (name,) <$> sourceRenameE y)
     UTabPi (UTabPiExpr pat body) ->
       sourceRenameB pat \pat' ->
         UTabPi <$> (UTabPiExpr pat' <$> sourceRenameE body)
@@ -210,7 +200,7 @@ instance SourceRenamableE UExpr' where
         UDepPairTy <$> (UDepPairType pat' <$> sourceRenameE body)
     UDepPair lhs rhs ->
       UDepPair <$> sourceRenameE lhs <*> sourceRenameE rhs
-    UTabApp f x -> UTabApp <$> sourceRenameE f <*> sourceRenameE x
+    UTabApp f x -> UTabApp <$> sourceRenameE f <*> mapM sourceRenameE x
     UDecl (UDeclExpr decl rest) ->
       sourceRenameB decl \decl' ->
         UDecl <$> UDeclExpr decl' <$> sourceRenameE rest
@@ -265,10 +255,11 @@ instance SourceRenamableB a => SourceRenamableB (WithSrcB a) where
 
 instance SourceRenamableB UDecl where
   sourceRenameB decl cont = case decl of
-    ULet ann pat expr -> do
+    ULet ann pat ty expr -> do
       expr' <- sourceRenameE expr
+      ty' <- mapM sourceRenameE ty
       sourceRenameB pat \pat' ->
-        cont $ ULet ann pat' expr'
+        cont $ ULet ann pat' ty' expr'
     UDataDefDecl dataDef tyConName dataConNames -> do
       dataDef' <- sourceRenameE dataDef
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
@@ -278,22 +269,20 @@ instance SourceRenamableB UDecl where
       structDef' <- sourceRenameE structDef
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
          cont $ UStructDecl structDef' tyConName'
-    UInterface paramBs superclasses methodTys className methodNames -> do
-      Abs paramBs' (PairE (ListE superclasses') (ListE methodTys')) <-
+    UInterface paramBs methodTys className methodNames -> do
+      Abs paramBs' (ListE methodTys') <-
         sourceRenameB paramBs \paramBs' -> do
-          superclasses' <- mapM sourceRenameE superclasses
-          methodTys' <- zipWithM (renameMethodType paramBs) methodTys methodSourceNames
-          return $ Abs paramBs' (PairE (ListE superclasses') (ListE methodTys'))
+          methodTys' <- mapM sourceRenameE methodTys
+          return $ Abs paramBs' $ ListE methodTys'
       sourceRenameUBinder UClassVar className \className' ->
         sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
-          cont $ UInterface paramBs' superclasses' methodTys' className' methodNames'
-      where methodSourceNames = nestToList (\(UBindSource n) -> n) methodNames
-    UInstance className conditions params methodDefs instanceName -> do
+          cont $ UInterface paramBs' methodTys' className' methodNames'
+    UInstance className conditions params methodDefs instanceName expl -> do
       className' <- sourceRenameE className
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
-        cont $ UInstance className' conditions' params' methodDefs' instanceName'
+        cont $ UInstance className' conditions' params' methodDefs' instanceName' expl
     UEffectDecl opTypes effName opNames -> do
       opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
       sourceRenameUBinder UEffectVar effName \effName' ->
@@ -305,24 +294,15 @@ instance SourceRenamableB UDecl where
         sourceRenameE (Abs bodyTyArg (Abs tyArgs (ListE ops `PairE` retEff `PairE` retTy)))
       sourceRenameUBinder UHandlerVar handlerName \handlerName' -> do
         cont $ UHandlerDecl effName' bodyTyArg' tyArgs' retEff' retTy' ops' handlerName'
+    UPass -> cont UPass
 
-renameMethodType :: (Fallible1 m, Renamer m, Distinct o)
-                 => Nest (UAnnBinder (AtomNameC CoreIR)) i' i
-                 -> UMethodType i
-                 -> SourceName
-                 -> m o (UMethodType o)
-renameMethodType paramBinders (UMethodType ~(Left explicitNames) ty) methodName = do
-  explicitFlags <- case explicitNames of
-    [] -> return $ replicate (nestLength paramBinders) False
-    _ | paramNames == explicitNames -> return $ replicate (nestLength paramBinders) True
-    _ -> case unexpected of
-      []    -> throw NotImplementedErr "Permuted or incomplete explicit type binders are not supported yet."
-      (h:_) -> throw TypeErr $ "Explicit type binder `" ++ pprint h ++ "` in method " ++
-                                pprint methodName ++ " is not a type parameter of its interface"
-      where unexpected = filter (not . (`elem` paramNames)) explicitNames
-  UMethodType (Right explicitFlags) <$> sourceRenameE ty
-  where
-    paramNames = nestToList (\(UAnnBinder (UBindSource n) _) -> n) paramBinders
+instance SourceRenamableE ULamExpr where
+  sourceRenameE (ULamExpr args expl effs resultTy body) =
+    sourceRenameB args \args' -> ULamExpr args'
+      <$> pure expl
+      <*> mapM sourceRenameE effs
+      <*> mapM sourceRenameE resultTy
+      <*> sourceRenameE body
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB cont = cont UnitB
@@ -337,6 +317,9 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b
     sourceRenameB b1 \b1' ->
       sourceRenameB b2 \b2' ->
         cont $ PairB b1' b2'
+
+instance SourceRenamableB b => SourceRenamableB (WithExpl b) where
+  sourceRenameB (WithExpl x b) cont = sourceRenameB b \b' -> cont $ WithExpl x b'
 
 sourceRenameUBinderNest
   :: (Color c, Renamer m, Distinct o)
@@ -457,15 +440,11 @@ instance SourceRenamablePat UPat' where
       con' <- sourceRenameE con
       sourceRenamePat sibs bs \sibs' bs' ->
         cont sibs' $ UPatCon con' bs'
-    UPatPair (PairB p1 p2) ->
-      sourceRenamePat sibs  p1 \sibs' p1' ->
-        sourceRenamePat sibs' p2 \sibs'' p2' ->
-          cont sibs'' $ UPatPair $ PairB p1' p2'
     UPatDepPair (PairB p1 p2) ->
       sourceRenamePat sibs  p1 \sibs' p1' ->
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatDepPair $ PairB p1' p2'
-    UPatUnit UnitB -> cont sibs $ UPatUnit UnitB
+    UPatProd bs -> sourceRenamePat sibs bs \sibs' bs' -> cont sibs' $ UPatProd bs'
     UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
 
@@ -536,25 +515,25 @@ class HasSourceNames (b::B) where
 
 instance HasSourceNames UDecl where
   sourceNames decl = case decl of
-    ULet _ (UPatAnn pat _) _ -> sourceNames pat
+    ULet _ pat _ _ -> sourceNames pat
     UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
     UStructDecl _ ~(UBindSource tyConName) -> do
       S.singleton tyConName
-    UInterface _ _ _ ~(UBindSource className) methodNames -> do
+    UInterface _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
-    UInstance _ _ _ _ instanceName -> sourceNames instanceName
+    UInstance _ _ _ _ instanceName _ -> sourceNames instanceName
     UEffectDecl _ ~(UBindSource effName) opNames -> do
       S.singleton effName <> sourceNames opNames
     UHandlerDecl _ _ _ _ _ _ handlerName -> sourceNames handlerName
+    UPass -> S.empty
 
 instance HasSourceNames UPat where
   sourceNames (WithSrcB _ pat) = case pat of
     UPatBinder b -> sourceNames b
     UPatCon _ bs -> sourceNames bs
-    UPatPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
-    UPatUnit UnitB -> mempty
+    UPatProd bs -> sourceNames bs
     UPatRecord p -> sourceNames p
     UPatTable ps -> sourceNames ps
 

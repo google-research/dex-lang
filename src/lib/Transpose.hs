@@ -62,7 +62,7 @@ unpackLinearLamExpr
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
-  PiType bsTy _ resultTy <- getNaryLamExprType lam
+  PiType bsTy _ resultTy <- getLamExprType lam
   PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
   let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
   return ( Abs bsNonlin $ Abs bLin body
@@ -128,7 +128,7 @@ withAccumulator
 withAccumulator ty cont = do
   singletonTypeVal ty >>= \case
     Nothing -> do
-      baseMonoid <- tangentBaseMonoidFor =<< getBaseMonoidType ty
+      baseMonoid <- tangentBaseMonoidFor ty
       getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
                    cont (LinRef $ Var ref) >> return UnitVal
     Just val -> do
@@ -141,7 +141,7 @@ withAccumulator ty cont = do
 
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
-  baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
+  baseMonoid <- getType ct >>= tangentBaseMonoidFor
   void $ liftM Var $ emit $ RefOp ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomName o]
@@ -228,7 +228,7 @@ transposeExpr expr ct = case expr of
     let emitEff = liftM Var . emit . RefOp refArg'
     case m of
       MAsk -> do
-        baseMonoid <- getType ct >>= getBaseMonoidType >>= tangentBaseMonoidFor
+        baseMonoid <- getType ct >>= tangentBaseMonoidFor
         void $ emitEff $ MExtend baseMonoid ct
       -- XXX: This assumes that the update function uses a tangent (0, +) monoid
       --      rule for RunWriter.
@@ -344,7 +344,7 @@ transposeHof hof ct = case hof of
     transposeAtom s cts
   RunReader r (BinaryLamExpr hB refB body) -> do
     accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
-    baseMonoid <- getBaseMonoidType accumTy >>= tangentBaseMonoidFor
+    baseMonoid <- tangentBaseMonoidFor accumTy
     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
