@@ -249,6 +249,10 @@ pat = propagateSrcB pat' where
   pat' CHole = return $ UPatBinder UIgnore
   pat' (CIdentifier name) = return $ UPatBinder $ fromString name
   pat' (CBin (WithSrc _ JuxtaposeWithSpace) lhs rhs) = do
+    case lhs of
+      WithSrc _ (CBin (WithSrc _ JuxtaposeWithSpace) _ _) ->
+        throw SyntaxErr "Only unary constructors can from patterns without parens"
+      _ -> return ()
     name <- identifier "pattern constructor name" lhs
     arg <- pat rhs
     return $ UPatCon (fromString name) (UnaryNest arg)

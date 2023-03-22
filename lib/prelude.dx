@@ -533,29 +533,29 @@ Here we define several basic kinds, and some operators on them.
 
 data Maybe (a:Type) =
   Nothing
-  Just (a)
+  Just(a)
 
 def is_nothing (x:Maybe a) -> Bool given (a) =
   case x of
     Nothing -> True
-    Just _ -> False
+    Just(_) -> False
 
 def is_just (x:Maybe a) -> Bool given (a) = not $ is_nothing x
 
 def maybe (d:b, f:(a)->b, x:Maybe a) -> b given (a, b) =
   case x of
-    Nothing -> d
-    Just x' -> f x'
+    Nothing  -> d
+    Just(x') -> f x'
 
 data Either (a:Type, b:Type) =
-  Left  (a)
-  Right (b)
+  Left(a)
+  Right(b)
 
 instance Ix (Either(a, b)) given (a|Ix, b|Ix)
   def size' () = size a + size b
   def ordinal (i) = case i of
-    Left ai  -> ordinal ai
-    Right bi -> ordinal bi + size a
+    Left(ai)  -> ordinal ai
+    Right(bi) -> ordinal bi + size a
   def unsafe_from_ordinal (o) =
     as = nat_to_rep $ size a
     o' = nat_to_rep o
@@ -787,20 +787,20 @@ instance Eq ()
 
 instance Eq (Either(a, b)) given (a|Eq, b|Eq)
   def (==) (x, y) = case x of
-    Left x -> case y of
-      Left y -> x == y
-      Right y -> False
-    Right x -> case y of
-      Left y -> False
-      Right y -> x == y
+    Left(x) -> case y of
+      Left( y) -> x == y
+      Right(y) -> False
+    Right(x) -> case y of
+      Left( y) -> False
+      Right(y) -> x == y
 
 instance Eq (Maybe a) given (a|Eq)
   def (==) (x, y) = case x of
-    Just x -> case y of
-      Just y -> x == y
+    Just(x) -> case y of
+      Just(y) -> x == y
       Nothing -> False
     Nothing -> case y of
-      Just y -> False
+      Just(y) -> False
       Nothing -> True
 
 instance Eq RawPtr
@@ -882,7 +882,7 @@ instance Ix Bool
 instance Ix (Maybe a) given (a|Ix)
   def size' () = size a + 1
   def ordinal (i) = case i of
-    Just ai -> ordinal ai
+    Just(ai) -> ordinal ai
     Nothing -> size a
   def unsafe_from_ordinal(o) =
     case o == size a of
@@ -895,7 +895,7 @@ instance NonEmpty Bool
 instance NonEmpty (a,b) given (a|NonEmpty, b|NonEmpty)
   first_ix = unsafe_from_ordinal 0
 
-instance NonEmpty (Either(a,b)) given (a|Ix, b|NonEmpty)
+instance NonEmpty (Either(a,b)) given (a|NonEmpty, b|Ix)
   first_ix = unsafe_from_ordinal 0
 
 -- The below instance is valid, but causes "multiple candidate dictionaries"
@@ -960,7 +960,7 @@ instance Subset(a, c) given (a, b, c) (Subset(a, b), Subset(b, c))
   def inject(x) = inject $ inject(superset=b, x)
   def project(x) = case project(subset=b, x) of
     Nothing -> Nothing
-    Just y -> project y
+    Just(y)-> project y
   def unsafe_project(x) = unsafe_project $ unsafe_project(subset=b, x)
 
 def unsafe_project_rangefrom (j:q) -> RangeFrom(q, i) given (q|Ix, i:q) =
@@ -1196,10 +1196,14 @@ pi : Float = 3.141592653589793
 
 def id (x:a) -> a given (a) = x
 def dup (x:a) -> (a, a) given (a) = (x, x)
-def map (xs: n=>a, f:(a)->{|eff} b) -> {|eff} (n=>b)  given (a, b, n|Ix, eff) =
+def map (f:(a)->{|eff} b, xs: n=>a) -> {|eff} (n=>b)  given (a, b, n|Ix, eff) =
   for i. f xs[i]
+-- map, flipped so that the function goes last
+def each (xs: n=>a, f:(a)->{|eff} b) -> {|eff} (n=>b)  given (a, b, n|Ix, eff) =
+  for i. f xs[i]
+
 def zip (xs:n=>a, ys:n=>b) -> (n=>(a,b)) given (a, b, n|Ix) = for i. (xs[i], ys[i])
-def unzip (xys:n=>(a,b)) -> (n=>a , n=>b) given (a, b, n|Ix)= (map xys fst, map xys snd)
+def unzip (xys:n=>(a,b)) -> (n=>a , n=>b) given (a, b, n|Ix)= (each xys fst, each xys snd)
 def fanout (x:a) -> n=>a given (n|Ix, a) = for i. x
 def sq (x:a) -> a given (a|Mul) = x * x
 def abs (x:a) -> a given (a|Sub|Ord) = select(x > zero, x, zero - x)
@@ -1208,26 +1212,26 @@ def mod (x:a, y:a) -> a given (a|Add|Integral) = rem(y + rem(x, y), y)
 '## Table Operations
 
 instance Floating (n=>a) given (a|Floating, n|Ix)
-  def exp      (x) = map x exp
-  def exp2     (x) = map x exp2
-  def log      (x) = map x log
-  def log2     (x) = map x log2
-  def log10    (x) = map x log10
-  def log1p    (x) = map x log1p
-  def sin      (x) = map x sin
-  def cos      (x) = map x cos
-  def tan      (x) = map x tan
-  def sinh     (x) = map x sinh
-  def cosh     (x) = map x cosh
-  def tanh     (x) = map x tanh
-  def floor    (x) = map x floor
-  def ceil     (x) = map x ceil
-  def round    (x) = map x round
-  def sqrt     (x) = map x sqrt
+  def exp      (x) = each x exp
+  def exp2     (x) = each x exp2
+  def log      (x) = each x log
+  def log2     (x) = each x log2
+  def log10    (x) = each x log10
+  def log1p    (x) = each x log1p
+  def sin      (x) = each x sin
+  def cos      (x) = each x cos
+  def tan      (x) = each x tan
+  def sinh     (x) = each x sinh
+  def cosh     (x) = each x cosh
+  def tanh     (x) = each x tanh
+  def floor    (x) = each x floor
+  def ceil     (x) = each x ceil
+  def round    (x) = each x round
+  def sqrt     (x) = each x sqrt
   def pow  (x, y)  = for i. pow(x[i], y[i])
-  def lgamma   (x) = map x lgamma
-  def erf      (x) = map x erf
-  def erfc     (x) = map x erfc
+  def lgamma   (x) = each x lgamma
+  def erf      (x) = each x erf
+  def erfc     (x) = each x erfc
 
 '### Reductions
 
@@ -1244,7 +1248,7 @@ def fsum (xs:n=>Float) -> Float given (n|Ix) = yield_accum(AddMonoid Float) \ref
 def sum  (xs:n=>v) -> v given (n|Ix, v|Add) = reduce(zero, (+), xs)
 def prod (xs:n=>v) -> v given (n|Ix, v|Mul) = reduce(one , (*), xs)
 def mean (xs:n=>v) -> v given (n|Ix, v|VSpace) = sum xs / n_to_f (size n)
-def std  (xs:n=>v) -> v given (n|Ix, v|Mul|Sub|VSpace|Floating) = sqrt $ mean (map xs sq) - sq (mean xs)
+def std  (xs:n=>v) -> v given (n|Ix, v|Mul|Sub|VSpace|Floating) = sqrt $ mean (each xs sq) - sq (mean xs)
 def any  (xs:n=>Bool) -> Bool given (n|Ix) = reduce(False, (||), xs)
 def all  (xs:n=>Bool) -> Bool given (n|Ix) = reduce(True , (&&), xs)
 
@@ -1288,22 +1292,22 @@ def vjp (f:(a)->b, x:a) -> (b, (b)->a) given (a, b) =
   (y, df) = linearize(f, x)
   (y, transpose_linear df)
 
-def grad (f:(a)->Float, x:a) -> a given (a) = (snd vjp(f, x))(1.0)
+def grad(f:(a)->Float, x:a) -> a given (a) = (snd vjp(f, x))(1.0)
 
-def deriv (f:(Float)->Float, x:Float) -> Float = jvp(f, x, 1.0)
+def deriv(f:(Float)->Float, x:Float) -> Float = jvp(f, x, 1.0)
 
-def deriv_rev (f:(Float)->Float, x:Float) -> Float = (snd vjp(f, x))(1.0)
+def deriv_rev(f:(Float)->Float, x:Float) -> Float = (snd vjp(f, x))(1.0)
 
 -- XXX: Watch out when editing this data type! We depend on its structure
 -- deep inside the compiler (mostly in linearization and during rule registration).
-data SymbolicTangent (a) =
+data SymbolicTangent(a) =
   ZeroTangent
-  SomeTangent (a)
+  SomeTangent(a)
 
-def someTangent (x:SymbolicTangent a) -> a given (a|VSpace) =
+def someTangent(x:SymbolicTangent a) -> a given (a|VSpace) =
   case x of
-    ZeroTangent    -> zero
-    SomeTangent x' -> x'
+    ZeroTangent     -> zero
+    SomeTangent(x') -> x'
 
 '### Approximate Equality
 TODO: move this outside the AD section to be with equality?
@@ -1396,7 +1400,7 @@ instance Monoid (List a) given (a|Data)
         True  -> xs[unsafe_from_ordinal i']
         False -> ys[unsafe_from_ordinal $ unsafe_nat_diff(i', nx)]
 
-named-instance ListMonoid : Monoid (List a) given (a|Data)
+named-instance ListMonoid (a|Data) -> Monoid (List a)
   mempty = mempty
   def (<>) (x, y) = x <> y
 
@@ -1528,10 +1532,23 @@ instance Show Float64
     (n, ptr) = showFloat64 x
     string_from_char_ptr(n, Ptr.new ptr)
 
+instance Show ()
+  def show(_) = "()"
+
 instance Show (a, b) given (a|Show, b|Show)
-  def show (pair) =
-    (a, b) = pair
+  def show(x) =
+    (a, b) = x
     "(" <> show a <> ", " <> show b <> ")"
+
+instance Show (a, b, c) given (a|Show, b|Show, c|Show)
+  def show(x) =
+    (a, b, c) = x
+    "(" <> show a <> ", " <> show b <> ", " <> show c <> ")"
+
+instance Show (a, b, c, d) given (a|Show, b|Show, c|Show, d|Show)
+  def show(x) =
+    (a, b, c, d) = x
+    "(" <> show a <> ", " <> show b <> ", " <> show c <> ", " <> show d <> ")"
 
 '### Parse interface
 For types that can be parsed from a `String`.
@@ -1652,10 +1669,10 @@ def iter (body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a|Data, eff) =
       if continue then
         case lift_state(resultRef, (\x. lift_state(i, body, x)), get i) of
           Continue -> i := get i + 1
-          Done result -> resultRef := Just result
+          Done(result) -> resultRef := Just result
       continue
   case result of
-    Just ans -> ans
+    Just(ans) -> ans
     Nothing -> unreachable()
 
 def bounded_iter
@@ -1672,7 +1689,7 @@ def bounded_iter
 def from_c_string (s:CString) -> {IO} (Maybe String) =
   case c_string_ptr s of
     Nothing -> Nothing
-    Just ptr ->
+    Just(ptr) ->
       Just do
         buf <- with_dynamic_buffer
         i <- iter
@@ -2192,16 +2209,16 @@ def general_integer_power
 def intpow (base:a, power:Nat) -> a given (a|Mul) =
   general_integer_power((*), one, base, power)
 
-def from_just (x:Maybe a) -> a given (a) = case x of Just x' -> x'
+def from_just(x:Maybe a) -> a given (a) = case x of Just(x') -> x'
 
-def any_sat (f:(a)->Bool, xs:n=>a) -> Bool given (a, n|Ix) = any(map xs f)
+def any_sat (f:(a)->Bool, xs:n=>a) -> Bool given (a, n|Ix) = any(each xs f)
 
-def seq_maybes (xs : n=>Maybe a) -> Maybe (n => a) given (n|Ix, a) =
+def seq_maybes (xs: n=>Maybe a) -> Maybe (n => a) given (n|Ix, a) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
   case any_sat(is_nothing, xs) of
     True  -> Nothing
-    False -> Just $ map xs from_just
+    False -> Just $ each xs from_just
 
 def linear_search (xs:n=>a, query:a) -> Maybe n given (n|Ix, a|Eq) =
   yield_state Nothing \ref. for i.
@@ -2236,15 +2253,15 @@ def concat (lists:n=>(List a)) -> List a given (a, n|Ix) =
 def cat_maybes (xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
   (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs[i] of
-      Just _ ->
+      Just(_) ->
         ix = get $ fst_ref ref
         (snd_ref ref) ! (unsafe_from_ordinal ix) := Just i
         fst_ref ref := ix + 1
       Nothing -> ()
   to_list $ for i:(Fin num_res).
     case res_inds[unsafe_from_ordinal $ ordinal i] of
-      Just j -> case xs[j] of
-        Just x -> x
+      Just(j) -> case xs[j] of
+        Just(x) -> x
         Nothing -> todo -- Impossible
       Nothing -> todo -- Impossible
 
@@ -2258,18 +2275,18 @@ def arg_filter (xs:n=>a, condition:(a)->Bool) -> List n given (a|Data, n|Ix) =
 def prev_ix (i:n) -> Maybe n given (n|Ix) =
   case i_to_n (n_to_i (ordinal i) - 1) of
     Nothing -> Nothing
-    Just i_prev -> Just $ unsafe_from_ordinal i_prev
+    Just(i_prev) -> unsafe_from_ordinal(i_prev) | Just
 
 def lines (source:String) -> List String =
   AsList(_, s) = source
   AsList(num_lines, newline_ixs) = cat_maybes for i_char.
     if s[i_char] == '\n'
-      then Just i_char
+      then Just(i_char)
       else Nothing
   to_list for i_line:(Fin num_lines).
     start = case prev_ix i_line of
       Nothing -> first_ix
-      Just i -> right_post newline_ixs[i]
+      Just(i) -> right_post newline_ixs[i]
     end = left_post newline_ixs[i_line]
     post_slice(s, start, end)
 
@@ -2279,7 +2296,7 @@ def lines (source:String) -> List String =
 def categorical_from_cdf (cdf: n=>Float, key: Key) -> n given (n|Ix) =
   r = rand key
   case search_sorted(cdf, r) of
-    Just i -> i
+    Just(i) -> i
 
 def normalize_pdf (xs: d=>Float) -> d=>Float given (d|Ix) = xs / sum xs
 
@@ -2340,20 +2357,20 @@ def assert (b:Bool) -> {Except} () =
 instance Subset(a, Either(a,b)) given (a|Data, b|Data)
   def inject (x) = Left x
   def project (x) = case x of
-    Left  y -> Just y
-    Right x -> Nothing
+    Left( y) -> Just y
+    Right(x) -> Nothing
   def unsafe_project (x) = case x of
-    Left  x -> x
-    Right x -> error "Can't project Right branch to Left branch"
+    Left( x) -> x
+    Right(x) -> error "Can't project Right branch to Left branch"
 
 instance Subset(b, Either(a,b)) given (a|Data, b|Data)
   def inject (x) =  Right x
   def project (x) = case x of
-    Left  x -> Nothing
-    Right y -> Just y
+    Left( x) -> Nothing
+    Right(y) -> Just y
   def unsafe_project (x) = case x of
-    Left  x -> error "Can't project Left branch to Right branch"
-    Right x -> x
+    Left( x) -> error "Can't project Left branch to Right branch"
+    Right(x) -> x
 
 '## Testing Helpers
 
@@ -2413,8 +2430,8 @@ def ensure_size_at_least (stack:Stack(h, a), req_size:Nat) -> {State h} () given
     cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
     snd_ref stack := to_list for i:(Fin new_buf_size).
       case to_ix(n=Fin logical_size, ordinal i) of
-        Just i' -> cur_data[i']
-        Nothing -> uninitialized_value()
+        Just(i') -> cur_data[i']
+        Nothing  -> uninitialized_value()
 
 def read_stack (stack:Stack(h, a)) -> {State h} (List a) given (h, a|Data) =
   n = stack_size stack
@@ -2521,9 +2538,6 @@ instance Subset(CodaIx(n, coda_offset, coda_size), n) given (n|Ix, coda_offset:N
   def project(i) = todo
   def unsafe_project(i) = todo
 
--- TODO Can we have a function that takes implicit or class arguments
--- last?  Status quo crashes with a pattern match failure in
--- Inference.checkSigma
 def tile(
     n|Ix,
     tile_size: Nat,
@@ -2538,7 +2552,6 @@ def tile(
   body (CodaIx(n, coda_offset, coda_size))
 
 -- matmul. Better symbol to use? `@`?
--- TODO: Improve auto-quantification to hoist the Ix n constraint to the type binder
 def (**)(
     x: l=>m=>Float,
     y: m=>n=>Float
@@ -2552,7 +2565,7 @@ def (**)(
       tile(n, n_tile_size) \n_set.
         tile(m, m_tile_size) \m_set.
           for_ l_offset:l_set.
-            l_ix = todo -- inject(superset=l, l_offset)
+            l_ix = inject(superset=l, l_offset)
             for_ n_offset:n_set.
               n_ix = inject n_offset
               for_ m_offset:m_set.

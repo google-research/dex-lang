@@ -78,7 +78,9 @@ tryAsDataAtom atom = do
  where
   go :: Emits n => CAtom n -> SimplifyM i n (SAtom n)
   go = \case
-    Var _ -> error "Shouldn't have core variables left" -- need to handle top-level vars?
+    Var v -> lookupAtomName v >>= \case
+      LetBound (DeclBinding _ _ (Atom x)) -> go x
+      _ -> error "Shouldn't have irreducible top names left"
     Con con -> Con <$> case con of
       Lit v -> return $ Lit v
       ProdCon xs -> ProdCon <$> mapM go xs
@@ -937,10 +939,10 @@ fmapMaybe scrut f = do
 -- compensatory bug somewhere that means that the wrong answer works and the
 -- right answer doesn't. Need to investigate.
 preludeJustVal :: EnvReader m => CAtom n -> m n (CAtom n)
-preludeJustVal x = do
-  xTy <- getType x
-  con <- preludeMaybeNewtypeCon xTy
-  return $ NewtypeCon con (JustAtom xTy x)
+preludeJustVal x = return x
+  -- xTy <- getType x
+  -- con <- preludeMaybeNewtypeCon xTy
+  -- return $ NewtypeCon con (JustAtom xTy x)
 
 preludeNothingVal :: EnvReader m => CType n -> m n (CAtom n)
 preludeNothingVal ty = do

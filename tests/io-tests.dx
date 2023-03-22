@@ -1,5 +1,5 @@
 
-:p unsafe_io \().
+:p unsafe_io \.
   with_temp_file \fname.
     with_file fname WriteMode \stream.
       fwrite stream "lorem ipsum\n"
@@ -9,19 +9,19 @@
 > dolor sit amet
 > "
 
-:p unsafe_io \().
+:p unsafe_io \.
   with_alloc 4 \ptr:(Ptr Nat).
     for i:(Fin 4). store (ptr +>> ordinal i) (ordinal i)
-    table_from_ptr (Fin 4) ptr
+    table_from_ptr(n=Fin 4, ptr)
 > [0, 1, 2, 3]
 
-unsafe_io \().
+unsafe_io \.
   print "testing log"
   1.0 -- prevent DCE
 > testing log
 > 1.
 
-unsafe_io \().
+unsafe_io \.
   for i':(Fin 10).
     i = ordinal i'
     if rem i 2 == 0
@@ -40,37 +40,37 @@ unsafe_io \().
 > 9 is odd
 > 1.
 
-:p storage_size Int
+:p storage_size(a=Int)
 > 4
 
-:p unsafe_io \().
+:p unsafe_io \.
   with_alloc 1 \ptr:(Ptr Int).
     store ptr 3
     load ptr
 > 3
 
-:p unsafe_io \().
+:p unsafe_io \.
   with_dynamic_buffer \buf.
     extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
     extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
-    (AsList _ xs) = load_dynamic_buffer buf
+    AsList(_, xs) = load_dynamic_buffer buf
     sum xs
 > 999000
 
-:p unsafe_io \().
+:p unsafe_io \.
   s = for i:(Fin 10000). i_to_w8 $ f_to_i $ 128.0 * rand (ixkey (new_key 0) i)
   with_temp_file \fname.
     with_file fname WriteMode \stream.
       fwrite stream $ AsList _ s
-    (AsList _ s') = read_file fname
-    sum (for i. w8_to_i s.i) == sum (for i. w8_to_i s'.i)
+    AsList(_, s') = read_file fname
+    sum (for i. w8_to_i s[i]) == sum (for i. w8_to_i s'[i])
 > True
 
-:p unsafe_io do get_env "NOT_AN_ENV_VAR"
+:p unsafe_io \. get_env "NOT_AN_ENV_VAR"
 > Nothing
 
-:p unsafe_io do get_env "DEX_TEST_MODE"
+:p unsafe_io \. get_env "DEX_TEST_MODE"
 > (Just "t")
 
-:p dex_test_mode ()
+:p dex_test_mode()
 > True

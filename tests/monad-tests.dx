@@ -1,21 +1,21 @@
 
 :p
-   def m {h:Heap} (ref:Ref h Int) : {State h} Int = get ref
+   def m (ref:Ref h Int) -> {State h} Int given (h:Heap) = get ref
    run_state 2 m
 > (2, 2)
 
 :p
-   def m {h:Heap} (ref:Ref h Int) : {State h} Unit = ref := 3
+   def m (ref:Ref h Int) -> {State h} () given (h:Heap) = ref := 3
    run_state 0 m
 > ((), 3)
 
 :p
-   def m {h:Heap} (ref:Ref h Int) : {Read h} Int = ask ref
+   def m (ref:Ref h Int) -> {Read h} Int given (h:Heap) = ask ref
    with_reader 5 m
 > 5
 
 :p
-  def stateAction {h:Heap} (ref:Ref h Float) : {State h} Unit =
+  def stateAction (ref:Ref h Float) -> {State h} () given (h:Heap) =
      x = get ref
      ref := (x + 2.0)
      z = get ref
@@ -25,11 +25,12 @@
 > ((), 9.)
 
 :p
-  def rwsAction
-        {rh:Heap} {wh:Heap} {sh:Heap}
-        [AccumMonoid wh Float]
-        (r:Ref rh Int) (w:Ref wh Float) (s:Ref sh Bool)
-        : {Read rh, Accum wh, State sh} Int =
+  def rwsAction(
+      r:Ref rh Int,
+      w:Ref wh Float,
+      s:Ref sh Bool
+      ) -> {Read rh, Accum wh, State sh} Int
+      given (rh:Heap, wh:Heap, sh:Heap) (AccumMonoid wh Float) =
     x = get s
     w += 2.0
     s := not x
@@ -44,28 +45,31 @@
 > ((4, 6.), False)
 
 :p
-   def m {h:Heap} (s:Ref h (Fin 3=>Int)) : {State h} Unit =
-     s!(from_ordinal _ 0) := 10
-     s!(from_ordinal _ 2) := 20
-     x = get (s!(from_ordinal _ 0))
-     s!(from_ordinal _ 1) := x
+   def m(s:Ref h (Fin 3=>Int)) -> {State h} () given (h:Heap) =
+     s!(from_ordinal 0) := 10
+     s!(from_ordinal 2) := 20
+     x = get (s!(from_ordinal 0))
+     s!(from_ordinal 1) := x
    run_state [0,0,0] m
 > ((), [10, 10, 20])
 
-:p with_reader [1,2,3] \r . ask r!(from_ordinal _ 1)
+:p with_reader [1,2,3] \r . ask r!(from_ordinal 1)
 > 2
 
 :p
-  def m {wh:Heap} {sh:Heap}
-        [AccumMonoid wh Float]
-        (w:Ref wh Float) (s:Ref sh Float)
-        : {Accum wh, State sh} Unit =
+  def m(
+      w:Ref wh Float,
+      s:Ref sh Float
+      ) -> {Accum wh, State sh} ()
+      given (wh:Heap, sh:Heap) (AccumMonoid wh Float) =
     x = get s
     w += x
   run_state 1.0 \s. run_accum (AddMonoid Float) \w . m w s
 > (((), 1.), 1.)
 
-def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
+def myAction(w:Ref hw Float, r:Ref hr Float)
+    -> {Read hr, Accum hw} ()
+    given (hw, hr) (AccumMonoid hw Float) =
   x = ask r
   w += x
   w += 2.0
@@ -74,19 +78,18 @@ def myAction {hw hr} [AccumMonoid hw Float] (w:Ref hw Float) (r:Ref hr Float) : 
 > ((), 3.5)
 
 :p
-  def m {h1:Heap} {h2:Heap}
-        [AccumMonoid h1 Float] [AccumMonoid h2 Float]
-        (w1:Ref h1 Float) (w2:Ref h2 Float)
-        : {Accum h1, Accum h2} Unit =
+  def m(w1:Ref h1 Float, w2:Ref h2 Float)
+      -> {Accum h1, Accum h2} ()
+      given (h1:Heap, h2:Heap) (AccumMonoid h1 Float, AccumMonoid h2 Float) =
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
   run_accum (AddMonoid Float) \w1. run_accum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
-def foom {h:Heap} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
-  s!(from_ordinal _ 0) := 1
-  s!(from_ordinal _ 2) := 2
+def foom (s:Ref h ((Fin 3)=>Int)) -> {State h} () given (h:Heap) =
+  s!(from_ordinal 0) := 1
+  s!(from_ordinal 2) := 2
 
 :p run_state [0,0,0] foom
 > ((), [1, 0, 2])
@@ -139,7 +142,7 @@ def foom {h:Heap} (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
           (x, y)
 > ((((2., 3), 4), 4.), 2.)
 
-def symmetrizeInPlace {n} (mat:n=>n=>Float) : n=>n=>Float =
+def symmetrizeInPlace(mat:n=>n=>Float) -> n=>n=>Float given (n|Ix) =
   yield_state mat \ref.
     for i j.
        x = get ref!i!j
@@ -171,17 +174,17 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
      ref += [2.,4.,5.]
 > [3., 6., 8.]
 
-def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
+def effectsAtZero(f: (Int)->{|eff} ()) -> {|eff} () given (eff:Effects) =
   f 0
   ()
 
 :p run_state 0 \ref. effectsAtZero \_. ref := 1
 > ((), 1)
 
-:p filter (\x. x > 5) [0, 7, -1, 6]
+:p filter([0, 7, -1, 6]) \x. x > 5
 > (AsList 2 [7, 6])
 
-:p arg_filter (\x. x > 5) [0, 7, -1, 6]
+:p arg_filter([0, 7, -1, 6]) \x. x > 5
 > (AsList 2 [1, 3])
 
 -- Test list equality
@@ -195,10 +198,11 @@ def effectsAtZero {eff:Effects} (f: Int ->{|eff} Unit) : {|eff} Unit =
 > False
 
 -- Test custom list monoid with accum
-def adjacencyMatrixToEdgeList {n} (mat: n=>n=>Bool) : List (n & n) =
-  yield_accum (ListMonoid (n & n)) \list.
-    for (i, j).
-      if mat.i.j then
+def adjacencyMatrixToEdgeList (mat: n=>n=>Bool) -> List (n, n) given (n|Ix) =
+  yield_accum(ListMonoid((n,n))) \list.
+    for idxs.
+      (i, j) = idxs
+      if mat[i,j] then
         append list (i, j)
 
 test_edges = [[False, False, True, False],
@@ -206,12 +210,12 @@ test_edges = [[False, False, True, False],
               [False, True, False, True],
               [False, False, False, False]]
 
-edgelist = (AsList 6 [ ((0@Fin 4), (2@Fin 4))
+edgelist = AsList(6) [ ((0@Fin 4), (2@Fin 4))
 , ((1@Fin 4), (0@Fin 4))
 , ((1@Fin 4), (2@Fin 4))
 , ((1@Fin 4), (3@Fin 4))
 , ((2@Fin 4), (1@Fin 4))
-, ((2@Fin 4), (3@Fin 4)) ])
+, ((2@Fin 4), (3@Fin 4)) ]
 
 :p edgelist == adjacencyMatrixToEdgeList test_edges
 > True

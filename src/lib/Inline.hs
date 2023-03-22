@@ -335,6 +335,8 @@ reconstruct ctx e = case ctx of
 
 reconstructTabApp :: Emits o
   => Context SExpr e o -> SExpr o -> [SAtom i] -> InlineM i o (e o)
+reconstructTabApp ctx expr [] = do
+  reconstruct ctx expr
 reconstructTabApp ctx expr ixs =
   case fromNaryForExpr (length ixs) expr of
     Just (bsCount, LamExpr bs (Block _ decls result)) -> do

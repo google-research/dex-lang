@@ -11,17 +11,17 @@
 
 :p
    x = iota (Fin 10)
-   sum (for i. x.i)
+   sum (for i. x[i])
 > 45
 
 :p
    x = iota (Fin 3)
-   prod (for i. x.i + 1)
+   prod (for i. x[i] + 1)
 > 6
 
 :p
-   vdot' : (n:Type) ?-> n=>Float -> n=>Float -> Float =
-     \x y. sum (for i. x.i * y.i * 2.0)
+   vdot' : (given (n|Ix),  n=>Float, n=>Float) -> Float =
+     \x y. sum (for i. x[i] * y[i] * 2.0)
    x = iota (Fin 3)
    y = map n_to_f x
    vdot' y y
@@ -30,8 +30,8 @@
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. n_to_f x.i * n_to_f y.j
-   sum (for i. sum z.i)
+   z = for i j. n_to_f x[i] * n_to_f y[j]
+   sum (for i. sum z[i])
 > 18.
 
 :p rand_int (new_key 0)
@@ -39,12 +39,12 @@
 
 -- :p let x = unpack range 10000
 --        key = hash 0
---    in sum (for i: randint (key x.i) 10)
+--    in sum (for i: randint (key x[i]) 10)
 NArr = Fin 7
 
 arr = iota NArr
 
-:p for i:NArr. (iota _).i + (iota _).i
+:p for i:NArr. (iota _)[i] + (iota _)[i]
 > [0, 2, 4, 6, 8, 10, 12]
 
 :p sum for i:NArr. 1
@@ -58,18 +58,17 @@ fun = \y. sum (map n_to_f arr) + y
 :p arr
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold 0 \i. (+) arr.i
+:p fold(0) \i x. x + arr[i]
 > 21
 
 :p 6.0 - 10.0
 > -4.
 
-:p (\(x, y). x + y) (1.0, 2.0)
-> 3.
-
 :p
-   f : (a:Type) ?-> (b:Type) ?-> (a -> b & a) -> b =
-     \(x, y). x y
+   f : (given (a:Type, b:Type), ((a)->b,a)) -> b =
+     \p.
+        (x, y) = p
+        x y
    f (\x. x, 1)
 > 1
 
@@ -86,8 +85,8 @@ fun = \y. sum (map n_to_f arr) + y
 > 3.
 
 -- :p let f (x, y) = x + 2 * y;
---        z.i = (x.i, x.i * x.i)
---    in sum (for i. f z.i)
+--        z[i] = (x[i], x[i] * x[i])
+--    in sum (for i. f z[i])
 :p exp 1.0
 > 2.718282
 
@@ -134,22 +133,22 @@ s = 1.0
 
 :p
    xs = [2,1,0]
-   for i. xs.i + 10
+   for i. xs[i] + 10
 > [12, 11, 10]
 
-def cumsumplus {n} : n=>Float -> n=>Float =
- \xs. snd $ scan 0.0 \i c.
-   ans = c + xs.i
-   (ans, 1.0 + ans)
+def cumsumplus (xs:n=>Float) -> n=>Float given (n|Ix) =
+  snd $ scan 0.0 \i c.
+    ans = c + xs[i]
+    (ans, 1.0 + ans)
 
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2., 4., 7.]
 
-def cumsum2d {n m a} [Add a] (xs:n=>m=>a) : n=>m=>a =
-  cumsum for i. cumsum xs.i
+def cumsum2d (xs:n=>m=>a) -> n=>m=>a given (n|Ix, m|Ix, a|Add) =
+  cumsum for i. cumsum xs[i]
 
 xs : (Fin 4)=>(Fin 3)=>Float = arb $ new_key 0
-sum (sum xs) ~~ (cumsum2d xs).(3@_).(2@_)
+sum (sum xs) ~~ (cumsum2d xs)[3@_,2@_]
 > True
 
 :p [False, False, True]
@@ -198,9 +197,9 @@ infty = 1./0.
 N3 = Fin 3
 N4 = Fin 4
 
-mat = for i:N3 j:N4. (iota _).i + (10 * (iota _).j)
+mat = for i:N3 j:N4. (iota _)[i] + (10 * (iota _)[j])
 
--- :p sum for (i,j). mat.i.j
+-- :p sum for (i,j). mat[i][j]
 -- > 192
 
 litArr = [10, 5, 3]
@@ -253,18 +252,18 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + n_to_f (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c[j] + n_to_f (ordinal j))
 > [0., 2., 4.]
 
 :p
    mat2 = for i:(Fin 4) j:(Fin 4) . ordinal i
-   tmp = for i. mat2.i.i
+   tmp = for i. mat2[i][i]
    tmp
 > [0, 1, 2, 3]
 
 :p
   x = [[0, 1], [2, 3]]
-  xt = for i j. x.j.i
+  xt = for i j. x[j][i]
   xt
 > [[0, 2], [1, 3]]
 
@@ -279,25 +278,25 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p for i:(Fin 3). i
 > [0, 1, 2]
 
-:p from_ordinal (Fin 1) 0
+:p from_ordinal(n=Fin 1, 0)
 > 0
 
 :p 0@(Fin 1)
 > 0
 
-:p 5@(Fin 5 & Fin 3)
+:p 5@(Fin 5, Fin 3)
 > (1, 2)
 
 :p ordinal (1@(Fin 5), 2@(Fin 3))
 > 5
 
-:p for i:(Fin 3 & Fin 5). i
+:p for i:(Fin 3, Fin 5). i
 > [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4)]
 
-:p [1, 2, 3].(0@_)
+:p [1, 2, 3][0@_]
 > 1
 
-:p [0].([asidx 0].(asidx 0))
+:p [0][[asidx 0][asidx 0]]
 > 0
 
 :p select True 1 2
@@ -312,17 +311,17 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p select False [1,2,3] [10,20,30]
 > [10, 20, 30]
 
-:p [(1, (for i:(Fin 2) . 3))].(from_ordinal _ 0)
+:p [(1, (for i:(Fin 2) . 3))][from_ordinal 0]
 > (1, [3, 3])
 
 :p (False && False, False && True, True && False, True && True)
-> (False, (False, (False, True)))
+> (False, False, False, True)
 
 :p (not False, not True)
 > (True, False)
 
 :p (False || False, False || True, True || False, True || True)
-> (False, (True, (True, True)))
+> (False, True, True, True)
 
 :p [(for i:(Fin 1). (False, for j:(Fin 2). 1.0)), [(True, for k:(Fin 2) . 2.0)]]
 > [[(False, [1., 1.])], [(True, [2., 2.])]]
@@ -349,21 +348,25 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p select False () ()
 > ()
 
-:p [1,2,3].(from_ordinal (Fin 3) 1 )
+:p [1,2,3][from_ordinal(n=Fin 3, 1)]
 > 2
 
-:p fold (1.0, 2.0) \i:(Fin 2) (x, y). (y, x)
+:p fold (1.0, 2.0) \i:(Fin 2) p.
+  (y, x) = p
+  (y, x)
 > (1., 2.)
 
-:p fold (1.0, 2.0) \i:(Fin 3) (x, y). (y, x)
+:p fold (1.0, 2.0) \i:(Fin 3) p.
+  (x, y) = p
+  (y, x)
 > (2., 1.)
 
 :p id 2
 > 2
-:p min 2.0 3.0
+:p min(2.0, 3.0)
 > 2.
 
-:p min_by sq 0.5 (-2.0)
+:p min_by(sq, 0.5, -2.0)
 > 0.5
 
 :p minimum [2.0, 3.0, 4.0, 1.5, 7.0]
@@ -375,7 +378,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p max 2.0 3.0
 > 3.
 
-:p max_by sq 0.5 (-2.0)
+:p max_by(sq, 0.5, -2.0)
 > -2.
 
 :p maximum [2.0, 4.0, 1.5, 7.0]
@@ -385,23 +388,13 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 > (10., 100)
 
 :p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
-> (False, (True, (True, (True, False))))
+> (False, True, True, True, False)
 
 :p (1. == 2., (-1.) == (-1.), 1. < 2., (-1.) < 2., 2. < (-1.))
-> (False, (True, (True, (True, False))))
+> (False, True, True, True, False)
 
-:p for i:(Fin 7). select (i < (from_ordinal _ 3)) 1 2
+:p for i:(Fin 7). select (i < (from_ordinal 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]
-
-σ = 1.0 + 2.0
-
-:p σ
-> 3.
-
-δ : Int -> Int = \x. x
-
-:p δ 3
-> 3
 
 :p select True 1 2
 > 1
@@ -419,12 +412,12 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p 1 + 2
 > 3
 
-:p slice [1,2,3,4,5] 2 (Fin 3)
+:p slice([1,2,3,4,5], 2, Fin 3)
 > [3, 4, 5]
 
 -- TODO: test file specifically for parse errors (including testing error messages)
 :p
-   f : Float->Float = \x.
+   f : (Float)->Float = \x.
      -- line comment should be ok here
      2.0 * x
    f 1.0
@@ -466,7 +459,9 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
 :p
   xs = [10.,20.]
   ys = [1.,2.,3.]
-  xys = for (i,j). xs.i + ys.j
+  xys = for p.
+    (i,j) = p
+    xs[i] + ys[j]
   sum xys
 > 102.
 
@@ -474,27 +469,33 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
   xs = [10.,20.]
   ys = [1.,2.,3.]
   zs = [1.]
-  xys = for (i,(j,k)). xs.i + ys.j + zs.k
+  xys = for ix.
+    (i,(j,k)) = ix
+    xs[i] + ys[j] + zs[k]
   sum xys
 > 108.
 
 :p
   xs = [[1,2],[3,4]]
-  ys = for (i,j). xs.i.j
-  zs = for (i,j). ys.(i,j)
-  for i j. zs.(j,i)
+  ys = for p.
+    (i, j) = p
+    xs[i][j]
+  zs = for p.
+    (i,j) = p
+    ys[(i,j)]
+  for i j. zs[(j,i)]
 > [[1, 3], [2, 4]]
 
 :p argmin [1.0, 2.0, 0.4, 5.0]
 > 2
 
-:p select True (from_ordinal (Fin 2) 0) (from_ordinal (Fin 2) 1)
+:p select(True, from_ordinal(n=Fin 2, 0), from_ordinal(n=Fin 2, 1))
 > 0
 
 -- TODO: printing (also parsing) tables with alternative index sets
 -- :p
 --   xs = [[1],[2]]
---   for (i,j). xs.i.j
+--   for (i,j). xs[i][j]
 -- > [1, 2]@(2, 1)
 
 
@@ -519,7 +520,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
       c
 > ([3., 2., 1., 0.], 4.)
 
-def eitherFloor (x:(Int|Float)) : Int = case x of
+def eitherFloor (x:(Int `Either` Float)) -> Int = case x of
   Left i  -> i
   Right f -> f_to_i $ floor f
 
@@ -527,7 +528,7 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > 1
 
 :p
-  x : (Int|Float) = Right 1.2
+  x : (Either Int Float) = Right 1.2
   x
 > (Right 1.2)
 
@@ -549,13 +550,13 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 :p (for i:(Fin 4). 1.0) == (for i:(Fin 4). 2.0)
 > False
 
-((Left 1) :: (Int | Bool)) == (Left 1 :: (Int | Bool))
+((Left 1) :: (Int `Either` Bool)) == (Left 1 :: (Int `Either` Bool))
 > True
 
-((Right False) :: (Int | Bool)) == (Left 1 :: (Int | Bool))
+((Right False) :: (Int `Either` Bool)) == (Left 1 :: (Int `Either` Bool))
 > False
 
-((Right False) :: (Bool | Bool)) == (Left False :: (Bool | Bool))
+((Right False) :: (Bool `Either` Bool)) == (Left False :: (Bool `Either` Bool))
 > False
 
 Just 1 == Just 1
@@ -602,23 +603,22 @@ for i:(Fin 4).
 
 -- TODO: re-enable these once we prevent (`(-3):Nat` occurring
 for i:(Fin (-3)). 1.0
-> Type error:Can't reduce type expression: (Fin -3)
-> This might be due to a failure to find a viable interface implementation for: (FromInteger Nat)
+> Type error:Can't reduce type expression: (Fin -3 [])
 >
 > for i:(Fin (-3)). 1.0
-> ^^^^^^^^^^^^^^^^^^^^^
+>       ^^^^^^^^^^
 
 x = 2 - 4
 > Type error:Couldn't synthesize a class dictionary for: (Sub Nat)
 >
 > x = 2 - 4
->       ^^
+>     ^^^^^
 
 -- Make sure that we can construct and print an array using a pair index set
-for i:(Fin 2 & Fin 2). 1.0
+for i:(Fin 2, Fin 2). 1.0
 > [1., 1., 1., 1.]
 
-1@(Fin 2 & Fin 2)
+1@(Fin 2, Fin 2)
 > (0, 1)
 
 for i:(Fin 5). for j:(..i).
@@ -645,10 +645,10 @@ for i:(Fin 5). for j:(..i).
 :p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
 > [[2., 4.], [6., 8.]]
 
-def newtonIter (f: Float -> Float) (x:Float) : Float =
+def newtonIter(f: (Float)->Float, x:Float) -> Float =
   x - (f x / deriv f x)
 
-def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
+def newtonSolve(tol:Float, f: (Float)->Float, x0:Float) -> Float =
   yield_state x0 \x.
     iter \i.
       if abs (f $ get x) <= tol
@@ -669,8 +669,8 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 --           for i.
 --             xil = (broadcastVector x.i.l)
 --             for j.
---               acc!i!j += xil * (loadVector y.l.j)
---   for i:(Fin 3). for j:(Fin 4). storeVector z.i.j
+--               acc!i!j += xil * (loadVector y.l[j])
+--   for i:(Fin 3). for j:(Fin 4). storeVector z.i[j]
 -- > [ [ [318400.0, 318600.0, 318800.0, 319000.0]
 -- > , [319200.0, 319400.0, 319600.0, 319800.0]
 -- > , [320000.0, 320200.0, 320400.0, 320600.0]
@@ -688,7 +688,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
   fs = for i:(Fin 4).
     x = ordinal i
     \y. x + y
-  for i. fs.i (ordinal i)
+  for i. fs[i] (ordinal i)
 > [0, 2, 4, 6]
 
 :p
@@ -715,8 +715,8 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 -- add toAdd toAdd
 -- > [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
 
-arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
-arr2d.(1@_)
+arr2d = for i:(Fin 2). for j:(Fin 2). (iota _)[(i,j)]
+arr2d[1@_]
 > [2, 3]
 
 :p any [True, False]
@@ -739,19 +739,19 @@ arr2d.(1@_)
 easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
 hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 
-:p logsumexp easy - (log $ sum for j. exp easy.j)
+:p logsumexp easy - (log $ sum for j. exp easy[j])
 > 0.
 
 :p sum $ softmax hard
 > 1.
 
-:p all for i. ((softmax hard).i >= 0.0)
+:p all for i. ((softmax hard)[i] >= 0.0)
 > True
 
-:p sum for i. exp $ (logsoftmax hard).i
+:p sum for i. exp $ (logsoftmax hard)[i]
 > 0.9999709
 
-:p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0001
+:p all for i. abs ((softmax hard)[i] - exp (logsoftmax hard)[i]) < 0.0001
 > True
 
 :p evalpoly [2.0, 3.0, 4.0] 10.0
@@ -788,7 +788,7 @@ s1 = "hello world"
   f = \z. case z == 4 of
             True  -> (\w. w + 2)
             False -> (\w. w)
-  (f x 4, f y 4)
+  (f(x)(4), f(y)(4))
 > (6, 4)
 
 :p
@@ -809,7 +809,7 @@ s1 = "hello world"
 -- > [[0], [1, 2], [3, 4, 5], [6, 7, 8, 9]]
 
 -- @noinline
-def fromLeftFloat (x:(Float | Int)) : Float =
+def fromLeftFloat (x:(Float `Either` Int)) -> Float =
   case x of
     Left x' -> x'
     Right _ -> error "this is an error"
@@ -822,30 +822,30 @@ def fromLeftFloat (x:(Float | Int)) : Float =
 > 1.2
 
 @noinline
-def f1 (x:Int) : Int = x + 1
+def f1 (x:Int) -> Int = x + 1
 
 @noinline
-def f2 (x:Int) : Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
+def f2 (x:Int) -> Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
 
 @noinline
-def f3 (x:Int) : Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
+def f3 (x:Int) -> Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
 
 @noinline
-def f4 (x:Int) : Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
+def f4 (x:Int) -> Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
 
 @noinline
-def f5 (x:Int) : Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
+def f5 (x:Int) -> Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 
 @noinline
-def f6 (x:Int) : Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+def f6 (x:Int) -> Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
 
 -- regression test for #1229 - checks that constraints and data args can be interleaved
 @noinline
-def interleave_args {n} (x:Float) (xs:n=>Float) : Float =
+def interleave_args (x:Float, xs:n=>Float) -> Float given (n|Ix) =
   x + sum xs
 
-interleave_args 1.0 [2.0, 3.0]
+interleave_args(1.0, [2.0, 3.0])
 > 6.
 
 
@@ -872,7 +872,7 @@ interleave_args 1.0 [2.0, 3.0]
 :p intpow 2 17
 > 131072
 
-def f (x:Float) : Float =
+def f (x:Float) -> Float =
   intpow x 2
 
 x2 = 3.1
@@ -890,55 +890,35 @@ grad f x2
 :p map natlog2 [1, 2, 3, 4, 5, 1023, 1024, 1025]
 > [0, 1, 1, 2, 2, 9, 10, 10]
 
-interface AssociatedInt a
-  value a : Int
+interface AssociatedInt(a:Type)
+  value : () -> Int
 
-instance AssociatedInt Int
-  value = 2
+instance AssociatedInt(Int)
+  def value() = 2
 
-instance AssociatedInt Float
-  value = 4
+instance AssociatedInt(Float)
+  def value() = 4
 
-value Int
+value(a=Int)
 > 2
-value Float
+value(a=Float)
 > 4
 
-interface AssociatedWithTwo a c
-  value2 a c : Int
+interface AssociatedWithTwo(a:Type, c:Type)
+  value2 : () -> Int
 
-instance AssociatedWithTwo Int Float
-  value2 = 8
+instance AssociatedWithTwo(Int, Float)
+  def value2 () = 8
 
 -- TODO: the source location for this error message is a bit off since we added
 -- n-ary applications.
-value2 Int Float
+value2(a=Int, c=Float)
 > 8
-value2 Float Int
+value2(a=Float, c=Int)
 > Type error:Couldn't synthesize a class dictionary for: (AssociatedWithTwo Float32 Int32)
 >
-> value2 Float Int
-> ^^^^^^^
-
--- TODO: This is a really bad error message
-interface BadAssociatedName a
-  value2 c : Int
-> Type error:Explicit type binder `c` in method value2 is not a type parameter of its interface
-
--- Technically the two tests below are not incorrect, but we don't implement them yet.
-interface AssociatedSubsetOfParams a c
-  badValue1 a : Int
-> Not implemented:
-> Please report this at github.com/google-research/dex-lang/issues
->
-> Permuted or incomplete explicit type binders are not supported yet.
-
-interface AssociatedPermutedParams a c
-  badValue2 c a : Int
-> Not implemented:
-> Please report this at github.com/google-research/dex-lang/issues
->
-> Permuted or incomplete explicit type binders are not supported yet.
+> value2(a=Float, c=Int)
+> ^^^^^^^^^^^^^^^^^^^^^^
 
 -- XXX: Disabled because we now compile expressions like these to blocks, which
 -- need a type that makes sense in the top scope. We may revisit that choice.
@@ -963,59 +943,59 @@ interface AssociatedPermutedParams a c
 
 '### Misc. index sets
 
-all for x:(Bool & Bool).
-  x == (unsafe_from_ordinal _ (ordinal x))
+all for x:(Bool, Bool).
+  x == (unsafe_from_ordinal (ordinal x))
 > True
 
-all for x:((Bool & Bool)=>(Fin 3)).
-  x == (unsafe_from_ordinal _ (ordinal x))
+all for x:((Bool, Bool)=>(Fin 3)).
+  x == (unsafe_from_ordinal (ordinal x))
 > True
 
-all for x:((Bool & Fin 3)=>(Fin 4)).
-  x == (unsafe_from_ordinal _ (ordinal x))
+all for x:((Bool, Fin 3)=>(Fin 4)).
+  x == (unsafe_from_ordinal (ordinal x))
 > True
 
 all $ for i:(Maybe (Fin 2)).
-  i == (unsafe_from_ordinal _ (ordinal i))
+  i == (unsafe_from_ordinal (ordinal i))
 > True
 
-def all_prefixes (s:String)  : List String =
-  (AsList _ s') = s
+def all_prefixes (s:String)  -> List String =
+  AsList(_, s') = s
   to_list for i. post_slice s' first_ix i
 
 :p all_prefixes "fence"
 > (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])
 
--- Record references
--- Regression test for https://github.com/google-research/dex-lang/issues/694
-data Thing = T {a: Float}
- 
-def scan_over {n} (xs:n=>Float) : n=>Float =
-  snd $ scan (T {a=1.0}) \i t.
-    (T {a}) = t
-    (T {a=a + xs.i}, a)
+-- -- Record references
+-- -- Regression test for https://github.com/google-research/dex-lang/issues/694
+-- data Thing = T {a: Float}
 
-scan_over [1.0, 2.0, 3.0]
-> [1., 2., 4.]
+-- def scan_over (xs:n=>Float) -> n=>Float given (n|Ix) =
+--   snd $ scan (T {a=1.0}) \i t.
+--     (T {a}) = t
+--     (T {a=a + xs[i]}, a)
+
+-- scan_over [1.0, 2.0, 3.0]
+-- > [1., 2., 4.]
 
 -- NonEmpty tests
 
-first_ix :: Unit
+first_ix :: ()
 > ()
 
-first_ix :: (Unit | Fin 2)
+first_ix :: (() `Either` Fin 2)
 > (Left ())
 
 first_ix :: Bool
 > False
 
-first_ix :: (Unit | Fin 2)=>(Unit | Fin 3)
+first_ix :: (() `Either` Fin 2)=>(() `Either` Fin 3)
 > [(Left ()), (Left ()), (Left ())]
 
-first_ix :: ((Unit | Fin 2) & (Unit | Fin 3))
+first_ix :: ((() `Either` Fin 2), (() `Either` Fin 3))
 > ((Left ()), (Left ()))
 
-first_ix :: ((Unit | Fin 2) | Fin 3)
+first_ix :: ((() `Either` Fin 2) `Either` Fin 3)
 > (Left (Left ()))
 
 
@@ -1025,36 +1005,36 @@ first_ix :: (Fin 0)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0))
 >
 > first_ix :: (Fin 0)
-> ^^^^^^^^^
+> ^^^^^^^^
 
-first_ix :: (Fin 0 | Fin 0)
-> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 | Fin 0))
+first_ix :: (Fin 0 `Either` Fin 0)
+> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Either (Fin 0) (Fin 0)))
 >
-> first_ix :: (Fin 0 | Fin 0)
-> ^^^^^^^^^
+> first_ix :: (Fin 0 `Either` Fin 0)
+> ^^^^^^^^
 
-first_ix :: (Fin 0 & Unit)
-> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0 & Unit))
+first_ix :: (Fin 0, ())
+> Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0, ()))
 >
-> first_ix :: (Fin 0 & Unit)
-> ^^^^^^^^^
+> first_ix :: (Fin 0, ())
+> ^^^^^^^^
 
 
 -- Subset tests
 
-project Unit (inject (Unit | Fin 2) ())
+project(subset=(), inject(superset=(() `Either` Fin 2), ()))
 > (Just ())
 
-project Unit (inject (Unit | Fin 2) (0@(Fin 2)))
+project(subset=(), inject(superset=(() `Either` Fin 2), 0@(Fin 2)))
 > Nothing
 
-unsafe_project Unit (inject (Unit | Fin 2) ())
+unsafe_project(subset=(), inject(superset=() `Either` Fin 2, ()))
 > ()
 
-unsafe_project Unit (inject (Fin 2 | Unit) ())
+unsafe_project(subset=(), inject(superset=(Fin 2 `Either` ()), ()))
 > ()
 
-:p unsafe_coerce (Fin 1 => (Nat & Nat)) ([1], [2])
+:p unsafe_coerce(to=Fin 1 => (Nat, Nat), ([1], [2]))
 > [(1, 2)]
 
 -- Stack tests
@@ -1069,7 +1049,7 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
 > (AsList 14 [1., 2., 3., 4., 0., 1., 2., 3., 4., 5., 6., 7., 8., 9.])
 
 :p
-  with_stack (Float & (Fin 2=>Float)) \stack.
+  with_stack (Float, (Fin 2=>Float)) \stack.
     stack_push stack (1.0, [1.0, 2.0])
     stack_extend stack [(10.0, [10.0, 20.0]), (100.0, [100.0, 200.0])]
     read_stack stack
@@ -1082,7 +1062,7 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
     for i:(Fin n).
       stack_push stack 2.0
       stack_extend stack [3.0, 4.0]
-    AsList _ xs = read_stack stack
+    AsList(_, xs) = read_stack stack
     sum xs
 > 9000000.
 
@@ -1090,18 +1070,18 @@ unsafe_project Unit (inject (Fin 2 | Unit) ())
 
 -- Check that we can print out a sum-typed non-data value
 Just f64_to_f
-> (Just <function of type (Float64 -> Float32)>)
+> (Just <function of type ((x:Float64) ->   Float32)>)
 
 -- Check that we can print out a sum-typed non-data value that came
 -- from a case (this tickles ACase colliding with the code generated
 -- to print).  The @noinline defeats case-of-known-constructor.
 @noinline
-def id_bool (x:Bool) : Bool = x
+def id_bool (x:Bool) -> Bool = x
 
 case (id_bool True) of
   True -> Just f64_to_f
   False -> Nothing
-> (Just <function of type (Float64 -> Float32)>)
+> (Just <function of type ((x:Float64) ->   Float32)>)
 
 -- Check that we can later scrutinize a sum-typed non-data value that
 -- came from a case.
@@ -1118,21 +1098,26 @@ case foo of
 
 -- Should be able to catch a function
 -- This is a regression test for Issue #1193.
-catch do f64_to_f
-> (Just <function of type (Float64 -> Float32)>)
+catch \. f64_to_f
+> (Just <function of type ((x:Float64) ->   Float32)>)
 
 -- Should be able to catch a function-valued computation that fails
-catch do
+catch \.
   x = if True
-    then throw ()
+    then throw()
     else 1.0
   \y. x + y
 > Nothing
 
 -- Should be able to apply a function that came out of a catch
-frob : (Maybe (Float -> Float)) = catch do \x. x + x
+frob : (Maybe ((Float) -> Float)) = catch \. \x. x + x
 
 case frob of
   Just func -> func 2.0
   Nothing -> 0.0
 > 4.
+
+
+
+
+

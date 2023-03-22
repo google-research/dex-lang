@@ -582,7 +582,7 @@ leafGroup = do
   leafGroupNoSC = withSrc do
     next <- nextChar
     case next of
-      '_'  -> underscore $> CHole
+      '_'  -> noSC $ underscore $> CHole
       '('  ->  (CIdentifier <$> symName)
            <|> cParensNoSC
       '['  -> cBracketsNoSC
@@ -605,6 +605,9 @@ leafGroup = do
       'i'  -> cIf   <|> cIdentifierNoSC
       _    -> cIdentifierNoSC
 
+  noSC :: Parser a -> Parser a
+  noSC p = withConsumption ConsumeNothing p
+
   postfixGroupNoSC :: Parser (Bin', Group)
   postfixGroupNoSC =
         ((JuxtaposeNoSpace,) <$> withSrc cParensNoSC)
@@ -612,10 +615,10 @@ leafGroup = do
     <|> ((Dot,)              <$> (try $ char '.' >> withSrc cIdentifierNoSC))
 
   bracketNoSC :: Char -> Char -> Parser a -> Parser a
-  bracketNoSC l r p = charLexeme l >> p <* char r
+  bracketNoSC l r p = charLexeme l >> mayBreak (sc >> p) <* char r
 
   cIdentifierNoSC :: Parser Group'
-  cIdentifierNoSC = withConsumption ConsumeNothing $ CIdentifier <$> anyName
+  cIdentifierNoSC = noSC $ CIdentifier <$> anyName
 
   cParensNoSC :: Parser Group'
   cParensNoSC = CParens <$> bracketNoSC '(' ')' (cParenGroup `sepBy` sym ",")

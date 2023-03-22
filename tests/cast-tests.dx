@@ -19,112 +19,112 @@
 
 -- Casts to Int32
 
-internal_cast Int32 (2147483647 :: Int64)
+internal_cast(to=Int32, 2147483647 :: Int64)
 > 2147483647
 
-internal_cast Int32 (2147483648 :: Int64)
+internal_cast(to=Int32, 2147483648 :: Int64)
 > -2147483648
 
-internal_cast Int32 (8589935826 :: Int64)  -- 2^33 + 1234
+internal_cast(to=Int32, 8589935826 :: Int64)  -- 2^33 + 1234
 > 1234
 
-internal_cast Int32 (123 :: Word8)
+internal_cast(to=Int32, 123 :: Word8)
 > 123
 
-internal_cast Int32 (1234 :: Word32)
+internal_cast(to=Int32, 1234 :: Word32)
 > 1234
 
-internal_cast Int32 (4294967295 :: Word32)
+internal_cast(to=Int32, 4294967295 :: Word32)
 > -1
 
-internal_cast Int32 (1234 :: Word64)
+internal_cast(to=Int32, 1234 :: Word64)
 > 1234
 
-internal_cast Int32 (4294967295 :: Word64)
+internal_cast(to=Int32, 4294967295 :: Word64)
 > -1
 
-internal_cast Int32 (4294967296 :: Word64)
+internal_cast(to=Int32, 4294967296 :: Word64)
 > 0
 
-internal_cast Int32 (5000000000 :: Word64)
+internal_cast(to=Int32, 5000000000 :: Word64)
 > 705032704
 
 -- Casts to Int64
 
-internal_cast Int64 (123 :: Int32)
+internal_cast(to=Int64, 123 :: Int32)
 > 123
 
-internal_cast Int64 (-123 :: Int32)
+internal_cast(to=Int64, -123 :: Int32)
 > -123
 
-internal_cast Int64 (123 :: Word8)
+internal_cast(to=Int64, 123 :: Word8)
 > 123
 
-internal_cast Int64 (1234 :: Word32)
+internal_cast(to=Int64, 1234 :: Word32)
 > 1234
 
-internal_cast Int64 (4294967296 :: Word64) -- 2^32
+internal_cast(to=Int64, 4294967296 :: Word64) -- 2^32
 > 4294967296
 
 -- Casts to Word8
 
-internal_cast Word8 (1234 :: Int32)
+internal_cast(to=Word8, 1234 :: Int32)
 > 0xd2
 
-internal_cast Word8 (1234 :: Int)
+internal_cast(to=Word8, 1234 :: Int)
 > 0xd2
 
-internal_cast Word8 (1234 :: Word32)
+internal_cast(to=Word8, 1234 :: Word32)
 > 0xd2
 
-internal_cast Word8 (1234 :: Word64)
+internal_cast(to=Word8, 1234 :: Word64)
 > 0xd2
 
 -- Casts to Word32
 
-internal_cast Word32 (1234 :: Int32)
+internal_cast(to=Word32, 1234 :: Int32)
 > 0x4d2
 
-internal_cast Word32 (-2147483648 :: Int32)
+internal_cast(to=Word32, -2147483648 :: Int32)
 > 0x80000000
 
-internal_cast Word32 (1234 :: Int64)
+internal_cast(to=Word32, 1234 :: Int64)
 > 0x4d2
 
-internal_cast Word32 (4294968530 :: Int64)  -- 2^32 + 1234
+internal_cast(to=Word32, 4294968530 :: Int64)  -- 2^32 + 1234
 > 0x4d2
 
-internal_cast Word32 (-1 :: Int64)
+internal_cast(to=Word32, -1 :: Int64)
 > 0xffffffff
 
-internal_cast Word32 (123 :: Word8)
+internal_cast(to=Word32, 123 :: Word8)
 > 0x7b
 
-internal_cast Word32 (1234 :: Word64)
+internal_cast(to=Word32, 1234 :: Word64)
 > 0x4d2
 
-internal_cast Word32 (4294967296 :: Word64)
+internal_cast(to=Word32, 4294967296 :: Word64)
 > 0x0
 
 -- Casts to Word64
 
-internal_cast Word64 (1234 :: Int32)
+internal_cast(to=Word64, 1234 :: Int32)
 > 0x4d2
 
-internal_cast Word64 (-1 :: Int32)
+internal_cast(to=Word64, -1 :: Int32)
 > 0xffffffff
 
-internal_cast Word64 (1234 :: Int64)
+internal_cast(to=Word64, 1234 :: Int64)
 > 0x4d2
 
-internal_cast Word64 (-1 :: Int64)
+internal_cast(to=Word64, -1 :: Int64)
 > 0xffffffffffffffff
 
-internal_cast Word64 (123 :: Word8)
+internal_cast(to=Word64, 123 :: Word8)
 > 0x7b
 
-internal_cast Word64 (1234 :: Word32)
+internal_cast(to=Word64, 1234 :: Word32)
 > 0x4d2
 
-internal_cast Word64 (4294967295 :: Word32)
+internal_cast(to=Word64, 4294967295 :: Word32)
 > 0xffffffff
