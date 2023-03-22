@@ -46,12 +46,11 @@ dexCompile ctxPtr ccInt funcAtomPtr = catchErrors do
   let cc = intAsCC ccInt
   runTopperMFromContext ctxPtr do
     -- TODO: Check if atom is compatible with context! Use module name?
-    (impFunc, nativeSignature) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
-    (nativeCode, linknames) <- toCFunction "userFunc" impFunc
-    nativeFunction <- emitObjFile "userFunc" nativeCode linknames >>= loadObject
-    let funcPtr = nativeFunPtr $ nativeFunction
-    let exportNativeFunction = ExportNativeFunction nativeFunction nativeSignature
-    liftIO $ insertIntoNativeFunctionTable ctxPtr funcPtr exportNativeFunction
+    (impFunc, nativeSig) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
+    nativeFun <- toCFunction "userFunc" impFunc >>= emitObjFile >>= loadObject
+    let funcPtr = nativeFunPtr $ nativeFun
+    let exportNativeFun = ExportNativeFunction nativeFun nativeSig
+    liftIO $ insertIntoNativeFunctionTable ctxPtr funcPtr exportNativeFun
     return funcPtr
 
 dexGetFunctionSignature :: Ptr Context -> ExportNativeFunctionAddr -> IO (Ptr (ExportedSignature 'VoidS))

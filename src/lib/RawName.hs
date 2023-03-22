@@ -103,7 +103,7 @@ firstSilentName = zeroBits
 lastSilentName :: NameRep
 lastSilentName = complement zeroBits `clearBit` nameKindBit
 
-newtype NameHint = NameHint Int
+newtype NameHint = NameHint Int deriving (Store)
 newtype RawName  = RawName  Int deriving (Eq, Ord, Generic, Hashable, Store)
 
 freshRawName :: NameHint -> RawNameMap a -> RawName

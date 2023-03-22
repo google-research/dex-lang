@@ -354,12 +354,9 @@ queryObjCache v = lookupEnv v >>= \case
   TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
   _ -> return Nothing
 
-emitObjFile
-  :: (Mut n, TopBuilder m)
-  => NameHint -> FunObjCode -> LinktimeNames  n
-  -> m n (FunObjCodeName n)
-emitObjFile hint objFile names = do
-  emitBinding hint $ FunObjCodeBinding objFile names
+emitObjFile :: (Mut n, TopBuilder m) => CFunction n -> m n (FunObjCodeName n)
+emitObjFile fun@CFunction{..} = do
+  emitBinding nameHint $ FunObjCodeBinding fun
 
 lookupPtrName :: EnvReader m => PtrName n -> m n (PtrType, Ptr ())
 lookupPtrName v = lookupEnv v >>= \case

@@ -180,6 +180,13 @@ data PtrBinder n l = PtrBinder (NameBinder PtrNameC n l) PtrType
 data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
 data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
 
+data CFunction (n::S) = CFunction
+  { nameHint :: NameHint
+  , objectCode :: FunObjCode
+  , linkerNames :: LinktimeNames n
+  }
+  deriving (Show, Generic)
+
 instance BindsAtMostOneName IFunBinder TopFunNameC where
   IFunBinder b _ @> x = b @> x
   {-# INLINE (@>) #-}
@@ -427,13 +434,11 @@ instance AlphaEqE    ImpFunction
 instance AlphaHashableE    ImpFunction
 instance RenameE     ImpFunction
 
-
 instance GenericE LinktimeNames where
   type RepE LinktimeNames = ListE  (Name FunObjCodeNameC)
                    `PairE`  ListE  (Name PtrNameC)
   fromE (LinktimeNames funs ptrs) = ListE funs `PairE` ListE ptrs
   {-# INLINE fromE #-}
-
   toE (ListE funs `PairE` ListE ptrs) = LinktimeNames funs ptrs
   {-# INLINE toE #-}
 
@@ -442,6 +447,20 @@ instance HoistableE     LinktimeNames
 instance AlphaEqE       LinktimeNames
 instance AlphaHashableE LinktimeNames
 instance RenameE        LinktimeNames
+
+instance GenericE CFunction where
+  type RepE CFunction = (LiftE NameHint) `PairE`
+    (LiftE FunObjCode) `PairE` LinktimeNames
+  fromE (CFunction{..}) = LiftE nameHint `PairE`
+    LiftE objectCode `PairE` linkerNames
+  {-# INLINE fromE #-}
+  toE (LiftE nameHint `PairE` LiftE objectCode `PairE` linkerNames) =
+    CFunction{..}
+  {-# INLINE toE #-}
+
+instance SinkableE      CFunction
+instance HoistableE     CFunction
+instance RenameE        CFunction
 
 instance Store IsCUDARequired
 instance Store CallingConvention
@@ -454,6 +473,7 @@ instance Store (IExpr n)
 instance Store (ImpBlock n)
 instance Store (ImpFunction n)
 instance Store (LinktimeNames n)
+instance Store (CFunction n)
 instance Store LinktimeVals
 
 instance Hashable IsCUDARequired

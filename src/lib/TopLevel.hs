@@ -600,8 +600,7 @@ evalSpecializations fs = do
     -- specialization cache)
     updateTopFunStatus f Running
     imp <- compileTopLevelFun StandardCC simp
-    (obj, linkerNames) <- toCFunction (getNameHint f) imp
-    objName <- emitObjFile (getNameHint f) obj linkerNames
+    objName <- toCFunction (getNameHint f) imp >>= emitObjFile
     void $ loadObject objName
     updateTopFunStatus f (Finished $ TopFunLowerings objName)
 
@@ -651,14 +650,17 @@ loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      (objCode, LinktimeNames funNames ptrNames) <- lookupFunObjCode fname
-      funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
-      ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
-      dyvarStores <- getRuntimeEnv
-      f <- liftIO $ linkFunObjCode objCode dyvarStores
-        $ LinktimeVals funVals ptrVals
+      f <- lookupFunObjCode fname >>= loadObjectContent
       extendLoadedObjects fname f
       return f
+
+loadObjectContent :: (Topper m, Mut n) => CFunction n -> m n NativeFunction
+loadObjectContent CFunction{..} = do
+  (LinktimeNames funNames ptrNames) <- return linkerNames
+  funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
+  ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
+  dyvarStores <- getRuntimeEnv
+  liftIO $ linkFunObjCode objectCode dyvarStores $ LinktimeVals funVals ptrVals
 
 linkFunObjCode
   :: FunObjCode -> DynamicVarKeyPtrs -> LinktimeVals -> IO NativeFunction
@@ -677,14 +679,13 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         destroyLinker l
   return $ NativeFunction ptr destructor
 
-toCFunction :: (Topper m, Mut n)
-  => NameHint -> ImpFunction n -> m n (FunObjCode, LinktimeNames n)
+toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (CFunction n)
 toCFunction nameHint impFun = do
   logger <- getFilteredLogger
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
   reqObjNames <- mapM funNameToObj reqFuns
-  return (obj, (LinktimeNames reqObjNames reqPtrNames))
+  return $ CFunction nameHint obj (LinktimeNames reqObjNames reqPtrNames)
 
 getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
@@ -699,13 +700,8 @@ getEntryFunCC = getConfig <&> backendName <&> \case
 packageLLVMCallable :: forall n m. (Topper m, Mut n)
   => ImpFunction n -> m n LLVMCallable
 packageLLVMCallable impFun = do
-  (obj, (LinktimeNames reqObjNames reqPtrNames)) <- toCFunction "main" impFun
-  reqFunPtrs  <- forM reqObjNames objNameToPtr
-  reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
-  dyvarStores <- getRuntimeEnv
+  nativeFun <- toCFunction "main" impFun >>= loadObjectContent
   benchRequired <- requiresBench <$> getPassCtx
-  nativeFun <- liftIO $ linkFunObjCode obj dyvarStores
-    $ LinktimeVals reqFunPtrs reqDataPtrs
   logger <- getFilteredLogger
   let IFunType _ _ resultTypes = impFunType impFun
   return LLVMCallable{..}
@@ -716,9 +712,6 @@ compileToObjCode astWithNames = forM astWithNames \ast -> do
   logger  <- getFilteredLogger
   opt <- getLLVMOptLevel <$> getConfig
   liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
-
-objNameToPtr :: (Topper m, Mut n) => FunObjCodeName n -> m n (FunPtr ())
-objNameToPtr v = nativeFunPtr <$> loadObject v
 
 funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
