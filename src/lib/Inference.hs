@@ -1555,7 +1555,7 @@ checkMaybeAnnExpr hint ty expr = confuseGHC >>= \_ -> case ty of
 
 inferRole :: CType o -> Explicitness -> InfererM i o ParamRole
 inferRole ty = \case
-  Explicit -> return DictParam
+  Inferred _ Synth -> return DictParam
   _ -> do
     zonk ty >>= \case
       TyKind -> return TypeParam

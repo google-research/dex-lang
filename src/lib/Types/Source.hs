@@ -106,16 +106,13 @@ data CSDecl'
 type CEffs = ([Group], Maybe Group)
 data CDef = CDef
   SourceName
-  CDefParams
-  (Maybe Group)
+  (ExplicitParams)
+  (Maybe CDefRhs)
   (Maybe GivenClause)
   CSBlock
   deriving (Show, Generic)
 
-data CDefParams =
-   ExplicitCDef (ExplicitParams) (Maybe CEffs)
- | ImplicitCDef
-   deriving (Show, Generic)
+type CDefRhs = (AppExplicitness, Maybe CEffs, Group)
 
 data CInstanceDef = CInstanceDef
   SourceName         -- interface name

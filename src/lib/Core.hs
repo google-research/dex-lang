@@ -489,7 +489,7 @@ fromNaryTabLamExact exactDepth lam = do
   return naryLam
 
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
-fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryForExpr maxDepth | maxDepth < 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
   Hof (For _ _ (UnaryLamExpr b body)) ->
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))

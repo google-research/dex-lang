@@ -938,10 +938,9 @@ instance PrettyPrec e => Pretty (PrimTC r e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC r e) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
-    ProdType []  -> atPrec ArgPrec $ "Unit"
-    ProdType [a] -> atPrec ArgPrec $ "(" <> pArg a <> "&)"
+    ProdType []  -> atPrec ArgPrec $ "()"
     ProdType as  -> atPrec ArgPrec $ align $ group $
-      encloseSep "(" ")" " & " $ fmap pApp as
+      encloseSep "(" ")" ", " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
@@ -1195,7 +1194,7 @@ instance Pretty CSDecl' where
 
 instance Pretty AppExplicitness where
   pretty ExplicitApp = "->"
-  pretty ImplicitApp = "implicit function"
+  pretty ImplicitApp = "->>"
 
 instance Pretty CSBlock where
   pretty (ExprBlock g) = pArg g

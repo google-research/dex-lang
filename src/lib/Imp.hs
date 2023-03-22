@@ -1406,7 +1406,7 @@ indexSetSizeImp (IxType _ dict) = do
     IxDictRawFin n -> return n
     IxDictSpecialized _ d params -> do
       SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
-      appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [UnitVal])
+      appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [])
   fromScalarAtom ans
 
 appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SAtom n] -> SubstImpM i n (SAtom n)

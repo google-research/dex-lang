@@ -598,7 +598,7 @@ def right_post (i:n) -> Post n given (n|Ix) =
 interface NonEmpty (n|Ix)
   first_ix : n
 
-def last_ix : n given (n|NonEmpty) =
+def last_ix () ->> n given (n|NonEmpty) =
   unsafe_from_ordinal(unsafe_i_to_n(n_to_i(size n) - 1))
 
 instance NonEmpty (Post n) given (n|Ix)
@@ -1744,7 +1744,7 @@ def error (s:String) -> a given (a|Data) = unsafe_io \.
   print s
   %throwError a
 
-def todo : a given (a|Data) = error "TODO: implement it!"
+def todo () ->> a given (a|Data) = error "TODO: implement it!"
 
 '### File Operations
 
@@ -2569,5 +2569,5 @@ def inner (x:n=>Float, mat:n=>m=>Float, y:m=>Float) -> Float given (n|Ix, m|Ix) 
     (i,j) = p
     x[i] * mat[i,j] * y[j]
 
-def eye : n=>n=>a given (n|Ix, a|Add|Mul) =
+def eye () ->> n=>n=>a given (n|Ix, a|Add|Mul) =
   for i j. select(ordinal i == ordinal j, one, zero)

@@ -27,7 +27,7 @@ generalizeIxDict dict = liftGeneralizerM do
   dictTyGeneralized <- generalizeType dictTy
   dictGeneralized <- liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
   return dictGeneralized
-{-# INLINE generalizeIxDict #-}
+-- {-# INLINE generalizeIxDict #-}
 
 generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
 generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do

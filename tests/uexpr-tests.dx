@@ -2,12 +2,12 @@
 :p 3 + (4 + 5)
 > 12
 
-def depId (a:Type) (x:a) : a = x
+def depId (a:Type, x:a) -> a = x
 
 :p depId Int 1
 > 1
 
-def returnFirstArg (a:Type) (b:Type) (x:a) (y:b) : a = x
+def returnFirstArg (a:Type, b:Type, x:a, y:b) -> a = x
 
 :p returnFirstArg Int Float 1 2.0
 > 1
@@ -15,26 +15,26 @@ def returnFirstArg (a:Type) (b:Type) (x:a) (y:b) : a = x
 :p 1.0 + 2.0
 > 3.
 
-def triple (x:Float) : Float = x + x + x
+def triple (x:Float) -> Float = x + x + x
 
 :p triple 1.0
 > 3.
 
-def idExplicit (a:Type) (x:a) : a = x
+def idExplicit (a:Type, x:a) -> a = x
 
 :p idExplicit Int 1
 > 1
 
-def idImplicit {a:Type} (x:a) : a = x
+def idImplicit (x:a) -> a given (a:Type) = x
 :p idImplicit 1
 > 1
 
-idImplicit2 : ((a:Type) ?-> a -> a) = \x. x
+idImplicit2 : (given (a:Type), a) -> a = \x. x
 :p idImplicit2 1
 > 1
 
 :p
-  idImplicit3 : ((a:Type) ?-> a -> a) = \x. x
+  idImplicit3 : (given (a:Type), a) -> a = \x. x
   idImplicit3 1
 > 1
 
@@ -54,27 +54,27 @@ idImplicit2 : ((a:Type) ?-> a -> a) = \x. x
 > Error: variable not in scope: x
 >
 > :p x + x
->    ^^
+>    ^
 
 idiv = 1
 > Error: variable already defined: idiv
 >
 > idiv = 1
-> ^^^^^
+> ^^^^
 
-def TyId (a:Type) : Type = a
+def TyId (a:Type) -> Type = a
 :p
   x:(TyId Int) = 1
   x
 > 1
 
 :p
-  def TyId2 (a:Type) : Type = a
+  def TyId2 (a:Type) -> Type = a
   x:(TyId2 Int) = 1
   x
 > 1
 
-def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
+def tabId (x:n=>Int) -> n=>Int given (n|Ix) = for i. x[i]
 
 -- bug: this doesn't work if we split it across top-level decls
 :p
@@ -101,7 +101,7 @@ myPair = (1, 2.3)
 > 1024
 
 :p
- x:Unit = ()
+ x:() = ()
  x
 > ()
 
@@ -113,15 +113,16 @@ myPair = (1, 2.3)
   x
 > []
 
+
 :p
-  x : (Fin 2 & Fin 2) => Int = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
+  x : (Fin 3, Fin 2) => Int = coerce_table((Fin 3, Fin 2), [1, 2, 3, 4, 5, 6])
   x
-> [1, 2, 3, 4]
+> [1, 2, 3, 4, 5, 6]
 
 :p [] :: (Fin 0 => Int)
 > []
 
-:p coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
+:p coerce_table (Fin 2, Fin 2) [1, 2, 3, 4]
 > [1, 2, 3, 4]
 
 
@@ -136,7 +137,7 @@ myPair = (1, 2.3)
 :p
   (x,y,z) = (1,2,3)
   (x,y,z)
-> (1, (2, 3))
+> (1, 2, 3)
 
 -- XXX: This is an ambiguous type error with overloaded literals
 -- TODO: Reenable once we have reasonable error messages for ambiguous types
@@ -152,9 +153,9 @@ myPair = (1, 2.3)
 -- >     ^^^
 
 :p
-  (x,(y,z)) = (1,2,3)
-  (x,(y,z))
-> (1, (2, 3))
+  (x,y,z) = (1,2,3)
+  (x,y,z)
+> (1, 2, 3)
 
 -- XXX: This is an ambiguous type error with overloaded literals
 -- TODO: Reenable once we have reasonable error messages for ambiguous types
@@ -175,11 +176,13 @@ myPair = (1, 2.3)
       xsRef!i := ordinal i
 > [0, 1, 2]
 
-def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
+def passthrough (f:(a)->{|eff} b, x:a) -> {|eff} b
+    given (a, b, eff:Effects) =
+  f x
 
 :p
   yield_state 1 \ref.
-    passthrough (\(). ref := 10) ()
+    passthrough (\_. ref := 10) ()
 > 10
 
 :p
@@ -194,24 +197,26 @@ def passthrough {a b} {eff:Effects} (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   myId = fst (\x. x, 2)
-  f : (aa:Type) -> aa -> aa = \bb. \x. myId x
+  f : (aa:Type, aa) -> aa = \bb x. myId x
   f Int 1
 > Leaked local variables:[bb]
 > Failed to exchage binders in buildAbsInf
 > Pending emissions: 
 > Defaults:  
-> Solver substitution: [(_.5, bb)]
+> Solver substitution: [(_.3, bb)]
 >
->   f : (aa:Type) -> aa -> aa = \bb. \x. myId x
->                               ^^^^^^^^^^^^^^^
+>   f : (aa:Type, aa) -> aa = \bb x. myId x
+>                             ^^^^^^^^^^^^^
 
-def myFst {a b} (p:(a&b)) : a =
+def myFst (p:(a,b)) -> a given (a, b) =
   (x, _) = p
   x
 :p myFst (1,2)
 > 1
 
-def myOtherFst {a b} ((x, _):(a&b)) : a = x
+def myOtherFst (pair:(a,b)) -> a given (a, b) =
+  (x, _) = pair
+  x
 :p myOtherFst (1,2)
 > 1
 
@@ -219,8 +224,8 @@ def myOtherFst {a b} ((x, _):(a&b)) : a = x
 > 3.
 
 :p
-  xs = fanout _ 1.0
-  for i:(Fin 3). xs.i + xs.i
+  xs = fanout 1.0
+  for i:(Fin 3). xs[i]+ xs[i]
 > [2., 2., 2.]
 
 :p
@@ -229,9 +234,9 @@ def myOtherFst {a b} ((x, _):(a&b)) : a = x
 > 18.
 
 :p
-   f : Float --o Float =
+   f : (Float) -> Float =
      \x. 2.0 * (x + x)
-   transpose_linear f 1.0
+   transpose_linear(f)(1.0)
 > 4.
 
 -- FIXME: This fails due to shadowing!
@@ -241,14 +246,14 @@ def myOtherFst {a b} ((x, _):(a&b)) : a = x
 --> [[1.0], [2.0], [3.0]]
 
 :p
-   f : Float --o (Fin 3=>Float) =
+   f : (Float) -> (Fin 3=>Float) =
      \x. for i. x * 2.0
-   transpose_linear f [1.0, 2.0, 3.0]
+   transpose_linear(f)([1.0, 2.0, 3.0])
 > 12.
 
-id'' : (b:Type) ?-> b -> b = id
+id'' : (given (b:Type), b) -> b = id
 
-def eitherFloor (x:(Int|Float)) : Int = case x of
+def eitherFloor (x:(Either Int Float)) -> Int = case x of
   Left  i -> i
   Right f -> f_to_i f
 
@@ -280,7 +285,7 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 > (Solving for: [a, b])
 >
 >   [a, b] = [1, 2, 3]
->   ^^^^^^^
+>   ^^^^^^
 
 :p
   [[a, _], [_, d]] = [[1, 2], [3, 4]]
@@ -289,15 +294,15 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 
 -- Can only unpack tables indexed by `Fin n`
 :p
-  [a, b, c, d] = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
+  [a, b, c, d] = coerce_table (Fin 2, Fin 2) [1, 2, 3, 4]
   (a, b, c, d)
 > Type error:
-> Expected: ((Fin 2 & Fin 2) => a)
+> Expected: ((Fin 2, Fin 2) => a)
 >   Actual: ((Fin 4) => b)
 > (Solving for: [a, b])
 >
->   [a, b, c, d] = coerce_table (Fin 2 & Fin 2) [1, 2, 3, 4]
->   ^^^^^^^^^^^^^
+>   [a, b, c, d] = coerce_table (Fin 2, Fin 2) [1, 2, 3, 4]
+>   ^^^^^^^^^^^^
 
 -- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
 -- :p
@@ -305,17 +310,17 @@ def eitherFloor (x:(Int|Float)) : Int = case x of
 --   (a, b, c, d)
 -- > (0, (0, (0, 0)))
 
-def bug (n : Type) [Data n]: Unit =
+def bug (n|Data) -> () =
   for w':n.
     w : n = todo
     for i:(w..). ()
   ()
-> Leaked local variables:[v#1]
+> Leaked local variables:[v#0]
 > Block:
->  v#1:n = todo n (synthesize (Data n))
->  v#2:((v#1..) => Unit) = for i:(v#1..). ()
->  v#2
-> Of type: ((v#1..) => Unit)
+>  v#0:n = todo n (synthesize (Data n))
+>  v#1:((RangeFrom n v#0) => ()) = for  ( i:(RangeFrom n v#0) ())
+>  v#1
+> Of type: ((RangeFrom n v#0) => ())
 > With effects: {}
 >
 >   for w':n.
@@ -331,7 +336,7 @@ badDefinition = 4
 > Error: variable already defined: badDefinition
 >
 > badDefinition = 4
-> ^^^^^^^^^^^^^^
+> ^^^^^^^^^^^^^
 
 :p badDefinition
 > Error: ambiguous variable: badDefinition is defined:

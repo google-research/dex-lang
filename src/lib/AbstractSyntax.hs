@@ -161,18 +161,17 @@ aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParam
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
 
 aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
-aDef (CDef name defParams resultTy givens body) = do
-  (expl, explicitParams, effs) <- case defParams of
-    ExplicitCDef params effs -> do
-      params' <- aExplicitParams params
-      effs'   <- mapM aEffects effs
-      return (ExplicitApp, params', effs')
-    ImplicitCDef -> return (ImplicitApp, Empty, Nothing)
-  resultTy' <- mapM expr resultTy
-  implicitParams <- toNest <$> fromMaybeM givens [] aGivens
-  let params = implicitParams >>> explicitParams
+aDef (CDef name params optRhs optGivens body) = do
+  explicitParams <- aExplicitParams params
+  let rhsDefault = (ExplicitApp, Nothing, Nothing)
+  (expl, effs, resultTy) <- fromMaybeM optRhs rhsDefault \(expl, optEffs, resultTy) -> do
+    effs <- fromMaybeM optEffs UPure aEffects
+    resultTy' <- expr resultTy
+    return (expl, Just effs, Just resultTy')
+  implicitParams <- toNest <$> fromMaybeM optGivens [] aGivens
+  let allParams = implicitParams >>> explicitParams
   body' <- block body
-  return (name, ULamExpr params expl effs resultTy' body')
+  return (name, ULamExpr allParams expl effs resultTy body')
 
 aExplicitParams :: ExplicitParams -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
 aExplicitParams gs = generalBinders DataParam Explicit gs

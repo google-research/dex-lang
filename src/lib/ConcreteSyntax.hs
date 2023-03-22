@@ -374,20 +374,22 @@ funDefLet :: Parser CDef
 funDefLet = label "function definition" do
   keyWord DefKW
   mayBreak do
-    name <- anyName
-    params <- (sym ":" >> return ImplicitCDef) <|> defParamsExplicit
-    resultTy <- optional cGroupNoEqual
+    name   <- anyName
+    params <- parens (commaSep cParenGroup)
+    rhs    <- optional do
+      expl     <- explicitness
+      effs     <- optional cEffs
+      resultTy <- cGroupNoEqual
+      return (expl, effs, resultTy)
     givens <- optional givenClause
     mayNotBreak do
       sym "="
       body <- cBlock
-      return $ CDef name params resultTy givens body
+      return $ CDef name params rhs givens body
 
-defParamsExplicit :: Parser CDefParams
-defParamsExplicit = do
-  params <- parens (commaSep cParenGroup)
-  effs <- arrowOptEffs <|> return Nothing
-  return $ ExplicitCDef params effs
+explicitness :: Parser AppExplicitness
+explicitness =   (sym "->"  $> ExplicitApp)
+             <|> (sym "->>" $> ImplicitApp)
 
 anyNameNoSC :: Parser SourceName
 anyNameNoSC = withConsumption ConsumeNothing $ anyName

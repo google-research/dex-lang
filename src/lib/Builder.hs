@@ -1165,10 +1165,7 @@ applyIxMethod dict method args = case dict of
     SpecializedDictBinding (SpecializedDict _ maybeFs) <- lookupEnv d
     Just fs <- return maybeFs
     LamExpr bs body <- return $ fs !! fromEnum method
-    let args' = case method of
-          Size -> params ++ [UnitVal]
-          _    -> params ++ args
-    emitBlock =<< applySubst (bs @@> fmap SubstVal args') body
+    emitBlock =<< applySubst (bs @@> fmap SubstVal (params ++ args)) body
 
 unsafeFromOrdinal :: (SBuilder m, Emits n) => IxType SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
 unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [i]
