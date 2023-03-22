@@ -9,6 +9,7 @@
 module ConstantCastingSpec (spec) where
 
 import Control.Monad
+import Control.Monad.IO.Class
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
@@ -20,6 +21,7 @@ import Lower
 import Name
 import Optimize
 import QueryType (getDestBlockType)
+import Runtime
 import TopLevel
 import Types.Core
 import Types.Imp
@@ -40,7 +42,8 @@ evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
 evalBlock block = do
   NullaryDestLamExpr lowered <- lowerFullySequential $ NullaryLamExpr block
   imp <- asImpFunction lowered
-  resultVals <- evalLLVM imp
+  llvm <- packageLLVMCallable imp
+  resultVals <- liftIO $ callEntryFun llvm []
   resultTy <- getDestBlockType lowered
   repValFromFlatList resultTy resultVals
 

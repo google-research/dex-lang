@@ -4,8 +4,10 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Runtime (loadLitVal, callNativeFun, callDtor, BenchRequirement (..),
-               createTLSKey, PThreadKey) where
+module Runtime
+  ( loadLitVal
+  , LLVMCallable (..), callEntryFun, callDtor, BenchRequirement (..)
+  , createTLSKey, PThreadKey) where
 
 import Data.Int
 import GHC.IO.FD
@@ -51,16 +53,24 @@ data BenchRequirement =
     NoBench
   | DoBench Bool -- True means "must sync CUDA"
 
-callNativeFun :: NativeFunction -> BenchRequirement -> PassLogger -> [LitVal] -> [BaseType] -> IO [LitVal]
-callNativeFun f bench logger args resultTypes = do
+data LLVMCallable = LLVMCallable
+  { nativeFun :: NativeFunction
+  , benchRequired :: BenchRequirement
+  , logger :: PassLogger
+  , resultTypes :: [BaseType]
+  }
+
+-- The NativeFunction needs to have been compiled with EntryFunCC.
+callEntryFun :: LLVMCallable -> [LitVal] -> IO [LitVal]
+callEntryFun LLVMCallable{..} args = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
-        let fPtr = castFunPtr $ nativeFunPtr f
+        let fPtr = castFunPtr $ nativeFunPtr nativeFun
         evalTime <- checkedCallFunPtr fd argsPtr resultPtr fPtr
         results <- loadLitVals resultPtr resultTypes
-        case bench of
+        case benchRequired of
           NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
           DoBench shouldSyncCUDA -> do
             let sync = when shouldSyncCUDA $ synchronizeCUDA
