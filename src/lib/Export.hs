@@ -21,8 +21,6 @@ import CheckType (asFirstOrderFunction)
 import Core
 import Err
 import IRVariants
-import Imp
-import Lower (lowerFullySequential)
 import Name
 import QueryType
 import Simplify
@@ -52,10 +50,7 @@ prepareFunctionForExport cc f = do
     Failure err -> throwErrs err
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
-  fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequential fOpt
-  flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction cc flOpt
+  fImp <- compileTopLevelFun cc fSimp
   return (fImp, sig)
 
   where

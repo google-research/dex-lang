@@ -13,7 +13,7 @@ module TopLevel (
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, evalLLVM, asImpFunction,
-  simpOptimizations, loweredOptimizations) where
+  simpOptimizations, loweredOptimizations, compileTopLevelFun) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -597,8 +597,10 @@ evalSpecializations fs = do
     -- (even without recursion in Dex itself this is possible via the
     -- specialization cache)
     updateTopFunStatus f Running
-    impl <- compileTopLevelFun (getNameHint f) simp
-    updateTopFunStatus f (Finished impl)
+    imp <- compileTopLevelFun StandardCC simp
+    objName <- toCFunction (getNameHint f) imp
+    void $ loadObject objName
+    updateTopFunStatus f (Finished $ TopFunLowerings objName)
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -626,15 +628,13 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
-compileTopLevelFun hint fSimp = do
+compileTopLevelFun :: (Topper m, Mut n)
+  => CallingConvention -> SLam n -> m n (ImpFunction n)
+compileTopLevelFun cc fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequential fOpt
+  fLower <- checkPass LowerPass $ lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
-  fImp <- checkPass ImpPass $ toImpFunction StandardCC flOpt
-  fObj <- toCFunction hint fImp
-  void $ loadObject fObj
-  return $ TopFunLowerings fObj
+  checkPass ImpPass $ toImpFunction cc flOpt
 {-# SCC compileTopLevelFun #-}
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
