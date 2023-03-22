@@ -35,8 +35,8 @@ exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport
-  :: (Mut n, Topper m) => CallingConvention -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport :: (Mut n, Topper m)
+  => CallingConvention -> CAtom n -> m n (NativeFunction, ExportedSignature VoidS)
 prepareFunctionForExport cc f = do
   (arrs, naryPi) <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
@@ -51,7 +51,8 @@ prepareFunctionForExport cc f = do
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
   fImp <- compileTopLevelFun cc fSimp
-  return (fImp, sig)
+  nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
+  return (nativeFun, sig)
 
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)

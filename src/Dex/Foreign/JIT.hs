@@ -25,10 +25,8 @@ import Foreign.Marshal.Alloc
 import Data.Functor
 import qualified Data.Map.Strict as M
 
-import Builder
 import Export
 import Name
-import TopLevel
 import Types.Core
 import Types.Imp
 
@@ -46,8 +44,7 @@ dexCompile ctxPtr ccInt funcAtomPtr = catchErrors do
   let cc = intAsCC ccInt
   runTopperMFromContext ctxPtr do
     -- TODO: Check if atom is compatible with context! Use module name?
-    (impFunc, nativeSig) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
-    nativeFun <- toCFunction "userFunc" impFunc >>= emitObjFile >>= loadObject
+    (nativeFun, nativeSig) <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     let funcPtr = nativeFunPtr $ nativeFun
     let exportNativeFun = ExportNativeFunction nativeFun nativeSig
     liftIO $ insertIntoNativeFunctionTable ctxPtr funcPtr exportNativeFun
