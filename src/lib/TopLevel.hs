@@ -11,7 +11,7 @@ module TopLevel (
   evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
-  ensureModuleLoaded, importModule, printCodegen, asImpFunction,
+  ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, packageLLVMCallable,
   simpOptimizations, loweredOptimizations, compileTopLevelFun) where
 
@@ -562,7 +562,8 @@ evalBlock typed = do
       checkEffects (OneEffect InitEffect) (NullaryDestLamApp lowered)
       NullaryDestLamExpr lOpt <- loweredOptimizations lowered
       checkEffects (OneEffect InitEffect) lOpt
-      impOpt <- asImpFunction lOpt
+      cc <- getEntryFunCC
+      impOpt <- checkPass ImpPass $ toImpFunction cc (NullaryDestLamExpr lOpt)
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
       resultTy <- getDestBlockType lOpt
@@ -690,13 +691,10 @@ getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-asImpFunction :: (Topper m, Mut n) => DestBlock SimpIR n -> m n (ImpFunction n)
-asImpFunction block = do
-  backend <- backendName <$> getConfig
-  let (cc, _needsSync) =
-        case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
-                        _        -> (EntryFunCC CUDANotRequired, False)
-  checkPass ImpPass $ blockToImpFunction backend cc block
+getEntryFunCC :: Topper m => m n CallingConvention
+getEntryFunCC = getConfig <&> backendName <&> \case
+    LLVMCUDA -> EntryFunCC CUDARequired
+    _        -> EntryFunCC CUDANotRequired
 
 packageLLVMCallable :: forall n m. (Topper m, Mut n)
   => ImpFunction n -> m n LLVMCallable

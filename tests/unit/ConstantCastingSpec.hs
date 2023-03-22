@@ -16,7 +16,7 @@ import Test.QuickCheck
 
 import Builder
 import Core
-import Imp (repValFromFlatList)
+import Imp (toImpFunction, repValFromFlatList)
 import Lower
 import Name
 import Optimize
@@ -41,7 +41,7 @@ exprToBlock expr = do
 evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
 evalBlock block = do
   NullaryDestLamExpr lowered <- lowerFullySequential $ NullaryLamExpr block
-  imp <- asImpFunction lowered
+  imp <- toImpFunction (EntryFunCC CUDANotRequired) (NullaryDestLamExpr lowered)
   llvm <- packageLLVMCallable imp
   resultVals <- liftIO $ callEntryFun llvm []
   resultTy <- getDestBlockType lowered
