@@ -149,6 +149,8 @@ storeLitVal ptr val = liftIO case val of
   Int64Lit   x -> poke (castPtr ptr) x
   Int32Lit   x -> poke (castPtr ptr) x
   Word8Lit   x -> poke (castPtr ptr) x
+  Word32Lit  x -> poke (castPtr ptr) x
+  Word64Lit  x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
   PtrLit _ (PtrLitVal x) -> poke (castPtr ptr) x

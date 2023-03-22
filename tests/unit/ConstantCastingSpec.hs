@@ -9,28 +9,29 @@
 module ConstantCastingSpec (spec) where
 
 import Control.Monad
-import Control.Monad.IO.Class
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 
 import Builder
 import Core
-import Imp (toImpFunction, repValFromFlatList)
-import Lower
 import Name
 import Optimize
-import QueryType (getDestBlockType)
 import Runtime
 import TopLevel
 import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util
 
-castOp :: ScalarBaseType -> LitVal -> PrimOp (SAtom VoidS)
-castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) (Con (Lit x))
+castOp :: ScalarBaseType -> (SAtom n) -> PrimOp (SAtom n)
+castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
+
+castLam :: EnvExtender m => ScalarBaseType -> ScalarBaseType -> m n (SLam n)
+castLam fromTy toTy = do
+  withFreshBinder noHint (BaseTy (Scalar fromTy)) \x -> do
+    body <- exprToBlock $ PrimOp $ castOp toTy $ Var $ binderName x
+    return $ LamExpr (Nest x Empty) body
 
 exprToBlock :: EnvReader m => SExpr n -> m n (SBlock n)
 exprToBlock expr = do
@@ -38,53 +39,54 @@ exprToBlock expr = do
     v <- emit $ sink expr
     return $ Var v
 
-evalBlock :: (Topper m, Mut n) => SBlock n -> m n (SRepVal n)
-evalBlock block = do
-  NullaryDestLamExpr lowered <- lowerFullySequential $ NullaryLamExpr block
-  imp <- toImpFunction (EntryFunCC CUDANotRequired) (NullaryDestLamExpr lowered)
-  llvm <- packageLLVMCallable imp
-  resultVals <- liftIO $ callEntryFun llvm []
-  resultTy <- getDestBlockType lowered
-  repValFromFlatList resultTy resultVals
+compile :: (Topper m, Mut n)
+  => ScalarBaseType -> ScalarBaseType -> m n LLVMCallable
+compile fromTy toTy = do
+  sLam <- liftEnvReaderM $ castLam fromTy toTy
+  compileTopLevelFun (EntryFunCC CUDANotRequired) sLam >>= packageLLVMCallable
 
-evalClosedExpr :: SExpr VoidS -> IO LitVal
-evalClosedExpr expr = do
-  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing NoOptimize PrintCodegen
-  env <- initTopState
-  fst <$> runTopperM cfg env do
-    block <- exprToBlock $ unsafeCoerceE expr
-    RepVal _ (Leaf (ILit ans)) <- evalBlock block
-    return ans
+arbLitVal :: ScalarBaseType -> Gen LitVal
+arbLitVal ty = case ty of
+  Int64Type   -> Int64Lit   <$> arbitrary
+  Int32Type   -> Int32Lit   <$> arbitrary
+  Word64Type  -> Word64Lit  <$> arbitrary
+  Word32Type  -> Word32Lit  <$> arbitrary
+  Word8Type   -> Word8Lit   <$> arbitrary
+  Float64Type -> Float64Lit <$> arbitrary
+  Float32Type -> Float32Lit <$> arbitrary
 
-instance Arbitrary LitVal where
-  arbitrary = oneof
-    [ Int64Lit   <$> arbitrary
-    , Int32Lit   <$> arbitrary
-    , Word8Lit   <$> arbitrary
-    , Word32Lit  <$> arbitrary
-    , Word64Lit  <$> arbitrary
-    , Float64Lit <$> arbitrary
-    , Float32Lit <$> arbitrary
-    ]
+constant_folding_and_runtime_casts_agree :: LLVMCallable
+  -> ScalarBaseType -> LitVal -> IO ()
+constant_folding_and_runtime_casts_agree llvmFunc toTy lit =
+  case foldCast toTy lit of
+    Nothing -> return ()
+    Just folded -> do
+      ~[evaled] <- callEntryFun llvmFunc [lit]
+      -- The failure message will list `evaled` as "expected" and `folded` as "got"
+      folded `shouldBe` evaled
 
 spec :: Spec
 spec = do
+  let cfg = EvalConfig LLVM [LibBuiltinPath] Nothing Nothing Nothing Optimize PrintCodegen
+  -- or just initTopState, to always compile the prelude during unit tests?
+  init_env <- runIO loadCache
   describe "constant-folding casts" do
-    let constant_folding_and_runtime_casts_agree ty = 
-          \(x::LitVal) -> case foldCast ty x of
-              Nothing -> return ()
-              Just folded -> do
-                let op = castOp ty x
-                evaled <- evalClosedExpr $ PrimOp op
-                -- The failure message will list `evaled` as "expected" and `folded` as "got"
-                folded `shouldBe` evaled
-    forM_ [Int64Type, Int32Type, Word8Type, Word32Type, Word64Type, Float64Type, Float32Type] \ty ->
-      -- TODO: We'd really like to run 10,000 or 1,000,000 examples here, but
-      -- status quo is that each one runs through the LLVM compile-and-run
-      -- pipeline separately, and is thus incredibly slow.  Taking 50 as a
-      -- compromise between test suite speed and test coverage.
-      -- I ran this offline with 10,000 before checking in, and it passed.
-      modifyMaxSuccess (const 50) $ prop ("agrees with runtime when casting to " ++ show ty) $ constant_folding_and_runtime_casts_agree ty
+    forM_ [ Int64Type, Int32Type, Word8Type, Word32Type
+          , Word64Type, Float64Type, Float32Type] \fromTy ->
+      forM_ [ Int64Type, Int32Type, Word8Type, Word32Type
+            , Word64Type, Float64Type, Float32Type] \toTy -> do
+        llvmFunc <- runIO $ fst <$> runTopperM cfg init_env (compile fromTy toTy)
+        -- TODO: We'd really like to run 10,000 or 1,000,000 examples here, but
+        -- taking 500 as a compromise between test suite speed and test
+        -- coverage.
+        -- I ran this offline with 10,000 before checking in, and it passed.
+        modifyMaxSuccess (const 500)
+          $ prop ("agrees with runtime when casting from "
+                  ++ show fromTy ++ " to " ++ show toTy)
+          $ forAll (arbLitVal fromTy)
+          $ \lit -> constant_folding_and_runtime_casts_agree llvmFunc toTy lit
+    llvmFunc <- runIO $ fst <$> runTopperM cfg init_env
+      (compile Word32Type Float32Type)
     it "agrees with runtime on rounding mode" $
       -- These values are chosen to tickle the difference between different
       -- rounding modes when rounding to float32, and specifically between
@@ -112,4 +114,4 @@ spec = do
             , Word32Lit 0x300000D
             , Word32Lit 0x300000E
             ] \val ->
-                constant_folding_and_runtime_casts_agree Float32Type val
+                constant_folding_and_runtime_casts_agree llvmFunc Float32Type val
