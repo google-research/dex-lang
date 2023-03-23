@@ -8,8 +8,7 @@
 
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
-    ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..),
-    ExportNativeFunction (..)
+    ExportedSignature (..), ExportNativeFunction (..)
   ) where
 
 import Data.List (intercalate)
@@ -50,24 +49,32 @@ prepareFunctionForExport cc f = do
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess npi -> return npi
-  sig <- liftExcept $ runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig cc arrs closedNaryPi
+  sig <- liftExportSigM $ naryPiToExportSig cc arrs closedNaryPi
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
   return $ ExportNativeFunction nativeFun sig
+{-# INLINE prepareFunctionForExport #-}
+{-# SCC prepareFunctionForExport #-}
 
-naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-  => CallingConvention -> [Arrow] -> NaryPiType CoreIR n -> m n (ExportedSignature n)
+-- === Exported function signature ===
+
+type ExportSigM (n::S) = EnvReaderT FallibleM n
+
+liftExportSigM :: Fallible m => ExportSigM VoidS a -> m a
+liftExportSigM = liftExcept . runFallibleM . runEnvReaderT emptyOutMap
+
+naryPiToExportSig :: CallingConvention
+  -> [Arrow] -> NaryPiType CoreIR n -> ExportSigM n (ExportedSignature n)
 naryPiToExportSig cc arrs (NaryPiType tbs effs resultTy) = do
     case effs of
       Pure -> return ()
       _    -> throw TypeErr "Only pure functions can be exported"
     goArgs Empty [] arrs tbs resultTy
   where
-    goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-           => Nest ExportArg n l' -> [CAtomName l'] -> [Arrow] -> Nest (Binder CoreIR) l' l
-           -> CType l -> m l' (ExportedSignature n)
+    goArgs :: Nest ExportArg n l' -> [CAtomName l'] -> [Arrow] -> Nest (Binder CoreIR) l' l
+           -> CType l -> ExportSigM l' (ExportedSignature n)
     goArgs argSig argVs argArrs piBs piRes = case (argArrs, piBs) of
       ([], Empty) -> goResult piRes \resSig ->
         return $ ExportedSignature argSig resSig $ case cc of
@@ -88,10 +95,9 @@ naryPiToExportSig cc arrs (NaryPiType tbs effs resultTy) = do
                  ((fromListE $ sink $ ListE argVs) ++ [binderName v]) arrows bs' piRes'
       _ -> error "zip error"
 
-    goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-             => CType l
-             -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
-             -> m l a
+    goResult :: CType l
+             -> (forall q. DExt l q => Nest ExportResult l q -> ExportSigM q a)
+             -> ExportSigM l a
     goResult ty cont = case ty of
       ProdTy [lty, rty] ->
         goResult lty \lres ->
@@ -110,6 +116,7 @@ toExportType ty = case ty of
     Just ety -> return ety
   _ -> unsupported
   where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+{-# INLINE toExportType #-}
 
 parseTabTy :: CType n -> Maybe (ExportType n)
 parseTabTy = go []
@@ -127,11 +134,6 @@ parseTabTy = go []
           HoistSuccess a' -> go (shape ++ [dim]) a'
           HoistFailure _  -> Nothing
       _ -> Nothing
-
-{-# INLINE prepareFunctionForExport #-}
-{-# SCC prepareFunctionForExport #-}
-
--- === Exported function signature ===
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 
