@@ -355,7 +355,7 @@ queryObjCache v = lookupEnv v >>= \case
   _ -> return Nothing
 
 emitObjFile :: (Mut n, TopBuilder m) => CFunction n -> m n (FunObjCodeName n)
-emitObjFile fun@CFunction{..} = do
+emitObjFile fun@CFunction{nameHint} = do
   emitBinding nameHint $ FunObjCodeBinding fun
 
 lookupPtrName :: EnvReader m => PtrName n -> m n (PtrType, Ptr ())

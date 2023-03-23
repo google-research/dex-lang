@@ -655,7 +655,7 @@ loadObject fname =
       return f
 
 loadObjectContent :: (Topper m, Mut n) => CFunction n -> m n NativeFunction
-loadObjectContent CFunction{..} = do
+loadObjectContent CFunction{objectCode, linkerNames} = do
   (LinktimeNames funNames ptrNames) <- return linkerNames
   funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
   ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name

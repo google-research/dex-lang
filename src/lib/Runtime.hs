@@ -62,7 +62,7 @@ data LLVMCallable = LLVMCallable
 
 -- The NativeFunction needs to have been compiled with EntryFunCC.
 callEntryFun :: LLVMCallable -> [LitVal] -> IO [LitVal]
-callEntryFun LLVMCallable{..} args = do
+callEntryFun LLVMCallable{nativeFun, benchRequired, logger, resultTypes} args = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do

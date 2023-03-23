@@ -69,7 +69,8 @@ data CallingConvention =
    --   Python without XLA.
    -- - Used for generating calls to standalone functions.
    StandardCC
-   -- - Args and dests are each packed into a buffer and passed as one pointer.
+   -- - Args and dests are each packed into a buffer and passed as one pointer,
+   --   dests first.
    -- - Used for generating functions called from within an XLA computation.
  | XLACC
    -- - Args are packed by the caller into a buffer and passed as a pointer
