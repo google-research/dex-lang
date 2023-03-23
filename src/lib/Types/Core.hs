@@ -519,30 +519,6 @@ data SynthCandidates n = SynthCandidates
 emptyImportStatus :: ImportStatus n
 emptyImportStatus = ImportStatus mempty mempty
 
-data AtomToMethodNames n = ATM [(AtomName CoreIR n, MethodName n)]
-                           deriving (Show, Generic)
-
-instance Semigroup (AtomToMethodNames n) where
-  (ATM xs) <> (ATM ys) = ATM (xs <> ys)
-
-instance Monoid (AtomToMethodNames n) where
-  mempty = ATM []
-
-instance GenericE AtomToMethodNames where
-  type RepE AtomToMethodNames =
-    ListE ((AtomName CoreIR) `PairE` MethodName)
-  fromE (ATM xs) = ListE $ map toPairE xs
-  {-# INLINE fromE #-}
-  toE (ListE xs) = ATM $ map fromPairE xs
-  {-# INLINE toE #-}
-
-instance SinkableE      AtomToMethodNames
-instance HoistableE     AtomToMethodNames
-instance AlphaEqE       AtomToMethodNames
-instance AlphaHashableE AtomToMethodNames
-instance RenameE        AtomToMethodNames
-instance Store          (AtomToMethodNames n)
-
 -- TODO: figure out the additional top-level context we need -- backend, other
 -- compiler flags etc. We can have a map from those to this.
 
