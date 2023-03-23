@@ -140,9 +140,11 @@ goResult :: IRRep r => Type r i
              Nest ExportResult o o' -> ExportSigM r i o' a)
          -> ExportSigM r i o a
 goResult ty cont = case ty of
-  ProdTy [lty, rty] ->
+  ProdTy [one] ->
+    goResult one cont
+  ProdTy (lty:rest) ->
     goResult lty \lres ->
-      goResult rty \rres ->
+      goResult (ProdTy rest) \rres ->
         cont $ lres >>> rres
   _ -> do
     ety <- toExportType ty
@@ -160,21 +162,26 @@ toExportType ty = case ty of
   where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 {-# INLINE toExportType #-}
 
-parseTabTy :: Type r i -> ExportSigM r i o (Maybe (ExportType o))
+parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
 parseTabTy = go []
   where
-    go :: forall r i o. [ExportDim o] -> Type r i
+    go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
       -> ExportSigM r i o (Maybe (ExportType o))
     go shape = \case
       BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy  (b:>(IxType (NewtypeTyCon (Fin n)) _)) a -> do
-        maybeDim <- case n of
-          Var v    -> do
+      TabTy  (b:>ixty) a -> do
+        maybeN <- case ixty of
+          (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
+          (IxType _ (IxDictRawFin n)) -> return $ Just n
+          _ -> return Nothing
+        maybeDim <- case maybeN of
+          Just (Var v)    -> do
             s <- getSubst
             let (Rename v') = s ! v
             return $ Just (ExportDimVar v')
-          NatVal s -> return $ Just (ExportDimLit $ fromIntegral s)
+          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+          Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
           _        -> return Nothing
         case maybeDim of
           Just dim -> case hoist b a of

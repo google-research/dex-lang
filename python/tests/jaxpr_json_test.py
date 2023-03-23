@@ -5,11 +5,13 @@
 # https://developers.google.com/open-source/licenses/bsd
 
 import json
+import math
 import unittest
 
 import jax
 import jax.numpy as jnp
 from dex import api
+from dex import native_function as nf
 from dex import prelude
 import dex.interop.jax.jaxpr_json as jj
 
@@ -64,8 +66,8 @@ class JaxprJsonTest(unittest.TestCase):
     module = prelude
     cc = api.FlatCC
     compiled = api.compileJaxpr(module, cc, api.as_cstr(jaxpr_dump))
-    func = nf.NativeFunction(module, cc, compiled)
-    assert func(3.) == sin(3.)
+    func = nf.NativeFunction(module, compiled, cc)
+    self.assertAlmostEqual(func(3.), math.sin(3.))
 
   # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)
