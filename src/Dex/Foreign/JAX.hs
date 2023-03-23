@@ -15,6 +15,7 @@ import Foreign.Ptr
 import Dex.Foreign.Context
 import Export
 import JAX.Concrete
+import JAX.Rename
 import JAX.ToSimp
 import Name
 
@@ -36,7 +37,9 @@ dexCompileJaxpr ctxPtr ccInt jsonPtr = do
   let maybeJaxpr :: Either String (ClosedJaxpr VoidS) = eitherDecode' json
   case maybeJaxpr of
     Right jaxpr -> runTopperMFromContext ctxPtr do
-      sLam <- liftJaxSimpM $ simplifyClosedJaxpr $ unsafeCoerceE jaxpr
+      Distinct <- getDistinct
+      jRename <- liftRenameM $ renameClosedJaxpr (unsafeCoerceE jaxpr)
+      sLam <- liftJaxSimpM $ simplifyClosedJaxpr jRename
       func <- prepareSLamForExport (intAsCC ccInt) sLam
       liftIO $ emitExport ctxPtr func
     Left err -> error err

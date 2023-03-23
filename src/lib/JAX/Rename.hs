@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module JAX.Rename (liftRenameM, renameJaxpr) where
+module JAX.Rename (liftRenameM, renameClosedJaxpr, renameJaxpr) where
 
 import Data.Map qualified as M
 
@@ -37,6 +37,11 @@ extendSourceMap sname name (RenamerM cont) = RenamerM do
 
 liftRenameM :: EnvReader m => RenamerM n (e n) -> m n (e n)
 liftRenameM act = liftScopeReaderM $ runOutReaderT mempty $ runRenamerM act
+
+renameClosedJaxpr :: Distinct o => ClosedJaxpr i -> RenamerM o (ClosedJaxpr o)
+renameClosedJaxpr ClosedJaxpr{jaxpr, consts} = do
+  jaxpr' <- renameJaxpr jaxpr
+  return ClosedJaxpr{jaxpr=jaxpr', consts}
 
 renameJaxpr :: Distinct o => Jaxpr i -> RenamerM o (Jaxpr o)
 renameJaxpr (Jaxpr invars constvars eqns outvars) =
