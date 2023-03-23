@@ -581,7 +581,7 @@ data Binding (c::C) (n::S) where
   HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
   EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   TopFunBinding     :: TopFun n                       -> Binding TopFunNameC     n
-  FunObjCodeBinding :: FunObjCode -> LinktimeNames n  -> Binding FunObjCodeNameC n
+  FunObjCodeBinding :: CFunction n                    -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
   -- TODO: add a case for abstracted pointers, as used in `ClosedImpFunction`
   PtrBinding        :: PtrType -> PtrLitVal           -> Binding PtrNameC        n
@@ -2177,7 +2177,7 @@ instance GenericE (Binding c) where
           (WhenC MethodNameC   c (ClassName `PairE` LiftE Int `PairE` CAtom)))
       (EitherE7
           (WhenC TopFunNameC     c (TopFun))
-          (WhenC FunObjCodeNameC c (LiftE FunObjCode `PairE` LinktimeNames))
+          (WhenC FunObjCodeNameC c (CFunction))
           (WhenC ModuleNameC     c (Module))
           (WhenC PtrNameC        c (LiftE (PtrType, PtrLitVal)))
           (WhenC EffectNameC     c (EffectDef))
@@ -2196,7 +2196,7 @@ instance GenericE (Binding c) where
     InstanceBinding   instanceDef       -> Case0 $ Case5 $ WhenC $ instanceDef
     MethodBinding     className idx f   -> Case0 $ Case6 $ WhenC $ className `PairE` LiftE idx `PairE` f
     TopFunBinding     fun               -> Case1 $ Case0 $ WhenC $ fun
-    FunObjCodeBinding x y               -> Case1 $ Case1 $ WhenC $ LiftE x `PairE` y
+    FunObjCodeBinding cFun              -> Case1 $ Case1 $ WhenC $ cFun
     ModuleBinding m                     -> Case1 $ Case2 $ WhenC $ m
     PtrBinding ty p                     -> Case1 $ Case3 $ WhenC $ LiftE (ty,p)
     EffectBinding   effDef              -> Case1 $ Case4 $ WhenC $ effDef
@@ -2215,7 +2215,7 @@ instance GenericE (Binding c) where
     Case0 (Case5 (WhenC (instanceDef)))                   -> InstanceBinding   instanceDef
     Case0 (Case6 (WhenC ((n `PairE` LiftE i `PairE` f)))) -> MethodBinding     n i f
     Case1 (Case0 (WhenC (fun)))                           -> TopFunBinding     fun
-    Case1 (Case1 (WhenC ((LiftE x `PairE` y))))           -> FunObjCodeBinding x y
+    Case1 (Case1 (WhenC (cFun)))                          -> FunObjCodeBinding cFun
     Case1 (Case2 (WhenC (m)))                             -> ModuleBinding     m
     Case1 (Case3 (WhenC ((LiftE (ty,p)))))                -> PtrBinding        ty p
     Case1 (Case4 (WhenC (effDef)))                        -> EffectBinding     effDef

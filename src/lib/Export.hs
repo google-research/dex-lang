@@ -21,8 +21,6 @@ import CheckType (asFirstOrderFunction)
 import Core
 import Err
 import IRVariants
-import Imp
-import Lower (lowerFullySequential)
 import Name
 import QueryType
 import Simplify
@@ -37,8 +35,8 @@ exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport
-  :: (Mut n, Topper m) => CallingConvention -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
+prepareFunctionForExport :: (Mut n, Topper m)
+  => CallingConvention -> CAtom n -> m n (NativeFunction, ExportedSignature VoidS)
 prepareFunctionForExport cc f = do
   (arrs, naryPi) <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
@@ -52,11 +50,9 @@ prepareFunctionForExport cc f = do
     Failure err -> throwErrs err
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
-  fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequential fOpt
-  flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction cc flOpt
-  return (fImp, sig)
+  fImp <- compileTopLevelFun cc fSimp
+  nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
+  return (nativeFun, sig)
 
   where
     naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)

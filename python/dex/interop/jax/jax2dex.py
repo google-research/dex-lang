@@ -266,7 +266,7 @@ def make_jaxpr(fun: Callable, in_tree: PyTreeDef,
                keep_inputs: typing.Tuple[bool]
                ) -> typing.Tuple[core.Jaxpr, List[Any], PyTreeDef]:
   flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  debug = pe.debug_info(fun, in_tree, False, "dex_jit")
+  debug = pe.debug_info(fun, in_tree, None, False, "dex_jit")
   jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug,
                                                 keep_inputs=keep_inputs)
   jaxpr = pe.convert_constvars_jaxpr(jaxpr_)
