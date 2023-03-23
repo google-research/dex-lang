@@ -47,9 +47,6 @@ import Dex.Foreign.Util
 data Context = Context EvalConfig (MVar TopStateEx) (MVar NativeFunctionTable)
 
 type ClosedExportedSignature = ExportedSignature 'VoidS
-data ExportNativeFunction =
-  ExportNativeFunction { nativeFunction  :: NativeFunction
-                       , nativeSignature :: ExportedSignature 'VoidS }
 
 type ExportNativeFunctionAddr = FunPtr () -- points to executable code
 type NativeFunctionTable = M.Map ExportNativeFunctionAddr ExportNativeFunction

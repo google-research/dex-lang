@@ -8,7 +8,8 @@
 
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
-    ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..)
+    ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..),
+    ExportNativeFunction (..)
   ) where
 
 import Data.List (intercalate)
@@ -35,8 +36,12 @@ exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
+data ExportNativeFunction = ExportNativeFunction
+  { nativeFunction  :: NativeFunction
+  , nativeSignature :: ExportedSignature 'VoidS }
+
 prepareFunctionForExport :: (Mut n, Topper m)
-  => CallingConvention -> CAtom n -> m n (NativeFunction, ExportedSignature VoidS)
+  => CallingConvention -> CAtom n -> m n ExportNativeFunction
 prepareFunctionForExport cc f = do
   (arrs, naryPi) <- getType f >>= asFirstOrderFunction >>= \case
     Nothing  -> throw TypeErr "Only first-order functions can be exported"
@@ -45,86 +50,83 @@ prepareFunctionForExport cc f = do
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess npi -> return npi
-  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig arrs closedNaryPi of
-    Success sig -> return sig
-    Failure err -> throwErrs err
+  sig <- liftExcept $ runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig cc arrs closedNaryPi
   f' <- asNaryLam naryPi f
   fSimp <- simplifyTopFunction f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
-  return (nativeFun, sig)
+  return $ ExportNativeFunction nativeFun sig
 
+naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
+  => CallingConvention -> [Arrow] -> NaryPiType CoreIR n -> m n (ExportedSignature n)
+naryPiToExportSig cc arrs (NaryPiType tbs effs resultTy) = do
+    case effs of
+      Pure -> return ()
+      _    -> throw TypeErr "Only pure functions can be exported"
+    goArgs Empty [] arrs tbs resultTy
   where
-    naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => [Arrow] -> NaryPiType CoreIR n -> m n (ExportedSignature n)
-    naryPiToExportSig arrs (NaryPiType tbs effs resultTy) = do
-        case effs of
-          Pure -> return ()
-          _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] arrs tbs resultTy
-      where
-        goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [CAtomName l'] -> [Arrow] -> Nest (Binder CoreIR) l' l
-               -> CType l -> m l' (ExportedSignature n)
-        goArgs argSig argVs argArrs piBs piRes = case (argArrs, piBs) of
-          ([], Empty) -> goResult piRes \resSig ->
-            return $ ExportedSignature argSig resSig $ case cc of
-              StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
-              XLACC      -> []
-              _ -> error $ "calling convention not supported: " ++ show cc
-          (arrow:arrows, Nest b bs) -> do
-            refreshAbs (Abs b (Abs bs piRes)) \(v:>ty) (Abs bs' piRes') -> do
-              let invalidArrow = throw TypeErr
-                                   "Exported functions can only have regular and implicit arrow types"
-              vis <- case arrow of
-                PlainArrow    -> return ExplicitArg
-                ImplicitArrow -> return ImplicitArg
-                ClassArrow _  -> invalidArrow
-                LinArrow      -> invalidArrow
-              ety <- toExportType ty
-              goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
-                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) arrows bs' piRes'
-          _ -> error "zip error"
+    goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
+           => Nest ExportArg n l' -> [CAtomName l'] -> [Arrow] -> Nest (Binder CoreIR) l' l
+           -> CType l -> m l' (ExportedSignature n)
+    goArgs argSig argVs argArrs piBs piRes = case (argArrs, piBs) of
+      ([], Empty) -> goResult piRes \resSig ->
+        return $ ExportedSignature argSig resSig $ case cc of
+          StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+          XLACC      -> []
+          _ -> error $ "calling convention not supported: " ++ show cc
+      (arrow:arrows, Nest b bs) -> do
+        refreshAbs (Abs b (Abs bs piRes)) \(v:>ty) (Abs bs' piRes') -> do
+          let invalidArrow = throw TypeErr
+                               "Exported functions can only have regular and implicit arrow types"
+          vis <- case arrow of
+            PlainArrow    -> return ExplicitArg
+            ImplicitArrow -> return ImplicitArg
+            ClassArrow _  -> invalidArrow
+            LinArrow      -> invalidArrow
+          ety <- toExportType ty
+          goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
+                 ((fromListE $ sink $ ListE argVs) ++ [binderName v]) arrows bs' piRes'
+      _ -> error "zip error"
 
-        goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-                 => CType l
-                 -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
-                 -> m l a
-        goResult ty cont = case ty of
-          ProdTy [lty, rty] ->
-            goResult lty \lres ->
-              goResult (sink rty) \rres ->
-                cont $ joinNest lres rres
-          _ -> withFreshBinder noHint ty \(b:>_) -> do
-            ety <- toExportType ty
-            cont $ Nest (ExportResult (b:>ety)) Empty
+    goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
+             => CType l
+             -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
+             -> m l a
+    goResult ty cont = case ty of
+      ProdTy [lty, rty] ->
+        goResult lty \lres ->
+          goResult (sink rty) \rres ->
+            cont $ joinNest lres rres
+      _ -> withFreshBinder noHint ty \(b:>_) -> do
+        ety <- toExportType ty
+        cont $ Nest (ExportResult (b:>ety)) Empty
 
-    toExportType :: Fallible m => CType n -> m (ExportType n)
-    toExportType ty = case ty of
-      BaseTy (Scalar sbt) -> return $ ScalarType sbt
-      NatTy               -> return $ ScalarType IdxRepScalarBaseTy
-      TabTy  _ _          -> case parseTabTy ty of
-        Nothing  -> unsupported
-        Just ety -> return ety
-      _ -> unsupported
-      where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+toExportType :: Fallible m => CType n -> m (ExportType n)
+toExportType ty = case ty of
+  BaseTy (Scalar sbt) -> return $ ScalarType sbt
+  NatTy               -> return $ ScalarType IdxRepScalarBaseTy
+  TabTy  _ _          -> case parseTabTy ty of
+    Nothing  -> unsupported
+    Just ety -> return ety
+  _ -> unsupported
+  where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 
-    parseTabTy :: CType n -> Maybe (ExportType n)
-    parseTabTy = go []
-      where
-        go :: [ExportDim n] -> CType n -> Maybe (ExportType n)
-        go shape = \case
-          BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-          NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-          TabTy  (b:>(IxType (NewtypeTyCon (Fin n)) _)) a -> do
-            dim <- case n of
-              Var v    -> Just (ExportDimVar v)
-              NatVal s -> Just (ExportDimLit $ fromIntegral s)
-              _        -> Nothing
-            case hoist b a of
-              HoistSuccess a' -> go (shape ++ [dim]) a'
-              HoistFailure _  -> Nothing
-          _ -> Nothing
+parseTabTy :: CType n -> Maybe (ExportType n)
+parseTabTy = go []
+  where
+    go :: [ExportDim n] -> CType n -> Maybe (ExportType n)
+    go shape = \case
+      BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
+      NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+      TabTy  (b:>(IxType (NewtypeTyCon (Fin n)) _)) a -> do
+        dim <- case n of
+          Var v    -> Just (ExportDimVar v)
+          NatVal s -> Just (ExportDimLit $ fromIntegral s)
+          _        -> Nothing
+        case hoist b a of
+          HoistSuccess a' -> go (shape ++ [dim]) a'
+          HoistFailure _  -> Nothing
+      _ -> Nothing
 
 {-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}

@@ -297,6 +297,7 @@ foreign-library Dex
                      , FlexibleInstances
                      , GADTs
                      , LambdaCase
+                     , NamedFieldPuns
                      , OverloadedStrings
                      , RecordWildCards
                      , ScopedTypeVariables
