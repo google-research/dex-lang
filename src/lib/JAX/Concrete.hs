@@ -26,7 +26,7 @@ data Primitive =
 data ScanParams = ScanParams
   { reverse :: Bool
   , length :: Int
-  , jaxpr :: ClosedJaxpr -- The scan body
+  , jaxpr :: (ClosedJaxpr VoidS) -- The scan body
   , num_consts :: Int
   , num_carry :: Int
   , linear :: [Bool] -- which arguments are we linear wrt?
@@ -143,8 +143,8 @@ data Jaxpr (n::S) where
     -> [JAtom o] -- outvars
     -> Jaxpr n
 
-data ClosedJaxpr = ClosedJaxpr
-  { jaxpr :: Jaxpr VoidS
+data ClosedJaxpr (n::S) = ClosedJaxpr
+  { jaxpr :: Jaxpr n
   , consts :: [A.Value]
   }
   deriving (Generic)
@@ -279,7 +279,7 @@ instance ToJSON JFuncType
 instance ToJSON Primitive
 instance ToJSON DimSizeDeBrujin
 instance ToJSON JArgType
-instance ToJSON ClosedJaxpr
+instance ToJSON (ClosedJaxpr n)
 instance ToJSON ScanParams
 instance ToJSON ConvertElementTypeParams
 
@@ -291,6 +291,6 @@ instance FromJSON JFuncType
 instance FromJSON Primitive
 instance FromJSON DimSizeDeBrujin
 instance FromJSON JArgType
-instance FromJSON ClosedJaxpr
+instance FromJSON (ClosedJaxpr VoidS)
 instance FromJSON ScanParams
 instance FromJSON ConvertElementTypeParams

@@ -10,6 +10,7 @@ import unittest
 import jax
 import jax.numpy as jnp
 from dex import api
+from dex import prelude
 import dex.interop.jax.jaxpr_json as jj
 
 def check_json_round_trip(jaxpr):
@@ -55,6 +56,16 @@ class JaxprJsonTest(unittest.TestCase):
     def f(xs):
       return jax.lax.scan(lambda tot, z: (tot + z, tot), 0.25, xs)
     check_haskell_round_trip(jax.make_jaxpr(f)(jnp.array([1., 2., 3.])))
+
+  def test_compute_one_prim(self):
+    jaxpr = jax.make_jaxpr(jax.numpy.sin)(3.)
+    jaxpr_dict = jj.dump_jaxpr(jaxpr)
+    jaxpr_dump = json.dumps(jaxpr_dict, indent=2)
+    module = prelude
+    cc = api.FlatCC
+    compiled = api.compileJaxpr(module, cc, api.as_cstr(jaxpr_dump))
+    func = nf.NativeFunction(module, cc, compiled)
+    assert func(3.) == sin(3.)
 
   # TODO Test bigger shapes (matrices?)
   # TODO Test dependent shapes (that have variables in them)

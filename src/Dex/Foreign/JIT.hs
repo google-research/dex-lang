@@ -28,15 +28,9 @@ import qualified Data.Map.Strict as M
 import Export
 import Name
 import Types.Core
-import Types.Imp
 
 import Dex.Foreign.Util
 import Dex.Foreign.Context
-
-intAsCC :: CInt -> CallingConvention
-intAsCC 0 = StandardCC
-intAsCC 1 = XLACC
-intAsCC _ = error "Unrecognized calling convention"
 
 dexCompile :: Ptr Context -> CInt -> Ptr AtomEx -> IO ExportNativeFunctionAddr
 dexCompile ctxPtr ccInt funcAtomPtr = catchErrors do
@@ -46,12 +40,6 @@ dexCompile ctxPtr ccInt funcAtomPtr = catchErrors do
     -- TODO: Check if atom is compatible with context! Use module name?
     func <- prepareFunctionForExport cc (unsafeCoerceE funcAtom)
     liftIO $ emitExport ctxPtr func
-
-emitExport :: Ptr Context -> ExportNativeFunction -> IO ExportNativeFunctionAddr
-emitExport ctxPtr func = do
-  let funcPtr = nativeFunPtr $ nativeFunction func
-  insertIntoNativeFunctionTable ctxPtr funcPtr func
-  return funcPtr
 
 dexGetFunctionSignature :: Ptr Context -> ExportNativeFunctionAddr -> IO (Ptr (ExportedSignature 'VoidS))
 dexGetFunctionSignature ctxPtr funcPtr = do

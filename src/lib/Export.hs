@@ -8,6 +8,7 @@
 
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
+    prepareSLamForExport,
     ExportedSignature (..), ExportNativeFunction (..)
   ) where
 
@@ -57,6 +58,12 @@ prepareFunctionForExport cc f = do
   return $ ExportNativeFunction nativeFun sig
 {-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}
+
+prepareSLamForExport :: (Mut n, Topper m)
+  => CallingConvention -> SLam n -> m n ExportNativeFunction
+prepareSLamForExport cc f = do
+  naryPi <- getNaryLamExprType f
+  undefined
 
 -- === Exported function signature ===
 

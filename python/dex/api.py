@@ -95,6 +95,7 @@ getFunctionSignature  = dex_func('dexGetFunctionSignature', HsContextPtr, Native
 freeFunctionSignature = dex_func('dexFreeFunctionSignature', NativeFunctionSignaturePtr, None)
 
 roundtripJaxprJson = dex_func('dexRoundtripJaxprJson', ctypes.c_char_p, ctypes.c_char_p)
+compileJaxpr = dex_func('dexCompileJaxpr', HsContextPtr, ExportCC, ctypes.c_char_p, NativeFunction)
 
 xlaCpuTrampoline = lib.dexXLACPUTrampoline
 

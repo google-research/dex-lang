@@ -43,3 +43,4 @@ foreign export ccall "dexFreeFunctionSignature" dexFreeFunctionSignature :: Ptr 
 
 -- JAX serialization
 foreign export ccall "dexRoundtripJaxprJson" dexRoundtripJaxprJson :: CString -> IO CString
+foreign export ccall "dexCompileJaxpr" dexCompileJaxpr :: Ptr Context -> CInt -> CString -> IO ExportNativeFunctionAddr

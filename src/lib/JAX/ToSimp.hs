@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module JAX.ToSimp (liftJaxSimpM, simplifyJaxpr) where
+module JAX.ToSimp (liftJaxSimpM, simplifyJaxpr, simplifyClosedJaxpr) where
 
 import Control.Category ((>>>))
 import GHC.Base (NonEmpty(..))
@@ -29,6 +29,10 @@ newtype JaxSimpM (i::S) (o::S) a = JaxSimpM
 liftJaxSimpM :: (EnvReader m) => JaxSimpM n n (e n) -> m n (e n)
 liftJaxSimpM act = liftBuilder $ runSubstReaderT idSubst $ runJaxSimpM act
 {-# INLINE liftJaxSimpM #-}
+
+simplifyClosedJaxpr :: ClosedJaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
+simplifyClosedJaxpr ClosedJaxpr{jaxpr, consts=[]} = simplifyJaxpr jaxpr
+simplifyClosedJaxpr _ = error "TODO Support consts"
 
 simplifyJaxpr :: Jaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
 simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
