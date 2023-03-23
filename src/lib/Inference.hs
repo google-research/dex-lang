@@ -3104,13 +3104,12 @@ synthTerm ty reqMethodAccess = confuseGHC >>= \_ -> case ty of
 isMethodAccessAllowedBy :: EnvReader m =>  RequiredMethodAccess -> InstanceName n -> m n Bool
 isMethodAccessAllowedBy access instanceName = do
   InstanceDef className _ _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
-  let instanceMethodIdxs = S.fromList $ take (length methods) [0..]
+  let numInstanceMethods = length methods
   ClassDef _ _ _ _ methodTys <- lookupClassDef className
-  let classMethodIdxs = S.fromList $ take (length methodTys) [0..]
+  let numClassMethods = length methodTys
   case access of
-    Full         -> return $ classMethodIdxs `S.isSubsetOf` instanceMethodIdxs
-    Partial idxs -> return $ idxs'           `S.isSubsetOf` instanceMethodIdxs
-                      where idxs' = S.fromList idxs
+    Full                  -> return $ numClassMethods == numInstanceMethods
+    Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven dictTy = do

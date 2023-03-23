@@ -46,7 +46,7 @@ def f2 {a:Type} [d:FooBar2 a] (x:a) = (\y. foo2 y + 1) x
 -- CHECK-NEXT:  \{a:Type} [{{.*}}:(FooBar2 a)] x:a.
 -- CHECK-NEXT:    v#0:Int32 =
 -- CHECK-NEXT:      (\y:a.
--- CHECK-NEXT:         v#0:Int32 = foo2 a (synthesize (FooBar2 a) [0]) y
+-- CHECK-NEXT:         v#0:Int32 = foo2 a (synthesize (FooBar2 a) (1)) y
 
 
 %passes typed
@@ -57,10 +57,10 @@ def g2 {a:Type} [d:FooBar2 a] (x:a) = (\y z. foo2 y + z) x (bar2 x)
 -- CHECK-NEXT:  === Result ===
 -- CHECK-EMPTY:
 -- CHECK-NEXT:  \{a:Type} [{{.*}}:(FooBar2 a)] x:a.
--- CHECK-NEXT:   v#0:Int32 = bar2 a (synthesize (FooBar2 a) [1]) x
+-- CHECK-NEXT:   v#0:Int32 = bar2 a (synthesize (FooBar2 a) (2)) x
 -- CHECK-NEXT:   v#1:Int32 =
 -- CHECK-NEXT:     (\y:a z:Int32.
--- CHECK-NEXT:        v#1:Int32 = foo2 a (synthesize (FooBar2 a) [0]) y
+-- CHECK-NEXT:        v#1:Int32 = foo2 a (synthesize (FooBar2 a) (1)) y
 
 
 instance FooBar2 Int

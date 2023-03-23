@@ -25,7 +25,7 @@ import Data.Int
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Text.Prettyprint.Doc (Pretty (..), parens)
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import GHC.Exts (inline)
@@ -148,7 +148,7 @@ type ForAnn = Direction
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
-data RequiredMethodAccess = Full | Partial [Int] deriving (Show, Eq, Ord, Generic)
+data RequiredMethodAccess = Full | Partial Int deriving (Show, Eq, Ord, Generic)
 
 data Arrow =
    PlainArrow
@@ -169,8 +169,8 @@ instance Pretty Arrow where
     PlainArrow     -> "->"
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
-    ClassArrow Full           -> "?=>"
-    ClassArrow (Partial idxs) -> "?" <> pretty idxs <> "=>"
+    ClassArrow Full        -> "?=>"
+    ClassArrow (Partial n) -> "?" <> (parens $ pretty n) <> "=>"
 
 data LetAnn =
   -- Binding with no additional information

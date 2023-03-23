@@ -1137,7 +1137,7 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   buildPureNaryLam arrows (EmptyAbs $ asPiBinders paramBs) \params -> do
     let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
-    buildPureLam noHint (ClassArrow (Partial [methodIdx])) dictTy \dict ->
+    buildPureLam noHint (ClassArrow (Partial $ succ methodIdx)) dictTy \dict ->
       emitExpr $ ProjMethod (Var dict) methodIdx
   where
     asPiBinders :: Nest RolePiBinder i i' -> Nest CBinder i i'

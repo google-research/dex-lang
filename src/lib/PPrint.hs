@@ -285,8 +285,8 @@ instance IRRep r => PrettyPrec (Atom r n) where
     NewtypeCon con x -> prettyPrecNewtype con x
     NewtypeTyCon con -> prettyPrec con
     SimpInCore x -> prettyPrec x
-    DictHole _ e Full           -> atPrec LowestPrec $ "synthesize" <+> pApp e
-    DictHole _ e (Partial idxs) -> atPrec LowestPrec $ "synthesize" <+> pApp e <+> p idxs
+    DictHole _ e Full        -> atPrec LowestPrec $ "synthesize" <+> pApp e
+    DictHole _ e (Partial n) -> atPrec LowestPrec $ "synthesize" <+> pApp e <+> (parens $ p n)
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -397,8 +397,8 @@ prettyLamHelper arr' lamExpr lamType = uncurry prettyLam $ rec arr' lamExpr True
       PlainArrow    -> arg
       LinArrow      -> arg
       ImplicitArrow -> "{" <> arg <> "}"
-      ClassArrow Full           -> "[" <> arg <> "]"
-      ClassArrow (Partial idxs) -> "[" <> arg <+> pretty idxs <> "]"
+      ClassArrow Full        -> "[" <> arg <> "]"
+      ClassArrow (Partial n) -> "[" <> arg <+> (parens $ pretty n) <> "]"
     PrettyFor _ -> arg
   rec :: IRRep r => Arrow -> LamExpr r n -> Bool -> (Doc ann, Block r n)
   rec arr lam first = case lam of
@@ -511,8 +511,8 @@ instance Pretty (Module n) where
 instance Pretty (DataDefParams n) where
   pretty (DataDefParams bs) = hsep $ map bracketize bs where
     bracketize (PlainArrow, x) = p x
-    bracketize (ClassArrow Full, x)           = "[" <> p x <> "]"
-    bracketize (ClassArrow (Partial idxs), x) = "[" <> p x <+> p idxs <> "]"
+    bracketize (ClassArrow Full, x)        = "[" <> p x <> "]"
+    bracketize (ClassArrow (Partial n), x) = "[" <> p x <+> (parens $ p n) <> "]"
     bracketize (ImplicitArrow, x) = "{" <> p x <> "}"
     bracketize (LinArrow, x) = p x
 
@@ -774,8 +774,8 @@ instance Pretty (UAnnBinder c n l) where
 
 instance Pretty (UAnnBinderArrow c n l) where
   pretty (UAnnBinderArrow b ty PlainArrow) = p b <> ":" <> p ty
-  pretty (UAnnBinderArrow b ty (ClassArrow Full))           = "[" <> p b <> ":" <> p ty <> "]"
-  pretty (UAnnBinderArrow b ty (ClassArrow (Partial idxs))) = "[" <> p b <> ":" <> p ty <+> p idxs <> "]"
+  pretty (UAnnBinderArrow b ty (ClassArrow Full))        = "[" <> p b <> ":" <> p ty <> "]"
+  pretty (UAnnBinderArrow b ty (ClassArrow (Partial n))) = "[" <> p b <> ":" <> p ty <+> (parens $ p n) <> "]"
   pretty (UAnnBinderArrow b ty ImplicitArrow) = "{" <> p b <> ":" <> p ty <> "}"
   pretty (UAnnBinderArrow b ty LinArrow) = p b <> ":" <> p ty
 
