@@ -13,7 +13,6 @@ module Export (
   ) where
 
 import Control.Category ((>>>))
-import Control.Monad.IO.Class
 import Data.List (intercalate)
 import Foreign.Storable
 import Foreign.C.String
