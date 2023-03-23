@@ -61,19 +61,38 @@ instance IsBool IsCUDARequired where
   toBool CUDANotRequired = False
 
 data CallingConvention =
-   -- Scalar args by value, arrays by pointer, dests allocated by caller and passed as pointers.
-   -- Used for standalone functions and for functions called from Python without XLA.
+   -- - Args passed one by one (not packed).  Scalar args are passed by value,
+   --   arrays by pointer.
+   -- - Dests are allocated by caller and passed as pointers
+   --   (also one by one).
+   -- - Used for generating standalone functions and functions called from
+   --   Python without XLA.
+   -- - Used for generating calls to standalone functions.
    StandardCC
-   -- Used for functions called from within an XLA computation.
+   -- - Args and dests are each packed into a buffer and passed as one pointer,
+   --   dests first.
+   -- - Used for generating functions called from within an XLA computation.
  | XLACC
-   -- Dests allocated within the function and passed back to the caller (packed
-   -- in a number-of-results-length buffer supplied by the caller)
+   -- - Args are packed by the caller into a buffer and passed as a pointer
+   --   to the buffer; unpacking is code-generated.
+   -- - Dests are allocated within the function and passed back to the caller
+   --   (packed in a number-of-results-length buffer supplied by the caller as a
+   --   pointer).
+   -- - Used for generating top-level blocks and other Dex code called from
+   --   Haskell.
  | EntryFunCC IsCUDARequired
-   -- Scalars only. Args as args, result as result. Used for calling C function
-   -- from Dex that return a single scalar.
+   -- - Scalars only. Args passed one by one, by value. Single result, passed by
+   --   value.
+   -- - Used for generating calls from Dex to C functions that return a single
+   --   scalar.
  | FFICC
+   -- - Results written to a buffer supplied by the caller (by pointer).
+   -- - Used for generating calls from Dex to C functions that return multiple
+   --   results.
  | FFIMultiResultCC
+   -- - Was used for generating bodies and calls of CUDA kernels.
  | CUDAKernelLaunch
+   -- - Was used for generating bodies and calls of multi-threaded CPU kernels.
  | MCThreadLaunch
    deriving (Show, Eq, Generic)
 
@@ -161,6 +180,13 @@ data ClosedImpFunction n where
 data PtrBinder n l = PtrBinder (NameBinder PtrNameC n l) PtrType
 data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
 data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
+
+data CFunction (n::S) = CFunction
+  { nameHint :: NameHint
+  , objectCode :: FunObjCode
+  , linkerNames :: LinktimeNames n
+  }
+  deriving (Show, Generic)
 
 instance BindsAtMostOneName IFunBinder TopFunNameC where
   IFunBinder b _ @> x = b @> x
@@ -409,13 +435,11 @@ instance AlphaEqE    ImpFunction
 instance AlphaHashableE    ImpFunction
 instance RenameE     ImpFunction
 
-
 instance GenericE LinktimeNames where
   type RepE LinktimeNames = ListE  (Name FunObjCodeNameC)
                    `PairE`  ListE  (Name PtrNameC)
   fromE (LinktimeNames funs ptrs) = ListE funs `PairE` ListE ptrs
   {-# INLINE fromE #-}
-
   toE (ListE funs `PairE` ListE ptrs) = LinktimeNames funs ptrs
   {-# INLINE toE #-}
 
@@ -424,6 +448,20 @@ instance HoistableE     LinktimeNames
 instance AlphaEqE       LinktimeNames
 instance AlphaHashableE LinktimeNames
 instance RenameE        LinktimeNames
+
+instance GenericE CFunction where
+  type RepE CFunction = (LiftE NameHint) `PairE`
+    (LiftE FunObjCode) `PairE` LinktimeNames
+  fromE (CFunction{..}) = LiftE nameHint `PairE`
+    LiftE objectCode `PairE` linkerNames
+  {-# INLINE fromE #-}
+  toE (LiftE nameHint `PairE` LiftE objectCode `PairE` linkerNames) =
+    CFunction{..}
+  {-# INLINE toE #-}
+
+instance SinkableE      CFunction
+instance HoistableE     CFunction
+instance RenameE        CFunction
 
 instance Store IsCUDARequired
 instance Store CallingConvention
@@ -436,6 +474,7 @@ instance Store (IExpr n)
 instance Store (ImpBlock n)
 instance Store (ImpFunction n)
 instance Store (LinktimeNames n)
+instance Store (CFunction n)
 instance Store LinktimeVals
 
 instance Hashable IsCUDARequired

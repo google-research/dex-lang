@@ -28,7 +28,6 @@ import Data.Map.Strict    qualified as M
 import Data.ByteString    qualified as BS
 import Data.Text.Encoding qualified as T
 
-import AbstractSyntax
 import ConcreteSyntax
 import Builder
 import Core
