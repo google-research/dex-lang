@@ -2,22 +2,24 @@
 
 import png
 
-Point : Type = (Float & Float)
+struct Point =
+ x : Float
+ y : Float
 
 data Geom =
   PointGeom
-  Circle Float
-  Rectangle Float Float  -- width, height
-  Line Point
-  Text String
+  Circle(Float)
+  Rectangle(Float, Float)  -- width, height
+  Line(Point)
+  Text(String)
 
 HtmlColor : Type = Fin 3 => Word8
 
-foreign "showHex" showHexFFI : Word8 -> {IO} (Word32 & RawPtr)
+foreign "showHex" showHexFFI : (Word8) -> {IO} (Word32, RawPtr)
 
-def showHex (x:Word8) : String = unsafe_io \().
+def showHex(x:Word8) -> String = unsafe_io \.
   (n, ptr) = showHexFFI x
-  string_from_char_ptr n (MkPtr ptr)
+  string_from_char_ptr n (Ptr.new ptr)
 
 black : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8   0]
 white : HtmlColor = [i_to_w8 255, i_to_w8 255, i_to_w8 255]
@@ -30,207 +32,219 @@ struct GeomStyle =
  strokeColor : Maybe HtmlColor
  strokeWidth : Int
 
-default_geom_style = GeomStyle~new Nothing (Just black) 1
+default_geom_style = GeomStyle.new Nothing (Just black) 1
 
 -- TODO: consider sharing attributes among a set of objects for efficiency
-data Diagram = MkDiagram (List (GeomStyle & Point & Geom))
+struct Diagram =
+  val : (List (GeomStyle, Point, Geom))
 
-instance Monoid Diagram
-  mempty = MkDiagram mempty
-  mcombine = \(MkDiagram d1) (MkDiagram d2). MkDiagram $ d1 <> d2
+instance Monoid(Diagram)
+  mempty = Diagram.new mempty
+  def (<>)(d1, d2) = Diagram.new $ d1.val <> d2.val
 
-def concat_diagrams {n} (diagrams:n=>Diagram) : Diagram =
-  MkDiagram $ concat for i.
-    (MkDiagram d) = diagrams.i
-    d
+def concat_diagrams(diagrams:n=>Diagram) -> Diagram given (n|Ix) =
+  Diagram.new $ concat for i. diagrams[i].val
 
 -- TODO: arbitrary affine transformations. Our current representation of
 -- rectangles and circles means we can only do scale/flip/rotate90.
 -- Should we use lenses/isomorphisms for these instead?
-def apply_transformation
-      (transformPoint: Point -> Point)
-      (transformGeom:  Geom -> Geom)
-      (d:Diagram) : Diagram =
-  (MkDiagram (AsList _ objs)) = d
-  MkDiagram $ to_list for i.
-    (attr, p, geom) = objs.i
+def apply_transformation(
+    transformPoint: (Point) -> Point,
+    transformGeom:  (Geom) -> Geom,
+    d:Diagram
+    ) -> Diagram =
+  AsList(_, objs) = d.val
+  Diagram.new $ to_list for i.
+    (attr, p, geom) = objs[i]
     (attr, transformPoint p, transformGeom geom)
 
-flip_y : Diagram -> Diagram =
-  apply_transformation (\(x,y). (x, -y)) \geom. case geom of
-    PointGeom     -> PointGeom
-    Circle r      -> Circle r
-    Rectangle w h -> Rectangle w h
-    Line (x, y)   -> Line (x, -y)
-    Text x        -> Text x
+def flip_y(d:Diagram) -> Diagram =
+  def flip_y_geom(geom:Geom) -> Geom =
+    case geom of
+      PointGeom       -> PointGeom
+      Circle r        -> Circle r
+      Rectangle(w, h) -> Rectangle(w, h)
+      Line p          -> Line Point.new(p.x, -p.y)
+      Text x          -> Text x
+  apply_transformation (\p. Point.new(p.x, -p.y)) flip_y_geom d
 
-def scale (s:Float) : (Diagram -> Diagram) =
-  apply_transformation ( \(x,y). (s * x, s * y) ) \geom. case geom of
-    PointGeom     -> PointGeom
-    Circle r      -> Circle (s * r)
-    Rectangle w h -> Rectangle (s * w) (s * h)
-    Line (x, y)   -> Line (s * x, s * y)
-    Text x        -> Text x
+def scale(d:Diagram, s:Float) -> Diagram =
+  def scale_geom(geom:Geom) -> Geom =
+    case geom of
+      PointGeom       -> PointGeom
+      Circle r        -> Circle (s * r)
+      Rectangle(w, h) -> Rectangle (s * w) (s * h)
+      Line p          -> Line Point.new(s * p.x, s * p.y)
+      Text x          -> Text x
+  apply_transformation (\p. Point.new(s * p.x, s * p.y)) scale_geom d
 
-def move_xy ((offX, offY) : Point) : (Diagram -> Diagram) =
-  apply_transformation (\(x,y). (x + offX, y + offY) ) id
+def move_xy(d: Diagram, offx: Float, offy: Float) -> Diagram =
+  apply_transformation (\p. Point.new(p.x + offx, p.y + offy) ) id d
 
-def singleton_default (geom:Geom) : Diagram =
-  MkDiagram $ to_list [(default_geom_style, (0.0, 0.0), geom)]
+def singleton_default(geom:Geom) -> Diagram =
+  Diagram.new $ to_list [(default_geom_style, Point.new(0.0, 0.0), geom)]
 
-def point_diagram               : Diagram = singleton_default PointGeom
-def circle (r:Float)           : Diagram = singleton_default $ Circle r
-def rect   (w:Float) (h:Float) : Diagram = singleton_default $ Rectangle w h
-def line   (p:Point)           : Diagram = singleton_default $ Line p
-def text   (x:String)          : Diagram = singleton_default $ Text x
+point_diagram               : Diagram = singleton_default PointGeom
+def circle(r:Float)        -> Diagram = singleton_default $ Circle r
+def rect(w:Float, h:Float) -> Diagram = singleton_default $ Rectangle w h
+def line(p:Point)          -> Diagram = singleton_default $ Line p
+def text(x:String)         -> Diagram = singleton_default $ Text x
 
-def update_geom (update: GeomStyle -> GeomStyle) (d:Diagram) : Diagram =
-  (MkDiagram (AsList _ objs)) = d
-  MkDiagram $ to_list for i.
-    (attr       , geoms) = objs.i
-    (update attr, geoms)
+def update_geom(update: (GeomStyle) -> GeomStyle, d:Diagram) -> Diagram =
+  AsList(_, objs) = d.val
+  Diagram.new $ to_list for i.
+    (       attr, point, geoms) = objs[i]
+    (update attr, point, geoms)
 
 -- TODO: these would be better if we had field-access-based ref projections, so we could
 -- write `geom~fillColor := c` instead of unpack and packing explicitly.
-def set_fill_color   (c:HtmlColor) : Diagram -> Diagram = update_geom \s.
- GeomStyle~new (Just c) s~strokeColor s~strokeWidth
-def set_stroke_color (c:HtmlColor) : Diagram -> Diagram = update_geom \s.
- GeomStyle~new s~fillColor (Just c) s~strokeWidth
-def set_stroke_width (w:Int)      : Diagram -> Diagram = update_geom \s.
- GeomStyle~new s~fillColor s~strokeColor w
-def remove_stroke                 : Diagram -> Diagram = update_geom \s.
- GeomStyle~new s~fillColor Nothing s~strokeWidth
-def remove_fill                   : Diagram -> Diagram = update_geom \s.
- GeomStyle~new Nothing s~strokeColor s~strokeWidth
+def set_fill_color(d:Diagram, c:HtmlColor) -> Diagram =
+  update_geom (\s. GeomStyle.new (Just c) s.strokeColor s.strokeWidth) d
+
+def set_stroke_color(d:Diagram, c:HtmlColor) -> Diagram =
+  update_geom (\s. GeomStyle.new s.fillColor (Just c) s.strokeWidth) d
+
+def set_stroke_width(d:Diagram, w:Int) -> Diagram =
+  update_geom (\s. GeomStyle.new s.fillColor s.strokeColor w) d
+
+def remove_stroke(d:Diagram) -> Diagram =
+  update_geom (\s. GeomStyle.new s.fillColor Nothing s.strokeWidth) d
+
+def remove_fill(d:Diagram) -> Diagram =
+  update_geom (\s. GeomStyle.new Nothing s.strokeColor s.strokeWidth) d
 
 '## Serialization to SVG string
 
 'Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).
 
 @noinline
-def str_cat (xs:String) (ys:String) : String = xs <> ys
+def str_cat(xs:String, ys:String) -> String = xs <> ys
 
-def (<.>) (xs:String) (ys:String) : String = str_cat xs ys
+def (<.>)(xs:String, ys:String) -> String = str_cat xs ys
 
-def quote (s:String) : String = "\"" <.> s <.> "\""
+def quote(s:String) -> String = "\"" <.> s <.> "\""
 
 @noinline
-def str_space_cat_uncurried ((s1,s2):(String & String)) : String =
+def str_space_cat_uncurried(pair:(String, String)) -> String =
+  (s1, s2) = pair
   s1 <.> " " <.> s2
 
-def (<+>) {a b} [Show a, Show b] (s1:a) (s2:b) : String =
+def (<+>)(s1:a, s2:b) -> String given (a|Show, b|Show) =
   str_space_cat_uncurried ((show s1), (show s2))
 
-def self_closing_brackets (s:String) : String = "<" <.> s <.> "/>"
+def self_closing_brackets(s:String) -> String = "<" <.> s <.> "/>"
 
-def tag_brackets (tag:String) (s:String) : String =
+def tag_brackets(tag:String, s:String) -> String =
   "<" <.> tag <.> ">" <.> s <.> "</" <.> tag <.> ">"
 
 @noinline
-def tag_brackets_attr_uncurried ((tag, attr, s):(String & String & String)) : String =
+def tag_brackets_attr_uncurried(triple:(String, String, String)) -> String =
+  (tag, attr, s) = triple
   "<" <.> tag <+> attr <.> ">" <.> s <.> "</" <.> tag <.> ">"
 
-def tag_brackets_attr (tag:String) (attr:String) (s:String) : String =
+def tag_brackets_attr(tag:String, attr:String, s:String) -> String =
   tag_brackets_attr_uncurried (tag, attr, s)
 
-def (<=>) {b} [Show b] (attr:String) (val:b) : String =
+def (<=>)(attr:String, val:b) -> String given (b|Show) =
   attr <.> "=" <.> quote (show val)
 
-def html_color(cs:HtmlColor) : String =
-  "#" <> (concat $ for i. showHex cs.i)
+def html_color(cs:HtmlColor) -> String =
+  "#" <> (concat $ for i. showHex cs[i])
 
-def optional_html_color(c: Maybe HtmlColor) : String =
+def optional_html_color(c: Maybe HtmlColor) -> String =
   case c of
     Nothing -> "none"
     Just c' -> html_color c'
 
 @noinline
-def attr_string (attr:GeomStyle) : String =
-  (   ("stroke"       <=> (optional_html_color attr~strokeColor))
-  <+> ("fill"         <=> (optional_html_color attr~fillColor))
-  <+> ("stroke-width" <=> (attr~strokeWidth)))
+def attr_string(attr:GeomStyle) -> String =
+  (   ("stroke"       <=> (optional_html_color attr.strokeColor))
+  <+> ("fill"         <=> (optional_html_color attr.fillColor))
+  <+> ("stroke-width" <=> (attr.strokeWidth)))
 
 @noinline
-def render_geom (attr:GeomStyle) ((x,y):Point) (geom:Geom) : String =
+def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
   -- For things that are solid. SVG says they have fill=stroke.
-  solidAttr = GeomStyle~new attr~strokeColor attr~strokeColor attr~strokeWidth
-  groupEle = \attr. tag_brackets_attr "g" (attr_string attr)
+  solidAttr = GeomStyle.new attr.strokeColor attr.strokeColor attr.strokeWidth
+  groupEle = \attr s. tag_brackets_attr "g" (attr_string attr) s
   case geom of
     PointGeom ->
       groupEle solidAttr $ self_closing_brackets $
         ("circle" <+>
-         "cx" <=> x <.>
-         "cy" <=> y <.>
+         "cx" <=> p.x <.>
+         "cy" <=> p.y <.>
          "r=\"1\"")
     Circle r ->
       groupEle attr $ self_closing_brackets $
         ("circle" <+>
-         "cx" <=> x <.>
-         "cy" <=> y <.>
+         "cx" <=> p.x <.>
+         "cy" <=> p.y <.>
          "r"  <=> r)
-    Rectangle w h ->
+    Rectangle(w, h) ->
       groupEle attr $ self_closing_brackets $
         ("rect" <+>
          "width"  <=> w <.>
          "height" <=> h <.>
-         "x"      <=> (x - (w/2.0)) <.>
-         "y"      <=> (y - (h/2.0)))
+         "x"      <=> (p.x - (w/2.0)) <.>
+         "y"      <=> (p.y - (h/2.0)))
     Text content ->
-      textEle = tag_brackets_attr "text" $
-        ("x" <=> x <.>
-         "y" <=> y <.>
+      textEle = \s. tag_brackets_attr("text",
+        ("x" <=> p.x <.>
+         "y" <=> p.y <.>
          "text-anchor" <=> "middle" <.>    -- horizontal center
          "dominant-baseline" <=> "middle"  -- vertical center
-        )
+        ), s)
       groupEle solidAttr $ textEle content
 
-BoundingBox : Type = (Point & Point)
+BoundingBox : Type = (Point, Point)
 
 @noinline
-def compute_bounds (d:Diagram) : BoundingBox =
-  computeSubBound = \sel op (_, p, geom).
-    sel p + case geom of
-      PointGeom     -> 0.0
-      Circle r      -> op r
-      Rectangle w h -> op $ (sel (w,h))/2.0
-      Line q        -> op $ max 0.0 $ op $ sel q  -- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
-      Text _        -> 0.0  -- no size info possible as it is scale invariant
+def compute_bounds(d:Diagram) -> BoundingBox =
+  computeSubBound = \sel op.
+    \triple.
+      (_, p, geom) = triple
+      sel p + case geom of
+        PointGeom       -> 0.0
+        Circle r        -> op r
+        Rectangle(w, h) -> op $ (sel Point.new(w,h))/2.0
+        Line q          -> op $ max 0.0 $ op $ sel q  -- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
+        Text _          -> 0.0  -- no size info possible as it is scale invariant
 
-  (MkDiagram (AsList _ objs)) = d
+  AsList(_, objs) = d.val
   (
-    (
-      minimum $ map (computeSubBound fst neg) objs,
-      minimum $ map (computeSubBound snd neg) objs
+    Point.new(
+      minimum $ map (computeSubBound (\p. p.x) neg) objs,
+      minimum $ map (computeSubBound (\p. p.y) neg) objs
     ),
-    (
-      maximum $ map (computeSubBound fst id)  objs,
-      maximum $ map (computeSubBound snd id)  objs
+    Point.new(
+      maximum $ map (computeSubBound (\p. p.x) id)  objs,
+      maximum $ map (computeSubBound (\p. p.y) id)  objs
     )
   )
 
 @noinline
-def render_svg (d:Diagram) (bounds:BoundingBox) : String =
-  ((xmin, ymin), (xmax, ymax)) = bounds
+def render_svg(d:Diagram, bounds:BoundingBox) -> String =
+  (min, max) = bounds
   imgWidth = 400.0
-  scaleFactor = imgWidth / (xmax - xmin)
-  imgHeight = (ymax - ymin) * scaleFactor
-  imgXMin   =  xmin * scaleFactor
-  imgYMin   = -ymax * scaleFactor
-  (MkDiagram (AsList _ objs)) = d |> flip_y |> scale scaleFactor
+  scaleFactor = imgWidth / (max.x - min.x)
+  imgHeight = (max.y - min.y) * scaleFactor
+  imgXMin   =  min.x * scaleFactor
+  imgYMin   = -max.y * scaleFactor
+  AsList(_, objs) = (d | flip_y | scale(scaleFactor)).val
   svgAttrStr = (    "width"   <=> imgWidth
                 <+> "height"  <=> imgHeight
                 <+> "viewBox" <=> (imgXMin <+> imgYMin <+> imgWidth <+> imgHeight))
   tag_brackets_attr "svg" svgAttrStr $
     concat for i.
-      (attr, pos, geom) = objs.i
+      (attr, pos, geom) = objs[i]
       render_geom attr pos geom
 
 render_scaled_svg = \d. render_svg d (compute_bounds d)
 
 '## Derived convenience methods and combinators
 
-move_x : Float -> Diagram -> Diagram = \x. move_xy (x, 0.0)
-move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
+def move_x(d:Diagram, x:Float) -> Diagram = move_xy(d, x, 0.0)
+def move_y(d:Diagram, y:Float) -> Diagram = move_xy(d, 0.0, y)
 
 '## Demos
 
@@ -238,12 +252,12 @@ move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 
 :html
   mydiagram : Diagram = (
-     (circle 7.0 |> move_xy (20.0, 20.0)
-       |> set_fill_color blue |> set_stroke_color red)
-  <> (circle 5.0 |> move_xy (40.0, 41.0))
-  <> (rect  10.0 20.0 |> move_xy (5.0, 10.0) |> set_stroke_color red)
-  <> (text "DexLang"  |> move_xy (30.0, 10.0) |> set_stroke_color green)
-  <> (point_diagram |> move_xy (15.0, 5.0) |> set_stroke_color red)
+     (circle 7.0 | move_xy(20.0, 20.0)
+       | set_fill_color blue | set_stroke_color red)
+  <> (circle 5.0 | move_xy(40.0, 41.0))
+  <> (rect  10.0 20.0 | move_xy(5.0, 10.0)  | set_stroke_color red)
+  <> (text "DexLang"  | move_xy(30.0, 10.0) | set_stroke_color green)
+  <> (point_diagram   | move_xy(15.0, 5.0)  | set_stroke_color red)
   )
   render_scaled_svg mydiagram
 > <html output>
@@ -252,9 +266,9 @@ move_y : Float -> Diagram -> Diagram = \y. move_xy (0.0, y)
 
 :html
   concentric_diagram : Diagram = (
-       (rect 2.0 2.0 |> set_fill_color red)
-    <> (circle 1.0 |> set_fill_color blue)
-    <> (text "DexLang" |> set_stroke_color white)
-  ) |> move_xy (5.0, 5.0)
+       (rect 2.0 2.0 | set_fill_color red)
+    <> (circle 1.0 | set_fill_color blue)
+    <> (text "DexLang" | set_stroke_color white)
+  ) | move_xy(5.0, 5.0)
   render_scaled_svg concentric_diagram
 > <html output>
