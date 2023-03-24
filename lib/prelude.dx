@@ -1923,7 +1923,7 @@ def rand(k:Key) -> Float =
   bits = exponent_bits .|. mantissa_bits
   %bitcast(Float, bits) - 1.0
 
-def rand_vec(n:Nat, f: (Key) -> a, k: Key) -> Fin n => a  given (n|Ix, a) =
+def rand_vec(n:Nat, f: (Key) -> a, k: Key) -> Fin n => a  given (a) =
   for i:(Fin n). f ixkey(k, i)
 
 def rand_mat(n:Nat, m:Nat, f: (Key) -> a, k: Key) -> Fin n => Fin m => a given (a) =
@@ -1939,8 +1939,6 @@ def randn(k:Key) -> Float =
 
 -- TODO: Make this better...
 def rand_int(k:Key) -> Nat = w64_to_n k `mod` 2147483647
-
-def bern(p:Float, k:Key) -> Bool = rand k < p
 
 def randn_vec(k:Key) -> n=>Float given (n|Ix) =
   for i. randn (ixkey(k, i))

@@ -59,7 +59,7 @@ Person = (Element String names2)
 
 -- Check that ordinal and unsafeFromOrdinal are inverses.
 roundTrip = for i:Person.
-  i == (unsafe_from_ordinal _ (ordinal i))
+  i == (unsafe_from_ordinal (ordinal i))
 :p all roundTrip
 > True
 
@@ -73,8 +73,8 @@ roundTrip2 = for i:Person.
 
 setix : Person = from_just $ member "Bob" names2
 :p setix
-> (UnsafeElement 1)
+> (Element.new 1)
 
 setix2 : Person = from_just $ member "Charlie" names2
 :p setix2
-> (UnsafeElement 2)
+> (Element.new 2)

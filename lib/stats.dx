@@ -20,28 +20,32 @@ actual value being represented (the raw probability) can be computed with
  use `ls_sum`, which applies the standard max-sweep log-sum-exp trick directly,
 rather than relying on monoid reduction using `add`.
 
-data LogSpace f = Exp f
+struct LogSpace(a) =
+  log : a
 
-instance Mul (LogSpace f) given {f} [Add f]
-  mul = \(Exp la) (Exp lb). Exp $ la + lb
+def Exp(x:a) -> LogSpace a given (a) = LogSpace.new x
+
+instance Mul(LogSpace f) given (f|Add)
+  def (*)(x, y) = Exp $ x.log + y.log
   one = Exp zero
 
-instance Fractional (LogSpace f) given {f} [Sub f]
-  divide = \(Exp la) (Exp lb). Exp $ la - lb
+instance Fractional(LogSpace f) given (f|Sub)
+  def divide(x, y) = Exp $ x.log - y.log
 
-instance Arbitrary (LogSpace Float)
-  arb = \k. Exp (randn k)
+instance Arbitrary(LogSpace Float)
+  def arb(k) = Exp (randn k)
 
-def is_infinite {f} [Fractional f, Sub f, Mul f, Ord f] (x:f) : Bool =
+def is_infinite(x:f) -> Bool given (f|Fractional|Sub|Mul|Ord) =
   -- Note: According to this function, nan is not infinite.
   -- Todo: Make polymorphic versions of these and put them in the prelude.
-  infinity = (divide one zero)
-  neg_infinity = sub zero infinity
+  infinity = divide one zero
+  neg_infinity = zero - infinity
   x == infinity || x == neg_infinity
 
-def log_add_exp {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] (la:f) (lb:f) : f =
+def log_add_exp(la:f, lb:f) -> f
+    given (f|Floating|Add|Sub|Mul|Fractional|Ord) =
   infinity = (divide one zero)
-  neg_infinity = sub zero infinity
+  neg_infinity = zero - infinity
   if la == infinity && lb == infinity
     then infinity
     else if la == neg_infinity && lb == neg_infinity
@@ -50,111 +54,116 @@ def log_add_exp {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f] (la:f
         then la + log1p (exp (lb - la))
         else lb + log1p (exp (la - lb))
 
-instance Add (LogSpace f) given {f} [Floating f, Add f, Sub f, Mul f, Fractional f, Ord f]
-  add = \(Exp la) (Exp lb). Exp $ log_add_exp la lb
+instance Add(LogSpace f) given (f|Floating|Add|Sub|Mul|Fractional|Ord)
+  def (+)(x, y) = Exp $ log_add_exp x.log y.log
   zero = Exp (zero - (divide one zero))
 
-def f_to_ls {f} [Floating f] (a:f) : LogSpace f = Exp $ log a
+def f_to_ls(a:f) -> LogSpace f given (f|Floating)  = Exp $ log a
 
-def ls_to_f {f} [Floating f] ((Exp la):LogSpace f) : f = exp la
+def ls_to_f(x:LogSpace f) -> f given (f|Floating) = exp x.log
 
-def ln {f} [Floating f] ((Exp la):LogSpace f) : f = la
+def ln(x:LogSpace f) -> f given (f|Floating) = x.log
 
-def log_sum_exp {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (xs:n=>f) : f =
+def log_sum_exp(xs:n=>f) -> f
+    given(n|Ix, f|Fractional|Sub|Floating|Mul|Ord) =
   m_raw = maximum xs
   m = case is_infinite m_raw of
     False -> m_raw
     True  -> zero
-  m + (log $ sum for i. exp (xs.i - m))
+  m + (log $ sum for i. exp (xs[i] - m))
 
-def ls_sum {n f} [Fractional f, Sub f, Floating f, Mul f, Ord f] (x:n=>LogSpace f) : LogSpace f =
+def ls_sum(x:n=>LogSpace f) -> LogSpace f
+    given (n|Ix, f|Fractional|Sub|Floating|Mul|Ord) =
   lx = map ln x
   Exp $ log_sum_exp lx
 
 '## Probability distributions
 Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions which can be sampled should implement `Random`, and those which can be evaluated should implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
 
-interface Random d a
-  draw : d -> Key -> a                -- function for random draws
+interface Random(d, a)
+  draw : (d, Key) -> a                -- function for random draws
 
-interface Dist d a f
-  density : d -> a -> LogSpace f      -- either the density function or mass function
+interface Dist(d, a, f)
+  density : (d, a) -> LogSpace f      -- either the density function or mass function
 
-interface [Dist d a f] OrderedDist d a f
-  cumulative : d -> a -> LogSpace f   -- the cumulative distribution function (CDF)
-  survivor : d -> a -> LogSpace f     -- the survivor function (complement of CDF)
-  quantile : d -> f -> a              -- the quantile function (inverse CDF)
+interface OrderedDist(d, a, f, given () (Dist d a f))
+  cumulative : (d, a) -> LogSpace f   -- the cumulative distribution function (CDF)
+  survivor   : (d, a) -> LogSpace f   -- the survivor function (complement of CDF)
+  quantile   : (d, f) -> a            -- the quantile function (inverse CDF)
 
 '## Univariate probability distributions
-Some commonly encountered univariate distributions. 
+Some commonly encountered univariate distributions.
 ### Bernoulli distribution
 The [Bernoulli distribution](https://en.wikipedia.org/wiki/Bernoulli_distribution) is parameterised by its "success" probability, `prob`.
 
-data BernoulliDist = Bernoulli Float
+struct Bernoulli =
+  prob: Float
 
-instance Random BernoulliDist Bool
-  draw = \(Bernoulli prob) k.
-    rand k < prob
+instance Random(Bernoulli ,Bool)
+  def draw(bern, k) =
+    rand k < bern.prob
 
-instance Dist BernoulliDist Bool Float
-  density = \(Bernoulli prob) b.
+instance Dist(Bernoulli, Bool, Float)
+  def density(bern, b) =
     if b
-     then Exp $ log prob
-     else Exp $ log1p (-prob)
+     then Exp $ log bern.prob
+     else Exp $ log1p (-bern.prob)
 
-instance OrderedDist BernoulliDist Bool Float
-  cumulative = \(Bernoulli prob) b.
+instance OrderedDist(Bernoulli, Bool, Float)
+  def cumulative(bern, b) =
     if b
       then Exp 0.0
-      else Exp $ log1p (-prob)
-  survivor = \(Bernoulli prob) b.
+      else Exp $ log1p (-bern.prob)
+  def survivor(bern, b) =
     if b
       then Exp (-infinity)
-      else Exp $ log prob
-  quantile = \(Bernoulli prob) q.
-    q > (1 - prob)
+      else Exp $ log bern.prob
+  def quantile(bern, q) =
+    q > (1 - bern.prob)
 
 
 '### Binomial distribution
 The [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution) is parameterised by the number of trials, `trials`, and the success probability, `prob`. Mean is `trials*prob`.
 
-data BinomialDist = Binomial Nat Float
+struct Binomial =
+  trials : Nat
+  prob   : Float
 
-instance Random BinomialDist Nat
-  draw = \(Binomial trials prob) k.
-    sum $ map b_to_n (rand_vec trials (draw $ Bernoulli prob) k)
+instance Random(Binomial, Nat)
+  def draw(d, k) =
+    sum $ map b_to_n (rand_vec d.trials (\k_. draw(Bernoulli.new(d.prob), k_)) k)
 
-instance Dist BinomialDist Nat Float
-  density = \(Binomial trials prob) x.
-    if (prob == 0.0)
+instance Dist(Binomial, Nat, Float)
+  def density(d, x) =
+    if (d.prob == 0.0)
       then
         if (x == 0)
           then Exp 0.0
           else Exp (-infinity)
       else
-        if (prob == 1.0)
+        if (d.prob == 1.0)
           then
-            if (x == trials)
+            if (x == d.trials)
               then Exp 0.0
               else Exp (-infinity)
           else
-            tf = n_to_f trials
+            tf = n_to_f d.trials
             xf = n_to_f x
             if (xf > tf)
               then Exp (-infinity)
-              else Exp ( (xf * log prob) + ((tf - xf) * log1p (-prob)) +
+              else Exp ( (xf * log d.prob) + ((tf - xf) * log1p (-d.prob)) +
                 lgamma (tf + 1) - lgamma (xf + 1) - lgamma (tf + 1 - xf) )
 
-instance OrderedDist BinomialDist Nat Float
-  cumulative = \(Binomial trials prob) x.
+instance OrderedDist(Binomial, Nat, Float)
+  def cumulative(d, x) =
     xp1:Nat = x + 1
-    ls_sum $ for i:(Fin xp1). density (Binomial trials prob) (ordinal i)
-  survivor = \(Binomial trials prob) x.
-    tmx = trials -| x
-    ls_sum $ for i:(Fin tmx). density (Binomial trials prob) (x + 1 + ordinal i)
-  quantile = \(Binomial trials prob) q.
-    tp1:Nat = trials + 1
-    lpdf = for i:(Fin tp1). ln $ density (Binomial trials prob) (ordinal i)
+    ls_sum $ for i:(Fin xp1). density d (ordinal i)
+  def survivor(d, x) =
+    tmx = d.trials -| x
+    ls_sum $ for i:(Fin tmx). density d (x + 1 + ordinal i)
+  def quantile(d, q) =
+    tp1:Nat = d.trials + 1
+    lpdf = for i:(Fin tp1). ln $ density d (ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
     ordinal $ from_just mi
@@ -163,94 +172,95 @@ instance OrderedDist BinomialDist Nat Float
 '### Exponential distribution
 The [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution) is parameterised by its *rate*, `rate > 0`, so that the mean of the distribution is `1/rate`.
 
-data ExponentialDist = Exponential Float
+struct Exponential =
+  rate : Float
 
-instance Random ExponentialDist Float
-  draw = \(Exponential rate) k.
-    log1p (-rand k) / -rate
+instance Random(Exponential, Float)
+  def draw(d, k) = log1p (-rand k) / -d.rate
 
-instance Dist ExponentialDist Float Float
-  density = \(Exponential rate) x.
+instance Dist(Exponential, Float, Float)
+  def density(d, x) =
     if (x < 0.0)
       then Exp (-infinity)
-      else Exp $ log rate - (rate * x)
+      else Exp $ log d.rate - (d.rate * x)
 
-instance OrderedDist ExponentialDist Float Float
-  cumulative = \(Exponential rate) x.
+instance OrderedDist(Exponential, Float, Float)
+  def cumulative(d, x) =
     if (x < 0.0)
       then Exp (-infinity)
-      else Exp $ log1p (-exp (-rate * x))
-  survivor = \(Exponential rate) x.
+      else Exp $ log1p (-exp (-d.rate * x))
+  def survivor(d, x) =
     if (x < 0.0)
       then Exp 0.0
-      else Exp $ -rate * x
-  quantile = \(Exponential rate) q.
-    log1p (-q) / -rate
+      else Exp $ -d.rate * x
+  def quantile(d, q) = log1p (-q) / -d.rate
 
 
 '### Geometric distribution
 This [geometric distribution](https://en.wikipedia.org/wiki/Geometric_distribution) is defined as the number of trials until a success (**not** the number of failures). Parameterised by success probability, `prob`. Mean is `1/prob`.
 
-data GeometricDist = Geometric Float
+struct Geometric =
+  prob : Float
 
-instance Random GeometricDist Nat
-  draw = \(Geometric prob) k.
-    f_to_n $ ceil $ log1p (-rand k) / log1p (-prob)
+instance Random(Geometric, Nat)
+  def draw(d, k) = f_to_n $ ceil $ log1p (-rand k) / log1p (-d.prob)
 
-instance Dist GeometricDist Nat Float
-  density = \(Geometric prob) n.
-    if (prob == 1)
+instance Dist(Geometric, Nat, Float)
+  def density(d, n) =
+    if (d.prob == 1)
       then
         if (n == 1)
           then Exp 0
           else Exp (-infinity)
       else
         nf = n_to_f n
-        Exp $ ((nf-1)*log1p (-prob)) + log prob
+        Exp $ ((nf-1)*log1p (-d.prob)) + log d.prob
 
-instance OrderedDist GeometricDist Nat Float
-  cumulative = \(Geometric prob) n.
+instance OrderedDist(Geometric, Nat, Float)
+  def cumulative(d, n) =
     nf = n_to_f n
-    Exp $ log1p (-pow (1-prob) nf)
-  survivor = \(Geometric prob) n.
-    Exp $ n_to_f n * log1p (-prob)
-  quantile = \(Geometric prob) q.
-    f_to_n $ ceil $ log1p (-q) / log1p (-prob)
+    Exp $ log1p (-pow (1-d.prob) nf)
+  def survivor(d, n) =
+    Exp $ n_to_f n * log1p (-d.prob)
+  def quantile(d, q) =
+    f_to_n $ ceil $ log1p (-q) / log1p (-d.prob)
 
 
 '### Normal distribution
 The Gaussian, or [normal distribution](https://en.wikipedia.org/wiki/Normal_distribution) is parameterised by its *mean*, `loc`, and *standard deviation*, `scale`. ie. **not** variance or precision.
 
-data NormalDist = Normal Float Float
+struct Normal =
+  loc : Float
+  scale : Float
 
-instance Random NormalDist Float
-  draw = \(Normal loc scale) k.
-    loc + (scale * randn k)
+instance Random(Normal, Float)
+  def draw(d, k) = d.loc + (d.scale * randn k)
 
-instance Dist NormalDist Float Float
-  density = \(Normal loc scale) x.
-    Exp $ -0.5 * (log (2 * pi * (sq scale)) + (sq ((x - loc) / scale)))
+instance Dist(Normal, Float, Float)
+  def density(d, x) =
+    Exp $ -0.5 * (log (2 * pi * (sq d.scale)) + (sq ((x - d.loc) / d.scale)))
 
-instance OrderedDist NormalDist Float Float
-  cumulative = \(Normal loc scale) x.
-    Exp $ log (0.5 * erfc ((loc - x) / (scale * sqrt(2.0))))
-  survivor = \(Normal loc scale) x.
-    Exp $ log (0.5 * erfc ((x - loc) / (scale * sqrt(2.0))))
-  quantile = \_ _. todo  -- Add `erfinv`.
+instance OrderedDist(Normal, Float, Float)
+  def cumulative(d, x) =
+    Exp $ log (0.5 * erfc ((d.loc - x) / (d.scale * sqrt(2.0))))
+  def survivor(d, x) =
+    Exp $ log (0.5 * erfc ((x - d.loc) / (d.scale * sqrt(2.0))))
+  def quantile(_, _)  = todo  -- Add `erfinv`.
 
 
 '### Poisson distribution
 The [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution) is parameterised by its rate, `rate > 0`. Mean is `rate`.
 
-data PoissonDist = Poisson Float
+struct Poisson =
+  rate : Float
 
-instance Random PoissonDist Nat
-  draw = \(Poisson rate) k.
-    exp_neg_rate = exp (-rate)
+instance Random(Poisson, Nat)
+  def draw(d, k) =
+    exp_neg_rate = exp (-d.rate)
     [current_k, next_k] = split_key k
     yield_state 0 \ans.
       with_state (rand current_k) \p. with_state next_k \k'.
-        while do
+        while \.
           if get p > exp_neg_rate
             then
               [ck, nk] = split_key (get k')
@@ -261,111 +271,112 @@ instance Random PoissonDist Nat
             else
               False
 
-instance Dist PoissonDist Nat Float
-  density = \(Poisson rate) n.
-    if ((rate == 0.0)&&(n == 0))
+instance Dist(Poisson, Nat, Float)
+  def density(d, n) =
+    if ((d.rate == 0.0)&&(n == 0))
       then
         Exp 0.0
       else
         nf = n_to_f n
-        Exp $ (nf * log rate) - rate - lgamma (nf + 1)
+        Exp $ (nf * log d.rate) - d.rate - lgamma (nf + 1)
 
-instance OrderedDist PoissonDist Nat Float
-  cumulative = \(Poisson rate) x.
+instance OrderedDist(Poisson, Nat, Float)
+  def cumulative(d, x) =
     xp1:Nat = x + 1
-    ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
-  survivor = \(Poisson rate) x.
+    ls_sum $ for i:(Fin xp1). density d (ordinal i)
+  def survivor(d, x) =
     xp1:Nat = x + 1
-    cdf = ls_sum $ for i:(Fin xp1). density (Poisson rate) (ordinal i)
+    cdf = ls_sum $ for i:(Fin xp1). density d (ordinal i)
     Exp $ log1p (-ls_to_f cdf)
-  quantile = \(Poisson rate) q.
+  def quantile(d, q) =
     yield_state (0::Nat) \x.
       with_state 0.0 \cdf.
-        while do
-          cdf := (get cdf) + ls_to_f (density (Poisson rate) (get x))
+        while \.
+          cdf := (get cdf) + ls_to_f (density d (get x))
           if (get cdf) > q
             then
               False
             else
               x := (get x) + 1
               True
-  
+
 
 '### Uniform distribution
 The [uniform distribution](https://en.wikipedia.org/wiki/Continuous_uniform_distribution) is continuous on an interval determined by a lower bound, `low`, and upper bound, `high > low`. Mean is `(low+high)/2`.
 
-data UniformDist = Uniform Float Float
+struct Uniform =
+  low  : Float
+  high : Float
 
-instance Random UniformDist Float
-  draw = \(Uniform low high) k.
-    low + ((high - low) * rand k)
+instance Random(Uniform, Float)
+  def draw(d, k) = d.low + ((d.high - d.low) * rand k)
 
-instance Dist UniformDist Float Float
-  density = \(Uniform low high) x.
-    if (x >= low)&&(x <= high)
-      then Exp $ -log (high - low)
+instance Dist(Uniform, Float, Float)
+  def density(d, x) =
+    if (x >= d.low)&&(x <= d.high)
+      then Exp $ -log (d.high - d.low)
       else Exp (-infinity)
 
-instance OrderedDist UniformDist Float Float
-  cumulative = \(Uniform low high) x.
-    if (x < low)
+instance OrderedDist(Uniform, Float, Float)
+  def cumulative(d, x) =
+    if (x < d.low)
       then Exp (-infinity)
-      else if (x > high)
+      else if (x > d.high)
         then Exp 0.0
-        else Exp $ log (x - low) - log (high - low)
-  survivor = \(Uniform low high) x.
-    if (x < low)
+        else Exp $ log (x - d.low) - log (d.high - d.low)
+  def survivor(d, x) =
+    if (x < d.low)
       then Exp 0.0
-      else if (x > high)
+      else if (x > d.high)
         then Exp (-infinity)
-        else Exp $ log (high - x) - log (high - low)
-  quantile = \(Uniform low high) q.
-    low + ((high - low) * q)
-  
+        else Exp $ log (d.high - x) - log (d.high - d.low)
+  def quantile(d, q) = d.low + ((d.high - d.low) * q)
+
 
 '## Data summaries
 Some data summary functions. Note that `mean` is provided by the prelude.
 
 '### Summaries for vector quantities
 
-def mean_and_variance {n a} [VSpace a, Mul a] (xs:n=>a) : (a & a) =
+def mean_and_variance(xs:n=>a) -> (a, a) given (n|Ix, a|VSpace|Mul) =
   m = mean xs
-  ss = sum for i. sq (xs.i - m)
+  ss = sum for i. sq (xs[i] - m)
   v = ss / (n_to_f (size n) - 1)
   (m, v)
 
-def variance {n a} [VSpace a, Mul a] (xs:n=>a) : a =
+def variance(xs:n=>a) -> a given (n|Ix, a|VSpace|Mul) =
   snd $ mean_and_variance xs
 
-def std_dev {n a} [VSpace a, Mul a, Floating a] (xs:n=>a) : a =
+def std_dev(xs:n=>a) -> a given (n|Ix, a|VSpace|Mul|Floating) =
   sqrt $ variance xs
 
-def covariance {n a} [VSpace a, Mul a] (xs:n=>a) (ys:n=>a) : a =
+def covariance(xs:n=>a, ys:n=>a) -> a given (n|Ix, a|VSpace|Mul) =
   xm = mean xs
   ym = mean ys
-  ss = sum for i. (xs.i - xm) * (ys.i - ym)
+  ss = sum for i. (xs[i] - xm) * (ys[i] - ym)
   ss / (n_to_f (size n) - 1)
 
-def correlation {n a} [VSpace a, Mul a, Floating a, Fractional a]
-    (xs:n=>a) (ys:n=>a) : a =
+def correlation(xs:n=>a, ys:n=>a) -> a
+    given (n|Ix, a|VSpace|Mul|Floating|Fractional) =
   divide (covariance xs ys) (std_dev xs * std_dev ys)
 
 '### Summaries for matrix quantities
 
-def mean_and_variance_matrix {n d a} [VSpace a, Mul a] (xs:n=>d=>a) : (d=>a & d=>d=>a) =
-  xsMean:d=>a = (for i. sum for j. xs.j.i) / n_to_f (size n)
+def mean_and_variance_matrix(xs:n=>d=>a) -> (d=>a, d=>d=>a)
+    given (n|Ix, d|Ix, a|Mul|VSpace) =
+  xsMean:d=>a = (for i. sum for j. xs[j,i]) / n_to_f (size n)
   xsCov:d=>d=>a = (for i i'. sum for j.
-                         (xs.j.i' - xsMean.i') *
-                           (xs.j.i  - xsMean.i ) ) / (n_to_f (size n) - 1)
+                         (xs[j,i'] - xsMean[i']) *
+                         (xs[j,i]  - xsMean[i] ) ) / (n_to_f (size n) - 1)
   (xsMean, xsCov)
 
-def variance_matrix {n d a} [VSpace a, Mul a] (xs:n=>d=>a) : d=>d=>a =
+def variance_matrix(xs:n=>d=>a) -> d=>d=>a
+    given (n|Ix, d|Ix, a|VSpace|Mul)=
   snd $ mean_and_variance_matrix xs
 
-def correlation_matrix {n d a} [VSpace a, Mul a, Floating a, Fractional a]
-    (xs:n=>d=>a) : d=>d=>a =
+def correlation_matrix(xs:n=>d=>a) -> d=>d=>a
+    given (n|Ix, d|Ix, a|Mul|VSpace|Floating|Fractional) =
   cvm = variance_matrix xs
-  for i. for j. divide cvm.i.j (sqrt cvm.i.i * sqrt cvm.j.j)
-
+  for i. for j. divide cvm[i,j] (sqrt cvm[i,i] * sqrt cvm[j,j])
 
 

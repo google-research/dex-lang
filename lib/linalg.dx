@@ -233,45 +233,43 @@ def chol(x:n=>n=>Float) -> LowerTriMat n Float given (n|Ix) =
 -- The sign of the determinant of a permutation is either 1.0 or -1.0
 PermutationSign = Float
 
-struct Permutation(n|Ix) =
-  val : n=>n
-  sign : PermutationSign
+-- TODO: use a struct once we can handle reference projections of struct fields
+def Permutation(n|Ix) -> Type = (n=>n, PermutationSign)
 
 def apply_permutation(perm:Permutation n, xs: n=>t) -> n=>t given (n|Ix, t) =
-  for i. xs[perm.val[i]]
+  for i. xs[(fst perm)[i]]
 
 def identity_permutation() ->> Permutation n given (n|Ix) =
-  Permutation.new(for i. i, 1.0)
+  (for i. i, 1.0)
 
-def swap_in_place {n h} [Ix n] (pRef: Ref h (Permutation n), i:n, j:n) -> {State h} Unit =
+def swap_in_place(pRef: Ref h (Permutation n), i:n, j:n) -> {State h} () given (n|Ix, h) =
   (permRef, signRef) = (fst_ref pRef, snd_ref pRef)
   tempj = get permRef!j
   permRef!j := get permRef!i
   permRef!i := tempj
   signRef := -(get signRef)
 
-def perm_to_table {n} ((perm, _):Permutation n) -> n=>n = perm
-def perm_sign     {n} ((_, sign):Permutation n) -> PermutationSign = sign
+def perm_to_table(p:Permutation n) -> n=>n given (n|Ix)  = fst p
+def perm_sign(p:Permutation n) -> PermutationSign  given (n|Ix) = snd p
 
 
 '## LU decomposition functions
 
-def pivotize {n} (a:n=>n=>Float) -> Permutation n =
+def pivotize(a:n=>n=>Float) -> Permutation n given (n|Ix) =
   -- Gives a row permutation that makes Gaussian elimination more stable.
   yield_state identity_permutation \permRef.
     for j:n.
-      row_with_largest = argmax for i:(j..). abs a.(inject n i).j
+      row_with_largest = argmax for i:(j..). abs a[inject(to=n, i),j]
       if (ordinal j) /= (ordinal row_with_largest) then
-        swap_in_place permRef j (inject n row_with_largest)
+        swap_in_place permRef j (inject(to=n, row_with_largest))
 
-def lu {n} (a: n=>n=>Float) :
-       (LowerTriMat n Float & UpperTriMat n Float & Permutation n) =
+def lu(a: n=>n=>Float) -> (LowerTriMat n Float, UpperTriMat n Float, Permutation n) given (n|Ix) =
   -- Computes lower, upper, and permuntation matrices from a square matrix,
   -- such that apply_permutation permutation a == lower ** upper.
   permutation = pivotize a
   a = apply_permutation permutation a
 
-  init_lower -> (LowerTriMat n Float) = lower_tri_identity
+  init_lower : LowerTriMat n Float = lower_tri_identity()
   init_upper = zero
 
   (lower, upper) = yield_state (init_lower, init_upper) \stateRef.
@@ -299,32 +297,32 @@ def lu {n} (a: n=>n=>Float) :
     for j:n.
       for i:(..j).
         s = sum for k:(..i).
-          (MkUpperTriIx k2 _)  = transpose_lower_ix i k
-          (MkUpperTriIx k3 j3) = transpose_lower_ix j k2
+          MkUpperTriIx(k2, _)  = transpose_lower_ix i k
+          MkUpperTriIx(k3, j3) = transpose_lower_ix j k2
           ukj = get $ upper_tri_mat uRef k3 j3
-          (MkLowerTriIx i4 k4) = inject _ $ MkLowerTriIx i k
+          MkLowerTriIx(i4, k4) = inject $ MkLowerTriIx i k
           lik = get $ lower_tri_mat lRef i4 k4
           ukj * lik
 
-        (MkUpperTriIx i' j') = transpose_lower_ix j i
-        upper_tri_mat uRef i' j' := a.(inject _ i).j - s
+        MkUpperTriIx(i', j') = transpose_lower_ix j i
+        upper_tri_mat uRef i' j' := a[inject i,j] - s
 
       for i:(j<..).
         s = sum for k:(..j).
-          (MkUpperTriIx k2 j2) = transpose_lower_ix j k
+          MkUpperTriIx(k2, j2) = transpose_lower_ix j k
           ukj = get $ upper_tri_mat uRef k2 j2
-          (MkLowerTriIxExc i3 k3) = relax_ei i k
-          lik = get $ lower_tri_mat lRef i3 $ inject _ k3
+          MkLowerTriIxExc(i3, k3) = relax_ei i k
+          lik = get $ lower_tri_mat lRef i3 $ inject k3
           ukj * lik
 
         ujj = get $ upper_tri_mat uRef j (refl_more j)
-        (MkLowerTriIxExc i' j') = transpose_upper_ix_exc j i
-        lower_tri_mat lRef i' (inject _ j') := (a.i'.j - s) / ujj
+        MkLowerTriIxExc(i', j') = transpose_upper_ix_exc j i
+        lower_tri_mat lRef i' (inject j') := (a[i',j] - s) / ujj
   (lower, upper, permutation)
 
 '## General linear algebra functions
 
-def solve {n v} [VSpace v] (a:n=>n=>Float, b:n=>v) -> n=>v =
+def solve(a:n=>n=>Float, b:n=>v) -> n=>v  given (n|Ix, v|VSpace) =
   -- There's a small speedup possible by exploiting the fact
   -- that l always has ones on the diagonal.  It would just require a
   -- custom forward_substitute routine that doesn't divide
@@ -334,22 +332,22 @@ def solve {n v} [VSpace v] (a:n=>n=>Float, b:n=>v) -> n=>v =
   y = forward_substitute l b'
   backward_substitute u y
 
-def invert {n} (a:n=>n=>Float) -> n=>n=>Float =
+def invert(a:n=>n=>Float) -> n=>n=>Float given (n|Ix) =
   solve a eye
 
-def determinant {n} (a:n=>n=>Float) -> Float =
+def determinant(a:n=>n=>Float) -> Float given (n|Ix) =
   (l, u, perm) = lu a
-  prod (for i. (upper_tri_diag u).i * (lower_tri_diag l).i) * perm_sign perm
+  prod (for i. (upper_tri_diag u)[i] * (lower_tri_diag l)[i]) * perm_sign perm
 
-def sign_and_log_determinant {n} (a:n=>n=>Float) -> (Float & Float) =
+def sign_and_log_determinant(a:n=>n=>Float) -> (Float, Float) given (n|Ix) =
   (l, u, perm) = lu a
-  diags = for i. (upper_tri_diag u).i * (lower_tri_diag l).i
-  sign = (perm_sign perm) * prod for i. sign diags.i
-  sum_of_log_abs = sum for i. log (abs diags.i)
+  diags = for i. (upper_tri_diag u)[i] * (lower_tri_diag l)[i]
+  sign = (perm_sign perm) * prod for i. sign diags[i]
+  sum_of_log_abs = sum for i. log (abs diags[i])
   (sign, sum_of_log_abs)
 
-def matrix_power {n} (base:n=>n=>Float, power:Nat) -> n=>n=>Float =
+def matrix_power(base:n=>n=>Float, power:Nat) -> n=>n=>Float given (n|Ix) =
   general_integer_power (**) eye base power
 
-def trace {n a} [Add a] (x:n=>n=>a) -> a =
-  sum for i. x.i.i
+def trace(x:n=>n=>a) -> a given (n|Ix, a|Add) =
+  sum for i. x[i,i]
