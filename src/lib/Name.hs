@@ -3052,11 +3052,13 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall (n'::S) (l'::S). Pretty (b n' l')) => Pretty (Nest b n l) where
-  pretty = group . go
+  pretty Empty = ""
+  pretty ns = group $ line' <> go ns
     where
       go :: (forall (n'::S) (l'::S). Pretty (b n' l')) => Nest b n l -> Doc ann
       go Empty = ""
-      go (Nest b rest) = line <> pretty b <> pretty rest
+      go (Nest b Empty) = pretty b
+      go (Nest b rest) = pretty b <> line <> pretty rest
 
 instance SinkableB b => SinkableB (Nest b) where
   sinkingProofB fresh Empty cont = cont fresh Empty

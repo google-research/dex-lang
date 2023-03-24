@@ -228,11 +228,13 @@ instance IRRep r => Pretty (PiType r n) where
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
-  prettyPrec (LamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
+  prettyPrec (LamExpr bs body) =
+    atPrec LowestPrec $ prettyLam (p bs <> ".") body
 
 instance IRRep r => Pretty (DestLamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DestLamExpr r n) where
-  prettyPrec (DestLamExpr bs body) = atPrec LowestPrec $ prettyLam (p bs) body
+  prettyPrec (DestLamExpr bs body) =
+    atPrec LowestPrec $ prettyLam (p bs <> ".") body
 
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
@@ -360,7 +362,8 @@ instance Pretty (CorePiType n) where
         Pure -> space
         _    -> space <> pretty eff <> space
 
-prettyBindersWithExpl :: forall b n l ann. PrettyB b => Nest (WithExpl b) n l -> Doc ann
+prettyBindersWithExpl :: forall b n l ann. PrettyB b
+  => Nest (WithExpl b) n l -> Doc ann
 prettyBindersWithExpl bs = do
   let groups = groupByExpl $ fromNest bs
   let groups' = case groups of [] -> [(Explicit, [])]
@@ -404,10 +407,9 @@ prettyBinderHelper (b:>ty) body =
     then parens $ p (b:>ty)
     else p ty
 
-data PrettyLamType = PrettyLam | PrettyFor ForAnn deriving (Eq)
-
 prettyLam :: Pretty a => Doc ann -> a -> Doc ann
-prettyLam binders body = group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
+prettyLam binders body =
+  group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
 
 _inlineLastDeclBlock :: IRRep r => Block r n -> Abs (Nest (Decl r)) (Expr r) n
 _inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
@@ -1029,7 +1031,7 @@ instance Pretty PrimName where
 instance IRRep r => Pretty (Hof r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Hof r n) where
   prettyPrec hof = atPrec LowestPrec case hof of
-    For _ _ lam -> "for" <+> nest 2 (line <> p lam)
+    For _ _ lam -> "for" <+> pLowest lam
     While body    -> "while" <+> pArg body
     RunReader x body    -> "runReader" <+> pArg x <> nest 2 (line <> p body)
     RunWriter _ bm body -> "runWriter" <+> pArg bm <> nest 2 (line <> p body)
