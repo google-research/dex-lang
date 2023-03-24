@@ -48,7 +48,7 @@
 module AbstractSyntax (
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock,
-  parseTopDeclRepl, parseExpr, parseDecl, parseBlock) where
+  parseExpr, parseDecl, parseBlock, parseTopDeclRepl) where
 
 import Control.Monad (forM, when, liftM2)
 import Data.Functor

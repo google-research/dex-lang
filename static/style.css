@@ -107,8 +107,8 @@ code {
 /* Tooltips support */
 
 .code-span:hover {
-  /* background-color: rgb(255 255 100 / 0.4); */
-  background-color: rgb(155 100 255 / 40%);
+  background-color: rgb(255 255 100 / 0.4);
+  /* background-color: rgb(155 100 255 / 40%); */
 }
 
 .code-span-leaf:hover {
