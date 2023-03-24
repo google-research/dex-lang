@@ -150,12 +150,12 @@ data ClosedJaxpr (n::S) = ClosedJaxpr
   deriving (Generic)
 
 instance ToJSON (JVar n) where
-  toJSON JVar {..} = object
+  toJSON JVar {sourceName, ty} = object
     [ "name" .= name
     , "count" .= count
     , "suffix" .= suffix
     , "ty" .= ty
-    ] where JSourceName {..} = case sourceName of
+    ] where JSourceName {name, count, suffix} = case sourceName of
               SourceName nm -> nm
               InternalName nm _ -> nm
 
@@ -205,7 +205,7 @@ varsAsBinders :: [JVar 'VoidS] -> Nest JBinder 'VoidS 'VoidS
 varsAsBinders = voidNest . map varAsBinder
 
 varAsBinder :: JVar 'VoidS -> JBinder 'VoidS 'VoidS
-varAsBinder JVar{..} = case sourceName of
+varAsBinder JVar{sourceName, ty} = case sourceName of
   SourceName srcName -> JBindSource srcName ty
   InternalName _ _ -> error "Unexpected internal name during parsing"
 

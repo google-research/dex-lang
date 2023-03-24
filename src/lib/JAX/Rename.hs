@@ -79,7 +79,7 @@ renameJAtom = \case
   JLiteral jlit -> return $ JLiteral jlit
 
 renameJVar :: JVar i -> RenamerM o (JVar o)
-renameJVar JVar{..} = do
+renameJVar JVar{sourceName, ty} = do
   sourceName' <- renameJSourceNameOr sourceName
   return $ JVar sourceName' ty
 
@@ -97,7 +97,7 @@ renameJEqn :: Distinct o
   => JEqn i i'
   -> (forall o'. DExt o o' => JEqn o o' -> RenamerM o' a)
   -> RenamerM o a
-renameJEqn JEqn{..} cont = do
+renameJEqn JEqn{outvars, primitive, invars} cont = do
   invars' <- mapM renameJAtom invars
   renameJBinders outvars \outvars' -> cont $ JEqn outvars' primitive invars'
 

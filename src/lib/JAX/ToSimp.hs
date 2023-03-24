@@ -58,7 +58,7 @@ simplifyJBinders (Nest jb jbs) cont = case jb of
         simplifyJBinders jbs \bs' -> cont (Nest b' bs')
 
 simplifyJTy :: JVarType -> JaxSimpM i o (SType o)
-simplifyJTy JArrayName{..} = go shape $ simplifyDType dtype where
+simplifyJTy JArrayName{shape, dtype} = go shape $ simplifyDType dtype where
   go [] ty = return ty
   go ((DimSize sz):rest) ty = do
     rest' <- go rest ty
@@ -117,7 +117,7 @@ simplifyPrim args prim = case (prim, args) of
 
 unaryExpandRank :: forall i o. Emits o
   => P.UnOp -> SAtom o -> JVarType -> JaxSimpM i o (SAtom o)
-unaryExpandRank op arg JArrayName {..} = go arg shape where
+unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
     [] -> emitExprToAtom $ PrimOp (P.UnOp op arg')
