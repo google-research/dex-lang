@@ -2,5 +2,5 @@
 
 test_module_C_val = 23
 
-interface FooClass a
-  fooMethod : a -> a
+interface FooClass(a)
+  fooMethod : (a) -> a

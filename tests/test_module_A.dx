@@ -5,10 +5,10 @@ test_module_amb = 10
 
 test_module_A_val = 1 + 2
 
-def test_module_A_fun (x:Int) : Int = x + x
+def test_module_A_fun(x:Int) -> Int = x + x
 
 @noinline
-def test_module_A_fun_noinline (x:Int) : Int = x + x
+def test_module_A_fun_noinline(x:Int) -> Int = x + x
 
-instance FooClass Float
-  fooMethod = \x. 10.0 * x
+instance FooClass(Float)
+  def fooMethod(x) = 10.0 * x

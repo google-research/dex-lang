@@ -1080,6 +1080,8 @@ inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
       ty <- getType =<< zonk x'
       case ty of
         NewtypeTyCon (UserADTType _ tyName _) -> return (tyName, Just x')
+        TabPi ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
+          ++ "\nArray indexing uses [] now."
         ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
 
 lookupFieldName :: TyConName o -> FieldName -> InfererM i o (FieldDef o)
