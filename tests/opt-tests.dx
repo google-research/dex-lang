@@ -1,5 +1,5 @@
 @noinline
-def id' (x:Int) : Int = x
+def id'(x:Int) -> Int = x
 
 -- CHECK-LABEL: dce-dead-app
 "dce-dead-app"
@@ -13,15 +13,15 @@ def id' (x:Int) : Int = x
 -- CHECK: === Result ===
 -- CHECK-NEXT: 0x6
 
-def arange_f {n} (off:Nat) : (Fin n)=>Int = for i. id' $ (n_to_i $ ordinal i + off)
-
+def arange_f(off:Nat) -> (Fin n)=>Int given (n) =
+  for i. id' $ (n_to_i $ ordinal i + off)
 
 -- CHECK-LABEL: matmul-single-alloc
 "matmul-single-alloc"
 m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
 
 %passes imp
-m' = m ** m
+m' = naive_matmul(m, m)
 -- CHECK: alloc Float32[10000]
 -- CHECK-NOT: alloc
 
