@@ -36,12 +36,12 @@ development. Expect monstrous bugs and razor-sharp edges!**
 ## Dependencies
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 12
-    * Ubuntu/Debian: `apt-get install llvm-12-dev`
-    * macOS: `brew install llvm@12`
-      * Make sure `llvm@12` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@12)/bin:$PATH"`
-  * Install clang 12 (may be installed together with llvm)
-    * Ubuntu/Debian: `apt-get install clang-12`
+  * Install LLVM 15
+    * Ubuntu/Debian: `apt-get install llvm-15-dev`
+    * macOS: `brew install llvm@15`
+      * Make sure `llvm@15` is on your `PATH` before building. Example: `export PATH="$(brew --prefix llvm@15)/bin:$PATH"`
+  * Install clang 15 (may be installed together with llvm)
+    * Ubuntu/Debian: `apt-get install clang-15`
     * macOS: installs with llvm
   * Install libpng (often included by default in *nix platforms)
     * Ubuntu/Debian: `apt-get install libpng-dev`

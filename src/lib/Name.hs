@@ -1323,8 +1323,14 @@ instance (ScopeReader m, ScopeExtender m)
 instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
          => ZipSubstReader (ZipSubstReaderT m) where
 
-  lookupZipSubstFst v = ZipSubstReaderT $ (!v) <$> fst <$> ask
-  lookupZipSubstSnd v = ZipSubstReaderT $ (!v) <$> snd <$> ask
+  lookupZipSubstFst v = ZipSubstReaderT $ (flip (!) v) <$> fst <$> ask
+  lookupZipSubstSnd v = ZipSubstReaderT $ (flip (!) v) <$> snd <$> ask
+  -- lookupZipSubstFst v = ZipSubstReaderT $ do
+  --   (env1, _) <- ask
+  --   return $ (!) env1 v
+  -- lookupZipSubstSnd v = ZipSubstReaderT $ do
+  --   (_, env2) <- ask
+  --   return $ (!) env2 v
 
   extendZipSubstFst frag (ZipSubstReaderT cont) = ZipSubstReaderT $ withReaderT (onFst (<>>frag)) cont
   extendZipSubstSnd frag (ZipSubstReaderT cont) = ZipSubstReaderT $ withReaderT (onSnd (<>>frag)) cont

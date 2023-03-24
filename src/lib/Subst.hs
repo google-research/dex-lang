@@ -30,7 +30,7 @@ class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v whe
    withSubst :: Subst v i' o -> m i' o a -> m i o a
 
 lookupSubstM :: (Color c, SubstReader v m) => Name c i -> m i o (v c o)
-lookupSubstM name = (!name) <$> getSubst
+lookupSubstM name = (flip (!) name) <$> getSubst
 
 dropSubst :: (SubstReader v m, FromName v) => m o o a -> m i o a
 dropSubst cont = withSubst idSubst cont

@@ -156,11 +156,11 @@ blockAsPolyRec decls result = case decls of
       _ -> empty
 
     impNameAsPoly :: ImpName i -> BlockTraverserM i o (Polynomial o)
-    impNameAsPoly v = getSubst <&> (!v) >>= \case
+    impNameAsPoly v = getSubst <&> (flip (!) v) >>= \case
       PolyRename v' -> return $ poly [(1, mono [(RightE v', 1)])]
 
     atomNameAsPoly :: AtomName SimpIR i -> BlockTraverserM i o (Polynomial o)
-    atomNameAsPoly v = getSubst <&> (!v) >>= \case
+    atomNameAsPoly v = getSubst <&> (flip (!) v) >>= \case
       PolySubstVal Nothing   -> empty
       PolySubstVal (Just cp) -> return cp
       PolyRename   v'        ->

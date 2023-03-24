@@ -15,7 +15,7 @@ module Optimize
 import Data.Functor
 import Data.Word
 import Data.Bits
-import Data.Bits.Floating
+-- import Data.Bits.Floating
 import Data.List
 import Control.Monad
 import Control.Monad.State.Strict
@@ -145,20 +145,26 @@ foldCast sTy l = case sTy of
     Float64Lit _ -> Nothing
     PtrLit   _ _ -> Nothing
   Float32Type -> case l of
-    Int32Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Int64Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    -- Int32Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Int32Lit  i  -> Just $ Float32Lit $ fromIntegral i
+    -- Int64Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Int64Lit  i  -> Just $ Float32Lit $ fromIntegral i
     Word8Lit  i  -> Just $ Float32Lit $ fromIntegral i
-    Word32Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Word64Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    -- Word32Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Word32Lit i  -> Just $ Float32Lit $ fromIntegral i
+    -- Word64Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
+    Word64Lit i  -> Just $ Float32Lit $ fromIntegral i
     Float32Lit _ -> Just l
     Float64Lit _ -> Nothing
     PtrLit   _ _ -> Nothing
   Float64Type -> case l of
     Int32Lit  i  -> Just $ Float64Lit $ fromIntegral i
-    Int64Lit  i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    -- Int64Lit  i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    Int64Lit  i  -> Just $ Float64Lit $ fromIntegral i
     Word8Lit  i  -> Just $ Float64Lit $ fromIntegral i
     Word32Lit i  -> Just $ Float64Lit $ fromIntegral i
-    Word64Lit i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    -- Word64Lit i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
+    Word64Lit i  -> Just $ Float64Lit $ fromIntegral i
     Float32Lit f -> Just $ Float64Lit $ float2Double f
     Float64Lit _ -> Just l
     PtrLit   _ _ -> Nothing
@@ -177,6 +183,8 @@ foldCast sTy l = case sTy of
     -- exhibit when cast back to the original integer type.
     fixUlp :: forall a b w. (Num a, Integral a, FiniteBits a, RealFrac b, FloatingBits b w)
       => a -> b -> b
+    fixUlp orig candidate = candidate
+    {-
     fixUlp orig candidate = res where
       res = closest $ sortBy moreLowBits [candidate, candidatem1, candidatep1]
       candidatem1 = nextDown candidate
@@ -187,6 +195,7 @@ foldCast sTy l = case sTy of
       moreLowBits a b =
         compare (0 - countTrailingZeros (round @b @a a))
                 (0 - countTrailingZeros (round @b @a b))
+    -}
 
 peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
 peepholeExpr expr = case expr of

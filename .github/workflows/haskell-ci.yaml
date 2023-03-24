@@ -21,11 +21,11 @@ jobs:
         os: [ubuntu-20.04, macos-latest]
         include:
           - os: macos-latest
-            install_deps: brew install llvm@12 pkg-config wget gzip coreutils
-            path_extension: $(brew --prefix llvm@12)/bin
+            install_deps: brew install llvm@15 pkg-config wget gzip coreutils
+            path_extension: $(brew --prefix llvm@15)/bin
           - os: ubuntu-20.04
-            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip wamerican
-            path_extension: /usr/lib/llvm-12/bin
+            install_deps: deb http://apt.llvm.org/focal/ llvm-toolchain-focal-15 main; deb-src http://apt.llvm.org/focal/ llvm-toolchain-focal-15 main; sudo apt-get install llvm-15-tools llvm-15-dev pkg-config wget gzip wamerican
+            path_extension: /usr/lib/llvm-15/bin
 
     steps:
     - name: Checkout the repository
@@ -36,7 +36,7 @@ jobs:
       with:
         path: |
           ~/.stack
-          ~/.ghcup/ghc/8.10.7
+          ~/.ghcup/ghc/9.2.6
           $GITHUB_WORKSPACE/.stack-work
           $GITHUB_WORKSPACE/.stack-work-test
           $GITHUB_WORKSPACE/examples/t10k-images-idx3-ubyte
@@ -48,7 +48,7 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 8.10.7; fi
+        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 9.2.6; fi
         echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
 
     # This step is a workaround.

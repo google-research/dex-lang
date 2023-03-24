@@ -131,8 +131,6 @@ library
                        -- Serialization
                      , aeson
                      , store
-                       -- Floating-point pedanticness (correcting for GHC < 9.2.2)
-                     , floating-bits
   if flag(live)
     build-depends:     binary
                      , blaze-html
