@@ -205,7 +205,7 @@ def fEff() -> {|a} a given (a) = todo
 g : (given (a:Type), a) -> a = \x. x
 
 :t g
-> ({a:Type}(x:a) ->   a)
+> ({a:Type}(x:a) -> a)
 
 :t
   f = \x:Int. x
@@ -220,7 +220,7 @@ g : (given (a:Type), a) -> a = \x. x
 g1 : (given (a:Type), (a) -> Int) -> (a) -> Int = \x. x
 
 :t g1
-> ({a:Type}(x:((v#0:a) ->   Int32)) ->   ((v#0:a) ->   Int32))
+> ({a:Type}(x:((v#0:a) -> Int32)) -> ((v#0:a) -> Int32))
 
 g2 : (given (aaa:Type), aaa) -> aaa = \x. idiv x x
 > Type error:Couldn't synthesize a class dictionary for: (Integral aaa)
@@ -231,7 +231,7 @@ g2 : (given (aaa:Type), aaa) -> aaa = \x. idiv x x
 h : (given (a:Type, b:Type), (a) -> b) -> (a) -> b = \x. x
 
 :t h
-> ({a:Type}{b:Type}(x:((v#0:a) ->   b)) ->   ((v#0:a) ->   b))
+> ({a:Type}{b:Type}(x:((v#0:a) -> b)) -> ((v#0:a) -> b))
 
 fun : (given (aaa:Type), aaa) -> aaa = \x. sin x
 > Type error:Couldn't synthesize a class dictionary for: (Floating aaa)
@@ -323,7 +323,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > False
 
 :p (\x:Int. x) == (\x:Int. x)
-> Type error:Couldn't synthesize a class dictionary for: (Eq ((x.1:Int32) ->   Int32))
+> Type error:Couldn't synthesize a class dictionary for: (Eq ((x.1:Int32) -> Int32))
 >
 > :p (\x:Int. x) == (\x:Int. x)
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -384,7 +384,7 @@ def weakerInferenceReduction(l: (i:n)=>(..i)=>Float, j:n) -> ()  given (n|Ix) =
 val = for i:(Fin 2). \x:Float . for j:(..i). 1
 
 :t val
-> ((i:(Fin 2)) => (x:Float32) ->   ((RangeTo (Fin 2) i) => Nat))
+> ((i:(Fin 2)) => (x:Float32) -> ((RangeTo (Fin 2) i) => Nat))
 
 -- Tests for table
 
@@ -498,7 +498,7 @@ def foo() ->> a=>Float given (a|Ix) =
   for z:a. 1.0
 
 :t foo
-> ({a:Type}[d:(Ix a)] ->>   (a => Float32))
+> ({a:Type}[d:(Ix a)] ->> (a => Float32))
 
 -- Reference foo with a type annotation (no parens needed)
 foo :: (Fin 3) => Float
@@ -602,7 +602,7 @@ table = [1.0, 2.0]
 
 -- We can't have table literals of non-data
 :p [\x:Float. x, \x:Float. x + x]
-> Type error:Couldn't synthesize a class dictionary for: (Data ((x.1:Float32) ->   Float32))
+> Type error:Couldn't synthesize a class dictionary for: (Data ((x.1:Float32) -> Float32))
 >
 > :p [\x:Float. x, \x:Float. x + x]
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

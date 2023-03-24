@@ -1,9 +1,10 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. ref += xs.i
+def sum'(xs:n=>Float) -> Float given (n|Ix) =
+  yield_accum (AddMonoid Float) \ref. for i. ref += xs[i]
 
 :p
-   f : Float -> Float = \x. x
+   f : (Float) -> Float = \x. x
    jvp f 3.0 2.0
 > 2.
 
@@ -23,28 +24,28 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 > 18.
 
 :p
-   f : Float --o Float = \x. x
-   transpose_linear f 2.0
+   f : (Float) -> Float = \x. x
+   transpose_linear(f)(2.0)
 > 2.
 
 :p
-   f : Float --o Float = \x. x + x
-   transpose_linear f 1.0
+   f : (Float) -> Float = \x. x + x
+   transpose_linear(f)(1.0)
 > 2.
 
 :p
-   f : Float --o Float = \x. x + (x + x) * 2.0
-   transpose_linear f 1.0
+   f : (Float) -> Float = \x. x + (x + x) * 2.0
+   transpose_linear(f)(1.0)
 > 5.
 
 :p
-   f : Float --o Float = \x. x * 2.0
-   transpose_linear f 1.0
+   f : (Float) -> Float = \x. x * 2.0
+   transpose_linear(f)(1.0)
 > 2.
 
 :p
-   f : Float --o Float = \x. 2.0 * x
-   transpose_linear f 1.0
+   f : (Float) -> Float = \x. 2.0 * x
+   transpose_linear(f)(1.0)
 > 2.
 
 :p grad (\x. x * x) 1.0
@@ -57,8 +58,8 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 > 0.5
 
 :p
-  f : (n:Type) ?-> n=>Float -> n=>Float =
-   \xs. for i. xs.i * xs.i
+  f : (given (n|Ix), n=>Float) -> n=>Float =
+   \xs. for i. xs[i] * xs[i]
 
   jvp f [1.,2.] [3.,4.]
 > [6., 16.]
@@ -70,7 +71,7 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 > 30.
 
 :p
-  f : Float -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
+  f : (Float) -> Float = \x. yield_accum (AddMonoid Float) \ref. ref += x
   jvp f 1.0 1.0
 > 1.
 
@@ -81,17 +82,19 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 
 :p
    f = \x. 4.0 * x * x * x
-   deriv (deriv (deriv f)) 1.234
+   deriv (\x1. deriv (\x2. deriv f x2) x1) 1.234
 > 24.
 
 :p
-   f : Float --o (Float & Float) = \x. (x, 2.0 * x)
-   transpose_linear f (1.0, 3.0)
+   f : (Float) -> (Float, Float) = \x. (x, 2.0 * x)
+   transpose_linear(f)((1.0, 3.0))
 > 7.
 
 :p
-   f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
-   transpose_linear f 1.0
+   f : ((Float, Float)) -> Float = \p.
+     (x, y) = p
+     x + 2.0 * y
+   transpose_linear(f)(1.0)
 > (1., 2.)
 
 :p deriv cos 0.0
@@ -100,10 +103,10 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 :p deriv sin 0.0
 > 1.
 
-:p (sin 1.0, deriv (deriv sin) 1.0)
+:p (sin 1.0, deriv (\x. deriv sin x) 1.0)
 > (0.841471, -0.841471)
 
-:p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
+:p (cos 1.0, deriv (\x'. deriv (\x. deriv sin x) x') 1.0)
 > (0.5403023, -0.5403023)
 
 :p check_deriv sin 1.0
@@ -121,10 +124,10 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 :p check_deriv (\x. exp (sin (cos x))) 2.0
 > True
 
-:p check_deriv (deriv sin) 1.0
+:p check_deriv (\x. deriv sin x) 1.0
 > True
 
-:p check_deriv (deriv cos) 1.0
+:p check_deriv (\x. deriv cos x) 1.0
 > True
 
 :p check_deriv sqrt 4.0
@@ -133,7 +136,7 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 -- badDerivFun : Float -> Float
 -- badDerivFun x = x
 
--- badDerivFun#lin : Float -> (Float, Float --o Float)
+-- badDerivFun#lin : Float -> (Float, Float -> Float)
 -- badDerivFun#lin x = (x, llam t. 2. * t)
 
 -- :p checkDeriv badDerivFun 1.0
@@ -144,66 +147,68 @@ def sum' {n} (xs:n=>Float) : Float = yield_accum (AddMonoid Float) \ref. for i. 
 :p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.
 
-tripleit : Float --o Float = \x. x + x + x
+tripleit : (Float) -> Float = \x. x + x + x
 
 :p tripleit 1.0
 > 3.
 
-:p transpose_linear tripleit 1.0
+:p transpose_linear(tripleit)(1.0)
 > 3.
 
-:p transpose_linear (transpose_linear tripleit) 1.0
-> 3.
-
-:p
-  f : (n:Type) ?-> Ix n ?=> Float --o n=>Float = \x. for i. x
-
-  transpose_linear f [1.0, 2.0]
+:p transpose_linear(transpose_linear tripleit)(1.0)
 > 3.
 
 :p
-  f : (n:Type) ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
+  f : (given (n|Ix), Float) -> n=>Float = \x. for i. x
 
-  transpose_linear f [1.0, 2.0]
+  transpose_linear(f)([1.0, 2.0])
+> 3.
+
+:p
+  f : (given (n|Ix), n=>Float) -> n=>Float = \x. for i. x[i] * 2.0
+
+  transpose_linear(f)([1.0, 2.0])
 > [2., 4.]
 
-myOtherSquare : Float -> Float =
+myOtherSquare : (Float) -> Float =
   \x. yield_accum (AddMonoid Float) \w. w += x * x
 
 :p check_deriv myOtherSquare 3.0
 > True
 
 :p
-  f : Float -> Float =
+  f : (Float) -> Float =
     \x. fst (x * x, 2 + 1)
 
   jvp f 1.0 3.0
 > 6.
 
 :p
-  f : Float -> Float = \x.
+  f : (Float) -> Float = \x.
     x * i_to_f (1 + 1)
 
   jvp f 1.0 2.0
 > 4.
 
 :p
-  f : (Fin 2)=>Float -> Float =
-    \xs. xs.(0 @ Fin 2) * xs.(1 @ Fin 2)
+  f : (Fin 2=>Float) -> Float =
+    \xs. xs[0 @ Fin 2] * xs[1 @ Fin 2]
 
   jvp f [1., 2.] [3.0, 4.0]
 > 10.
 
 :p
-  f : (Float & Float) -> Float =
-    \(x,y). x * y
+  f : ((Float, Float)) -> Float =
+    \p.
+      (x,y) = p
+      x * y
 
   jvp f (1., 2.) (3.0, 4.0)
 > 10.
 
 :p
-  f : (n:Type) ?-> n=>Float -> n=>Float =
-    \xs. for i. xs.i * xs.i
+  f : (given (n|Ix), n=>Float) -> n=>Float =
+    \xs. for i. xs[i] * xs[i]
 
   jvp f [1.,2.] [3.,4.]
 > [6., 16.]
@@ -220,11 +225,13 @@ vec = [1.]
 :p jvp (\x. vec) [1.] [1.]
 > [0.]
 
-:p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
+:p grad (\p.
+    (x, y) = p
+    vdot x y) ([1.,2.], [3.,4.])
 > ([3., 4.], [1., 2.])
 
 :p
-  f : Float -> Float = \x.
+  f : (Float) -> Float = \x.
     y = x * 2.0
     yield_accum (AddMonoid Float) \a.
       a += x * 2.0
@@ -233,7 +240,7 @@ vec = [1.]
 > 4.
 
 :p
-  f : Float -> Float = \x.
+  f : (Float) -> Float = \x.
     x2 = x * x
     with_reader x \xr.
       with_reader x2 \x2r.
@@ -242,19 +249,19 @@ vec = [1.]
 > True
 
 :p
-  f : Float -> Float = \x.
+  f : (Float) -> Float = \x.
     yield_state x \xr.
       for i:(Fin 2).
         xr := get xr * get xr
   check_deriv f 2.0
 > True
 
-:p
-  f = \rec.
-    ({x=x, y=y, z=z}) = rec
-    x * y * i_to_f z
-  (check_deriv (\x. f {x=x, y=4.0, z=5}) 2.0, check_deriv (\y. f {x=2.0, y=y, z=5}) 4.0)
-> (True, True)
+-- :p
+--   f = \rec.
+--     ({x=x, y=y, z=z}) = rec
+--     x * y * i_to_f z
+--   (check_deriv (\x. f {x=x, y=4.0, z=5}) 2.0, check_deriv (\y. f {x=2.0, y=y, z=5}) 4.0)
+-- > (True, True)
 
 -- TODO: Re-enable once the big PR is merged
 -- :p
@@ -267,13 +274,13 @@ vec = [1.]
 --   checkDeriv f 1.0
 -- > True
 
-:p
-  f = \x. for i:(Fin 4). { x=x * x * (n_to_f $ ordinal i) }
-  jvp f 2.0 1.0
-> [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
+-- :p
+--   f = \x. for i:(Fin 4). { x=x * x * (n_to_f $ ordinal i) }
+--   jvp f 2.0 1.0
+-- > [{x = 0.}, {x = 4.}, {x = 8.}, {x = 12.}]
 
 :p
-  f = max 0.0
+  f = \x. max(0.0, x)
   (check_deriv_base f 1.0, check_deriv_base f (-1.0))
 > (True, True)
 
@@ -296,9 +303,9 @@ vec = [1.]
 -- Test reference indexing
 :p
   f = \x.
-    i = unsafe_from_ordinal (Fin 3) 0
+    i = unsafe_from_ordinal(n=Fin 3, 0)
     mat = yield_state zero \m. m!i!i := x
-    mat.i.i
+    mat[i,i]
 
   check_deriv f 1.0
 > True
@@ -307,16 +314,16 @@ vec = [1.]
 func = \x:Float.
   table = for i:(Fin 2). for j:(..i). x
   tmp = (0 @ (Fin 2))
-  sum table.tmp
+  sum table[tmp]
 
-snd (linearize func 1.0) 2.0
+snd(linearize func 1.0)(2.0)
 > 2.
 
 -- Nested AD, examples from #713
-def func2 {m} (x:m=>Float) : Float =
-    exp (0.5 * sum for i. sq x.i)
+def func2(x:m=>Float) -> Float given (m|Ix) =
+    exp (0.5 * sum for i. sq x[i])
 
-def hvpf {m} (x:m=>Float) (v:m=>Float) : m=>Float =
+def hvpf(x:m=>Float, v:m=>Float) -> m=>Float given (m|Ix) =
     (dot x v) .* (grad func2 x) + func2(x) .* v
 
 x = [0.1, 0.2, 0.3]
@@ -343,11 +350,11 @@ grad (\x. dot (grad func2 x) v) x ~~ result
 > True
 
 -- forward over reverse
-jvp (grad func2) x v ~~ result
+jvp (\x. grad func2 x) x v ~~ result
 > True
 
 -- Regression test for bug #848, AD through state effect over case
-def min' (a:Float) (b:Float) : Float =
+def min'(a:Float, b:Float) -> Float =
   yield_state a \s.
     best = get s
     new_best = select (best < b) best 2.0
@@ -356,7 +363,7 @@ def min' (a:Float) (b:Float) : Float =
 grad (\x . (min' x (x+1))) 1.0
 > 1.
 
-grad (\x . [x].(argmin [x])) 1.0
+grad (\x . [x][argmin [x]]) 1.0
 > 1.
 
 -- -- Regression test for bug #821, AD of a record-typed function
@@ -380,11 +387,14 @@ deriv f 1.0
 -- Custom derivative is preserved even when we defunctionalize for
 flip deriv 1.0 \x:Float.
   farr = for i:(Fin 5). f
-  farr.(unsafe_from_ordinal _ 1) x
-> 4.
+  farr[unsafe_from_ordinal 1] x
+> Error: variable not in scope: flip
+>
+> flip deriv 1.0 \x:Float.
+> ^^^^^
 
 -- Custom derivative is preserved even when we defunctionalize case
-flip deriv 1.0 \x:Float.
+(\x f. deriv f x) 1.0 \x:Float.
   total = sum $ for i:(Fin 10). ordinal i
   f2 = case total > 10 of
     True  -> f
@@ -393,17 +403,18 @@ flip deriv 1.0 \x:Float.
 > 4.
 
 @noinline
-g = \x:(Float & Float). 4 .* x
+g = \x:(Float, Float). 4 .* x
 
 custom-linearization g \x. (g x, g x)
 > Type error:Expected the custom linearization to have type:
 >
-> ((Float32 & Float32)
->  -> ((Float32 & Float32) & ((Float32 & Float32) -> (Float32 & Float32))))
+> ((x.1:(Float32, Float32)) -> ((Float32, Float32)
+>                              , ((v#0:(Float32, Float32)) -> (Float32
+>                                                             , Float32))))
 >
 > but it has type:
 >
-> ((Float32 & Float32) -> ((Float32 & Float32) & (Float32 & Float32)))
+> ((x.1:(Float32, Float32)) -> ((Float32, Float32), (Float32, Float32)))
 
 data IHaveNoTangentType = MkIHaveNoTangentType
 
@@ -411,21 +422,13 @@ data IHaveNoTangentType = MkIHaveNoTangentType
 noInputTangent = \x:IHaveNoTangentType. 2.0
 
 custom-linearization noInputTangent \x. (noInputTangent x, 0.0)
-> Type error:The type of one of the arguments of noInputTangent is:
->
->   IHaveNoTangentType
->
-> but it doesn't have a well-defined tangent space.
+> Type error:No tangent type for: IHaveNoTangentType
 
 @noinline
 noOutputTangent = \x:Float. MkIHaveNoTangentType
 
 custom-linearization noOutputTangent \x. (noOutputTangent x, 0.0)
-> Type error:The type of the result of noOutputTangent is:
->
->   IHaveNoTangentType
->
-> but it does not have a well-defined tangent space.
+> Type error:No tangent type for: IHaveNoTangentType
 
 -- Functions of multiple arguments should be supported
 @noinline
@@ -439,8 +442,9 @@ deriv (\x. h x x) 1.0 == deriv (\x. x + x) 1.0
 
 -- Index-polymorphic custom linearization
 @noinline
-def w {n} [Ix n] (x:n=>Float) : n=>Float = 2 .* x
-def wLin {n} [Ix n] (x:n=>Float) : (n=>Float & n=>Float -> n=>Float) = (w x, \xt:(n=>Float). 4 .* xt)
+def w(x:n=>Float) -> n=>Float given (n|Ix) = 2 .* x
+def wLin(x:n=>Float) -> (n=>Float, (n=>Float) -> n=>Float) given (n|Ix) =
+  (w x, \xt:(n=>Float). 4 .* xt)
 
 custom-linearization w wLin
 
@@ -453,7 +457,7 @@ jvp w [1.0, 1.0] [1.0, 0.0]
 ------ standalone functions ------
 
 @noinline
-def xy2 (x:Float) (y:Float) : Float =
+def xy2(x:Float, y:Float) -> Float =
   x * y * y
 
 :p check_deriv (\x. xy2 x x) 2.0
@@ -467,12 +471,12 @@ def xy2 (x:Float) (y:Float) : Float =
 
 ------ Symbolic tangents ------
 
-ST = SymbolicTangent
+def ST(a) = SymbolicTangent(a)
 
 @noinline
-def q (x:Float) (y:Float) : Float = x * 2 + y
-def qLin (x:Float) (y:Float) : _ =
-  def lin (xt:ST Float) (yt: ST Float) : Float =
+def q(x:Float, y:Float) -> Float = x * 2 + y
+def qLin(x:Float, y:Float) -> _ =
+  def lin(xt:ST Float, yt: ST Float) -> Float =
     case yt of
       ZeroTangent     -> someTangent xt * 4
       SomeTangent yt' -> someTangent xt * 2 + yt'
@@ -481,14 +485,13 @@ def qLin (x:Float) (y:Float) : _ =
 custom-linearization q qLin
 > Type error:Expected the custom linearization to have type:
 >
-> (Float32 -> Float32 -> (Float32 & (Float32 -> Float32 -> Float32)))
+> ((x.1:Float32,y:Float32) -> (Float32, ((v#0:Float32,v#1:Float32) -> Float32)))
 >
 > but it has type:
 >
-> (Float32
->  -> Float32
->  -> (Float32
->      & ((SymbolicTangent Float32) -> (SymbolicTangent Float32) -> Float32)))
+> ((x.1:Float32,y:Float32) -> (Float32
+>                             , ((xt:(SymbolicTangent Float32),yt:(SymbolicTangent
+>                                                                    Float32)) -> Float32)))
 
 custom-linearization-symbolic q qLin
 

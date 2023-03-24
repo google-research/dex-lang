@@ -1070,7 +1070,7 @@ unsafe_project(subset=(), inject(superset=(Fin 2 `Either` ()), ()))
 
 -- Check that we can print out a sum-typed non-data value
 Just f64_to_f
-> (Just <function of type ((x:Float64) ->   Float32)>)
+> (Just <function of type ((x:Float64) -> Float32)>)
 
 -- Check that we can print out a sum-typed non-data value that came
 -- from a case (this tickles ACase colliding with the code generated
@@ -1081,7 +1081,7 @@ def id_bool(x:Bool) -> Bool = x
 case (id_bool True) of
   True -> Just f64_to_f
   False -> Nothing
-> (Just <function of type ((x:Float64) ->   Float32)>)
+> (Just <function of type ((x:Float64) -> Float32)>)
 
 -- Check that we can later scrutinize a sum-typed non-data value that
 -- came from a case.
@@ -1099,7 +1099,7 @@ case foo of
 -- Should be able to catch a function
 -- This is a regression test for Issue #1193.
 catch \. f64_to_f
-> (Just <function of type ((x:Float64) ->   Float32)>)
+> (Just <function of type ((x:Float64) -> Float32)>)
 
 -- Should be able to catch a function-valued computation that fails
 catch \.

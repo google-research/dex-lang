@@ -354,7 +354,7 @@ forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
   pretty (CorePiType appExpl bs eff resultTy) =
-    prettyBindersWithExpl bs <+> p appExpl <+> prettyEff <+> p resultTy
+    prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
     where
       prettyEff = case eff of
         Pure -> space

@@ -30,7 +30,7 @@ f = \x. x + 10.
 
 :p f -1.0   -- parses as (-) f (-1.0)
 > Type error:
-> Expected: ((x:Float32) ->   Float32)
+> Expected: ((x:Float32) -> Float32)
 >   Actual: Float32
 >
 > :p f -1.0   -- parses as (-) f (-1.0)
@@ -128,9 +128,9 @@ data MyMaybe a =
 data MyMaybe (a) =
   MyNothing
 
-> Parse error:122:14:
+> Parse error:128:14:
 >     |
-> 122 | data MyMaybe (a) =
+> 128 | data MyMaybe (a) =
 >     |              ^
 > unexpected '('
 > expecting '=' or parameter list in parentheses (without preceding whitespace)
@@ -138,9 +138,9 @@ data MyMaybe(a) =
   MyNothing
   MyJust a
 
-> Parse error:127:10:
+> Parse error:139:10:
 >     |
-> 127 |   MyJust a
+> 139 |   MyJust a
 >     |          ^^
 > unexpected "a<newline>"
 > expecting end of input, end of line, or optional parameter list
@@ -148,46 +148,49 @@ data MyMaybe(a) =
   MyNothing
   MyJust (a)
 
-> Parse error:131:10:
+> Parse error:149:10:
 >     |
-> 131 |   MyJust (a)
+> 149 |   MyJust (a)
 >     |          ^^
 > unexpected "(a"
 > expecting end of input, end of line, or optional parameter list
 interface MyClass a
   pass
 
-> Parse error:133:19:
+> Parse error:157:19:
 >     |
-> 133 | interface MyClass a
+> 157 | interface MyClass a
 >     |                   ^
 > expecting parameter list in parentheses (without preceding whitespace)
 instance MyClass Int
   pass
 
-> Parse error:136:18:
+> Parse error:165:18:
 >     |
-> 136 | instance MyClass Int
+> 165 | instance MyClass Int
 >     |                  ^
 > expecting '(' (without preceding whitespace)
 instance MyClass (Int)
   pass
 
-> Parse error:139:18:
+> Parse error:173:18:
 >     |
-> 139 | instance MyClass (Int)
+> 173 | instance MyClass (Int)
 >     |                  ^
 > expecting '(' (without preceding whitespace)
 def myFunction (x) = ()
 
-> Parse error:142:16:
+> Parse error:181:16:
 >     |
-> 142 | def myFunction (x) = ()
+> 181 | def myFunction (x) = ()
 >     |                ^
 > expecting parameter list in parentheses (without preceding whitespace)
+
 def myFunction x = ()
-> Parse error:144:16:
+
+> Parse error:189:16:
 >     |
-> 144 | def myFunction x = ()
+> 189 | def myFunction x = ()
 >     |                ^
 > expecting parameter list in parentheses (without preceding whitespace)
+
