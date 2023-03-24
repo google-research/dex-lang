@@ -1,49 +1,37 @@
 
-interface Empty a
+interface Empty(a:Type)
   pass
 -- CHECK-NOT: Parse error
 
-instance Empty Int
+instance Empty(Int)
   pass
 -- CHECK-NOT: Parse error
 
-instance Empty Float32
-  witness = 0.0
+instance Empty(Float32)
+  def witness() = 0.0
 -- CHECK-NOT: Parse error
 -- CHECK: Error: variable not in scope: witness
 
-interface Inhabited a
+interface Inhabited(a)
   witness : a
 -- CHECK-NOT: Parse error
 
-instance Inhabited Int
+instance Inhabited(Int)
   witness = 0
 -- CHECK-NOT: Parse error
 
-instance Inhabited Float32
-  witness = 0.0
-  pass
--- CHECK: Parse error
--- CHECK: "pass" is a reserved word
-
-instance Inhabited Float64
-  witness = 0.0
+instance Inhabited(Float64)
+  witness = f_to_f64(0.0)
  pass
 -- CHECK: Parse error
 -- CHECK: unexpected "pa"
 -- CHECK: expecting end of line
 
-instance Inhabited Word32
+instance Inhabited(Word32)
   witness = 0
    pass
 -- CHECK: Parse error
--- CHECK: unexpected space
--- CHECK: expecting name or symbol name
-
-instance Inhabited Word64
-  pass
--- CHECK: Type error:Missing method: witness
-  witness = 0
--- CHECK: Parse error
--- CHECK: unexpected "wi"
--- CHECK: expecting end of line
+-- CHECK: unexpected
+-- CHECK: pass
+-- CHECK: expecting
+-- CHECK: name, or symbol name

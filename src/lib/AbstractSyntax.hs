@@ -51,6 +51,7 @@ import Control.Category ((>>>))
 import Control.Monad (forM, when)
 import Data.Functor
 import Data.Either
+import Data.Maybe (catMaybes)
 import Data.Set qualified as S
 import Data.String (fromString)
 import Data.Text (Text)
@@ -149,7 +150,7 @@ aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParam
   let clName' = fromString clName
   args' <- mapM expr args
   givens' <- toNest <$> fromMaybeM givens [] aGivens
-  methods' <- mapM aMethod methods
+  methods' <- catMaybes <$> mapM aMethod methods
   case instNameAndParams of
     Nothing -> return $ UInstance clName' givens' args' methods' NothingB ImplicitApp
     Just (instName, optParams) -> do
@@ -358,8 +359,9 @@ effect (Identifier "IO") = return UIOEffect
 effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
-aMethod :: CSDecl -> SyntaxM (UMethodDef VoidS)
-aMethod (WithSrc src d) = WithSrcE src <$> addSrcContext src case d of
+aMethod :: CSDecl -> SyntaxM (Maybe (UMethodDef VoidS))
+aMethod (WithSrc _ CPass) = return Nothing
+aMethod (WithSrc src d) = Just . WithSrcE src <$> addSrcContext src case d of
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ UMethodDef (fromString name) lam
