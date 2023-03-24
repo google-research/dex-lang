@@ -1,149 +1,144 @@
 
-interface InterfaceTest0 a
+interface InterfaceTest0(a)
   someMethod : a
 
-interface InterfaceTest1 a
+interface InterfaceTest1(a)
   InterfaceTest1 : a
 > Error: variable already defined: InterfaceTest1
 
-interface InterfaceTest3 a
-  foo_dup : a -> Int
-  foo_dup : a -> Int
+interface InterfaceTest3(a)
+  foo_dup : (a) -> Int
+  foo_dup : (a) -> Int
 > Error: variable already defined: foo_dup
 
-interface InterfaceTest4 a
+interface InterfaceTest4(a)
   foo : Int
-  bar : a -> Int
+  bar : (a) -> Int
 
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   foo = 1
-  bar = \_. 1
+  def bar(_) = 1
   foo = 1
 > Type error:Duplicate method: foo
 
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   foo = 1
 > Type error:Missing method: bar
 
 baz = 1
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   baz = 1
 > Type error:not a method name: baz
+>
+>   baz = 1
+>   ^^^^^^^
 
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   someMethod = 1
 > Type error:someMethod is not a method of InterfaceTest4
+>
+>   someMethod = 1
+>   ^^^^^^^^^^^^^^
 
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   foo = 1
-  bar = \_. 'x'
+  def bar(_) = 'x'
 > Type error:
 > Expected: Int32
 >   Actual: Word8
 >
->   bar = \_. 'x'
->             ^^^
+>   def bar(_) = 'x'
+>                ^^^
 
-instance InterfaceTest4 Float
+instance InterfaceTest4(Float)
   foo = 1
-  bar = \_. 1
-
-outer = 1.0
--- Should be able to shadow a variable with the parameter
-interface InterfaceTest5 outer
-  value outer : Int
-> Error: variable already defined: outer
-
--- Shouldn't be able to bind a parameter variable twice
-interface InterfaceTest6 a a
-  f : a -> Int
-> Error: variable already defined: a
+  def bar(_) = 1
 
 -------------------- Diamond superclasses --------------------
 
-interface A a
-  a_ : a -> Int
-interface [A a] B a
-  b_ : Int
-interface [A a] C a
-  c_ : Int
+interface A(a)
+  a_ : (a) -> Int
+interface B(a|A)
+  b_ : (Int)
+interface C(a|A)
+  c_ : (Int)
 
 -- Diamond superclasses should be ok
-def f1 {a} [B a, C a] (x : a) : Int = a_ x
+def f1(x: a) -> Int given (a|B|C) = a_ x
 -- Multiple binders are ok too
-def f2 {a} [A a, A a] (x : a) : Int = a_ x
+def f2(x: a) -> Int given (a|A|A) = a_ x
 
 -------------------- Transitive superclasses --------------------
 
-interface D a
-  d_ : a -> Int
-interface [D a] E a
-  e_ : a -> Int
-interface [E a] F a
-  f_ : a -> Int
-instance D Int
-  d_ = \_. 1
-instance E Int
-  e_ = \_. 2
-instance F Int
-  f_ = \_. 3
+interface D(a)
+  d_ : (a) -> Int
+interface E(a|D)
+  e_ : (a) -> Int
+interface F(a|E)
+  f_ : (a) -> Int
+instance D(Int)
+  def d_(_) = 1
+instance E(Int)
+  def e_(_) = 2
+instance F(Int)
+  def f_(_) = 3
 
-def deriveDFromE {a} [E a] (x:a) : Int = d_ x
-def deriveDFromF {a} [F a] (x:a) : Int = d_ x
+def deriveDFromE(x:a) -> Int given (a|E) = d_ x
+def deriveDFromF(x:a) -> Int given (a|F) = d_ x
 
 -------------------- Overlapping instances --------------------
 
 -- Overlapping instances
-instance A Int
-  a_ = \x. 1
-instance A (n=>a) given {n a} [A a]
-  a_ = \x. a_ x.(0@_)
-instance A (n=>Int) given {n}
-  a_ = \x. 0
+instance A(Int)
+  def a_(x) = 1
+instance A(n=>a) given (a|A, n|Ix)
+  def a_(x) = a_ x[0@_]
+instance A(n=>Int) given (n|Ix)
+  def a_(x) = 0
 
 -- There are two derivations for n=>Int
-def f3 {n} (x : n=>Int) : Int = a_ x
+def f3(x: n=>Int) -> Int given (n|Ix) = a_ x
 > Type error:Multiple candidate class dictionaries for: (A (n => Int32))
 >
-> def f3 {n} (x : n=>Int) : Int = a_ x
->                                 ^^^
+> def f3(x: n=>Int) -> Int given (n|Ix) = a_ x
+>                                         ^^^^
 -- Adding an explicit binder shouldn't change anything
-def f4 {n} [Ix n, A (n=>Int)] (x : n=>Int) : Int = a_ x
+def f4(x: n=>Int) -> Int given (n|Ix) (A (n=>Int)) = a_ x
 > Type error:Multiple candidate class dictionaries for: (A (n => Int32))
 >
-> def f4 {n} [Ix n, A (n=>Int)] (x : n=>Int) : Int = a_ x
->                                                    ^^^
+> def f4(x: n=>Int) -> Int given (n|Ix) (A (n=>Int)) = a_ x
+>                                                      ^^^^
 
 -- TODO: This should fail! The choice of dictionary depends on instantiation
 --       of a (there's a generic one and a specific one for n=>Int)!
 --       This is reported in #669.
-def f5 {n a} [A a] (x : n=>a) : Int = a_ x
+def f5(x : n=>a) -> Int given (n|Ix, a|A) = a_ x
 
-interface Eq' a
-  eq : a -> Int
-interface [Eq' a] Ord' a
-  ord : a -> Int
+interface Eq'(a)
+  eq : (a) -> Int
+interface Ord'(a|Eq')
+  ord : (a) -> Int
 
-instance Eq' (n=>Int) given {n}
-  eq = const 2
-instance Eq' (n=>a) given {n a} [Eq' a]
-  eq = const 3
-instance Ord' (n=>a) given {n a} [Ord' a]
-  ord = const 4
+instance Eq'(n=>Int) given (n|Ix)
+  def eq(_) = 2
+instance Eq'(n=>a) given (n|Ix, a|Eq')
+  def eq(_) = 3
+instance Ord'(n=>a) given (n|Ix, a|Ord')
+  def ord(_) = 4
 
 -- Simplifiable constraints should be accepted
-def f6 {n} [Ix n, Eq' (n=>Int)] (x : n=>Int) : Int = eq x
-def f7 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+def f6(x : n=>Int) -> Int given (n|Ix) (Eq'  (n=>Int))= eq x
+def f7(x : n=>Int) -> Int given (n|Ix) (Ord' (n=>Int)) = eq x
 
 -- This additional instance makes f7 ambiguous. Note that there's an easy way out
 -- in the form of the superclass of Ord', but we still check that there's no overlap.
-instance Eq' Int
-  eq = const 0
-def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
+instance Eq'(Int)
+  def eq(_) = 0
+def f8(x : n=>Int) -> Int given (n|Ix) (Ord' (n=>Int))  = eq x
 > Type error:Multiple candidate class dictionaries for: (Eq' (n => Int32))
 >
-> def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
->                                                       ^^^
+> def f8(x : n=>Int) -> Int given (n|Ix) (Ord' (n=>Int))  = eq x
+>                                                           ^^^^
 
 -- XXX: In Haskell overlap is determined entirely by instance heads, making it
 --      independent of other instances in scope. In Dex an instance might be ruled out,
@@ -153,65 +148,13 @@ def f8 {n} [Ix n, Ord' (n=>Int)] (x : n=>Int) : Int = eq x
 -------------------- Multi-parameter interfaces --------------------
 
 -- Adapted from PR 1039
-interface MyDist d a
-  log_pdf : d -> a -> Float
+interface MyDist(d, a)
+  log_pdf : (d, a) -> Float
 
-interface [MyDist d a] MyOrderedDist d a
-  log_cdf : d -> a -> Float
+interface MyOrderedDist(d, a, given () (MyDist d a))
+  log_cdf : (d, a) -> Float
 
 -- TODO: Test actually using it.
-
--------------------- Automatic quantification --------------------
-
-
-interface X a
-  x_ a : Int
-
-def MyPairOfXs (a : Type) [X a] : Type = (a & a)
-
-instance X Int
-  x_ = 1
-
--- No automatic quantification needed
-def q0 (x : MyPairOfXs Int) : Int = fst x
-def q1 {a} [X a] (x : MyPairOfXs a) : a = fst x
-
--- Should work with implicit quantification
-def q2 {a} (x : MyPairOfXs a) : a = fst x
-
--- Should work with implicit quantification
-def q3 {a} (x : MyPairOfXs a) : Int = x_ a
-
--- We don't quantify implicitly over constraints of the return type
-def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
-> Type error:Couldn't synthesize a class dictionary for: (X a5)
->
-> def q4 {a5} (x : a5) : MyPairOfXs a5 = (x, x)
->                        ^^^^^^^^^^^^^^
-
--- Check automatic quantification for interfaces
-interface AutoQuant a
-  dummy : Int
-instance AutoQuant (MyPairOfXs a) given {a}
-  dummy = 1
-
--- Should be able to quantify nested constraints
-def q5 {a} (x : MyPairOfXs (MyPairOfXs a)) : Int = 0
-
--- disabling because the order of constraints changes depending on the names in
--- scope
--- :t q5
--- > ((a:Type) ?-> (X (a & a)) ?=> (X a) ?=> ((a & a) & (a & a)) -> Int32)
-
--------------------- Data interface constraints --------------------
-
-data MyData a5       = MkMyData (MyPairOfXs a5)
-> Type error:Couldn't synthesize a class dictionary for: (X a5)
->
-> data MyData a5       = MkMyData (MyPairOfXs a5)
->                                  ^^^^^^^^^^^^^
-
-data MyDataBetter a [X a] = MkMyDataBetter (MyPairOfXs a)
 
 -------------------- User-defined Ix --------------------
 
@@ -219,12 +162,12 @@ data TwoPoints =
   FirstPoint
   SecondPoint
 
-instance Ix TwoPoints
-  size = 2
-  ordinal = \b. case b of
+instance Ix(TwoPoints)
+  def size'() = 2
+  def ordinal(b) = case b of
     FirstPoint  -> 0
     SecondPoint -> 1
-  unsafe_from_ordinal = \i. case i == 0 of
+  def unsafe_from_ordinal(i) = case i == 0 of
     True  -> FirstPoint
     False -> SecondPoint
 
@@ -241,19 +184,19 @@ data TwoMorePoints =
 
 both_points = [APoint, AnotherPoint]
 
-instance Ix TwoMorePoints
-  size = 2
-  ordinal = \b. case b of
+instance Ix(TwoMorePoints)
+  def size'() = 2
+  def ordinal(b) = case b of
     APoint -> 0
     AnotherPoint -> 1
-  unsafe_from_ordinal = \i. both_points.(unsafe_from_ordinal _ i)
+  def unsafe_from_ordinal(i) = both_points[unsafe_from_ordinal i]
 
 :p for i:TwoMorePoints. ordinal i
 > [0, 1]
 
 ----------------- Data constraint synthesis -----------------
 
-def data_id {a} [Data a] (x:a) : a = x
+def data_id(x:a) -> a given (a|Data) = x
 
 data_id 4
 > 4
@@ -262,13 +205,13 @@ data_id Int
 > Type error:Couldn't synthesize a class dictionary for: (Data Type)
 >
 > data_id Int
-> ^^^^^^^^
+> ^^^^^^^^^^^
 
 data_id (5, Int)
-> Type error:Couldn't synthesize a class dictionary for: (Data (Nat & Type))
+> Type error:Couldn't synthesize a class dictionary for: (Data (Nat, Type))
 >
 > data_id (5, Int)
-> ^^^^^^^^
+> ^^^^^^^^^^^^^^^^
 
 data_id (5, 8)
 > (5, 8)

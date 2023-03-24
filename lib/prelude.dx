@@ -952,71 +952,77 @@ instance Ord(n=>a) given (n|Ix, a|Ord)
 '## Subset class
 
 interface Subset(subset, superset)
-  inject         : (subset) -> superset
-  project        : (superset) -> Maybe subset
-  unsafe_project : (superset) -> subset
+  inject'         : (subset) -> superset
+  project'        : (superset) -> Maybe subset
+  unsafe_project' : (superset) -> subset
+
+-- wrappers with more helpful implicit arg names
+def inject(x:from)         -> to       given (to, from) (Subset(from, to)) = inject'(x)
+def project(x:from)        -> Maybe to given (to, from) (Subset(to, from)) = project'(x)
+def unsafe_project(x:from) -> to       given (to, from) (Subset(to, from)) = unsafe_project'(x)
+
 
 instance Subset(a, c) given (a, b, c) (Subset(a, b), Subset(b, c))
-  def inject(x) = inject $ inject(superset=b, x)
-  def project(x) = case project(subset=b, x) of
+  def inject'(x) = inject $ inject(to=b, x)
+  def project'(x) = case project(to=b, x) of
     Nothing -> Nothing
     Just(y)-> project y
-  def unsafe_project(x) = unsafe_project $ unsafe_project(subset=b, x)
+  def unsafe_project'(x) = unsafe_project $ unsafe_project(to=b, x)
 
 def unsafe_project_rangefrom(j:q) -> RangeFrom(q, i) given (q|Ix, i:q) =
   RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
-  def inject(j) =
+  def inject'(j) =
     unsafe_from_ordinal $ j.val + ordinal i
-  def project(j) =
+  def project'(j) =
     j' = ordinal j
     i' = ordinal i
     if j' < i'
       then Nothing
       else Just $ RangeFrom.new $ unsafe_nat_diff(j', i')
-  def unsafe_project(j) = RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
+  def unsafe_project'(j) = RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
-  def inject(j) = unsafe_from_ordinal $ j.val + ordinal i + 1
-  def project(j) =
+  def inject'(j) = unsafe_from_ordinal $ j.val + ordinal i + 1
+  def project'(j) =
     j' = ordinal j
     i' = ordinal i
     if j' <= i'
       then Nothing
       else Just $ RangeFromExc.new unsafe_nat_diff(j', i' + 1)
-  def unsafe_project(j) =
+  def unsafe_project'(j) =
     RangeFromExc.new unsafe_nat_diff(ordinal j, ordinal i + 1)
 
 instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
-  def inject(j) = unsafe_from_ordinal j.val
-  def project(j) =
+  def inject'(j) = unsafe_from_ordinal j.val
+  def project'(j) =
     j' = ordinal j
     i' = ordinal i
     if j' > i'
       then Nothing
       else Just $ RangeTo.new j'
-  def unsafe_project(j) = RangeTo.new (ordinal j)
+  def unsafe_project'(j) = RangeTo.new (ordinal j)
 
 instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
-  def inject(j) = unsafe_from_ordinal j.val
-  def project(j) =
+  def inject'(j) = unsafe_from_ordinal j.val
+  def project'(j) =
     j' = ordinal j
     i' = ordinal i
     if j' >= i'
       then Nothing
       else Just $ RangeToExc.new j'
-  def unsafe_project(j) = RangeToExc.new (ordinal j)
+  def unsafe_project'(j) = RangeToExc.new (ordinal j)
 
 instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
-  def inject(j) = unsafe_from_ordinal j.val
-  def project(j) =
+  def inject'(j) = unsafe_from_ordinal j.val
+  def project'(j) =
     j' = ordinal j
     i' = ordinal i
     if j' >= i'
       then Nothing
       else Just $ RangeToExc.new j'
-  def unsafe_project(j) = RangeToExc.new (ordinal j)
+  def unsafe_project'(j) = RangeToExc.new (ordinal j)
 
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).
@@ -2360,20 +2366,20 @@ def assert(b:Bool) -> {Except} () =
 '### Misc instances that require `error`
 
 instance Subset(a, Either(a,b)) given (a|Data, b|Data)
-  def inject(x) = Left x
-  def project(x) = case x of
+  def inject'(x) = Left x
+  def project'(x) = case x of
     Left( y) -> Just y
     Right(x) -> Nothing
-  def unsafe_project(x) = case x of
+  def unsafe_project'(x) = case x of
     Left( x) -> x
     Right(x) -> error "Can't project Right branch to Left branch"
 
 instance Subset(b, Either(a,b)) given (a|Data, b|Data)
-  def inject(x) =  Right x
-  def project(x) = case x of
+  def inject'(x) =  Right x
+  def project'(x) = case x of
     Left( x) -> Nothing
     Right(y) -> Just y
-  def unsafe_project(x) = case x of
+  def unsafe_project'(x) = case x of
     Left( x) -> error "Can't project Left branch to Right branch"
     Right(x) -> x
 
@@ -2523,9 +2529,9 @@ instance Ix(FullTileIx(n, tile_size, tile_ix)) given (n|Ix, tile_size:Nat, tile_
   def unsafe_from_ordinal(i) =FullTileIx.new $ unsafe_from_ordinal i
 
 instance Subset(FullTileIx(n, tile_size, tile_ix), n) given (n|Ix, tile_size:Nat, tile_ix:Nat)
-  def inject(i) = unsafe_from_ordinal $ tile_size * tile_ix + ordinal i.unwrap
-  def project(i) = todo
-  def unsafe_project(i) = todo
+  def inject'(i) = unsafe_from_ordinal $ tile_size * tile_ix + ordinal i.unwrap
+  def project'(i) = todo
+  def unsafe_project'(i) = todo
 
 -- A `CodaIx` type represents the last few elements of the index set `n`,
 -- as might be left over after iterating by tiles.
@@ -2539,9 +2545,9 @@ instance Ix(CodaIx(n, coda_offset, coda_size)) given (n|Ix, coda_offset:Nat, cod
   def unsafe_from_ordinal(i) = CodaIx.new $ unsafe_from_ordinal i
 
 instance Subset(CodaIx(n, coda_offset, coda_size), n) given (n|Ix, coda_offset:Nat, coda_size:Nat)
-  def inject(i) = unsafe_from_ordinal $ coda_offset + ordinal i.unwrap
-  def project(i) = todo
-  def unsafe_project(i) = todo
+  def inject'(i) = unsafe_from_ordinal $ coda_offset + ordinal i.unwrap
+  def project'(i) = todo
+  def unsafe_project'(i) = todo
 
 def tile(
     n|Ix,
@@ -2570,7 +2576,7 @@ def (**)(
       tile(n, n_tile_size) \n_set.
         tile(m, m_tile_size) \m_set.
           for_ l_offset:l_set.
-            l_ix = inject(superset=l, l_offset)
+            l_ix = inject(to=l, l_offset)
             for_ n_offset:n_set.
               n_ix = inject n_offset
               for_ m_offset:m_set.

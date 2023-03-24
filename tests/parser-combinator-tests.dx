@@ -1,7 +1,7 @@
 
 import parser
 
-parseABC : Parser Unit = MkParser \h.
+parseABC : Parser () = MkParser \h.
   parse h $ p_char 'A'
   parse h $ p_char 'B'
   parse h $ p_char 'C'
@@ -18,18 +18,18 @@ parseABC : Parser Unit = MkParser \h.
 :p run_parser "ABC" parseABC
 > (Just ())
 
-def parseT : Parser Bool = MkParser \h.
+def parseT() ->> Parser Bool = MkParser \h.
   parse h $ p_char 'T'
   True
 
-def parseF : Parser Bool = MkParser \h.
+def parseF() ->> Parser Bool = MkParser \h.
   parse h $ p_char 'F'
   False
 
-def parseTF : Parser Bool =
+def parseTF() ->> Parser Bool =
   parseT <|> parseF
 
-def parserTFTriple : Parser (Fin 3=>Bool) = MkParser \h.
+def parserTFTriple() ->> Parser (Fin 3=>Bool) = MkParser \h.
   for i. parse h parseTF
 
 :p run_parser "TTF" parserTFTriple

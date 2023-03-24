@@ -26,7 +26,7 @@
 -- Test all the way around the circle.
 angles = linspace (Fin 11) (-pi + 0.001) (pi)
 :p all for i:(Fin 11).
-  angles.i ~~ atan2 (sin angles.i) (cos angles.i)
+  angles[i] ~~ atan2 (sin angles[i]) (cos angles[i])
 > True
 
 :p (atan2   infinity  1.0) ~~ ( pi / 2.0)

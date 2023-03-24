@@ -1,128 +1,131 @@
 '# Complex number support
 
-data Complex = MkComplex Float Float  -- real, imaginary
+struct Complex =
+  re: Float
+  im: Float
 
-instance HasAllClose Complex
-  allclose = \atol rtol (MkComplex a b) (MkComplex c d). (a ~~ c) && (b ~~ d)
+instance HasAllClose(Complex)
+  def allclose(atol, rtol, x, y) = allclose(atol.re, rtol.re, x.re, y.re) &&
+                                   allclose(atol.im, rtol.im, x.im, y.im)
 
-instance HasDefaultTolerance Complex
-  atol = MkComplex atol atol
-  rtol = MkComplex rtol rtol
+instance HasDefaultTolerance(Complex)
+  default_atol = Complex.new(default_atol, default_atol)
+  default_rtol = Complex.new(default_rtol, default_rtol)
 
-instance Eq Complex
-  (==) = \(MkComplex a b) (MkComplex c d). (a == c) && (b == d)
+instance Eq(Complex)
+  def (==)(x, y) = x.re == y.re && x.im == y.im
 
-instance Add Complex
-  add = \(MkComplex a b) (MkComplex c d). MkComplex (a + c) (b + d)
-  zero = MkComplex 0.0 0.0
-instance Sub Complex
-  sub = \(MkComplex a b) (MkComplex c d). MkComplex (a - c) (b - d)
+instance Add(Complex)
+  def (+)(x, y) = Complex.new(x.re + y.re, x.im + y.im)
+  zero = Complex.new(0.0, 0.0)
+instance Sub(Complex)
+  def (-)(x, y) = Complex.new(x.re - y.re, x.im - y.im)
 
-instance Mul Complex
-  mul = \(MkComplex a b) (MkComplex c d).
-    MkComplex (a * c - b * d) (a * d + b * c)
-  one = MkComplex 1.0 0.0
+instance Mul(Complex)
+  def (*)(x, y) = Complex.new( x.re * y.re - x.im * y.im
+                             , x.re * y.im + x.im * y.re)
+  one = Complex.new(1.0, 0.0)
 
-instance VSpace Complex
-  scale_vec = \a:Float (MkComplex c d):Complex. MkComplex (a * c) (a * d)
+instance VSpace(Complex)
+  def (.*)(s, v) = Complex.new(s * v.re, s * v.im)
 
-instance Arbitrary Complex
-  arb = \key. (MkComplex (randn key) (randn key))
+instance Arbitrary(Complex)
+  def arb(key) = Complex.new(randn key, randn key)
 
 -- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
-def complex_division (MkComplex a b:Complex) (MkComplex c d:Complex): Complex =
-  MkComplex ((a * c + b * d) / (c * c + d * d)) ((b * c - a * d) / (c * c + d * d))
+def complex_division(x:Complex, y:Complex) -> Complex =
+  (a, b, c, d) = (x.re, x.im, y.re, y.im)
+  Complex.new((a * c + b * d) / (c * c + d * d), (b * c - a * d) / (c * c + d * d))
 
-def complex_exp (MkComplex a b:Complex) : Complex =
-  expx = exp a
-  MkComplex (expx * cos b) (expx * sin b)
+def complex_exp(x:Complex) -> Complex =
+  expx = exp x.re
+  Complex.new(expx * cos x.im, expx * sin x.im)
 
-def complex_exp2 (MkComplex a b:Complex) : Complex =
-  exp2x = exp2 a
-  b' = b * log 2.0
-  MkComplex (exp2x * cos b') (exp2x * sin b')
+def complex_exp2(x:Complex) -> Complex =
+  exp2x = exp2 x.re
+  b = x.im * log 2.0
+  Complex.new(exp2x * cos b, exp2x * sin b)
 
-def complex_conj (MkComplex a b:Complex) : Complex = MkComplex a (-b)
-def complex_abs  (MkComplex a b:Complex) : Float = a * a + b * b
-def complex_mag  (MkComplex a b:Complex) : Float = sqrt (a * a + b * b)
-def complex_arg  (MkComplex a b:Complex) : Float = atan2 b a
+def complex_conj(x:Complex) -> Complex = Complex.new(x.re, -x.im)
+def complex_abs(x:Complex) -> Float = x.re * x.re + x.im * x.im
+def complex_mag(x:Complex) -> Float = sqrt (x.re * x.re + x.im * x.im)
+def complex_arg(x:Complex) -> Float = atan2 x.im x.re
 
-complex_log   = \x:Complex. MkComplex (log (complex_mag x)) (complex_arg x)
-complex_log2  = \x:Complex. (complex_log x) / log 2.0
-complex_log10 = \x:Complex. (complex_log x) / log 10.0
-complex_pow = \base:Complex power:Complex. complex_exp (power * complex_log base)
+def complex_log(x:Complex) -> Complex = Complex.new(log (complex_mag x), complex_arg x)
+def complex_log2(x:Complex) -> Complex = complex_log x / log 2.0
+def complex_log10(x:Complex) -> Complex = complex_log x / log 10.0
+def complex_pow(base:Complex, power:Complex) -> Complex = complex_exp(power * complex_log base)
 
-def complex_sqrt (MkComplex a b:Complex) : Complex =
-  m = complex_mag $ MkComplex a b
-  MkComplex (sqrt ((a + m) / 2.0)) (sign b * sqrt ((m - a) / 2.0))
+def complex_sqrt(x:Complex) -> Complex =
+  m = complex_mag x
+  Complex.new (sqrt ((x.re + m) / 2.0)) (sign x.im * sqrt ((m - x.re) / 2.0))
 
-def complex_sin  (MkComplex a b:Complex) : Complex = MkComplex (sin  a * cosh b) (cos   a * sinh b)
-def complex_sinh (MkComplex a b:Complex) : Complex = MkComplex (sinh a *  cos b) (cosh  a * sin  b)
-def complex_cos  (MkComplex a b:Complex) : Complex = MkComplex (cos  a * cosh b) (-sin  a * sinh b)
-def complex_cosh (MkComplex a b:Complex) : Complex = MkComplex (cosh a *  cos b) (-sinh a * sin  b)
-def complex_tan  (x:Complex) : Complex = complex_division (complex_sin  x) (complex_cos  x)
-def complex_tanh (MkComplex a b:Complex) : Complex =
-  num = MkComplex (sinh a * cos b) (cosh a * sin  b)
-  den = MkComplex (cosh a * cos b) (sinh a * sin  b)
+def complex_sin( x:Complex) -> Complex = Complex.new(sin  x.re * cosh x.im, cos  x.re * sinh x.im)
+def complex_sinh(x:Complex) -> Complex = Complex.new(sinh x.re *  cos x.im, cosh x.re * sin  x.im)
+def complex_cos( x:Complex) -> Complex = Complex.new(cos  x.re * cosh x.im, -sin x.re * sinh x.im)
+def complex_cosh(x:Complex) -> Complex = Complex.new(cosh x.re *  cos x.im, -sinh x.re * sin  x.im)
+def complex_tan( x:Complex) -> Complex = complex_division(complex_sin  x, complex_cos x)
+def complex_tanh(x:Complex) -> Complex =
+  num = Complex.new(sinh x.re * cos x.im, cosh x.re * sin  x.im)
+  den = Complex.new(cosh x.re * cos x.im, sinh x.re * sin  x.im)
   complex_division num den
 
-instance Fractional Complex
-  divide = complex_division
+instance Fractional(Complex)
+  def divide(x, y) = complex_division(x, y)
 
-def complex_floor (MkComplex re im:Complex) : Complex =
+def complex_floor(c:Complex) -> Complex =
   -- from "Complex Floor" by Eugene McDonnell
   -- https://www.jsoftware.com/papers/eem/complexfloor.htm
-  fr = floor re
-  fi = floor im
-  x = re - fr
-  y = im - fi
+  fr = floor c.re
+  fi = floor c.im
+  x = c.re - fr
+  y = c.im - fi
   case (x + y) < 1.0 of
-    True -> MkComplex fr fi
+    True -> Complex.new(fr, fi)
     False -> case x >= y of
-      True  -> MkComplex (fr + 1.0) fi
-      False -> MkComplex fr (fi + 1.0)
+      True  -> Complex.new(fr + 1.0, fi)
+      False -> Complex.new(fr, fi + 1.0)
 
-complex_ceil =  \x:Complex. -(complex_floor (-x))
-complex_round = \x:Complex. complex_floor $ MkComplex 0.5 0.0
+def complex_ceil(x:Complex)  -> Complex = -(complex_floor (-x))
+def complex_round(x:Complex) -> Complex = complex_floor Complex.new(0.5, 0.0)
 
-complex_lgamma : Complex -> Complex = \x:Complex.
+def complex_lgamma(x:Complex) -> Complex =
   todo  -- This one is pretty hairy.
         -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
 
-complex_erf : Complex -> Complex = \x:Complex.
+def complex_erf(x:Complex) -> Complex =
   todo
 
-complex_erfc : Complex -> Complex = \x:Complex.
+def complex_erfc(x:Complex) -> Complex =
   todo
 
-def complex_log1p (x:Complex) : Complex =
-  (MkComplex a b) = x
-  case a == 0.0 of
+def complex_log1p(x:Complex) -> Complex =
+  case x.re == 0.0 of
     True -> x
     False ->
-      u = x + MkComplex 1.0 0.0
-      case a <= -1.0 of
+      u = x + Complex.new(1.0, 0.0)
+      case x.re <= -1.0 of
         True -> complex_log u
         False -> divide ((complex_log u) * x) x
 
-instance Floating Complex
-  exp    = complex_exp
-  exp2   = complex_exp2
-  log    = complex_log
-  log2   = complex_log2
-  log10  = complex_log10
-  log1p  = complex_log1p
-  sin    = complex_sin
-  cos    = complex_cos
-  tan    = complex_tan
-  sinh   = complex_sinh
-  cosh   = complex_cosh
-  tanh   = complex_tanh
-  floor  = complex_floor
-  ceil   = complex_ceil
-  round  = complex_round
-  sqrt   = complex_sqrt
-  pow    = complex_pow
-  lgamma = complex_lgamma
-  erf    = complex_erf
-  erfc   = complex_erfc
+instance Floating(Complex)
+  def exp(x)    = complex_exp(x)
+  def exp2(x)   = complex_exp2(x)
+  def log(x)    = complex_log(x)
+  def log2(x)   = complex_log2(x)
+  def log10(x)  = complex_log10(x)
+  def log1p(x)  = complex_log1p(x)
+  def sin(x)    = complex_sin(x)
+  def cos(x)    = complex_cos(x)
+  def tan(x)    = complex_tan(x)
+  def sinh(x)   = complex_sinh(x)
+  def cosh(x)   = complex_cosh(x)
+  def tanh(x)   = complex_tanh(x)
+  def floor(x)  = complex_floor(x)
+  def ceil(x)   = complex_ceil(x)
+  def round(x)  = complex_round(x)
+  def sqrt(x)   = complex_sqrt(x)
+  def pow(x, y) = complex_pow(x, y)
+  def lgamma(x) = complex_lgamma(x)
+  def erf(x)    = complex_erf(x)
+  def erfc(x)   = complex_erfc(x)

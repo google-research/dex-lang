@@ -359,7 +359,7 @@ effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
 aMethod :: CSDecl -> SyntaxM (UMethodDef VoidS)
-aMethod (WithSrc src d) = addSrcContext src case d of
+aMethod (WithSrc src d) = WithSrcE src <$> addSrcContext src case d of
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ UMethodDef (fromString name) lam

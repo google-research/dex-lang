@@ -385,7 +385,7 @@ instance SourceRenamableE e => SourceRenamableE (ListE e) where
 instance SourceRenamableE UnitE where
   sourceRenameE UnitE = return UnitE
 
-instance SourceRenamableE UMethodDef where
+instance SourceRenamableE UMethodDef' where
   sourceRenameE (UMethodDef ~(SourceName v) expr) = do
     lookupSourceName v >>= \case
       UMethodVar v' -> UMethodDef (InternalName v v') <$> sourceRenameE expr

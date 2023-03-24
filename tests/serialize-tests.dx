@@ -10,7 +10,7 @@
 :p [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 > [[1., 2., 3.], [4., 5., 6.]]
 
-:p from_ordinal (Fin 10) 7
+:p from_ordinal(n=Fin 10, 7)
 > 7
 
 :p [True, False]
@@ -20,18 +20,20 @@
 > ()
 
 x = ['a', 'b']
-:p for (i,j). [x.i, x.j]
+:p for p.
+   (i,j) = p
+   [x[i], x[j]]
 > [[0x61, 0x61], [0x61, 0x62], [0x62, 0x61], [0x62, 0x62]]
 
-'Records and variants
+-- 'Records and variants
 
-:p {a=1, b=2}
-> {a = 1, b = 2}
+-- :p {a=1, b=2}
+-- > {a = 1, b = 2}
 
-:p {a="1234", b=[1, 2, 3]}
-> {a = "1234", b = [1, 2, 3]}
+-- :p {a="1234", b=[1, 2, 3]}
+-- > {a = "1234", b = [1, 2, 3]}
 
-'Values without a pretty-printer (currently shows warning message):
+'Values without a pretty-printer
 
 :p Int
 > Int32
@@ -39,5 +41,5 @@ x = ['a', 'b']
 :p Fin 10
 > (Fin 10)
 
-:p (Fin 10 & Fin 20)
-> (Fin 10 & Fin 20)
+:p (Fin 10, Fin 20)
+> ((Fin 10), (Fin 20))

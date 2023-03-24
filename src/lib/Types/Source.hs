@@ -358,7 +358,8 @@ instance Store UResumePolicy
 data UForExpr (n::S) where
   UForExpr :: UOptAnnBinder n l -> UExpr l -> UForExpr n
 
-data UMethodDef (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
+type UMethodDef = WithSrcE UMethodDef'
+data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
   deriving (Show, Generic)
 
 data UEffectOpDef (n::S) =

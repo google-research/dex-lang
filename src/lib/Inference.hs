@@ -1824,7 +1824,8 @@ superclassDictTys (Nest b bs) = do
 
 checkMethodDef :: EmitsInf o
                => ClassName o -> [CorePiType o] -> UMethodDef i -> InfererM i o (Int, CAtom o)
-checkMethodDef className methodTys (UMethodDef ~(InternalName sourceName v) rhs) = do
+checkMethodDef className methodTys (WithSrcE src m) = addSrcContext src do
+  UMethodDef ~(InternalName sourceName v) rhs <- return m
   MethodBinding className' i <- renameM v >>= lookupEnv
   when (className /= className') do
     ClassBinding (ClassDef classSourceName _ _ _ _ _) <- lookupEnv className

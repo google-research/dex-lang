@@ -371,7 +371,7 @@ id (for i:(Fin 2). for j:(..i). 1.0)
 
 def weakerInferenceReduction(l: (i:n)=>(..i)=>Float, j:n) -> ()  given (n|Ix) =
   for i:(..j).
-    i' = inject(superset=n, i)
+    i' = inject(to=n, i)
     for k:(..i').
       l[i',k]
     ()
@@ -543,7 +543,7 @@ def LowerTriMat(n|Ix, v:Type) -> Type = (i:n)=>(..i)=>v
 def UpperTriMat(n|Ix, v:Type) -> Type = (i:n)=>(i..)=>v
 
 def transpose_ix(i:n, j:(i..)) -> (i:n &> ..i) given (n|Ix) =
-  j' = inject(superset=n, j)
+  j' = inject(to=n, j)
   i' = unsafe_project i
   (j' ,> i')
 

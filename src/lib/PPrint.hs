@@ -767,7 +767,7 @@ instance Pretty (UAnn req n) where
   pretty (UAnn ty) = ":" <> p ty
   pretty UNoAnn = mempty
 
-instance Pretty (UMethodDef n) where
+instance Pretty (UMethodDef' n) where
   pretty (UMethodDef b rhs) = p b <+> "=" <+> p rhs
 
 instance Pretty (UPat' n l) where pretty = prettyFromPrettyPrec

@@ -4,95 +4,94 @@
 
 '## Utilities unrelated to parsing
 
-def from_ordinal_exc (n:Type) [Ix n] (i:Nat) : {Except} n =
+def from_ordinal_exc(n|Ix, i:Nat) -> {Except} n =
   if (0 <= i) && (i < size n)
-    then unsafe_from_ordinal _ i
-    else throw ()
+    then unsafe_from_ordinal i
+    else throw()
 
 -- TODO: allow this to happen in-place
 -- TODO: if it takes too long to make that possible, start with a bounded version
-def push {h a} [Data a] (ref:Ref h (List a)) (x:a) : {State h} Unit =
+def push(ref:Ref h (List a), x:a) -> {State h} () given (h, a|Data) =
   l = get ref
   ref := l <> AsList _ [x]
 
-def index_list {a} [Data a] (l:List a) (i:Nat) : {Except} a =
-  (AsList n xs) = l
-  xs.(from_ordinal_exc _ i)
+def index_list(l:List a, i:Nat) -> {Except} a given (a|Data) =
+  AsList(n, xs) = l
+  xs[from_ordinal_exc _ i]
 
 '## The Parser type
 
-def ParserHandle (h:Heap) : Type = (String & Ref h Nat)
+struct ParserHandle(h:Heap) =
+  input: String
+  offset: Ref h Nat
 
-data Parser a:Type =
-  MkParser ((h:Heap) ?-> ParserHandle h -> {Except, State h} a)
+data Parser(a:Type) =
+  MkParser((given(h:Heap), ParserHandle h )-> {Except, State h} a)
 
-def parse {a h} (handle:ParserHandle h) (parser:Parser a) : {Except, State h} a =
-  (MkParser f) = parser
+def parse(handle:ParserHandle h, parser:Parser a) -> {Except, State h} a given (a, h)  =
+  MkParser f = parser
   f handle
 
-def run_parser_partial {a} (s:String) (parser:Parser a) : Maybe a =
-  (MkParser f) = parser
+def run_parser_partial(s:String, parser:Parser a) -> Maybe a given (a)  =
+  MkParser f = parser
   with_state 0 \pos.
-    catch $ do
-      f (s, pos)
+    catch $ \.
+      f ParserHandle.new(s, pos)
 
 '## Primitive combinators
 
-def p_char (c:Char) : Parser Unit = MkParser \(s, posRef).
-  i = get posRef
-  c' = index_list s i
+def p_char(c:Char) -> Parser () = MkParser \h.
+  i = get h.offset
+  c' = index_list h.input i
   assert (c == c')
-  posRef := i + 1
+  h.offset := i + 1
 
-def p_eof : Parser Unit = MkParser \(s, posRef).
-  assert $ get posRef >= list_length s
+def p_eof() ->> Parser () = MkParser \h.
+  assert $ get h.offset >= list_length h.input
 
-def (<|>) {a} (p1:Parser a) (p2:Parser a) : Parser a = MkParser \h.
-  (s, posRef) = h
-  curPos = get posRef
-  case catch do parse h p1 of
+def (<|>)(p1:Parser a, p2:Parser a) -> Parser a given (a) = MkParser \h.
+  curPos = get h.offset
+  case catch \. parse h p1 of
     Nothing ->
-      assert $ curPos == get posRef
+      assert $ curPos == get h.offset
       parse h p2
     Just ans -> ans
 
-def returnP {a} (x:a) : Parser a = MkParser \_. x
+def returnP(x:a) -> Parser a given (a) = MkParser \_. x
 
-def run_parser {a} (s:String) (parser:Parser a) : Maybe a =
+def run_parser(s:String, parser:Parser a) -> Maybe a given (a) =
   run_parser_partial s $ MkParser \h.
     ans = parse h parser
     _   = parse h p_eof
     ans
 
-def parse_any : Parser Char = MkParser \h.
-  (s, posRef) = h
-  i = get posRef
-  c' = index_list s i
-  posRef := i + 1
+def parse_any() ->> Parser Char = MkParser \h.
+  i = get h.offset
+  c' = index_list h.input i
+  h.offset := i + 1
   c'
 
-def try {a} (parser:Parser a) : Parser a = MkParser \h.
-  (s, posRef) = h
-  savedPos = get posRef
-  ans = catch do parse h parser
+def try(parser:Parser a) -> Parser a given (a) = MkParser \h.
+  savedPos = get h.offset
+  ans = catch \. parse h parser
   case ans of
     Nothing ->
-      posRef := savedPos
-      throw ()
+      h.offset := savedPos
+      throw()
     Just x -> x
 
 '## Derived combinators
 
-def parse_digit : Parser Int = try $ MkParser \h.
+def parse_digit() ->> Parser Int = try $ MkParser \h.
   c = parse h $ parse_any
   i = w8_to_i c - 48
   assert $ 0 <= i && i < 10
   i
 
-def optional {a} (p:Parser a) : Parser (Maybe a) =
+def optional(p:Parser a) -> Parser (Maybe a) given (a) =
   (MkParser \h. Just (parse h p)) <|> returnP Nothing
 
-def parse_many {a} [Data a] (parser:Parser a) : Parser (List a) = MkParser \h.
+def parse_many(parser:Parser a) -> Parser (List a) given (a|Data) = MkParser \h.
   yield_state (AsList _ []) \results.
     iter \_.
       maybeVal = parse h $ optional parser
@@ -102,24 +101,24 @@ def parse_many {a} [Data a] (parser:Parser a) : Parser (List a) = MkParser \h.
           push results x
           Continue
 
-def parse_unsigned_int : Parser Int = MkParser \h.
-  (AsList _ digits) = parse h $ parse_many parse_digit
+def parse_unsigned_int() ->> Parser Int = MkParser \h.
+  AsList(_, digits) = parse h $ parse_many parse_digit
   yield_state 0 \ref.
-    for i. ref := 10 * get ref + digits.i
+    for i. ref := 10 * get ref + digits[i]
 
-def parse_int : Parser Int = MkParser \h.
+def parse_int() ->> Parser Int = MkParser \h.
   negSign = parse h $ optional $ p_char '-'
   x       = parse h $ parse_unsigned_int
   case negSign of
     Nothing -> x
     Just () -> (-1) * x
 
-def bracketed {a} (l:Parser Unit) (r:Parser Unit) (body:Parser a) : Parser a =
+def bracketed(l:Parser (), r:Parser (), body:Parser a) -> Parser a given (a) =
   MkParser \h.
     _   = parse h l
     ans = parse h body
     _   = parse h r
     ans
 
-def parens {a} (parser:Parser a) : Parser a =
+def parens(parser:Parser a) -> Parser a given (a) =
   bracketed (p_char '(') (p_char ')') parser

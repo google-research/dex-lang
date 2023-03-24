@@ -1022,16 +1022,16 @@ first_ix :: (Fin 0, ())
 
 -- Subset tests
 
-project(subset=(), inject(superset=(() `Either` Fin 2), ()))
+project(to=(), inject(to=(() `Either` Fin 2), ()))
 > (Just ())
 
-project(subset=(), inject(superset=(() `Either` Fin 2), 0@(Fin 2)))
+project(to=(), inject(to=(() `Either` Fin 2), 0@(Fin 2)))
 > Nothing
 
-unsafe_project(subset=(), inject(superset=() `Either` Fin 2, ()))
+unsafe_project(to=(), inject(to=() `Either` Fin 2, ()))
 > ()
 
-unsafe_project(subset=(), inject(superset=(Fin 2 `Either` ()), ()))
+unsafe_project(to=(), inject(to=(Fin 2 `Either` ()), ()))
 > ()
 
 :p unsafe_coerce(to=Fin 1 => (Nat, Nat), ([1], [2]))
