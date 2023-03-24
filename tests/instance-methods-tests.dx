@@ -1,0 +1,107 @@
+
+interface FooBar0 a
+  foo0 : a -> Int
+  bar0 : a -> Int
+
+instance FooBar0 Int
+  foo0 = \x. x + 1
+  bar0 = \x. foo0 x + 1
+
+w : Int = 42
+
+-- CHECK: 43
+foo0 w
+
+-- CHECK: 44
+bar0 w
+
+
+interface FooBar1 a
+  foo1 : a -> Int
+  bar1 : a -> Int
+
+instance FooBar1 Int
+  foo1 = \x. x + 1
+  -- Fails: Definition of `bar1` uses the class method `bar1` (with index 1);
+  -- but the instance `FooBar1 Int` is currently still being defined and, at
+  -- this point, can only grant access to method `foo1` (with index 0).
+  bar1 = \x. bar1 x + 1
+-- CHECK: Type error:Couldn't synthesize a class dictionary for: (FooBar1 Int32)
+-- CHECK:   bar1 = \x. bar1 x + 1
+-- CHECK:              ^^^^^
+
+
+interface FooBar2 a
+  foo2 : a -> Int
+  bar2 : a -> Int
+
+%passes typed
+def f2 {a:Type} [d:FooBar2 a] (x:a) = (\y. foo2 y + 1) x
+-- The defintion of `f2` is OK because argument `d : FooBar2 a` grants access to
+-- all methods of class `FooBar2 a`. (Only one method of `FooBar2` is actually
+-- used in the body of `f2`.)
+-- CHECK:       === typed ===
+-- CHECK-NEXT:  === Result ===
+-- CHECK-EMPTY:
+-- CHECK-NEXT:  \{a:Type} [{{.*}}:(FooBar2 a)] x:a.
+-- CHECK-NEXT:    v#0:Int32 =
+-- CHECK-NEXT:      (\y:a.
+-- CHECK-NEXT:         v#0:Int32 = foo2 a (synthesize (FooBar2 a) (1)) y
+
+
+%passes typed
+def g2 {a:Type} [d:FooBar2 a] (x:a) = (\y z. foo2 y + z) x (bar2 x)
+-- The defintion of `g2` is OK because argument `d : FooBar2 a` grants access to
+-- all methods of class `FooBar2 a`.
+-- CHECK:       === typed ===
+-- CHECK-NEXT:  === Result ===
+-- CHECK-EMPTY:
+-- CHECK-NEXT:  \{a:Type} [{{.*}}:(FooBar2 a)] x:a.
+-- CHECK-NEXT:   v#0:Int32 = bar2 a (synthesize (FooBar2 a) (2)) x
+-- CHECK-NEXT:   v#1:Int32 =
+-- CHECK-NEXT:     (\y:a z:Int32.
+-- CHECK-NEXT:        v#1:Int32 = foo2 a (synthesize (FooBar2 a) (1)) y
+
+
+instance FooBar2 Int
+  foo2 = \x. x + 1
+  -- Fails: The definition of `bar2` uses `f2`, which requires a dictionary
+  -- `d : FooBar2 Int` that has access to all methods of `FooBar2 Int`.
+  bar2 = \x. f2 x + 1
+-- CHECK: Type error:Couldn't synthesize a class dictionary for: (FooBar2 Int32)
+-- CHECK:   bar2 = \x. f2 x + 1
+-- CHECK:              ^^^
+
+
+interface Shows0 a
+  shows0 : a -> String
+  showsList0 : List a -> String
+
+-- The body of method `showsList0` uses method `shows0` from the same instance.
+instance Shows0 Nat
+  shows0 = show
+  showsList0 = \xs.
+    (AsList n ys) = xs
+    strings = map shows0 ys
+    reduce "" (<>) strings
+
+showsList0 (AsList 3 [0, 1, 2])
+-- CHECK: "012"
+
+interface Shows1 a
+  shows1 : a -> String
+  showsList1 : List a -> String
+
+instance Shows1 Nat
+  shows1 = \x. showsList1 (AsList 1 [x])
+  -- Methods `shows1` and `showsList1` refer to each other in a mutually recursive
+  -- fashion: the body of method `showsList1` uses method `shows1` from the same
+  -- instance, and the body of method `showsList1` uses method `shows1` also from
+  -- this instance.
+  showsList1 = \xs.
+    (AsList n ys) = xs
+    strings = map shows1 ys
+    reduce "" (<>) strings
+-- CHECK: Type error:Couldn't synthesize a class dictionary for: (Shows1 Nat)
+-- CHECK:   shows1 = \x. showsList1 (AsList 1 [x])
+-- CHECK:                ^^^^^^^^^^^

@@ -199,7 +199,7 @@ instance IRRep r => HasType r (Atom r) where
     NewtypeCon con x -> NewtypeTyCon <$> typeCheckNewtypeCon con x
     NewtypeTyCon t   -> typeCheckNewtypeTyCon t
     SimpInCore x -> getTypeE x
-    DictHole _ ty -> checkTypeE TyKind ty
+    DictHole _ ty _ -> checkTypeE TyKind ty
     ProjectElt UnwrapNewtype x -> do
       NewtypeTyCon con <- getTypeE x
       snd <$> unwrapNewtypeType con

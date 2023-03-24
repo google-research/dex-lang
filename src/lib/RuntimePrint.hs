@@ -131,7 +131,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
                 rec =<< normalizeNaryProj (init projs) arg
-  DictHole _ _ -> error "shouldn't have DictHole past inference"
+  DictHole _ _ _ -> error "shouldn't have DictHole past inference"
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y

@@ -25,7 +25,7 @@ import Data.Int
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Text.Prettyprint.Doc (Pretty (..))
+import Data.Text.Prettyprint.Doc (Pretty (..), parens)
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import GHC.Exts (inline)
@@ -148,12 +148,18 @@ type ForAnn = Direction
 
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
+data RequiredMethodAccess = Full | Partial Int deriving (Show, Eq, Ord, Generic)
+
 data Arrow =
    PlainArrow
  | ImplicitArrow
- | ClassArrow
+ | ClassArrow RequiredMethodAccess
  | LinArrow
    deriving (Show, Eq, Ord, Generic)
+
+isClassArrow :: Arrow -> Bool
+isClassArrow (ClassArrow _) = True
+isClassArrow _ = False
 
 plainArrows :: [(Arrow, a)] -> [a]
 plainArrows = map snd . filter (\(arr, _) -> arr == PlainArrow)
@@ -163,7 +169,8 @@ instance Pretty Arrow where
     PlainArrow     -> "->"
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
-    ClassArrow     -> "?=>"
+    ClassArrow Full        -> "?=>"
+    ClassArrow (Partial n) -> "?" <> (parens $ pretty n) <> "=>"
 
 data LetAnn =
   -- Binding with no additional information
@@ -286,6 +293,7 @@ emptyLit = \case
 
 -- === Typeclass instances ===
 
+instance Store RequiredMethodAccess
 instance Store Arrow
 instance Store LetAnn
 instance Store RWS
@@ -318,6 +326,7 @@ instance Hashable LitVal
 instance Hashable ScalarBaseType
 instance Hashable Device
 instance Hashable LetAnn
+instance Hashable RequiredMethodAccess
 instance Hashable Arrow
 
 instance Hashable a => Hashable (PrimCon r a)

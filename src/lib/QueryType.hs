@@ -303,7 +303,7 @@ instance IRRep r => HasType r (Atom r) where
         NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
         ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
     SimpInCore x -> getTypeE x
-    DictHole _ ty -> substM ty
+    DictHole _ ty _ -> substM ty
 
 instance HasType CoreIR SimpInCore where
   getTypeE = \case

@@ -328,10 +328,10 @@ argument (Bracketed Curly g) = case g of
     pats <- mapM pat $ nary Juxtapose g
     return $ map (\x -> UPatAnnArrow (UPatAnn x Nothing) ImplicitArrow) pats
 argument (Bracketed Square g) = case g of
-  (Binary Colon name typ) -> singleArgument ClassArrow name typ
+  (Binary Colon name typ) -> singleArgument (ClassArrow Full) name typ
   _ -> do
     tys <- mapM expr $ nary Comma g
-    return $ map (\ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) ClassArrow) tys
+    return $ map (\ty -> UPatAnnArrow (UPatAnn (nsB UPatIgnore) (Just ty)) (ClassArrow Full)) tys
 argument (WithSrc _ (CParens (ExprBlock g))) = explicitArgument g
 argument g = explicitArgument g
 

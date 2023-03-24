@@ -301,6 +301,10 @@ updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n
 updateTransposeRelation f1 f2 =
   extendCache $ mempty { transpositionCache = eMapSingleton f1 f2 <> eMapSingleton f2 f1}
 
+updateInstanceDef :: (Mut n, TopBuilder m) => InstanceName n -> InstanceDef n -> m n ()
+updateInstanceDef name def =
+  emitPartialTopEnvFrag $ mempty {fragInstanceDefUpdates = toSnocList [(name, def)]}
+
 bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
 bindModule sourceName internalName = do
   let loaded = LoadedModules $ M.singleton sourceName internalName
@@ -1123,8 +1127,8 @@ emitMethod
   => NameHint -> ClassName n -> [Bool] -> Int -> m n (Name MethodNameC n)
 emitMethod hint classDef explicit idx = do
   getter <- makeMethodGetter classDef explicit idx
-  f <- Var <$> emitTopLet hint PlainLet (Atom getter)
-  emitBinding hint $ MethodBinding classDef idx f
+  v <- emitTopLet hint PlainLet (Atom getter)
+  emitBinding hint $ MethodBinding classDef idx (Var v)
 
 makeMethodGetter :: EnvReader m => Name ClassNameC n -> [Bool] -> Int -> m n (CAtom n)
 makeMethodGetter className explicit methodIdx = liftBuilder do
@@ -1133,7 +1137,7 @@ makeMethodGetter className explicit methodIdx = liftBuilder do
   let arrows = explicit <&> \case True -> PlainArrow; False -> ImplicitArrow
   buildPureNaryLam arrows (EmptyAbs $ asPiBinders paramBs) \params -> do
     let dictTy = DictTy $ DictType sourceName (sink className') (map Var params)
-    buildPureLam noHint ClassArrow dictTy \dict ->
+    buildPureLam noHint (ClassArrow (Partial $ succ methodIdx)) dictTy \dict ->
       emitExpr $ ProjMethod (Var dict) methodIdx
   where
     asPiBinders :: Nest RolePiBinder i i' -> Nest CBinder i i'
