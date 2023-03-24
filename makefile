@@ -61,6 +61,7 @@ ifeq (, $(STACK))
 else
 	STACK=stack
 
+	MACHINE := $(shell uname -m)
 	PLATFORM := $(shell uname -s)
 	ifeq ($(PLATFORM),Darwin)
 		STACK=stack --stack-yaml=stack-macos.yaml
@@ -99,6 +100,15 @@ ifneq (,$(wildcard /usr/local/include/png.h))
 CFLAGS := $(CFLAGS) -I/usr/local/include
 endif
 
+# Apple M1 (Darwin arm64)
+# - Add Homebrew include and library paths.
+ifeq ($(PLATFORM),Darwin)
+ifeq ($(MACHINE),arm64)
+STACK_FLAGS := $(STACK_FLAGS) --extra-include-dirs=/opt/homebrew/include
+STACK_FLAGS := $(STACK_FLAGS) --extra-lib-dirs=/opt/homebrew/lib
+endif
+endif
+
 ifneq (,$(PREFIX))
 STACK_BIN_PATH := --local-bin-path $(PREFIX)
 endif
@@ -108,7 +118,7 @@ ifneq (,$(DEX_CI))
 STACK_FLAGS := $(STACK_FLAGS) --flag dex:debug
 endif
 
-possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++
+possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++-15 clang++
 
 CLANG := clang++
 
@@ -125,7 +135,7 @@ then echo "$$clangversion" ; break ; fi ; done)
 ifeq (,$(CLANG))
 $(error "Please install clang++-12")
 endif
-clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)).*$$/, "")) }')
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)|(15\.)).*$$/, "")) }')
 ifneq (1,$(clang-version-compatible))
 $(error "Please install clang++-12")
 endif

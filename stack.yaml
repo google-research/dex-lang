@@ -4,14 +4,15 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-resolver: lts-18.23
+# Keep in sync with llvm-hs@llvm-15: https://github.com/llvm-hs/llvm-hs/blob/llvm-15/stack.yaml
+resolver: lts-20.16 # GHC 9.2.7
 
 packages:
 - .
 
 extra-deps:
   - github: llvm-hs/llvm-hs
-    commit: 423220bffac4990d019fc088c46c5f25310d5a33
+    commit: 80e0de0f96eb78288c88fda0eaba0f7cf5d38a30 # llvm-15, 2023-04-03
     subdirs:
       - llvm-hs
       - llvm-hs-pure
@@ -20,7 +21,6 @@ extra-deps:
   - store-0.7.8@sha256:0b604101fd5053b6d7d56a4ef4c2addf97f4e08fe8cd06b87ef86f958afef3ae,8001
   - store-core-0.4.4.4@sha256:a19098ca8419ea4f6f387790e942a7a5d0acf62fe1beff7662f098cfb611334c,1430
   - th-utilities-0.2.4.1@sha256:b37d23c8bdabd678aee5a36dd4373049d4179e9a85f34eb437e9cd3f04f435ca,1869
-  - floating-bits-0.3.0.0@sha256:742bcfcbc21b8daffc995990ee2399ab49550e8f4dd0dff1732d18f57a064c83,2442
 
 nix:
   enable: false
