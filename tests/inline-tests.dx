@@ -4,7 +4,7 @@
 -- the body to occur in the output from the first inlining pass.
 
 @noinline
-def id' (x:Nat) : Nat = x
+def id'(x:Nat) -> Nat = x
 
 -- CHECK-LABEL: Inline for into for
 "Inline for into for"
@@ -12,7 +12,7 @@ def id' (x:Nat) : Nat = x
 %passes inline
 :pp
   xs = for i:(Fin 10). ordinal i
-  for j. xs.j + 2
+  for j. xs[j] + 2
 -- CHECK: === inline ===
 -- CHECK: for
 -- CHECK-NOT: for
@@ -34,8 +34,9 @@ def id' (x:Nat) : Nat = x
 %passes inline
 :pp
   xs = for i:(Fin 10). for j:(Fin 20). ordinal i * ordinal j
-  for j i. xs.i.j + 2
+  for j i. xs[i, j] + 2
 -- CHECK: === inline ===
+-- CHECK: for
 -- CHECK: for
 -- CHECK-NOT: for
 -- CHECK: === inline ===
@@ -54,7 +55,7 @@ def id' (x:Nat) : Nat = x
     ordinal i
   for j.
     ct := (get ct) * 2
-    xs.j + 2
+    xs[j] + 2
 -- CHECK: === inline ===
 -- CHECK: for
 -- CHECK: for
@@ -68,7 +69,7 @@ def id' (x:Nat) : Nat = x
 %passes inline
 :pp
   ix = (id' 20)@(Fin 100)
-  (for i:(Fin 100). ordinal i + ordinal i).ix
+  (for i:(Fin 100). ordinal i + ordinal i)[ix]
 -- CHECK: === inline ===
 -- CHECK: error
 -- CHECK-NOT: error
@@ -83,6 +84,6 @@ def id' (x:Nat) : Nat = x
 
 :p
   ix = (1@(Fin 2))
-  sum (for i:(Fin 2) j:(..i). ordinal j).ix
+  sum (for i:(Fin 2) j:(..i). ordinal j)[ix]
 -- CHECK: 1
 -- CHECK-NOT: Compiler bug
