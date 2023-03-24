@@ -68,7 +68,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       PtrType _  -> printTypeOnly "pointer"
       Scalar _ -> do
         (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
-        logicalTabTy <- finTabTy (NewtypeCon NatCon n) CharRepTy
+        logicalTabTy <- finTabTyCore (NewtypeCon NatCon n) CharRepTy
         tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
         emitCharTab tab'
     -- TODO: we could do better than this but it's not urgent because raw sum types
@@ -228,7 +228,7 @@ pushBuffer buf x = do
 
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
-  t <- finTabTy (NatVal $ fromIntegral $ length s) CharRepTy
+  t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
@@ -247,9 +247,6 @@ applyPreludeFunction name args = do
 
 strType :: EnvReader m => m n (CType n)
 strType = constructPreludeType "List" $ DataDefParams [(PlainArrow, CharRepTy)]
-
-finTabTy :: EnvReader m => CAtom n -> CType n -> m n (CType n)
-finTabTy n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
 
 constructPreludeType :: EnvReader m => String -> DataDefParams n -> m n (CType n)
 constructPreludeType sourceName params = do

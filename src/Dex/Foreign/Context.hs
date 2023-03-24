@@ -12,7 +12,8 @@ module Dex.Foreign.Context (
   setError, runTopperMFromContext,
   dexCreateContext, dexDestroyContext, dexForkContext,
   dexInsert, dexLookup,
-  dexEval, dexFreshName, insertIntoNativeFunctionTable, popFromNativeFunctionTable
+  dexEval, dexFreshName, insertIntoNativeFunctionTable, popFromNativeFunctionTable,
+  intAsCC, emitExport
   ) where
 
 import Foreign.C
@@ -47,9 +48,6 @@ import Dex.Foreign.Util
 data Context = Context EvalConfig (MVar TopStateEx) (MVar NativeFunctionTable)
 
 type ClosedExportedSignature = ExportedSignature 'VoidS
-data ExportNativeFunction =
-  ExportNativeFunction { nativeFunction  :: NativeFunction
-                       , nativeSignature :: ExportedSignature 'VoidS }
 
 type ExportNativeFunctionAddr = FunPtr () -- points to executable code
 type NativeFunctionTable = M.Map ExportNativeFunctionAddr ExportNativeFunction
@@ -150,3 +148,14 @@ popFromNativeFunctionTable ctxPtr funcPtr = do
   addrTable <- takeMVar ptrTabMVar
   putMVar ptrTabMVar $  M.delete funcPtr addrTable
   return $ addrTable M.! funcPtr
+
+intAsCC :: CInt -> CallingConvention
+intAsCC 0 = StandardCC
+intAsCC 1 = XLACC
+intAsCC _ = error "Unrecognized calling convention"
+
+emitExport :: Ptr Context -> ExportNativeFunction -> IO ExportNativeFunctionAddr
+emitExport ctxPtr func = do
+  let funcPtr = nativeFunPtr $ nativeFunction func
+  insertIntoNativeFunctionTable ctxPtr funcPtr func
+  return funcPtr

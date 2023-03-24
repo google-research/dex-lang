@@ -62,6 +62,9 @@ library
                      , Inference
                      , Inline
                      , IRVariants
+                     , JAX.Concrete
+                     , JAX.Rename
+                     , JAX.ToSimp
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA
@@ -268,10 +271,12 @@ foreign-library Dex
   type:                native-shared
   other-modules:       Dex.Foreign.API
                      , Dex.Foreign.Context
+                     , Dex.Foreign.JAX
                      , Dex.Foreign.JIT
                      , Dex.Foreign.Serialize
                      , Dex.Foreign.Util
   build-depends:       dex
+                     , aeson
                      , base
                      , bytestring
                      , containers
@@ -292,6 +297,7 @@ foreign-library Dex
                      , FlexibleInstances
                      , GADTs
                      , LambdaCase
+                     , NamedFieldPuns
                      , OverloadedStrings
                      , RecordWildCards
                      , ScopedTypeVariables
@@ -314,8 +320,12 @@ test-suite spec
                      , mtl
                      , QuickCheck
                      , text
+                     , aeson
+                     , aeson-pretty
+                     , bytestring
                      , dex
   other-modules:       ConstantCastingSpec
+                     , JaxADTSpec
                      , OccAnalysisSpec
                      , OccurrenceSpec
                      , RawNameSpec
