@@ -36,7 +36,7 @@ arr = 20
 > Error: variable already defined: arr
 >
 > arr = 20
-> ^^^
+> ^^^^
 
 :p arr
 > Error: ambiguous variable: arr is defined:
@@ -89,4 +89,4 @@ ShadowCon' = 1
 > Error: variable already defined: ShadowCon'
 >
 > ShadowCon' = 1
-> ^^^^^^^^^^
+> ^^^^^^^^^^^

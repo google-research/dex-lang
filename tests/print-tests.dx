@@ -14,7 +14,7 @@
 :pcodegen [Just (Just 1.0), Just Nothing, Nothing]
 > [(Just (Just 1.)), (Just Nothing), Nothing]
 
-data MyType = MyValue (Nat)
+data MyType = MyValue(Nat)
 
 :pcodegen MyValue 1
 > (MyValue 1)

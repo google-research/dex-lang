@@ -238,8 +238,7 @@ structDef :: Parser CTopDecl
 structDef = withSrc do
   keyWord StructKW
   tyName <- anyName
-  params <- explicitParams
-  sym "="
+  params <- typeParams
   fields <- onePerLine nameAndType
   return $ CStruct tyName params fields
 
@@ -247,11 +246,10 @@ dataDef :: Parser CTopDecl
 dataDef = withSrc do
   keyWord DataKW
   tyName <- anyName
-  params <- explicitParams
-  sym "="
+  params <- typeParams
   dataCons <- onePerLine do
     dataConName <- anyName
-    dataConArgs <- explicitParams
+    dataConArgs <- optExplicitParams
     return (dataConName, dataConArgs)
   return $ CData tyName params dataCons
 
@@ -272,9 +270,6 @@ interfaceDef = withSrc do
       ty <- cGroup
       return (methodName, ty)
   return $ CInterface className params methodDecls
-
--- superclassConstraints :: Parser [Group]
--- superclassConstraints = optionalMonoid $ brackets $ cNames `sepBy` sym ","
 
 effectDef :: Parser CTopDecl
 effectDef = withSrc do
@@ -364,7 +359,7 @@ instanceDef isNamed = do
       args <-  (sym ":" >> return Nothing)
            <|> ((Just <$> parens (commaSep cParenGroup)) <* sym "->")
       return $ Just (name, args)
-  className <- anyNameNoSC
+  className <- anyName
   args <- argList
   givens <- optional givenClause
   methods <- realBlock
@@ -375,7 +370,7 @@ funDefLet = label "function definition" do
   keyWord DefKW
   mayBreak do
     name   <- anyName
-    params <- parens (commaSep cParenGroup)
+    params <- explicitParams
     rhs    <- optional do
       expl     <- explicitness
       effs     <- optional cEffs
@@ -391,20 +386,39 @@ explicitness :: Parser AppExplicitness
 explicitness =   (sym "->"  $> ExplicitApp)
              <|> (sym "->>" $> ImplicitApp)
 
-anyNameNoSC :: Parser SourceName
-anyNameNoSC = withConsumption ConsumeNothing $ anyName
-
 -- Intended for occurrences, like `foo(x, y, z)` (cf. defParamsList).
--- Previous lexeme shouldn't consume trailing whitespace.
 argList :: Parser [Group]
-argList = nextChar >>= \case
-  '(' -> parens (commaSep cGroup)
-  _   -> do
-    arg <- sc >> leafGroup
-    return [arg]
+argList = immediateParens (commaSep cParenGroup)
+
+immediateLParen :: Parser ()
+immediateLParen = label "'(' (without preceding whitespace)" do
+  nextChar >>= \case
+    '(' -> precededByWhitespace >>= \case
+      True -> empty
+      False -> charLexeme '('
+    _ -> empty
+
+immediateParens :: Parser a -> Parser a
+immediateParens p = bracketed immediateLParen rParen p
+
+-- Putting `sym =` inside the cases gives better errors.
+typeParams :: Parser ExplicitParams
+typeParams =
+      (explicitParams <* sym "=")
+  <|> (return []      <* sym "=")
+
+optExplicitParams :: Parser ExplicitParams
+optExplicitParams = label "optional parameter list" $
+  explicitParams <|> return []
 
 explicitParams :: Parser ExplicitParams
-explicitParams = label "parameter list" $ parens (commaSep cGroup) <|> return []
+explicitParams = label "parameter list in parentheses (without preceding whitespace)" $
+  immediateParens $ commaSep cParenGroup
+
+noGap :: Parser ()
+noGap = precededByWhitespace >>= \case
+  True -> fail "Unexpected whitespace"
+  False -> return ()
 
 givenClause :: Parser GivenClause
 givenClause = keyWord GivenKW >> do
@@ -571,22 +585,20 @@ noElse msg = (optional $ try $ sc >> keyWord ElseKW) >>= \case
 
 leafGroup :: Parser Group
 leafGroup = do
-  leaf <- leafGroupNoSC
-  postOps <- many postfixGroupNoSC <* sc
+  leaf <- leafGroup'
+  postOps <- many postfixGroup
   return $ foldl (\accum (op, opLhs) -> joinSrc accum opLhs $ CBin (WithSrc Nothing op) accum opLhs) leaf postOps
  where
 
-  -- These "noSC" functions don't consume trailing whitespace. We want to parse
-  -- things like `f(x,y).foo(z)[q]`.
-  leafGroupNoSC :: Parser Group
-  leafGroupNoSC = withSrc do
+  leafGroup' :: Parser Group
+  leafGroup' = withSrc do
     next <- nextChar
     case next of
-      '_'  -> noSC $ underscore $> CHole
+      '_'  ->  underscore $> CHole
       '('  ->  (CIdentifier <$> symName)
-           <|> cParensNoSC
-      '['  -> cBracketsNoSC
-      '{'  -> CBraces   <$> bracketNoSC '{' '}' (commaSep cGroup)
+           <|> cParens
+      '['  -> cBrackets
+      '{'  -> cBraces
       '\"' -> CString <$> strLit
       '\'' -> CChar <$> charLit
       '%'  -> do
@@ -598,33 +610,30 @@ leafGroup = do
                            <|> CFloat <$> doubleLit)
       '\\' -> cNullaryLam <|> cLam
       -- For exprs include for, rof, for_, rof_
-      'f'  -> cFor  <|> cIdentifierNoSC
-      'd'  -> cDo   <|> cIdentifierNoSC
-      'r'  -> cFor  <|> cIdentifierNoSC
-      'c'  -> cCase <|> cIdentifierNoSC
-      'i'  -> cIf   <|> cIdentifierNoSC
-      _    -> cIdentifierNoSC
+      'f'  -> cFor  <|> cIdentifier
+      'd'  -> cDo   <|> cIdentifier
+      'r'  -> cFor  <|> cIdentifier
+      'c'  -> cCase <|> cIdentifier
+      'i'  -> cIf   <|> cIdentifier
+      _    -> cIdentifier
 
-  noSC :: Parser a -> Parser a
-  noSC p = withConsumption ConsumeNothing p
+  postfixGroup :: Parser (Bin', Group)
+  postfixGroup = noGap >>
+        ((JuxtaposeNoSpace,) <$> withSrc cParens)
+    <|> ((JuxtaposeNoSpace,) <$> withSrc cBrackets)
+    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cIdentifier))
 
-  postfixGroupNoSC :: Parser (Bin', Group)
-  postfixGroupNoSC =
-        ((JuxtaposeNoSpace,) <$> withSrc cParensNoSC)
-    <|> ((JuxtaposeNoSpace,) <$> withSrc cBracketsNoSC)
-    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cIdentifierNoSC))
+cIdentifier :: Parser Group'
+cIdentifier = CIdentifier <$> anyName
 
-  bracketNoSC :: Char -> Char -> Parser a -> Parser a
-  bracketNoSC l r p = charLexeme l >> mayBreak (sc >> p) <* char r
+cParens :: Parser Group'
+cParens = CParens <$> parens (commaSep cParenGroup)
 
-  cIdentifierNoSC :: Parser Group'
-  cIdentifierNoSC = noSC $ CIdentifier <$> anyName
+cBrackets :: Parser Group'
+cBrackets = CBrackets <$> brackets (commaSep cGroup)
 
-  cParensNoSC :: Parser Group'
-  cParensNoSC = CParens <$> bracketNoSC '(' ')' (cParenGroup `sepBy` sym ",")
-
-  cBracketsNoSC :: Parser Group'
-  cBracketsNoSC = CBrackets <$> bracketNoSC '[' ']' (commaSep cGroup)
+cBraces :: Parser Group'
+cBraces = CBrackets <$> braces (commaSep cGroup)
 
 -- A `PrecTable` is enough information to (i) remove or replace
 -- operators for special contexts, and (ii) build the input structure

@@ -1,57 +1,57 @@
 
 
-def checkFloatInUnitInterval (x:Float) : {Except} Float =
+def checkFloatInUnitInterval(x:Float) -> {Except} Float =
   assert $ x >= 0.0
   assert $ x <= 1.0
   x
 
-:p catch do assert False
+:p catch \. assert False
 > Nothing
 
-:p catch do assert True
+:p catch \. assert True
 > (Just ())
 
-:p catch do checkFloatInUnitInterval 1.2
+:p catch \. checkFloatInUnitInterval 1.2
 > Nothing
 
-:p catch do checkFloatInUnitInterval (-1.2)
+:p catch \. checkFloatInUnitInterval (-1.2)
 > Nothing
 
-:p catch do checkFloatInUnitInterval 0.2
+:p catch \. checkFloatInUnitInterval 0.2
 > (Just 0.2)
 
 :p yield_state 0 \ref.
-     catch do
+     catch \.
        ref := 1
        assert False
        ref := 2
 > 1
 
-:p catch do
+:p catch \.
   for i:(Fin 5).
     if ordinal i > 3
-      then throw ()
+      then throw()
       else 23
 > Nothing
 
-:p catch do
+:p catch \.
   for i:(Fin 3).
     if ordinal i > 3
-      then throw ()
+      then throw()
       else 23
 > (Just [23, 23, 23])
 
 -- Is this the result we want?
 :p yield_state zero \ref.
-     catch do
+     catch \.
        for i:(Fin 6).
          if (ordinal i `rem` 2) == 0
-           then throw ()
+           then throw()
            else ()
          ref!i := 1
 > [0, 1, 0, 1, 0, 1]
 
-:p catch do
+:p catch \.
      run_state 0 \ref.
        ref := 1
        assert False
@@ -59,9 +59,9 @@ def checkFloatInUnitInterval (x:Float) : {Except} Float =
 > Nothing
 
 -- https://github.com/google-research/dex-lang/issues/612
-def sashabug (h: Unit) : {Except} List Int =
+def sashabug(h: ()) -> {Except} List Int =
   yield_state mempty \results.
       results := (get results) <> AsList 1 [2]
 
-catch do (catch do sashabug ())
+catch \. (catch \. sashabug ())
 > (Just (Just (AsList 1 [2])))

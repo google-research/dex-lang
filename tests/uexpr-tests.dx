@@ -2,12 +2,12 @@
 :p 3 + (4 + 5)
 > 12
 
-def depId (a:Type, x:a) -> a = x
+def depId(a:Type, x:a) -> a = x
 
 :p depId Int 1
 > 1
 
-def returnFirstArg (a:Type, b:Type, x:a, y:b) -> a = x
+def returnFirstArg(a:Type, b:Type, x:a, y:b) -> a = x
 
 :p returnFirstArg Int Float 1 2.0
 > 1
@@ -15,17 +15,17 @@ def returnFirstArg (a:Type, b:Type, x:a, y:b) -> a = x
 :p 1.0 + 2.0
 > 3.
 
-def triple (x:Float) -> Float = x + x + x
+def triple(x:Float) -> Float = x + x + x
 
 :p triple 1.0
 > 3.
 
-def idExplicit (a:Type, x:a) -> a = x
+def idExplicit(a:Type, x:a) -> a = x
 
 :p idExplicit Int 1
 > 1
 
-def idImplicit (x:a) -> a given (a:Type) = x
+def idImplicit(x:a) -> a given (a:Type) = x
 :p idImplicit 1
 > 1
 
@@ -54,27 +54,27 @@ idImplicit2 : (given (a:Type), a) -> a = \x. x
 > Error: variable not in scope: x
 >
 > :p x + x
->    ^
+>    ^^
 
 idiv = 1
 > Error: variable already defined: idiv
 >
 > idiv = 1
-> ^^^^
+> ^^^^^
 
-def TyId (a:Type) -> Type = a
+def TyId(a:Type) -> Type = a
 :p
   x:(TyId Int) = 1
   x
 > 1
 
 :p
-  def TyId2 (a:Type) -> Type = a
+  def TyId2(a:Type) -> Type = a
   x:(TyId2 Int) = 1
   x
 > 1
 
-def tabId (x:n=>Int) -> n=>Int given (n|Ix) = for i. x[i]
+def tabId(x:n=>Int) -> n=>Int given (n|Ix) = for i. x[i]
 
 -- bug: this doesn't work if we split it across top-level decls
 :p
@@ -176,7 +176,7 @@ myPair = (1, 2.3)
       xsRef!i := ordinal i
 > [0, 1, 2]
 
-def passthrough (f:(a)->{|eff} b, x:a) -> {|eff} b
+def passthrough(f:(a)->{|eff} b, x:a) -> {|eff} b
     given (a, b, eff:Effects) =
   f x
 
@@ -208,13 +208,13 @@ def passthrough (f:(a)->{|eff} b, x:a) -> {|eff} b
 >   f : (aa:Type, aa) -> aa = \bb x. myId x
 >                             ^^^^^^^^^^^^^
 
-def myFst (p:(a,b)) -> a given (a, b) =
+def myFst(p:(a,b)) -> a given (a, b) =
   (x, _) = p
   x
 :p myFst (1,2)
 > 1
 
-def myOtherFst (pair:(a,b)) -> a given (a, b) =
+def myOtherFst(pair:(a,b)) -> a given (a, b) =
   (x, _) = pair
   x
 :p myOtherFst (1,2)
@@ -253,7 +253,7 @@ def myOtherFst (pair:(a,b)) -> a given (a, b) =
 
 id'' : (given (b:Type), b) -> b = id
 
-def eitherFloor (x:(Either Int Float)) -> Int = case x of
+def eitherFloor(x:(Either Int Float)) -> Int = case x of
   Left  i -> i
   Right f -> f_to_i f
 
@@ -285,7 +285,7 @@ def eitherFloor (x:(Either Int Float)) -> Int = case x of
 > (Solving for: [a, b])
 >
 >   [a, b] = [1, 2, 3]
->   ^^^^^^
+>   ^^^^^^^
 
 :p
   [[a, _], [_, d]] = [[1, 2], [3, 4]]
@@ -302,7 +302,7 @@ def eitherFloor (x:(Either Int Float)) -> Int = case x of
 > (Solving for: [a, b])
 >
 >   [a, b, c, d] = coerce_table (Fin 2, Fin 2) [1, 2, 3, 4]
->   ^^^^^^^^^^^^
+>   ^^^^^^^^^^^^^
 
 -- Needs delayed inference (can't verify Ix and reduce the type before we infer the hole).
 -- :p
@@ -310,7 +310,7 @@ def eitherFloor (x:(Either Int Float)) -> Int = case x of
 --   (a, b, c, d)
 -- > (0, (0, (0, 0)))
 
-def bug (n|Data) -> () =
+def bug(n|Data) -> () =
   for w':n.
     w : n = todo
     for i:(w..). ()
@@ -336,7 +336,7 @@ badDefinition = 4
 > Error: variable already defined: badDefinition
 >
 > badDefinition = 4
-> ^^^^^^^^^^^^^
+> ^^^^^^^^^^^^^^
 
 :p badDefinition
 > Error: ambiguous variable: badDefinition is defined:

@@ -5,7 +5,6 @@ import sort
 :p is_sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
 
-
 '### Lexical Sorting Tests
 
 :p "aaa" < "bbb"

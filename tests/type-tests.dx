@@ -153,13 +153,13 @@ MyPair : (Type) -> Type =
 
 
 -- TODO: put source annotation on effect for a better message here
-def fEff () -> {|a} a given (a) = todo
+def fEff() -> {|a} a given (a) = todo
 > Type error:
 > Expected: Type
 >   Actual: EffKind
 >
-> def fEff () -> {|a} a given (a) = todo
->                     ^
+> def fEff() -> {|a} a given (a) = todo
+>                    ^^
 
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
@@ -328,25 +328,25 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > :p (\x:Int. x) == (\x:Int. x)
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-def getFst1 (xs:n=>b) -> b given (n|Ix, b) =
+def getFst1(xs:n=>b) -> b given (n|Ix, b) =
   xs[from_ordinal 0]
 
 :p getFst1 [1,2,3]
 > 1
 
-def getFst2 (xs:n=>b) -> b given (n|Ix, b) =
+def getFst2(xs:n=>b) -> b given (n|Ix, b) =
   xs[from_ordinal 0]
 
 :p getFst2 [1,2,3]
 > 1
 
-def getFst3 (xs:n=>b) -> b  given (b, n|Ix) =
+def getFst3(xs:n=>b) -> b  given (b, n|Ix) =
   xs[from_ordinal 0]
 
 :p getFst3 [1,2,3]
 > 1
 
-def triRefIndex (ref:Ref h ((i':n)=>(..i')=>Float), i:n) -> Ref h ((..i)=>Float)
+def triRefIndex(ref:Ref h ((i':n)=>(..i')=>Float), i:n) -> Ref h ((..i)=>Float)
   given (h, n|Ix) (Data ((i':n)=>(..i')=>Float)) =
   %indexRef(ref, i)
 
@@ -369,7 +369,7 @@ def triRefIndex (ref:Ref h ((i':n)=>(..i')=>Float), i:n) -> Ref h ((..i)=>Float)
 id (for i:(Fin 2). for j:(..i). 1.0)
 > [[1.], [1., 1.]]
 
-def weakerInferenceReduction (l: (i:n)=>(..i)=>Float, j:n) -> ()  given (n|Ix) =
+def weakerInferenceReduction(l: (i:n)=>(..i)=>Float, j:n) -> ()  given (n|Ix) =
   for i:(..j).
     i' = inject(superset=n, i)
     for k:(..i').
@@ -408,7 +408,7 @@ c = [1, 2]
 
 -- Tests for type inference of table literals
 
-def mkEmpty (a|Data) -> (Fin 0)=>a = []
+def mkEmpty(a|Data) -> (Fin 0)=>a = []
 
 :t [0.0, 1.0]
 > ((Fin 2) => Float32)
@@ -419,7 +419,7 @@ def mkEmpty (a|Data) -> (Fin 0)=>a = []
 :t (coerce_table _ [0.0, 1.0]) :: (Fin 1, Fin 2)=>Float
 > ((Fin 1, Fin 2) => Float32)
 
-def uncurryTable (x: (Fin 2, Fin 2)=>a) -> (Fin 2)=>(Fin 2)=>a  given (a) =
+def uncurryTable(x: (Fin 2, Fin 2)=>a) -> (Fin 2)=>(Fin 2)=>a  given (a) =
   for i j. x[(i, j)]
 
 -- We should be able to infer the tuple type here
@@ -431,8 +431,8 @@ def uncurryTable (x: (Fin 2, Fin 2)=>a) -> (Fin 2)=>(Fin 2)=>a  given (a) =
 > ((Fin 2) => (Fin 2) => Nat)
 
 -- Make sure that the local type alias is unifiable with Int
-def GetInt (n: Int) -> Type = Int
-def ff (n : Int) -> Int =
+def GetInt(n: Int) -> Type = Int
+def ff(n : Int) -> Int =
   i = GetInt n
   the i 2
 
@@ -440,7 +440,7 @@ ff 0
 > 2
 
 -- The two local aliases for Fin n should be unifiable with each other and Fin n
-def q (n: Nat) -> (Fin n)=>Nat =
+def q(n: Nat) -> (Fin n)=>Nat =
   ix1 = Fin n
   x1 = for i:ix1. ordinal i
   ix2 = Fin n
@@ -478,7 +478,7 @@ q 5
 
 -- Make sure we fail gracefully when the annotated index set doesn't
 -- have a static size.
-def frob (_:()) -> () given (n) =
+def frob(_:()) -> () given (n) =
   [0.0, 1.0]::((Fin n)=>Float)
   ()
 > Type error:
@@ -494,7 +494,7 @@ def frob (_:()) -> () given (n) =
 
 -- foo is a function with all-implicit arguments (whether that's a
 -- good idea or not).
-def foo () ->> a=>Float given (a|Ix) =
+def foo() ->> a=>Float given (a|Ix) =
   for z:a. 1.0
 
 :t foo
@@ -517,7 +517,7 @@ foo : Fin 3 => Float = [1.0, 2.0, 3.0]
 > Error: variable already defined: foo
 >
 > foo : Fin 3 => Float = [1.0, 2.0, 3.0]
-> ^^^
+> ^^^^
 
 '### Tests for dependent pair syntax
 
@@ -539,10 +539,10 @@ if False
 
 '### Tests for dependent pair pattern match
 
-def LowerTriMat (n|Ix, v:Type) -> Type = (i:n)=>(..i)=>v
-def UpperTriMat (n|Ix, v:Type) -> Type = (i:n)=>(i..)=>v
+def LowerTriMat(n|Ix, v:Type) -> Type = (i:n)=>(..i)=>v
+def UpperTriMat(n|Ix, v:Type) -> Type = (i:n)=>(i..)=>v
 
-def transpose_ix (i:n, j:(i..)) -> (i:n &> ..i) given (n|Ix) =
+def transpose_ix(i:n, j:(i..)) -> (i:n &> ..i) given (n|Ix) =
   j' = inject(superset=n, j)
   i' = unsafe_project i
   (j' ,> i')

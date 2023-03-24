@@ -136,7 +136,7 @@ s = 1.0
    for i. xs[i] + 10
 > [12, 11, 10]
 
-def cumsumplus (xs:n=>Float) -> n=>Float given (n|Ix) =
+def cumsumplus(xs:n=>Float) -> n=>Float given (n|Ix) =
   snd $ scan 0.0 \i c.
     ans = c + xs[i]
     (ans, 1.0 + ans)
@@ -144,7 +144,7 @@ def cumsumplus (xs:n=>Float) -> n=>Float given (n|Ix) =
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2., 4., 7.]
 
-def cumsum2d (xs:n=>m=>a) -> n=>m=>a given (n|Ix, m|Ix, a|Add) =
+def cumsum2d(xs:n=>m=>a) -> n=>m=>a given (n|Ix, m|Ix, a|Add) =
   cumsum for i. cumsum xs[i]
 
 xs : (Fin 4)=>(Fin 3)=>Float = arb $ new_key 0
@@ -520,7 +520,7 @@ count = (w32_to_w64 (i_to_w32 608135816) .<<. 32) .|. (w32_to_w64 (i_to_w32 2242
       c
 > ([3., 2., 1., 0.], 4.)
 
-def eitherFloor (x:(Int `Either` Float)) -> Int = case x of
+def eitherFloor(x:(Int `Either` Float)) -> Int = case x of
   Left i  -> i
   Right f -> f_to_i $ floor f
 
@@ -569,7 +569,7 @@ Just 1 == Just 0
 -- Userspace-Bool breaks these
 
 -- -- Needed to avoid ambiguous type variables if both sides use the same constructor
--- def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
+-- def cmpEither(x:Int|Int) (y:Int|Int) : Bool = x == y
 
 -- :p cmpEither (Left 1) (Left 1)
 -- > True
@@ -708,7 +708,7 @@ def newtonSolve(tol:Float, f: (Float)->Float, x0:Float) -> Float =
   (f 5, w)
 > (7, 2.)
 
--- def add (n : Type) ?-> (a : n=>Float) (b : n=>Float) : n=>Float =
+-- def add(n : Type) ?-> (a : n=>Float) (b : n=>Float) : n=>Float =
 --   (tile (\t:(Tile n (Fin VectorWidth)). storeVector $ loadTile t a + loadTile t b)
 --         (\i:n. a.i + b.i))
 -- toAdd = for _:(Fin 10). 1.0
@@ -809,7 +809,7 @@ s1 = "hello world"
 -- > [[0], [1, 2], [3, 4, 5], [6, 7, 8, 9]]
 
 -- @noinline
-def fromLeftFloat (x:(Float `Either` Int)) -> Float =
+def fromLeftFloat(x:(Float `Either` Int)) -> Float =
   case x of
     Left x' -> x'
     Right _ -> error "this is an error"
@@ -822,27 +822,27 @@ def fromLeftFloat (x:(Float `Either` Int)) -> Float =
 > 1.2
 
 @noinline
-def f1 (x:Int) -> Int = x + 1
+def f1(x:Int) -> Int = x + 1
 
 @noinline
-def f2 (x:Int) -> Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
+def f2(x:Int) -> Int = f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ f1 $ x
 
 @noinline
-def f3 (x:Int) -> Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
+def f3(x:Int) -> Int = f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ f2 $ x
 
 @noinline
-def f4 (x:Int) -> Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
+def f4(x:Int) -> Int = f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ f3 $ x
 
 @noinline
-def f5 (x:Int) -> Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
+def f5(x:Int) -> Int = f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ f4 $ x
 
 @noinline
-def f6 (x:Int) -> Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
+def f6(x:Int) -> Int = f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ f5 $ x
 
 
 -- regression test for #1229 - checks that constraints and data args can be interleaved
 @noinline
-def interleave_args (x:Float, xs:n=>Float) -> Float given (n|Ix) =
+def interleave_args(x:Float, xs:n=>Float) -> Float given (n|Ix) =
   x + sum xs
 
 interleave_args(1.0, [2.0, 3.0])
@@ -872,7 +872,7 @@ interleave_args(1.0, [2.0, 3.0])
 :p intpow 2 17
 > 131072
 
-def f (x:Float) -> Float =
+def f(x:Float) -> Float =
   intpow x 2
 
 x2 = 3.1
@@ -908,7 +908,7 @@ interface AssociatedWithTwo(a:Type, c:Type)
   value2 : () -> Int
 
 instance AssociatedWithTwo(Int, Float)
-  def value2 () = 8
+  def value2() = 8
 
 -- TODO: the source location for this error message is a bit off since we added
 -- n-ary applications.
@@ -959,7 +959,7 @@ all $ for i:(Maybe (Fin 2)).
   i == (unsafe_from_ordinal (ordinal i))
 > True
 
-def all_prefixes (s:String)  -> List String =
+def all_prefixes(s:String)  -> List String =
   AsList(_, s') = s
   to_list for i. post_slice s' first_ix i
 
@@ -970,7 +970,7 @@ def all_prefixes (s:String)  -> List String =
 -- -- Regression test for https://github.com/google-research/dex-lang/issues/694
 -- data Thing = T {a: Float}
 
--- def scan_over (xs:n=>Float) -> n=>Float given (n|Ix) =
+-- def scan_over(xs:n=>Float) -> n=>Float given (n|Ix) =
 --   snd $ scan (T {a=1.0}) \i t.
 --     (T {a}) = t
 --     (T {a=a + xs[i]}, a)
@@ -1005,19 +1005,19 @@ first_ix :: (Fin 0)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0))
 >
 > first_ix :: (Fin 0)
-> ^^^^^^^^
+> ^^^^^^^^^
 
 first_ix :: (Fin 0 `Either` Fin 0)
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Either (Fin 0) (Fin 0)))
 >
 > first_ix :: (Fin 0 `Either` Fin 0)
-> ^^^^^^^^
+> ^^^^^^^^^
 
 first_ix :: (Fin 0, ())
 > Type error:Couldn't synthesize a class dictionary for: (NonEmpty (Fin 0, ()))
 >
 > first_ix :: (Fin 0, ())
-> ^^^^^^^^
+> ^^^^^^^^^
 
 
 -- Subset tests
@@ -1076,7 +1076,7 @@ Just f64_to_f
 -- from a case (this tickles ACase colliding with the code generated
 -- to print).  The @noinline defeats case-of-known-constructor.
 @noinline
-def id_bool (x:Bool) -> Bool = x
+def id_bool(x:Bool) -> Bool = x
 
 case (id_bool True) of
   True -> Just f64_to_f

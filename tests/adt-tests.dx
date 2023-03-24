@@ -51,7 +51,7 @@ MkMyPair(z1, MkMyPair(z2, z3)) = zz
 > [(1, 1), (3, 2), (5, 3)]
 
 data MyEither(a:Type, b:Type) =
-  MyLeft (a)
+  MyLeft(a)
   MyRight(b)
 
 x : MyEither Int Float = MyLeft 1
@@ -189,7 +189,7 @@ AsList(_, xsTab) = xsList
   (x, y)
 > (3, 4)
 
-def catLists (xs:List a, ys:List a) -> List a given (a) =
+def catLists(xs:List a, ys:List a) -> List a given (a) =
   AsList(nx, xs') = xs
   AsList(ny, ys') = ys
   nz = nx + ny
@@ -215,7 +215,7 @@ def catLists (xs:List a, ys:List a) -> List a given (a) =
 
 
 
-def listToTable2 (l: List a) -> (Fin (list_length l))=>a given (a) =
+def listToTable2(l: List a) -> (Fin (list_length l))=>a given (a) =
   AsList(_, xs) = l
   xs
 
@@ -231,7 +231,7 @@ l2 = AsList _ [1, 2, 3]
 :p sum $ listToTable2 l2
 > 6
 
-def zerosLikeList (l : List a) -> (Fin (list_length l))=>Float given (a) =
+def zerosLikeList(l: List a) -> (Fin (list_length l))=>Float given (a) =
   for i:(Fin $ list_length l). 0.0
 
 :p zerosLikeList l2
@@ -240,7 +240,7 @@ def zerosLikeList (l : List a) -> (Fin (list_length l))=>Float given (a) =
 data Graph(n|Ix, a:Type) =
   MkGraph(nodes:(n=>a), edges:(List (n, n)))
 
-def graphToAdjacencyMatrix (g:Graph n a) -> n=>n=>Bool given (n|Ix, a) =
+def graphToAdjacencyMatrix(g:Graph n a) -> n=>n=>Bool given (n|Ix, a) =
   MkGraph(nodes, AsList(_, edges)) = g
   init = for i j. False
   yield_state init \mRef.
@@ -271,7 +271,7 @@ data MySum =
 
 data MySum2 =
   Foo2
-  Bar2 (Fin 3 => Int)
+  Bar2(Fin 3 => Int)
 
 -- bug #348
 :p concat for i:(Fin 4). AsList _ [(Foo2, Foo2)]

@@ -30,7 +30,7 @@ f = \x. x + 10.
 
 :p f -1.0   -- parses as (-) f (-1.0)
 > Type error:
-> Expected: (Float32 -> Float32)
+> Expected: ((x:Float32) ->   Float32)
 >   Actual: Float32
 >
 > :p f -1.0   -- parses as (-) f (-1.0)
@@ -38,16 +38,6 @@ f = \x. x + 10.
 
 :p f (-1.0)
 > 9.
-
-'Lambdas can have specific arrow annotations.
-
-lam1 = \{n}. \x:(Fin n). ordinal x
-:t lam1
-> ((n:Nat) ?-> (Fin n) -> Nat)
-
-lam4 = \{n m}. (Fin n, Fin m)
-:t lam4
-> (Nat ?-> Nat ?-> (Type & Type))
 
 :p (
     1
@@ -59,7 +49,7 @@ lam4 = \{n m}. (Fin n, Fin m)
 :p
   xs = [1,2,3]
   for i.
-    if xs.i > 1
+    if xs[i] > 1
       then 0
       else 1
 > [1, 0, 0]
@@ -71,24 +61,14 @@ lam4 = \{n m}. (Fin n, Fin m)
       ref := get ref + 1
 > ((), 10)
 
-def myInt : Int = 1
-:p myInt
-> 1
-
-def myInt2 : {State Int} Int = 1
-> Syntax error: Nullary def can't have effects
->
-> def myInt2 : {State Int} Int = 1
-> ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 -- Check that a syntax error in a funDefLet doesn't try to reparse the
 -- whole definition as something it's not.
-def frob (x:Int) (y:Int) : + =
+def frob(x:Int, y:Int) -> + =
 
-> Parse error:86:30:
+> Parse error:66:29:
 >    |
-> 86 | def frob (x:Int) (y:Int) : + =
->    |                              ^
+> 66 | def frob(x:Int, y:Int) -> + =
+>    |                             ^
 > unexpected '='
 > expecting name or symbol name
 
@@ -96,35 +76,31 @@ def frob (x:Int) (y:Int) : + =
 for i.
 i
 
-> Parse error:97:1:
+> Parse error:77:1:
 >    |
-> 97 | i
+> 77 | i
 >    | ^
 > expecting end of line or space
 
 def (foo + bar) : Int = 6
 
-> Parse error:105:6:
->     |
-> 105 | def (foo + bar) : Int = 6
->     |      ^
+> Parse error:85:6:
+>    |
+> 85 | def (foo + bar) : Int = 6
+>    |      ^
 > unexpected 'f'
 > expecting symbol name
 
 'Data definitions allow but do not require type / kind annotations
 
-data MyPair1 a b = MkPair1 a b
+data MyPair1(a, b) = MkPair1(a, b)
 
-data MyPair2 a:Type b:Type = MkPair2 x:a y:b
-
-'which may be grouped with parentheses
-
-data MyPair3 (a:Type) (b:Type) = MkPair3 (x:a) (y:b)
+data MyPair2(a:Type, b:Type) = MkPair2(x:a, y:b)
 
 'Data definitions allow interleaving arguments and class constraints
 (regression test for Issue 1015)
 
-data TableInType n a [Ix n] table:(n=>a) =
+data TableInType(n|Ix, a, table:(n=>a)) =
   MkTableInType              -- Doesn't store any data except in the type!
 
 'Left arrow <- desugars to a continuation lambda
@@ -135,3 +111,83 @@ data TableInType n a [Ix n] table:(n=>a) =
   x := 4
   get x
 > 4
+
+'Check that we get reasonably helpful error messages if we try to write param lists
+without parens or with whitespace before the parens.
+
+
+data MyMaybe a =
+  MyNothing
+
+> Parse error:119:14:
+>     |
+> 119 | data MyMaybe a =
+>     |              ^
+> unexpected 'a'
+> expecting '=' or parameter list in parentheses (without preceding whitespace)
+data MyMaybe (a) =
+  MyNothing
+
+> Parse error:122:14:
+>     |
+> 122 | data MyMaybe (a) =
+>     |              ^
+> unexpected '('
+> expecting '=' or parameter list in parentheses (without preceding whitespace)
+data MyMaybe(a) =
+  MyNothing
+  MyJust a
+
+> Parse error:127:10:
+>     |
+> 127 |   MyJust a
+>     |          ^^
+> unexpected "a<newline>"
+> expecting end of input, end of line, or optional parameter list
+data MyMaybe(a) =
+  MyNothing
+  MyJust (a)
+
+> Parse error:131:10:
+>     |
+> 131 |   MyJust (a)
+>     |          ^^
+> unexpected "(a"
+> expecting end of input, end of line, or optional parameter list
+interface MyClass a
+  pass
+
+> Parse error:133:19:
+>     |
+> 133 | interface MyClass a
+>     |                   ^
+> expecting parameter list in parentheses (without preceding whitespace)
+instance MyClass Int
+  pass
+
+> Parse error:136:18:
+>     |
+> 136 | instance MyClass Int
+>     |                  ^
+> expecting '(' (without preceding whitespace)
+instance MyClass (Int)
+  pass
+
+> Parse error:139:18:
+>     |
+> 139 | instance MyClass (Int)
+>     |                  ^
+> expecting '(' (without preceding whitespace)
+def myFunction (x) = ()
+
+> Parse error:142:16:
+>     |
+> 142 | def myFunction (x) = ()
+>     |                ^
+> expecting parameter list in parentheses (without preceding whitespace)
+def myFunction x = ()
+> Parse error:144:16:
+>     |
+> 144 | def myFunction x = ()
+>     |                ^
+> expecting parameter list in parentheses (without preceding whitespace)

@@ -1,21 +1,21 @@
 
 :p
-   def m (ref:Ref h Int) -> {State h} Int given (h:Heap) = get ref
+   def m(ref:Ref h Int) -> {State h} Int given (h:Heap) = get ref
    run_state 2 m
 > (2, 2)
 
 :p
-   def m (ref:Ref h Int) -> {State h} () given (h:Heap) = ref := 3
+   def m(ref:Ref h Int) -> {State h} () given (h:Heap) = ref := 3
    run_state 0 m
 > ((), 3)
 
 :p
-   def m (ref:Ref h Int) -> {Read h} Int given (h:Heap) = ask ref
+   def m(ref:Ref h Int) -> {Read h} Int given (h:Heap) = ask ref
    with_reader 5 m
 > 5
 
 :p
-  def stateAction (ref:Ref h Float) -> {State h} () given (h:Heap) =
+  def stateAction(ref:Ref h Float) -> {State h} () given (h:Heap) =
      x = get ref
      ref := (x + 2.0)
      z = get ref
@@ -87,7 +87,7 @@ def myAction(w:Ref hw Float, r:Ref hr Float)
   run_accum (AddMonoid Float) \w1. run_accum (AddMonoid Float) \w2. m w1 w2
 > (((), 3.), 2.)
 
-def foom (s:Ref h ((Fin 3)=>Int)) -> {State h} () given (h:Heap) =
+def foom(s:Ref h ((Fin 3)=>Int)) -> {State h} () given (h:Heap) =
   s!(from_ordinal 0) := 1
   s!(from_ordinal 2) := 2
 
@@ -96,7 +96,7 @@ def foom (s:Ref h ((Fin 3)=>Int)) -> {State h} () given (h:Heap) =
 
 -- TODO: handle effects returning functions
 -- :p
---   def foo (x:Float) : Float =
+--   def foo(x:Float) : Float =
 --      f = withReader x \r.
 --            y = ask r
 --            \z. 100.0 * x + 10.0 * y + z
@@ -198,7 +198,7 @@ def effectsAtZero(f: (Int)->{|eff} ()) -> {|eff} () given (eff:Effects) =
 > False
 
 -- Test custom list monoid with accum
-def adjacencyMatrixToEdgeList (mat: n=>n=>Bool) -> List (n, n) given (n|Ix) =
+def adjacencyMatrixToEdgeList(mat: n=>n=>Bool) -> List (n, n) given (n|Ix) =
   yield_accum(ListMonoid((n,n))) \list.
     for idxs.
       (i, j) = idxs
