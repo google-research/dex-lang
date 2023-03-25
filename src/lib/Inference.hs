@@ -1256,7 +1256,10 @@ applySigmaAtom (SigmaUVar f) args = case f of
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
   UHandlerVar  _ -> error "not implemented"
-applySigmaAtom (SigmaFieldDef _ (Just _) (FieldProj _)) _ = error "not implemented"
+applySigmaAtom (SigmaFieldDef tyCon (Just arg) (FieldProj i)) args = do
+  TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
+  result <- normalizeNaryProj (projs!!i) arg
+  emitExprWithEffects $ App result args
 applySigmaAtom (SigmaFieldDef tyConName Nothing FieldNew) args =
   applyDataCon tyConName 0 args
 applySigmaAtom _ _ = error "not implemented"

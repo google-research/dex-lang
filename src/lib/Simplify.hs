@@ -497,6 +497,12 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
       Rename v' -> doInline v'
       SubstVal (Var v') -> doInline v'
       SubstVal x -> return x
+  -- This is a hack because we weren't normalize the unwrapping of
+  -- `unit_type_scale` in `plot.dx`. We need a better system for deciding how to
+  -- normalize and inline.
+  ProjectElt i x -> do
+    x' <- simplifyAtom x >>= normalizeProj i
+    dropSubst $ simplifyAtomAndInline x'
   _ -> simplifyAtom atom >>= \case
     Var v -> doInline v
     ans -> return ans

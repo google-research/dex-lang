@@ -2,16 +2,15 @@
 
 '## Fitness function
 
-rosenbrock : Float -> Float -> Float =
-  \x y. sq (1.0 - x) + 80.0*sq (y - x*x)
+def rosenbrock(x:Float, y:Float) -> Float =
+  sq (1.0 - x) + 80.0*sq (y - x*x)
 
 'We write one that uses vector for input
 
-rosenbrock2 : ((Fin 2)=>Float) -> Float =
-  \xs.
-    x = xs.(from_ordinal _ 0)
-    y = xs.(from_ordinal _ 1)
-    rosenbrock x y
+def rosenbrock2(xs: (Fin 2)=>Float) -> Float =
+  x = xs[from_ordinal 0]
+  y = xs[from_ordinal 1]
+  rosenbrock x y
 
 'Min should be at 1.0, 1.0
 

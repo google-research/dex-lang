@@ -2,7 +2,7 @@
 
 'We implement rejection sampling from a Binomial distribution using a uniform proposal.
 
-def rejectionSample {a} [Data a] (try: Key -> Maybe a) (k:Key) : a =
+def rejectionSample(try: (Key) -> Maybe a, k:Key) -> a  given (a|Data) =
   iter \i. case try $ hash k i of
     Nothing -> Continue
     Just x  -> Done x
@@ -11,7 +11,7 @@ Prob    = Float
 LogProb = Float
 
 -- log probability density of a Binomial distribution
-def logBinomialProb (n':Nat) (p:Prob) (counts':Nat) : LogProb =
+def logBinomialProb(n':Nat, p:Prob, counts':Nat) -> LogProb =
   n      = n_to_f n'
   counts = n_to_f counts'
   pSuccess = log p * counts
@@ -20,7 +20,7 @@ def logBinomialProb (n':Nat) (p:Prob) (counts':Nat) : LogProb =
                log1p (n))
   pSuccess + pFailure - normConst
 
-def trySampleBinomial (n:Nat) (p:Prob) (k:Key) : Maybe Nat =
+def trySampleBinomial(n:Nat, p:Prob, k:Key) -> Maybe Nat =
   [k1, k2] = split_key k
   proposal = f_to_n $ floor $ rand k1 * n_to_f (n + 1)
   if proposal > n
@@ -41,14 +41,15 @@ p = 0.4
 numSamples = 5000
 k0 = new_key 0
 
-rejectionSamples = rand_vec numSamples (rejectionSample $ trySampleBinomial n p) k0
+-- TODO: use currying sugar (or even better, effects)
+rejectionSamples = rand_vec numSamples (\k. rejectionSample (\k'. trySampleBinomial n p k') k) k0
 
 :p slice rejectionSamples 0 $ Fin 10
 > [5, 3, 3, 3, 4, 4, 5, 4, 3, 3]
 
 'The Binomial distribution has mean 4 and variance 2.4.
 
-def meanAndVariance {n} (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
+def meanAndVariance(xs:n=>Float) -> (Float, Float) given (n|Ix) = (mean xs, sq $ std xs)
 
 :p meanAndVariance $ map n_to_f rejectionSamples
 > (4.019, 2.434639)
@@ -57,12 +58,12 @@ def meanAndVariance {n} (xs:n=>Float) : (Float&Float) = (mean xs, sq $ std xs)
 
 'Alternatively, we can use inversion sampling.
 
-def binomialSample (n:Nat) (p:Prob) (k:Key) : Nat =
+def binomialSample(n:Nat, p:Prob, k:Key) -> Nat =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   ordinal $ categorical logprobs k
 
-inversionSamples = rand_vec numSamples (binomialSample n p) k0
+inversionSamples = rand_vec numSamples (\k. binomialSample n p k) k0
 
 :p slice inversionSamples 0 $ Fin 10
 > [6, 3, 3, 3, 4, 5, 1, 3, 3, 6]
@@ -72,7 +73,7 @@ inversionSamples = rand_vec numSamples (binomialSample n p) k0
 
 'The following variant is guaranteed to evaluate the CDF only once.
 
-def binomialBatch {a} [Ix a] (n:Nat) (p:Prob) (k:Key) : a => Nat =
+def binomialBatch(n:Nat, p:Prob, k:Key) -> a => Nat given (a|Ix) =
   m = n + 1
   logprobs = for i:(Fin m). logBinomialProb n p $ ordinal i
   map ordinal $ categorical_batch logprobs k

@@ -3,112 +3,113 @@
 import diagram
 import png
 
-data CompactSet a:Type =
-  Interval a a
-  Singleton a
+data CompactSet(a:Type) =
+  Interval(a, a)
+  Singleton(a)
 
-struct Scale (a:Type) =
-  mapping : a -> Maybe Float
+struct Scale(a:Type) =
+  mapping : (a) -> Maybe Float
   range   : List (CompactSet Float)  -- non-overlapping, ordered
 
-struct ScaledData (n:Type) [Ix n] (a:Type) =
+struct ScaledData(n|Ix, a:Type) =
   scale : Scale a
   dat   : n => a
 
-struct Plot (n:Type) [Ix n] (a:Type) (b:Type) (c:Type) =
+struct Plot(n|Ix, a:Type, b:Type, c:Type) =
   xs : ScaledData n a
   ys : ScaledData n b
   cs : ScaledData n c
 
-def Color : Type = Fin 3 => Float
+Color : Type = Fin 3 => Float
 
-def apply_scale {a} (s:Scale a) (x:a) : Maybe Float = s~mapping x
+def apply_scale(s:Scale a, x:a) -> Maybe Float given (a) = s.mapping x
 
-unit_type_scale : Scale Unit = Scale~new (\(). Just 0.0) (AsList _ [Singleton 0.0])
+unit_type_scale : Scale(()) = Scale.new (\_. Just 0.0) (AsList _ [Singleton 0.0])
 
-def project_unit_interval (x:Float) : Maybe Float =
+def project_unit_interval(x:Float) -> Maybe Float =
   case x >= 0.0 && x <= 1.0 of
     True  -> Just x
     False -> Nothing
 
-unit_interval_scale : Scale Float = Scale~new (project_unit_interval) (AsList _ [Interval 0.0 1.0])
+unit_interval_scale : Scale Float = Scale.new (project_unit_interval) (AsList _ [Interval 0.0 1.0])
 
-def map_scale {a b} (s:Scale a) (f: b -> a) : Scale b = Scale~new (\x. s~mapping (f x)) s~range
+def map_scale(s:Scale a, f: (b) -> a) -> Scale b given (a, b) = Scale.new (\x. s.mapping (f x)) s.range
 
-def float_scale (xmin:Float) (xmax:Float) : Scale Float =
+def float_scale(xmin:Float, xmax:Float) -> Scale Float =
   map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
 
-def get_scaled {a n} (sd:ScaledData n a) (i:n) : Maybe Float =
-  apply_scale sd~scale (sd~dat).i
+def get_scaled(sd:ScaledData n a, i:n) -> Maybe Float given (n|Ix, a) =
+  apply_scale sd.scale sd.dat[i]
 
 low_color  = [1.0, 0.5, 0.0]
 high_color = [0.0, 0.5, 1.0]
 
-def interpolate {a} [VSpace a] (low:a) (high:a) (x:Float) : a =
+def interpolate(low:a, high:a, x:Float) -> a given (a|VSpace) =
   x' = clip (0.0, 1.0) x
   (x' .* low) + ((1.0 - x') .* high)
 
-def make_rgb_color (c : Color) : HtmlColor =
-  for i. n_to_w8 $ f_to_n $ floor (255.0 * c.i)
+def make_rgb_color(c: Color) -> HtmlColor =
+  for i. n_to_w8 $ f_to_n $ floor (255.0 * c[i])
 
-def color_scale (x:Float) : HtmlColor =
+def color_scale(x:Float) -> HtmlColor =
   make_rgb_color $ interpolate low_color high_color x
 
-def plot_to_diagram {a b c n} (plot:Plot n a b c) : Diagram =
+def plot_to_diagram(plot:Plot n a b c) -> Diagram given (a, b, c, n|Ix) =
   points = concat_diagrams for i.
-    x = get_scaled plot~xs i
-    y = get_scaled plot~ys i
-    c = get_scaled plot~cs i
+    x = get_scaled plot.xs i
+    y = get_scaled plot.ys i
+    c = get_scaled plot.cs i
     -- TODO: nested may-fail patterns would make this much better
     case x of
       Just x' -> case y of
         Just y' -> case c of
-          Just c' ->
-            point_diagram |> move_xy (x', y') |> set_stroke_color (color_scale c' )
+          Just c' -> point_diagram | move_xy(x', y') | set_stroke_color(color_scale c')
           Nothing -> mempty
         Nothing -> mempty
       Nothing -> mempty
-  boundingBox = move_xy (0.5, 0.5) $ rect 1.0 1.0
+  boundingBox = move_xy(rect 1.0 1.0, 0.5, 0.5)
   boundingBox <> points
 
-def show_plot {a b c n} (plot:Plot n a b c) : String =
-  render_svg (plot_to_diagram plot) ((0.0, 0.0), (1.0, 1.0))
+def show_plot(plot:Plot n a b c) -> String given (a, b, c, n|Ix) =
+  render_svg (plot_to_diagram plot) (Point.new 0.0 0.0, Point.new 1.0 1.0)
 
-def blank_data {n} [Ix n] : ScaledData n Unit =
-  ScaledData~new unit_type_scale (for i. ())
+def blank_data() ->> ScaledData n () given (n|Ix) =
+  ScaledData.new unit_type_scale (for i. ())
 
-def blank_plot {n} [Ix n] : Plot n Unit Unit Unit =
-  Plot~new blank_data blank_data blank_data
+def blank_plot() ->> Plot n () () () given (n|Ix) =
+  Plot.new blank_data blank_data blank_data
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
-def auto_scale {n} (xs:n=>Float) : ScaledData n Float =
+def auto_scale(xs:n=>Float) -> ScaledData n Float given (n|Ix) =
   max = maximum xs
   min = minimum xs
   -- Add 10% padding away from the plot area
   space = (max - min) * 0.05
   padding = maximum [space, max * 0.001, 0.000001]
-  ScaledData~new (float_scale (min - padding) (max + padding)) xs
+  ScaledData.new (float_scale (min - padding) (max + padding)) xs
 
-def set_x_data {n a b c new} (xs:ScaledData n new) (plot:Plot n a b c) : Plot n new b c =
+def set_x_data(plot:Plot n a b c, xs:ScaledData n new) -> Plot n new b c given (n|Ix, a, b, c, new) =
   -- We can't use `setAt` here because we're changing the type
-  Plot~new xs plot~ys plot~cs
+  Plot.new xs plot.ys plot.cs
 
-def set_y_data {n a b c new} (ys:ScaledData n new) (plot:Plot n a b c) : Plot n a new c =
-  Plot~new plot~xs ys plot~cs
+def set_y_data(plot:Plot n a b c, ys:ScaledData n new) -> Plot n a new c given (n|Ix, a, b, c, new) =
+  Plot.new plot.xs ys plot.cs
 
-def set_c_data {n a b c new} (cs:ScaledData n new) (plot:Plot n a b c) : Plot n a b new =
-  Plot~new plot~xs plot~ys cs
+def set_c_data(plot:Plot n a b c, cs:ScaledData n new) -> Plot n a b new given (n|Ix, a, b, c, new) =
+  Plot.new plot.xs plot.ys cs
 
-def xy_plot {n} (xs:n=>Float) (ys:n=>Float) : Plot n Float Float Unit =
-  blank_plot |> set_x_data (auto_scale xs) |> set_y_data (auto_scale ys)
+def xy_plot(xs:n=>Float, ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
+  blank_plot |
+    set_x_data (auto_scale xs) |
+    set_y_data (auto_scale ys)
 
-def xyc_plot {n} (xs:n=>Float) (ys:n=>Float) (cs:n=>Float) : Plot n Float Float Float =
-  blank_plot |>
-    set_x_data (auto_scale xs) |>
-    set_y_data (auto_scale ys) |>
+def xyc_plot(xs:n=>Float, ys:n=>Float, cs:n=>Float) -> Plot n Float Float Float given (n|Ix) =
+  blank_plot |
+    set_x_data (auto_scale xs) |
+    set_y_data (auto_scale ys) |
     set_c_data (auto_scale cs)
 
-def y_plot {n} (ys:n=>Float) : Plot n Float Float Unit =
+def y_plot(ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
   xs = for i. n_to_f $ ordinal i
   xy_plot xs ys
 
@@ -118,12 +119,16 @@ def y_plot {n} (ys:n=>Float) : Plot n Float Float Unit =
 '## Heatmap-style plots
 
 -- TODO: scales
-def matshow {n m} (img:n=>m=>Float) : Html =
-  low  = minimum  $ for (i,j). img.i.j
-  high = maximum $ for (i,j). img.i.j
+def matshow(img:n=>m=>Float) -> Html given (n|Ix, m|Ix) =
+  low  = minimum  $ for p.
+    (i, j) = p
+    img[i,j]
+  high = maximum $ for p.
+    (i, j) = p
+    img[i,j]
   range = high - low
   img_to_html $ make_png for i j.
     x = if range == 0.0
       then float_to_8bit $ 0.5
-      else float_to_8bit $ (img.i.j - low) / range
+      else float_to_8bit $ (img[i,j] - low) / range
     [x, x, x]

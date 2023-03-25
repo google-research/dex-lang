@@ -12,18 +12,18 @@
 
 'To compute $\pi$, randomly sample points in the first quadrant unit square to estimate the $\frac{A_{quadrant}}{A_{square}}$ ratio. Then, multiply by $4$.
 
-def estimatePiArea (key:Key) : Float =
+def estimatePiArea(key:Key) -> Float =
   [k1, k2] = split_key key
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0
   4.0 * b_to_f inBounds
 
-def estimatePiAvgVal (key:Key) : Float =
+def estimatePiAvgVal(key:Key) -> Float =
   x = rand key
   4.0 * sqrt (1.0 - sq x)
 
-def meanAndStdDev (n:Nat) (f: Key -> Float) (key:Key) : (Float & Float) =
+def meanAndStdDev(n:Nat, f: (Key) -> Float, key:Key) -> (Float, Float) =
   samps = for i:(Fin n). many f key i
   (mean samps, std samps)
 
