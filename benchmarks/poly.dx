@@ -3,7 +3,7 @@ n = if dex_test_mode() then 1000 else 100000
 a = for i:(Fin n). n_to_f $ ordinal i
 
 %bench "poly"
-res = for i. evalpoly [0.0, 1.0, 2.0, 3.0, 4.0] a.i
+res = for i. evalpoly [0.0, 1.0, 2.0, 3.0, 4.0] a[i]
 >
 > poly
 > Compile time: 44.950 ms

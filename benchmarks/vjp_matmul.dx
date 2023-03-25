@@ -3,11 +3,11 @@ n = if dex_test_mode() then 10 else 500
 m1 = rand_mat n n randn (new_key 0)
 m2 = rand_mat n n randn (new_key 1)
 
-def mmp' {l m n} (m1:l=>m=>Float) (m2:m=>n=>Float) : l=>n=>Float =
-  snd (vjp ((**) (transpose m1)) (for _ _. 0.0)) m2
+def mmp'(m1:l=>m=>Float, m2:m=>n=>Float) -> l=>n=>Float given (l|Ix, m|Ix, n|Ix) =
+  snd(vjp(\m. transpose(m1) ** m, for _ _. 0.0))(m2)
 
 %bench "vjp_matmul"
-res = mmp' m1 m2
+res = mmp'(m1, m2)
 >
 > vjp_matmul
 > Compile time: 130.231 ms
