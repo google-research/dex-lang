@@ -5,9 +5,9 @@
 import parser
 
 data Image =
-  MkImage rows:Nat cols:Nat pixels:(Fin rows => Fin cols => Fin 3 => Word8)
+  MkImage(rows:Nat, cols:Nat, pixels:(Fin rows => Fin cols => Fin 3 => Word8))
 
-def parse_p6 : Parser Image = MkParser \h.
+parse_p6 : Parser Image = MkParser \h.
   -- Loads a raw PPM file in P6 format.
   -- The header will look something like:
   --   P6
@@ -29,6 +29,6 @@ def parse_p6 : Parser Image = MkParser \h.
         parse h parse_any
   MkImage rows cols pixels
 
-def load_image_p6 (filename:String) : Maybe Image =
-  image_raw = unsafe_io do read_file filename
+def load_image_p6(filename:String) -> Maybe Image =
+  image_raw = unsafe_io \. read_file filename
   run_parser_partial image_raw parse_p6
