@@ -1629,7 +1629,10 @@ inferClassDef
   -> [UType i']
   -> InfererM i o (ClassDef o)
 inferClassDef className methodNames paramBs methods = do
-  let paramNames = nestToList (\(WithExpl _ (UAnnBinder b _ _)) -> Just $ uBinderSourceName b) paramBs
+  let paramNames = catMaybes $ nestToList
+        (\(WithExpl expl (UAnnBinder b _ _)) -> case expl of
+             Inferred _ Synth -> Nothing
+             _ -> Just $ Just $ uBinderSourceName b) paramBs
   ab <- withRoleUBinders paramBs \_ -> do
      ListE <$> forM methods \m -> do
        checkUType m >>= \case

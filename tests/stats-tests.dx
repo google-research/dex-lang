@@ -40,22 +40,22 @@ ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 -- Log-sum-exp
 
 Exp (-infinity) + Exp (-infinity)
-> (Exp -inf)
+> (LogSpace.new -inf)
 
 Exp infinity + Exp infinity
-> (Exp inf)
+> (LogSpace.new inf)
 
 ls_sum [Exp (-infinity), Exp (-infinity)]
-> (Exp -inf)
+> (LogSpace.new -inf)
 
 ls_sum [Exp (infinity), Exp (infinity)]
-> (Exp inf)
+> (LogSpace.new inf)
 
 Exp infinity + Exp (nan)
-> (Exp nan)
+> (LogSpace.new nan)
 
 ls_sum [Exp (-infinity), Exp nan]
-> (Exp nan)
+> (LogSpace.new nan)
 
 ln $ Exp nan
 > nan
@@ -95,7 +95,7 @@ quantile (Bernoulli.new 0.6) 0.39 == False
 quantile (Bernoulli.new 0.6) 0.41 == True
 > True
 
-rand_vec 5 (draw $ Bernoulli.new 0.6) (new_key 0) :: Fin 5=>Bool
+rand_vec 5 (\k. draw (Bernoulli.new 0.6) k) (new_key 0) :: Fin 5=>Bool
 > [False, True, True, True, True]
 
 -- binomial
@@ -124,7 +124,7 @@ ln (survivor (Binomial.new 10 0.4) 7) ~~ -4.398599
 quantile (Binomial.new 10 0.4) 0.5 == 4
 > True
 
-rand_vec 5 (draw $ Binomial.new 10 0.4) (new_key 0) :: Fin 5=>Nat
+rand_vec 5 (\k. draw (Binomial.new 10 0.4) k) (new_key 0) :: Fin 5=>Nat
 > [1, 0, 7, 6, 7]
 
 -- exponential
@@ -147,7 +147,7 @@ ln (survivor (Exponential.new 2.0) 3.0) ~~ -6.0
 quantile (Exponential.new 2.0) 0.5 ~~ 0.3465736
 > True
 
-rand_vec 5 (draw $ Exponential.new 2.0) (new_key 0) :: Fin 5=>Float
+rand_vec 5 (\k. draw (Exponential.new 2.0) k) (new_key 0) :: Fin 5=>Float
 > [1.021143, 0.1418202, 0.09321166, 0.2130168, 0.4305491]
 
 -- geometric
@@ -188,21 +188,21 @@ ln (density (Geometric.new 1) 1) ~~ 0.0
 ln (density (Geometric.new 1) 2) == -infinity
 > True
 
-rand_vec 5 (draw $ Geometric.new 0.1) (new_key 0) :: Fin 5=>Nat
+rand_vec 5 (\k. draw (Geometric.new 0.1) k) (new_key 0) :: Fin 5=>Nat
 > [20, 3, 2, 5, 9]
 
 -- normal
 
-ln (density (Normal 1.0 2.0) 3.0) ~~ -2.112086
+ln (density (Normal.new 1.0 2.0) 3.0) ~~ -2.112086
 > True
 
-rand_vec 5 (draw $ Normal 1.0 2.0) (new_key 0) :: Fin 5=>Float
+rand_vec 5 (\k. draw (Normal.new 1.0 2.0) k) (new_key 0) :: Fin 5=>Float
 > [-1.93355, 4.198111, 0.5292515, 0.01886255, 2.921813]
 
-ln (cumulative (Normal 1.0 2.0) 0.5) ~~ -0.9130617
+ln (cumulative (Normal.new 1.0 2.0) 0.5) ~~ -0.9130617
 > True
 
-ln (survivor (Normal 1.0 2.0) 0.1) ~~ -0.3950523
+ln (survivor (Normal.new 1.0 2.0) 0.1) ~~ -0.3950523
 > True
 
 -- poisson
@@ -225,7 +225,7 @@ ln (survivor (Poisson.new 5.0) 8) ~~ -2.686872
 quantile (Poisson.new 5.0) 0.7 == 6
 > True
 
-rand_vec 5 (draw $ Poisson.new 5.0) (new_key 0) :: Fin 5=>Nat
+rand_vec 5 (\k. draw (Poisson.new 5.0) k) (new_key 0) :: Fin 5=>Nat
 > [4, 4, 2, 2, 7]
 
 -- uniform
@@ -242,7 +242,7 @@ ln (survivor (Uniform.new 2.0 5.0) 3.5) ~~ -0.6931472
 quantile (Uniform.new 2.0 5.0) 0.2 ~~ 2.6
 > True
 
-rand_vec 5 (draw $ Uniform.new 2.0 5.0) (new_key 0) :: Fin 5=>Float
+rand_vec 5 (\k. draw (Uniform.new 2.0 5.0) k) (new_key 0) :: Fin 5=>Float
 > [4.610805, 2.740888, 2.510233, 3.040717, 3.731907]
 
 
