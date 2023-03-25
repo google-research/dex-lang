@@ -8,25 +8,25 @@ look different.
 
 '## Math
 
-def truncate (x: Float): Float =
+def truncate(x: Float) -> Float =
   case x < 0.0 of
     True -> -floor(-x)
     False -> floor x
 
 -- A mod that matches np.mod and python mod.
-def pmod (x: Float) (y: Float): Float =
+def pmod(x: Float, y: Float) -> Float =
   x - floor(x / y) * y
 
 -- A mod that matches np.fmod and c fmod.
-def fmod (x: Float) (y: Float): Float =
+def fmod(x: Float, y: Float) -> Float =
   x - truncate (x / y) * y
 
-def Vec (dim:Type) [Ix dim] : Type = dim=>Float
+def Vec(dim|Ix) -> Type = dim=>Float
 
-def sq_norm {dim} (r: Vec dim) : Float =
-  sum $ for i. r.i * r.i
+def sq_norm(r: Vec dim) -> Float given (dim|Ix) =
+  sum $ for i. r[i] * r[i]
 
-def norm {dim} (r: Vec dim) : Float =
+def norm(r: Vec dim) -> Float given (dim|Ix) =
   sqrt $ sq_norm r
 
 '## Useful Quantities
@@ -35,41 +35,41 @@ def norm {dim} (r: Vec dim) : Float =
 such that the given number of particles will fill it with the given
 density.
 
-def box_size_at_number_density (particle_count: Int) (density: Float) (dim: Int) : Float =
+def box_size_at_number_density(particle_count: Int, density: Float, dim: Int) -> Float =
   pow ((i_to_f particle_count) / density) (1.0 / (i_to_f dim))
 
 '## Spaces
 
-def Displacement (dim:Type) : Type = Vec dim -> Vec dim -> Vec dim
-def Shift        (dim:Type) : Type = Vec dim -> Vec dim -> Vec dim
+def Displacement(dim|Ix) -> Type = (Vec dim, Vec dim) -> Vec dim
+def Shift(dim|Ix) -> Type = (Vec dim, Vec dim) -> Vec dim
 
-def free_displacement {dim} : Displacement dim =
+def free_displacement() ->> Displacement dim given (dim|Ix) =
   \r_1 r_2. r_1 - r_2
 
-def free_shift {dim} : Shift dim =
+def free_shift() ->> Shift dim given (dim|Ix) =
   \r dr. r + dr
 
-def periodic_wrap {dim} (box: Float) (dr: dim=>Float) : (dim=>Float) =
-  for i. (pmod (dr.i + box / 2.0) box) - box / 2.0
+def periodic_wrap(box: Float, dr: dim=>Float) -> (dim=>Float) given (dim|Ix) =
+  for i. (pmod (dr[i] + box / 2.0) box) - box / 2.0
 
-def periodic_displacement {dim} (box:Float) : Displacement dim =
+def periodic_displacement(box:Float) -> Displacement dim given (dim|Ix) =
   \r_1 r_2. periodic_wrap box (r_1 - r_2)
 
-def periodic_shift {dim} (box:Float) : Shift dim =
-  \r dr. for i. pmod (r.i + dr.i) box
+def periodic_shift(box:Float) -> Shift dim given (dim|Ix) =
+  \r dr. for i. pmod (r[i] + dr[i]) box
 
 '## Energy Functions
 
-def Energy (n: Type) (dim: Type) : Type = (n=>Vec dim) -> Float
+def Energy(n|Ix, dim|Ix) -> Type = (n=>Vec dim) -> Float
 
 'The "soft-sphere" energy, as a function of the displacement `r`.
 
-def soft_sphere (ε: Float) (α: Float) (σ: Float) (r: Float) : Float =
+def soft_sphere(ε: Float, α: Float, σ: Float, r: Float) -> Float =
   case r < σ of
     True  -> ε / α * pow (1 - r / σ) α
     False -> 0.0
 
-def harmonic_soft_sphere (sigma:Float) (r:Float) : Float =
+def harmonic_soft_sphere(sigma:Float) -> (Float) -> Float = \r.
   soft_sphere 1.0 2.0 sigma r
 
 'Here we have a naive pairwise energy function constructor, that
@@ -77,48 +77,43 @@ promotes a two-particle energy to a whole-system energy by just
 applying it to every pair of distinct particles.  We start with this
 to have something to test with.
 
-def pair_energy {dim n}
-  (energy: Float -> Float)
-  (displacement: Displacement dim)
-  (r: n=>Vec dim)
-  : Float =
+def pair_energy(
+  energy: (Float) -> Float,
+  displacement: Displacement dim,
+  r: n=>Vec dim
+  ) -> Float given (n|Ix, dim|Ix) =
   sum $ for i. sum for j:(..<i).
-    energy $ norm $ displacement r.i r.(inject _ j)
+    energy $ norm $ displacement r[i] r[inject j]
 
 '## Minimization Functions
 
 'Now we develop the FIRE Descent algorithm.
 
-data FireDescentState n:Type dim:Type [Ix n, Ix dim] = MkFireDescentState {
-     R:     (n=>Vec dim) &
-     V:     (n=>Vec dim) &
-     F:     (n=>Vec dim) &
-     dt:    Float        &
-     alpha: Float        &
-     n_pos: Int
-}
+struct FireDescentState(n|Ix, dim|Ix) =
+  R:     (n=>Vec dim)
+  V:     (n=>Vec dim)
+  F:     (n=>Vec dim)
+  dt:    Float
+  alpha: Float
+  n_pos: Int
 
-def get_position {dim n} (state: FireDescentState n dim) : (n=>Vec dim) =
-  (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
-  R
-
-def fire_descent_init {dim n}
-  (dt: Float)
-  (alpha: Float)
-  (energy: Energy n dim)
-  (r: n=>Vec dim)
-  : FireDescentState n dim =
+def fire_descent_init(
+  dt: Float,
+  alpha: Float,
+  energy: Energy(n, dim),
+  r: n=>Vec dim
+  ) -> FireDescentState n dim given (n|Ix, dim|Ix) =
   force = \rp. -(grad energy) rp
   V = for i:n j:dim. 0.0
   F = force r
   n_pos: Int = 0
-  MkFireDescentState {R=r, V, F, dt, alpha, n_pos}
+  FireDescentState.new(r, V, F, dt, alpha, n_pos)
 
-def fire_descent_step {dim n}
-  (shift: Shift dim)
-  (energy: Energy n dim)
-  (state: FireDescentState n dim)
-  : FireDescentState n dim =
+def fire_descent_step(
+  shift: Shift dim,
+  energy: Energy n dim,
+  state: FireDescentState n dim
+  ) -> FireDescentState n dim given (n|Ix, dim|Ix) =
   -- Constants that parameterize the FIRE algorithm.
   -- TODO: Thread these constants through somehow.
   -- dougalm@ is there a canonical way to do this?
@@ -135,22 +130,24 @@ def fire_descent_step {dim n}
   force = \r. -(grad energy) r
 
   -- FIRE algorithm.
-  (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
-
+  -- (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
+  dt = state.dt
+  alpha = state.alpha
+  n_pos = state.n_pos
   -- Do a Velocity-Verlet step.
-  R = for i. shift R.i (V.i *. dt + F.i *. pow dt 2)
-  F_old = F
+  R = for i. shift state.R[i] (state.V[i] *. dt + state.F[i] *. pow dt 2)
+  F_old = state.F
   F = force R
-  V = V + dt * 0.5 .* (F_old + F)
+  V = state.V + dt * 0.5 .* (F_old + F)
 
   -- Rescale the velocity.
-  F_norm = sqrt $ sum for (i, j). pow F.i.j 2
-  V_norm = sqrt $ sum for (i, j). pow V.i.j 2
+  F_norm = sqrt $ sum $ sum for i j. pow F[i, j] 2
+  V_norm = sqrt $ sum $ sum for i j. pow V[i, j] 2
 
   V = V + alpha .* (F *. V_norm / (F_norm + ε) - V)
 
   -- Check whether the force is aligned with the velocity.
-  FdotV = sum for (i, j). F.i.j * V.i.j
+  FdotV = sum $ sum for i j. F[i, j] * V[i, j]
 
   -- Decide whether to increase the speed of the simulation or reduce it.
   (n_pos, dt, alpha) = if FdotV >= 0.0
@@ -161,7 +158,7 @@ def fire_descent_step {dim n}
     else (0, dt * f_dec, alpha_start)
   V = if FdotV >= 0.0 then V else zero
 
-  MkFireDescentState { R, V, F, dt, alpha, n_pos }
+  FireDescentState.new(R, V, F, dt, alpha, n_pos)
 
 '## Drawing
 
@@ -173,9 +170,9 @@ disk of given size.
 
 TwoDimensions = Fin 2
 
-def draw_system {n} radius (r: n=>Vec TwoDimensions) : Diagram =
+def draw_system(radius, r: n=>Vec TwoDimensions) -> Diagram given (n|Ix) =
   disks = concat_diagrams for i.
-    circle radius |> move_xy (r.i.(0 @ TwoDimensions), r.i.(1 @ TwoDimensions))
+    circle radius | move_xy(r[i, (0 @ TwoDimensions)], r[i, (1 @ TwoDimensions)])
   disks
 
 '## Example
@@ -194,16 +191,16 @@ R_init_small = rand_mat N_small d (\k. L_small * rand k) (new_key 0)
 'The initial state of our random system
 
 %time
-:html render_svg (draw_system 0.5 R_init_small) ((0.0, 0.0), (L_small, L_small))
+:html render_svg (draw_system 0.5 R_init_small) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
 > <html output>
 >
 > Compile time: 309.318 ms
-> Run time:     17.076 ms 
+> Run time:     17.076 ms
 
 'Define energy function.  Note the `preiodic_displacement`, which means
 our system will be evolving on a torus.
 
-def energy {n d} (pos: n=>d=>Float) : Float
+def energy(pos: n=>d=>Float) -> Float given (n|Ix, d|Ix)
   = pair_energy (harmonic_soft_sphere 1.0) (periodic_displacement L_small) pos
 
 'Here's the initial energy we compute for our system.
@@ -221,7 +218,7 @@ state_small = fire_descent_init 0.1 0.1 energy R_init_small
 'and test one step of minimization.  The energy decreases from the
 initial, as expected:
 
-energy $ get_position $ fire_descent_step free_shift energy state_small
+energy $ fire_descent_step(free_shift, energy, state_small).R
 > 71.78407
 
 'Now we can test that our code basically works by running 100 steps of
@@ -230,10 +227,10 @@ minimization.
 %time
 (state_small', energies) = scan state_small \i:(Fin 100) s.
   s' = fire_descent_step (periodic_shift L_small) energy s
-  (s', energy $ get_position s')
+  (s', energy $ s'.R)
 >
 > Compile time: 698.365 ms
-> Run time:     942.147 ms 
+> Run time:     942.147 ms
 
 'Here's how the energy decreases over time.
 
@@ -242,16 +239,16 @@ minimization.
 > <html output>
 >
 > Compile time: 724.795 ms
-> Run time:     3.076 ms 
+> Run time:     3.076 ms
 
 'Here's what the system looks like after minimization.
 
 %time
-:html render_svg (draw_system 0.5 (get_position state_small')) ((0.0, 0.0), (L_small, L_small))
+:html render_svg (draw_system 0.5 (state_small'.R)) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
 > <html output>
 >
 > Compile time: 318.742 ms
-> Run time:     14.919 ms 
+> Run time:     14.919 ms
 
 '## Neighbors optimization
 
@@ -276,16 +273,16 @@ bound for the list's size.
 
 -- TODO Can we encapsulate this BoundedList type as a `data` and still
 -- define in-place mutation operations on it?
-def BoundedList n [Ix n] a [Data a] = (n & (n => a))
+def BoundedList(n|Ix, a|Data) -> Type = (n, (n => a))
 
-def unsafe_next_index {n} [Ix n] (ix:n) : n =
-  unsafe_from_ordinal n $ ordinal ix + 1
+def unsafe_next_index(ix:n) -> n given (n|Ix)  =
+  unsafe_from_ordinal $ ordinal ix + 1
 
-def empty_bounded_list {n a} [Ix n, Data a] (dummy_val: a) : BoundedList n a =
-  (unsafe_from_ordinal _ 0, for _. dummy_val)
+def empty_bounded_list(dummy_val: a) -> BoundedList n a given (a|Data, n|Ix) =
+  (unsafe_from_ordinal 0, for _. dummy_val)
 
 -- The point of a `BoundedList` is O(1) push by in-place mutation
-def bd_push {h n a} [Ix n] (lst_ref: Ref h (BoundedList n a)) (x: a) : {State h} Unit =
+def bd_push(lst_ref: Ref h (BoundedList n a), x: a) -> {State h} () given (h, a|Data, n|Ix) =
   sz_ref = fst_ref lst_ref
   sz = get sz_ref
   buf_ref = snd_ref lst_ref
@@ -297,46 +294,47 @@ def bd_push {h n a} [Ix n] (lst_ref: Ref h (BoundedList n a)) (x: a) : {State h}
       todo -- throw ()
 
 -- Once we're done pushing, we can compact a `BoundedList` into a standard `List`.
-def as_list {n a} (lst: BoundedList n a) : List a =
+def as_list(lst: BoundedList n a) -> List a given (a|Data, n|Ix) =
   (lim, buf) = lst
   n_result = ordinal lim
-  AsList _ $ for i:(Fin n_result). buf.(unsafe_from_ordinal _ $ ordinal i)
+  AsList _ $ for i:(Fin n_result). buf[unsafe_from_ordinal $ ordinal i]
 
 '### Cell list
 
 'We define a single index for the whole grid.
 
-def GridIx dim grid_size [Ix dim] = dim => (Fin grid_size)
+def GridIx(dim|Ix, grid_size) -> Type = dim => (Fin grid_size)
 
 'A cell list is now just a `BoundedList` of the (indices of) the atoms
 that appear in each cell in the grid.
 
-def CellTable dim grid_size bucket_size atom_ix [Ix dim] [Data atom_ix] =
+def CellTable(dim|Ix, grid_size, bucket_size, atom_ix|Data) -> Type =
   GridIx dim grid_size => BoundedList (Fin bucket_size) atom_ix
 
 -- Compute the cell an atom should go into.
-def target_cell {dim grid_size}
-  (cell_size: Float) (atom: Vec dim) : GridIx dim grid_size =
-  for dim. from_ordinal _ $ f_to_n $ atom.dim / cell_size
+def target_cell(cell_size: Float, atom: Vec dim)
+  -> GridIx dim grid_size given (dim|Ix, grid_size) =
+  for dim. from_ordinal $ f_to_n $ atom[dim] / cell_size
 
 -- A traversal of an atom array together with target cell.
 -- We abstract this because we will use it twice.
-def traverse_cells {dim atom_ix eff}
-  [Ix atom_ix] grid_size cell_size
-  (atoms: atom_ix => Vec dim)
-  (action: atom_ix -> (GridIx dim grid_size) -> {|eff} Unit)
-  : {|eff} Unit =
+def traverse_cells(
+  grid_size, cell_size,
+  atoms: atom_ix => Vec dim,
+  action: (atom_ix, GridIx(dim, grid_size)) -> {|eff} ()
+  ) -> {|eff} () given (dim|Ix, atom_ix|Ix, eff) =
   for_ ix.
-    cell = target_cell cell_size atoms.ix
+    cell = target_cell cell_size atoms[ix]
     action ix cell
 
 'Here is the actual cell table computation:
 
-def cell_table {dim atom_ix}
-  [Ix atom_ix] grid_size bucket_size cell_size
-  (atoms: atom_ix => Vec dim)
-  : (CellTable dim grid_size bucket_size atom_ix) =
-  yield_state (for _. empty_bounded_list $ unsafe_from_ordinal _ 0) \ref.
+def cell_table(
+  grid_size, bucket_size, cell_size,
+  atoms: atom_ix => Vec dim
+  ) -> CellTable(dim, grid_size, bucket_size, atom_ix)
+  given (dim|Ix, atom_ix|Ix) =
+  yield_state (for _. empty_bounded_list $ unsafe_from_ordinal 0) \ref.
     traverse_cells grid_size cell_size atoms \ix cell.
       bd_push ref!cell ix
 
@@ -344,9 +342,9 @@ def cell_table {dim atom_ix}
 -- up traversing the input twice (once to compute a size and once to
 -- actually build the cell table); this is working around limitations
 -- in Dex's support for mutable lists of statically unknown length.
-def cell_table_bucket_size {dim atom_ix}
-  [Ix atom_ix] grid_size cell_size
-  (atoms: atom_ix => Vec dim) : Nat =
+def cell_table_bucket_size(
+  grid_size, cell_size, atoms: atom_ix => Vec dim
+  ) -> Nat given (dim|Ix, atom_ix|Ix) =
   -- TODO Use yield_accum here
   bucket_sizes = yield_state (for _:(GridIx dim grid_size). 0) \ref.
     traverse_cells grid_size cell_size atoms \ix cell.
@@ -355,32 +353,32 @@ def cell_table_bucket_size {dim atom_ix}
 
 'Let's test it out on our "small" system:
 
-def grid_params L desired_cell_size : _ =
+def grid_params(L, desired_cell_size) =
   cells_per_side = floor(L / desired_cell_size)
   cell_size = L / cells_per_side
   grid_size = unsafe_i_to_n $ f_to_i cells_per_side
-  cell_size, grid_size
+  (cell_size, grid_size)
 
 desired_cell_size = 1.0 -- unit interaction range
 
-cell_size, grid_size = grid_params L_small desired_cell_size
+(cell_size, grid_size) = grid_params L_small desired_cell_size
 
 bucket_size = 10
 
 %time
-tbl = cell_table grid_size bucket_size cell_size $ get_position state_small'
+tbl = cell_table grid_size bucket_size cell_size $ state_small'.R
 >
 > Compile time: 128.647 ms
-> Run time:     14.530 us 
+> Run time:     14.530 us
 
 'We have a table of cells with atoms in them
 
 :t tbl
-> (((Fin 2) => Fin 20) => (Fin 10 & ((Fin 10) => Fin 500)))
+> (((Fin 2) => Fin 20) => (Fin 10, ((Fin 10) => Fin 500)))
 
 'And here are the atoms in the 0th cell.
 
-as_list tbl.(unsafe_from_ordinal _ 0)
+as_list tbl[unsafe_from_ordinal 0]
 > (AsList 2 [33, 237])
 
 '### Now let's compute pairs of neighbors from our cell list
@@ -394,27 +392,27 @@ cell_neighbors_2d = [[-1, -1], [-1, 0], [-1, 1], [0, -1],
 > ((Fin 9) => (Fin 2) => Int32)
 
 -- Toroidal index offsetting
-def torus_offset {n} (ix: (Fin n)) (offset: Int) : (Fin n) =
-  unsafe_from_ordinal _ $ unsafe_i_to_n $
+def torus_offset(ix: (Fin n), offset: Int) -> (Fin n) given (n) =
+  unsafe_from_ordinal $ unsafe_i_to_n $
     mod (n_to_i (ordinal ix) + offset) (n_to_i n)
 
 -- A traversal of pairs of atoms from adjacent or equal cells in a
 -- cell table.
-def traverse_pairs {grid_size bucket_size atom_ix eff}
-    (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
-    (atoms: atom_ix => Vec TwoDimensions)
-    (action: atom_ix -> atom_ix -> {|eff} Unit)
-    : {|eff} Unit =
+def traverse_pairs(
+    tbl: CellTable(TwoDimensions, grid_size, bucket_size, atom_ix),
+    atoms: atom_ix => Vec TwoDimensions,
+    action: (atom_ix, atom_ix) -> {|eff} ()
+    ) -> {|eff} () given (grid_size, bucket_size, atom_ix|Ix, eff) =
   for_ cell_ix : (GridIx TwoDimensions grid_size).
     for_ nb.
-      displacement = cell_neighbors_2d.nb
-      neighbor_ix = for dim. torus_offset cell_ix.dim displacement.dim
-      (AsList sz_atoms_1 atoms_1) = as_list tbl.cell_ix
+      displacement = cell_neighbors_2d[nb]
+      neighbor_ix = for dim. torus_offset cell_ix[dim] displacement[dim]
+      AsList(sz_atoms_1, atoms_1) = as_list tbl[cell_ix]
       for_ atom1_ix : (Fin sz_atoms_1).
-        atom1 = atoms_1.atom1_ix
-        (AsList sz_atoms_2 atoms_2) = as_list tbl.neighbor_ix
+        atom1 = atoms_1[atom1_ix]
+        AsList(sz_atoms_2, atoms_2) = as_list tbl[neighbor_ix]
         for_ atom2_ix : (Fin sz_atoms_2).
-          atom2 = atoms_2.atom2_ix
+          atom2 = atoms_2[atom2_ix]
           action atom1 atom2
 
 'The neighbor list computation.  The point of the exercise is that
@@ -422,49 +420,50 @@ this is not O(#atoms^2), but rather O(#cells) * 9 * O(#atoms per
 cell^2), because it only considers atoms from adjacent cells as
 potential neighbors.
 
-def neighbor_list {grid_size bucket_size atom_ix}
-    neighbor_list_size
-    (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
-    (is_neighbor: atom_ix -> atom_ix -> Bool)
-    (atoms: atom_ix => Vec TwoDimensions)
-    : BoundedList (Fin neighbor_list_size) (atom_ix & atom_ix) =
-  yield_state (empty_bounded_list $ (from_ordinal _ 0, from_ordinal _ 0)) \ref.
-    traverse_pairs tbl atoms (\atom1 atom2.
-      if is_neighbor atom1 atom2
-        then bd_push ref (atom1, atom2))
+def neighbor_list(
+    neighbor_list_size,
+    tbl: CellTable(TwoDimensions, grid_size, bucket_size, atom_ix),
+    is_neighbor: (atom_ix, atom_ix) -> Bool,
+    atoms: atom_ix => Vec TwoDimensions
+    ) -> BoundedList(Fin neighbor_list_size, (atom_ix, atom_ix))
+    given (grid_size, bucket_size, atom_ix|Ix) =
+  yield_state(empty_bounded_list((from_ordinal 0, from_ordinal 0))) \ref.
+    traverse_pairs(tbl, atoms) \atom1 atom2.
+      if is_neighbor(atom1, atom2)
+        then bd_push(ref, (atom1, atom2))
 
 -- Also a helper to pre-compute how large a buffer to allocate for the
 -- neighbor list, by traversing the input an extra time.
-def count_neighbor_list_size {grid_size bucket_size atom_ix}
-    (tbl: CellTable TwoDimensions grid_size bucket_size atom_ix)
-    (is_neighbor: atom_ix -> atom_ix -> Bool)
-    (atoms: atom_ix => Vec TwoDimensions)
-    : Nat =
+def count_neighbor_list_size(
+    tbl: CellTable(TwoDimensions, grid_size, bucket_size, atom_ix),
+    is_neighbor: (atom_ix, atom_ix) -> Bool,
+    atoms: atom_ix => Vec TwoDimensions
+    ) -> Nat given (grid_size, bucket_size, atom_ix|Ix) =
   yield_accum (AddMonoid Nat) \ref.
     traverse_pairs tbl atoms (\atom1 atom2.
       if is_neighbor atom1 atom2
         then ref += 1)
 
-def periodic_near {atom_ix}
-    desired_cell_size
-    L
-    (atoms: atom_ix => Vec TwoDimensions) (atom1:atom_ix) (atom2:atom_ix)
-    : Bool =
-  dist = norm $ periodic_displacement L atoms.atom1 atoms.atom2
+def periodic_near(
+    desired_cell_size,
+    L,
+    atoms: atom_ix => Vec TwoDimensions
+    ) -> (atom_ix, atom_ix) -> Bool given (atom_ix|Ix) = \atom1 atom2.
+  dist = norm $ periodic_displacement(L)(atoms[atom1], atoms[atom2])
   dist < desired_cell_size
 
 'Let's test this one out on our "small" system.
 
 %time
 res = (neighbor_list 4000 tbl
-  (periodic_near 1.0 L_small $ get_position state_small') $ get_position state_small')
+  (periodic_near 1.0 L_small $ state_small'.R) $ state_small'.R)
 >
 > Compile time: 104.015 ms
-> Run time:     134.844 us 
+> Run time:     134.844 us
 
 'In that configuration, we find this many pairs of neighbors:
 
-(AsList k _) = as_list res
+AsList(k, _) = as_list res
 k
 > 3090
 
@@ -472,43 +471,42 @@ k
 variant of `pair_energy` that only considers atoms that the neighbor
 list says are close.
 
-def pair_energy_nl {dim n}
-  (energy: Float -> Float)
-  (displacement: Displacement dim)
-  (r: n=>Vec dim)
-  (neighbors: List (n & n))
-  : Float =
-  (AsList k nbrs) = neighbors
+def pair_energy_nl(
+  energy: (Float) -> Float,
+  displacement: Displacement dim,
+  r: n=>Vec dim,
+  neighbors: List (n, n)
+  ) -> Float given (dim|Ix, n|Ix) =
+  AsList(k, nbrs) = neighbors
   sum for i.
-    a1ix, a2ix = nbrs.i
+    (a1ix, a2ix) = nbrs[i]
     case (ordinal a1ix) < (ordinal a2ix) of
-      True  -> energy $ norm $ displacement r.a1ix r.a2ix
+      True  -> energy $ norm $ displacement r[a1ix] r[a2ix]
       False -> 0.0
 
-def energy_nl {n d}
-    L
-    (neighbors: List (n & n))
-    (pos: n=>d=>Float)
-    : Float
-  = pair_energy_nl (harmonic_soft_sphere 1.0) (periodic_displacement L) pos neighbors
+def energy_nl(
+    L,
+    neighbors: List (n, n)
+    ) -> (n=>d=>Float) -> Float given (d|Ix, n|Ix) = \pos.
+  pair_energy_nl (harmonic_soft_sphere 1.0) (periodic_displacement L) pos neighbors
 
 'And here's the check that it computes near-identical results to our
 original, fully pairwise energy function.
 
-energy_nl L_small (as_list res) (get_position state_small')
-> 1.230931
+energy_nl(L_small, as_list res)(state_small'.R)
+> 1.230965
 
-energy (get_position state_small')
-> 1.230932
+energy (state_small'.R)
+> 1.230966
 
 -- Package the above up into a function that just computes the
 -- neighbor list from an array of atoms.
-def just_neighbor_list {n}
-    desired_cell_size
-    L
-    (atoms:n=>(Fin 2)=>Float)
-    : (List (n & n)) =
-  cell_size, grid_size = grid_params L desired_cell_size
+def just_neighbor_list(
+    desired_cell_size,
+    L,
+    atoms:n=>(Fin 2)=>Float
+    ) -> (List (n, n)) given (n|Ix) =
+  (cell_size, grid_size) = grid_params L desired_cell_size
   bucket_size = cell_table_bucket_size grid_size cell_size atoms
   tbl = cell_table grid_size bucket_size cell_size atoms
   is_neighbor = periodic_near desired_cell_size L atoms
@@ -525,11 +523,11 @@ state_nl =
 
 energy R_init_small
 > 74.69006
-energy $ get_position $ fire_descent_step free_shift energy state_small
+energy $ fire_descent_step(free_shift, energy, state_small).R
 > 71.78407
 
 -- A helper for short-circuiting `any` computation
-def fast_any {n eff} [Ix n] (f: n -> {|eff} Bool) : {|eff} Bool =
+def fast_any(f: (n) -> {|eff} Bool) -> {|eff} Bool given (n|Ix, eff) =
   iter \ct.
     if ct >= size n
       then Done False
@@ -545,39 +543,39 @@ neighbor list is computed, because otherwise it remains a sound
 approximation.
 
 -- TODO(Issue 1133) Can't use scan with a body that has an effect?
-def simulate {atom_ix}
-    (displacement : Displacement TwoDimensions)
-    halo_size
-    L
-    time [Ix time]
-    (state : FireDescentState atom_ix TwoDimensions)
-    : {IO} (FireDescentState atom_ix TwoDimensions & time => Float) =
-  with_state (get_position state) \saved_atoms_ref.
-    nbrs = just_neighbor_list (1.0 + halo_size) L $ get_position state
-    (AsList k _) = nbrs
+def simulate(
+    displacement : Displacement TwoDimensions,
+    halo_size,
+    L,
+    time|Ix,
+    state : FireDescentState(atom_ix, TwoDimensions)
+    ) -> {IO} (FireDescentState(atom_ix, TwoDimensions), time => Float) given (atom_ix|Ix) =
+  with_state state.R \saved_atoms_ref.
+    nbrs = just_neighbor_list (1.0 + halo_size) L $ state.R
+    AsList(k, _) = nbrs
     print $ show k <> " initial neighbor list size"
     with_state nbrs \saved_neighbors_ref.
       swap $ run_state state \s_ref. for i.
         s = get s_ref
-        new_atoms = get_position s
+        new_atoms = s.R
         rebuild = fast_any \i.
-          2 * norm (displacement (get saved_atoms_ref!i) new_atoms.i) > halo_size
+          2 * norm (displacement (get saved_atoms_ref!i) new_atoms[i]) > halo_size
         if rebuild then
           saved_atoms_ref := new_atoms
           nbrs = just_neighbor_list (1.0 + halo_size) L new_atoms
           saved_neighbors_ref := nbrs
-          (AsList k _) = nbrs
+          AsList(k, _) = nbrs
           print $ show k <> " new neighbor list size"
         nbrs = get saved_neighbors_ref
         s' = fire_descent_step (periodic_shift L) (energy_nl L nbrs) s
         s_ref := s'
-        energy_nl L nbrs $ get_position s'
+        energy_nl(L, nbrs)(s'.R)
 
 'Let's check that it works on our test system from before
 
 %time
 (state_nl', energies_nl) =
-  unsafe_io do simulate (periodic_displacement L_small) 0.5 L_small (Fin 100) state_small
+  unsafe_io \. simulate (periodic_displacement L_small) 0.5 L_small (Fin 100) state_small
 > 4568 initial neighbor list size
 > 4614 new neighbor list size
 > 4564 new neighbor list size
@@ -601,26 +599,26 @@ def simulate {atom_ix}
 > 3554 new neighbor list size
 >
 > Compile time: 1.768 s
-> Run time:     17.954 ms 
+> Run time:     17.954 ms
 
 %time
 :html show_plot $ y_plot energies_nl
 > <html output>
 >
 > Compile time: 738.194 ms
-> Run time:     3.072 ms 
+> Run time:     3.072 ms
 
 %time
-:html render_svg (draw_system 0.5 (get_position state_nl')) ((0.0, 0.0), (L_small, L_small))
+:html render_svg (draw_system 0.5 state_nl'.R) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
 > <html output>
 >
 > Compile time: 327.153 ms
-> Run time:     14.981 ms 
+> Run time:     14.981 ms
 
 'But of course the point of the exercise is that this now scales up to
 larger systems because it avoids the quadratic energy computation.
 
-N_large = if not (dex_test_mode ()) then 50000 else 500
+N_large = if not (dex_test_mode()) then 50000 else 500
 L_large = box_size_at_number_density (n_to_i N_large) 1.2 (n_to_i d)
 L_large
 > 20.41241
@@ -630,11 +628,11 @@ R_init_large = rand_mat N_large d (\k. L_large * rand k) (new_key 0)
 'Initial state (we render the atoms smaller now so they don't over-plot too badly).
 
 %time
-:html render_svg (draw_system 0.2 R_init_large) ((0.0, 0.0), (L_large, L_large))
+:html render_svg (draw_system 0.2 R_init_large) (Point.new(0.0, 0.0), Point.new(L_large, L_large))
 > <html output>
 >
 > Compile time: 302.700 ms
-> Run time:     16.298 ms 
+> Run time:     16.298 ms
 
 state_large =
   energy_func = (energy_nl L_large $ just_neighbor_list 1.0 L_large R_init_large)
@@ -642,7 +640,7 @@ state_large =
 
 %time
 (state_large_nl', energies_large_nl) =
-  unsafe_io do simulate (periodic_displacement L_large) 0.5 L_large (Fin 100) state_large
+  unsafe_io \. simulate (periodic_displacement L_large) 0.5 L_large (Fin 100) state_large
 > 4568 initial neighbor list size
 > 4614 new neighbor list size
 > 4564 new neighbor list size
@@ -666,7 +664,7 @@ state_large =
 > 3554 new neighbor list size
 >
 > Compile time: 1.724 s
-> Run time:     18.361 ms 
+> Run time:     18.361 ms
 
 'Energy decrease
 
@@ -675,14 +673,14 @@ state_large =
 > <html output>
 >
 > Compile time: 757.663 ms
-> Run time:     3.450 ms 
+> Run time:     3.450 ms
 
 'System state after minimization.
 
 %time
-:html render_svg (draw_system 0.2 (get_position state_large_nl')) ((0.0, 0.0), (L_large, L_large))
+:html render_svg (draw_system 0.2 state_large_nl'.R) (Point.new(0.0, 0.0), Point.new(L_large, L_large))
 > <html output>
 >
 > Compile time: 301.748 ms
-> Run time:     15.928 ms 
+> Run time:     15.928 ms
 
