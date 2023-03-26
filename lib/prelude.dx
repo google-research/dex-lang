@@ -443,6 +443,15 @@ instance Ix((a, b)) given (a|Ix, b|Ix)
     bs = size b
     (unsafe_from_ordinal(n=a, idiv(o, bs)), unsafe_from_ordinal(n=b, rem(o, bs)))
 
+instance Ix((a, b, c)) given (a|Ix, b|Ix, c|Ix)
+  def size'() = size a * size b * size c
+  def ordinal(tup) =
+    (i, j, k) = tup
+    ordinal((i,(j,k)))
+  def unsafe_from_ordinal(o) =
+    (i, (j, k)) = unsafe_from_ordinal o
+    (i, j, k)
+
 '## Vector spaces
 
 interface VSpace(a|Add|Sub)

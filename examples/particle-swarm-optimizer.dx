@@ -29,17 +29,15 @@ def rosenbrock2(xs: (Fin 2)=>Float) -> Float =
 
 '## Helper functions
 
-def minbyfst {a} : (Float & a) -> (Float & a) -> (Float & a) = min_by fst
-
-def minimumbyfst {n a} [Data a] : (n=>(Float & a)) -> (Float & a) = minimum_by fst
+def minbyfst(x:(Float, a), y:(Float, a)) -> (Float, a) given (a) = min_by fst x y
+def minimumbyfst(xs:n=>(Float, a)) -> (Float, a) given (n|Ix, a|Data) = minimum_by fst xs
 
 '### Rand helpers
 
 'make a random vector uniformly distributed between `lb` and `ub`
 
-def randBounded {d} : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
-  \key lb ub.
-    for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
+def randBounded(k:Key, lb:d=>Float, ub:d=>Float) -> (d=>Float) given (d|Ix) =
+  for i. lb[i] + ((rand $ ixkey k i) * (ub[i] - lb[i]))
 
 :p randBounded (new_key 4) [1.0,  -2.0] [-1.0,  2.0]
 > [-0.7370105, 1.433697]
@@ -55,32 +53,34 @@ We have **arguments**:
 
 '**Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
-def optimize
-      {d}
-      (np':Nat)                                        -- number of particles
-      (niter:Nat)                                      -- number of iterations
-      (key:Key)                                        -- random seed
-      (f:(d=>Float)->Float)                              -- function to optimize
-      ((lb,ub):(d=>Float & d=>Float))                    -- bounds
-      ((momentum, gRate, pRate):(Float & Float & Float))  -- momentum/pRate/gRate
-      : (d=>Float) =
+def optimize(
+    np':Nat,                      -- number of particles
+    niter:Nat,                    -- number of iteration
+    key:Key,                      -- random seed
+    f:(d=>Float)->Float,          -- function to optimize
+    bounds:(d=>Float, d=>Float),  -- bounds
+    params:(Float, Float, Float)  -- momentum/pRate/gRate
+    ) -> d=>Float given (d|Ix) =
+    (lb,ub) = bounds
+    (momentum, gRate, pRate) = params
     np = Fin np'
-    optStep = \(keyL, gbest, pbests, positions, velocities).
+    optStep = \state.
+        (keyL, gbest, pbests, positions, velocities) = state
         newPositions:(np=>d=>Float) = positions + velocities
-        newPbests:(np=>(Float & d=>Float)) = for p.
-            minbyfst pbests.p (f newPositions.p, newPositions.p)
-        newGbest:(Float & d=>Float) =
+        newPbests:(np=>(Float, d=>Float)) = for p.
+            minbyfst pbests[p] (f newPositions[p], newPositions[p])
+        newGbest:(Float, d=>Float) =
             minbyfst gbest (minimumbyfst newPbests)
         [keyG, keyP, keyNext] = split_key keyL
         (gscore, gloc) = gbest
         plocs = map snd pbests
         gVel:(np=>d=>Float) = for p i.
             weight = rand $ (ixkey keyG (p, i))
-            dir = gloc.i - positions.p.i
+            dir = gloc[i] - positions[p,i]
             weight * dir
         pVel:(np=>d=>Float) = for p i.
             weight = rand $ (ixkey keyP (p, i))
-            dir = plocs.p.i - positions.p.i
+            dir = plocs[p,i] - positions[p,i]
             weight * dir
         newVelocities:(np=>d=>Float) = momentum .* velocities + gRate .* gVel + pRate .* gVel
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
@@ -89,10 +89,10 @@ def optimize
     [keyPos, keyVel, keyLoop] = split_key key
     initPositions:(np=>d=>Float) = randInit keyPos
     initVelocities:(np=>d=>Float) = randInit keyVel
-    initPs:(np=>(Float & d=>Float)) = for p. (f initPositions.p, initPositions.p)
-    initG:(Float & d=>Float) = minimumbyfst initPs
+    initPs:(np=>(Float, d=>Float)) = for p. (f initPositions[p], initPositions[p])
+    initG:(Float, d=>Float) = minimumbyfst initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
-    res = fold inits (\iter:(Fin niter). optStep)
+    res = fold inits (\iter:(Fin niter) s. optStep s)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 

@@ -2085,11 +2085,11 @@ inferTabCon hint xs reqTy = do
         checkRho noHint x elemTy'
       dTy <- case hoist b elemTy of
         HoistSuccess elemTy' -> DictTy <$> dataDictType elemTy'
-        HoistFailure _ -> undefined
-        -- HoistFailure _ -> do
-        --   Pi <$> buildPi noHint (Inferred Unify) finTy \i -> do
-        --     elemTy' <- applyRename (b@>i) elemTy
-        --     (Pure,) <$> DictTy <$> dataDictType elemTy'
+        HoistFailure _ -> ignoreExcept <$> liftEnvReaderT do
+          withFreshBinder noHint finTy \b' ->  do
+            elemTy' <- applyRename (b@>binderName b') elemTy
+            dTy <- DictTy <$> dataDictType elemTy'
+            return $ Pi $ CorePiType ImplicitApp (UnaryNest (WithExpl (Inferred Nothing Unify) b')) Pure dTy
       liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
 
 -- Bool flag is just to tweak the reported error message

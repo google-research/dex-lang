@@ -6,12 +6,12 @@ import plot
 
 LogProb : Type = Float
 
-def runChain {a} [Data a]
-      (initialize: Key -> a)
-      (step: Key -> a -> a)
-      (numSamples: Nat)
-      (k:Key)
-      : Fin numSamples => a =
+def runChain(
+    initialize: (Key) -> a,
+    step:       (Key, a) -> a,
+    numSamples: Nat,
+    k:Key
+    ) -> Fin numSamples => a  given (a|Data) =
   [k1, k2] = split_key k
   with_state (initialize k1) \s.
     for i:(Fin numSamples).
@@ -19,82 +19,89 @@ def runChain {a} [Data a]
       s := x
       x
 
-def propose {a}
-      (logDensity : a -> LogProb)
-      (cur      : a)
-      (proposal : a)
-      (k : Key)
-      : a =
+def propose(
+    logDensity: (a) -> LogProb,
+    cur:        a,
+    proposal:   a,
+    k:          Key
+    ) -> a given (a) =
   accept = logDensity proposal > (logDensity cur + log (rand k))
   select accept proposal cur
 
-def meanAndCovariance {n d} (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
-   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / n_to_f (size n)
+def meanAndCovariance(xs:n=>d=>Float) -> (d=>Float, d=>d=>Float) given (n|Ix, d|Ix) =
+   xsMean :    d=>Float = (for i. sum for j. xs[j,i]) / n_to_f (size n)
    xsCov  : d=>d=>Float = (for i i'. sum for j.
-                           (xs.j.i' - xsMean.i') *
-                           (xs.j.i  - xsMean.i )   ) / (n_to_f (size n) - 1)
+                           (xs[j,i'] - xsMean[i']) *
+                           (xs[j,i ] - xsMean[i ])   ) / (n_to_f (size n) - 1)
    (xsMean, xsCov)
 
 '## Metropolis-Hastings implementation
 
 MHParams : Type = Float  -- step size
 
-def mhStep {d} [Ix d]
-      (stepSize: MHParams)
-      (logProb: (d=>Float) -> LogProb)
-      (k:Key)
-      (x:d=>Float)
-      : d=>Float =
+def mhStep(
+    stepSize: MHParams,
+    logProb: (d=>Float) -> LogProb,
+    k:Key,
+    x:d=>Float
+    ) -> d=>Float given (d|Ix) =
   [k1, k2] = split_key k
   proposal = x + stepSize .* randn_vec k1
   propose logProb x proposal k2
 
 '## HMC implementation
 
-HMCParams : Type = (Nat & Float)  -- leapfrog steps, step size
+struct HMCParams =
+  nsteps : Nat
+  dt     : Float
 
-def leapfrogIntegrate {a}
-      [VSpace a]
-      ((nsteps, dt): HMCParams)
-      (logProb: a -> LogProb)
-      ((x, p): (a & a))
-      : (a & a) =
-  x = x + (0.5 * dt) .* p
-  (x, p) = apply_n nsteps (x, p) \(xOld, pOld).
-    pNew = pOld + dt .* grad logProb xOld
-    xNew = xOld + dt .* pNew
-    (xNew, pNew)
-  p = p + (0.5 * dt) .* grad logProb x
-  (x, p)
+struct HMCState(a|VSpace) =
+  x: a
+  p: a
 
-def hmcStep {d} [Ix d]
-      (params: HMCParams)
-      (logProb: (d=>Float) -> LogProb)
-      (k:Key)
-      (x:d=>Float)
-      : d=>Float =
-  hamiltonian = \(x, p). logProb x - 0.5 * vdot p p
+def leapfrogIntegrate(
+    params:  HMCParams,
+    logProb: (a) -> LogProb,
+    init:    HMCState a
+    ) -> HMCState a given (a|VSpace) =
+  x = init.x + (0.5 * params.dt) .* init.p
+  final = apply_n params.nsteps HMCState.new(x, init.p) \old.
+    pNew = old.p + params.dt .* grad logProb old.x
+    xNew = old.x + params.dt .* pNew
+    HMCState.new(xNew, pNew)
+  p = final.p + (0.5 * params.dt) .* grad logProb final.x
+  HMCState.new(final.x, p)
+
+def hmcStep(
+    params:  HMCParams,
+    logProb: (d=>Float) -> LogProb,
+    k:       Key,
+    x:       d=>Float
+    ) -> d=>Float given (d|Ix) =
+  def hamiltonian(s:HMCState (d=>Float)) -> Float =
+    logProb s.x - 0.5 * vdot s.p s.p
   [k1, k2] = split_key k
   p = randn_vec k1
-  proposal = leapfrogIntegrate params logProb (x, p)
-  fst $ propose hamiltonian (x, p) proposal k2
+  proposal = leapfrogIntegrate params logProb HMCState.new(x, p)
+  final = propose hamiltonian HMCState.new(x, p) proposal k2
+  final.x
 
 '## Test it out
 
 'Generate samples from a multivariate normal distribution N([1.5, 2.5], [[1., 0.], [0., 0.05]]).
 
-def myLogProb (x:(Fin 2)=>Float) : LogProb =
+def myLogProb(x:(Fin 2)=>Float) -> LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 
 numSamples : Nat =
-  if dex_test_mode ()
+  if dex_test_mode()
     then 1000
     else 10000
 k0 = new_key 1
 
 mhParams = 0.1
-mhSamples  = runChain randn_vec (mhStep  mhParams  myLogProb) numSamples k0
+mhSamples  = runChain randn_vec (\k x. mhStep  mhParams myLogProb k x) numSamples k0
 
 :p meanAndCovariance mhSamples
 > ([0.5455918, 2.522631], [[0.3552593, 0.05022133], [0.05022133, 0.08734216]])
@@ -103,8 +110,8 @@ mhSamples  = runChain randn_vec (mhStep  mhParams  myLogProb) numSamples k0
   slice (map head mhSamples) 0 (Fin 1000)
 > <html output>
 
-hmcParams = (10, 0.1)
-hmcSamples = runChain randn_vec (hmcStep hmcParams myLogProb) numSamples k0
+hmcParams = HMCParams.new(10, 0.1)
+hmcSamples = runChain randn_vec (\k x. hmcStep hmcParams myLogProb k x) numSamples k0
 
 :p meanAndCovariance hmcSamples
 > ([1.472011, 2.483082], [[1.054705, -0.002082013], [-0.002082013, 0.05058844]])
