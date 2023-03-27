@@ -38,76 +38,78 @@ gifFrames = 100
 '## Helpers
 
 -- Define i_=sqrt(-1) in a way that won't clash with indices named 'i'
-i_ = MkComplex 0. 1.
+i_ = Complex.new(0., 1.)
 
 -- Shorthand conversion
-def fToC (x:Float) : Complex = MkComplex x 0.
+def fToC(x:Float) -> Complex = Complex.new(x, 0.)
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension
-def ixToF {n} [Ix n] (i:n) : Float = (n_to_f (ordinal i)) / (n_to_f gridSize - 1.)
+def ixToF(i:n) -> Float given (n|Ix) = (n_to_f (ordinal i)) / (n_to_f gridSize - 1.)
 
 -- Helper to generate zero-delay GIF animations
-def animate {t n m} (imgs:t=>n=>m=>(Fin 3)=>Float) : Html =
+def animate(imgs:t=>n=>m=>(Fin 3)=>Float) -> Html given (t|Ix, n|Ix, m|Ix) =
   img_to_html $ pngs_to_gif 0 $ map img_to_png imgs
 
 -- Cuts an array down to a smaller dimension.
 -- Useful for cutting out animation frames for a faster GIF.
-def cut {n m a} [Ix m] (x:n=>a) : m=>a =
+def cut(x:n=>a) -> m=>a given (n|Ix, m|Ix, a) =
   s = idiv (size n) (size m)
-  for i:m. x.(from_ordinal _ $ s * ordinal i)
+  for i:m. x[from_ordinal $ s * ordinal i]
 
 -- Converts a given 2D matrix to a greyscale image.
-def toImg {n m} (xs:n=>m=>Float) : (n=>m=>Fin 3=>Float) =
+def toImg(xs:n=>m=>Float) -> (n=>m=>Fin 3=>Float) given (n|Ix, m|Ix) =
   scale = 1. / maximum (map maximum xs)
   for h.
-    for w c. scale * xs.h.w
+    for w c. scale * xs[h, w]
 
-def sqr {a} [Mul a] (x:a) : a = x * x
+def sqr(x:a) -> a given (a|Mul) = x * x
 
 '## Computing $\psi_{t+\Delta t}$
 
 -- Are the given indices at the bounds of the grid
-def atBounds {n m} [Ix n, Ix m] (i:n) (j:m) : Bool =
+def atBounds(i:n, j:m) -> Bool given (n|Ix, m|Ix) =
   (ordinal i == 0
    || n_to_i (ordinal i) == (n_to_i gridSize - 1)
    || ordinal j == 0
    || n_to_i (ordinal j) == (n_to_i gridSize - 1))
 
 -- Operators for performing unsafe ordinal arithmetic
-def (+!) {n} [Ix n] (i:n) (off:Int) : n =
-  unsafe_from_ordinal _ $ unsafe_i_to_n (n_to_i (ordinal i) + off)
-def (-!) {n} [Ix n] (i:n) (off:Int) : n = i +! (-1 * off)
+def (+!)(i:n, off:Int) -> n given (n|Ix) =
+  unsafe_from_ordinal $ unsafe_i_to_n (n_to_i (ordinal i) + off)
+def (-!)(i:n, off:Int) -> n given (n|Ix) = i +! (-1 * off)
 
 -- Run a single forward-step to compute psi_(t+1) from psi_t with the given potential.
-def step {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : m=>n=>Complex =
+def step(psi:m=>n=>Complex, v:m=>n=>Float) -> m=>n=>Complex given (m|Ix, n|Ix) =
   for i j.
     if atBounds i j
       then zero
       else
-        psi_u = psi.(i -! 1).j
-        psi_d = psi.(i +! 1).j
-        psi_l = psi.i.(j -! 1)
-        psi_r = psi.i.(j +! 1)
-        (psi.i.j
+        psi_u = psi[i -! 1, j]
+        psi_d = psi[i +! 1, j]
+        psi_l = psi[i, j -! 1]
+        psi_r = psi[i, j +! 1]
+        (psi[i, j]
          + ((i_ / 2.) * (fToC $ dt / sqr dx)
-             * (psi_l + psi_u + (fToC 4. * psi.i.j) + psi_r + psi_d))
-         - (i_ * (fToC $ dt * v.i.j) * psi.i.j))
+             * (psi_l + psi_u + (fToC 4. * psi[i, j]) + psi_r + psi_d))
+         - (i_ * (fToC $ dt * v[i, j]) * psi[i, j]))
 
 -- Computes time evolution of wavefunction.
-def evolve {m n} (psi:m=>n=>Complex) (v:m=>n=>Float): Steps=>m=>n=>Complex =
+def evolve(psi:m=>n=>Complex, v:m=>n=>Float) -> Steps=>m=>n=>Complex given (m|Ix, n|Ix) =
   scan' psi (\i x. step x v)
 
 -- Compute the Born rule probability distribution by |psi|**2
-def pdf {n m} (psi:n=>m=>Complex) : n=>m=>Float =
-  pdf = for i j. complex_mag (sqr psi.i.j)
+def pdf(psi:n=>m=>Complex) -> n=>m=>Float given (n|Ix, m|Ix) =
+  pdf = for i j. complex_mag (sqr psi[i, j])
   scale = sum (map sum pdf)
-  for i j. divide pdf.i.j scale
+  for i j. divide pdf[i, j] scale
 
 '## Examples
 
 -- Generate gaussian initial conditions with zero at the bounds.
-def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Float)): (n=>m=>Complex) =
+def gaussian(u:(Float, Float), o:(Float, Float)) -> (n=>m=>Complex) given (n|Ix, m|Ix) =
+  (ux, uy) = u
+  (ox, oy) = o
   for i:n.
     for j:m.
       y2 = sqr (ixToF i - uy)
@@ -117,7 +119,7 @@ def gaussian {n m} [Ix n, Ix m] ((ux, uy):(Float & Float)) ((ox, oy):(Float & Fl
         else fToC $ exp $ -0.5 * (x2 / sqr ox + y2 / sqr oy)
 
 -- Create an animation of the evolution of the given wavefunction under the given potential.
-def run {m n} (psi:m=>n=>Complex) (v:m=>n=>Float) : Html =
+def run(psi:m=>n=>Complex, v:m=>n=>Float) -> Html given (n|Ix, m|Ix) =
   animate (map toImg (cut (map pdf (evolve psi v)))::(Fin gifFrames=>_))
 
 ' Initial state representing a centered particle
@@ -126,7 +128,7 @@ centered = (gaussian (0.5, 0.5) (0.1, 0.1) :: D=>D=>_)
 
 pdf_centered = pdf centered
 
-all for i. all for j. pdf_centered.i.j >= 0
+all for i. all for j. pdf_centered[i, j] >= 0
 > True
 
 :html
