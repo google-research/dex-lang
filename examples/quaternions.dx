@@ -22,7 +22,7 @@ struct Quaternion =
 
 quaternion = Quaternion.new(1.0, 2.0, 3.0, 4.0)
 quaternion
-> (Q {w = 4., x = 1., y = 2., z = 3.})
+> (Quaternion.new 1. 2. 3. 4.)
 
 '## Quaternion magnitude
  A quaternion is basically a 4 dimensional vector.

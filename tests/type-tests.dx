@@ -260,7 +260,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 > 1
 
 :p NewPair
-> (NewPair)
+> <function of type ((aa:Type,bb:Type) -> Type)>
 
 -- TODO: these are broken since switching from newtype mechanism to ADTs
 

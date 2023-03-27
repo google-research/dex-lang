@@ -40,12 +40,12 @@ def array_sum(x:a=>Int32) -> Int32 given (a|Ix) =
     for i.
       acc := (get acc) + x[i]
 > Type error:
-> Expected: (a.1 & b)
->   Actual: (a => Unit)
+> Expected: (a.1, b)
+>   Actual: (a => ())
 > (Solving for: [a.1, b])
 >
->   snd $ with_state 0 $ \acc.
->         ^^^^^^^^^^^^^^^^^^^^^
+>   snd $ with_state 0 \acc.
+>         ^^^^^^^^^^^^^^^^^^^
 
 '## [Layout annotation](https://katex.org/docs/supported.html#annotation)
 

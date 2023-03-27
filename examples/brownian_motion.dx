@@ -125,7 +125,7 @@ fs = each xs \x. sample_brownian_motion tolerance randn (new_key 0) x
 '#### Check that the finite differences look like white noise
 
 fdiffs = for i.
-  (fs.(((ordinal i) -| 1)@_) - fs.i) / sqrt tolerance
+  (fs[((ordinal i) -| 1)@_] - fs[i]) / sqrt tolerance
 :html show_plot $ xy_plot xs fdiffs
 > <html output>
 

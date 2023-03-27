@@ -934,7 +934,7 @@ checkedApplyNaryAbs (Abs bsTop e) xsTop = do
      checkAlphaEq (binderType b) xTy
      bs' <- applySubst (b@>SubstVal x) (Abs bs UnitE)
      go bs' xs
-   go _ _ = throw TypeErr "wrong number of arguments"
+   go _ _ = error "bad" -- throw TypeErr "wrong number of arguments"
 
 -- === effects ===
 

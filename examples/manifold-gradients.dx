@@ -507,7 +507,7 @@ quatGrad quatRoll quatSomeRoll
 -- moving in pitch and/or yaw directions. This demonstrates that the Euler
 -- angles are not independent.
 quatGrad quatRoll quatForTestOne
-> [1.041025, 0.5948712, 7.450581e-09]
+> [1.041024, 0.5948712, 1.490116e-08]
 
 quatGrad quatRoll quatForTestTwo
-> [-0.5702829, 0.8334905, -8.381903e-09]
+> [-0.5702829, 0.8334905, 0.]

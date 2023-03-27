@@ -1093,27 +1093,22 @@ lookupFieldName dataDefName (WithSrc src name) = addSrcContext src do
 
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
-  Pi piTy@(CorePiType ExplicitApp bs _ _) ->
-    if all (== Explicit) (nestToList getExpl bs)
-      then noInstantiationNeeded
-      else Lam <$> etaExpandExplicits piTy \args -> do
-        applySigmaAtom (sink sigmaAtom) args
+  Pi piTy@(CorePiType ExplicitApp _ _ _) -> do
+    Lam <$> etaExpandExplicits piTy \args ->
+      applySigmaAtom (sink sigmaAtom) args
   Pi (CorePiType ImplicitApp bs _ resultTy) -> do
     args <- inferMixedArgs @UExpr (Abs bs resultTy) [] []
     applySigmaAtom sigmaAtom args
-  _ -> noInstantiationNeeded
-  where
-    noInstantiationNeeded :: InfererM i o (CAtom o)
-    noInstantiationNeeded = case sigmaAtom of
-      SigmaAtom x -> return x
-      SigmaUVar v -> case v of
-        UAtomVar v' -> return $ Var v'
-        _ -> applySigmaAtom sigmaAtom []
-      SigmaFieldDef tyCon (Just arg) (FieldProj i) -> do
-        TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
-        normalizeNaryProj (projs!!i) arg
-      SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
-      _ -> error "not implemented"
+  _ -> case sigmaAtom of
+    SigmaAtom x -> return x
+    SigmaUVar v -> case v of
+      UAtomVar v' -> return $ Var v'
+      _ -> applySigmaAtom sigmaAtom []
+    SigmaFieldDef tyCon (Just arg) (FieldProj i) -> do
+      TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
+      normalizeNaryProj (projs!!i) arg
+    SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
+    _ -> error "not implemented"
 
 -- creates a lambda term with just the explicit binders, but provides
 -- args corresponding to all the binders (explicit and implicit)

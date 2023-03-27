@@ -291,7 +291,7 @@ def table_add'(x: m=>n=>Float32, y: m=>n=>Float32) -> m=>n=>Float32 given (n|Ix,
 >   Actual: ((Fin 8) => (Fin 3) => Float32)
 >
 > :t table_add'(x, trans(x))
->                 ^^^^^^^^
+>                  ^^^^^^^^
 
 ' The type system checked for us that the input tables indeed have the same shape.
 
@@ -447,7 +447,7 @@ table_mean [0.0, 1.0, 0.5]
   constructor in this case).
 
 :t \ x. x + 10
-> (Nat -> Nat)
+> ((x:Nat) -> Nat)
 
 (\ x. x + 10)(20)
 > 30
@@ -502,12 +502,12 @@ with_state(10) \state.
   `table_mean` does not work when applied to a table of *pairs* of floats.
 
 :t (for pos. (x[fst(pos), snd(pos)], x[fst(pos), snd(pos)]))
-> ((Fin 3 & Fin 8) => (Float32 & Float32))
+> ((Fin 3, Fin 8) => (Float32, Float32))
 
 table_mean(for pos. (x[fst(pos), snd(pos)], x[fst(pos), snd(pos)]))
 > Type error:
 > Expected: Float32
->   Actual: (Float32 & Float32)
+>   Actual: (Float32, Float32)
 >
 > table_mean(for pos. (x[fst(pos), snd(pos)], x[fst(pos), snd(pos)]))
 >                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

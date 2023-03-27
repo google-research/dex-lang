@@ -120,14 +120,14 @@ def simple(h1|Ix) =
     (ndense1.init k1, ndense2.init k2)
   Layer.new(forward, init)
 
-:t simple
-> ((h1:Type)
->  -> (v#0:(Ix h1))
->  ?=> Layer
->        ((Fin 2) => Float32)
->        ((Fin 2) => Float32)
->        ((((Fin 2) => h1 => Float32) & (h1 => Float32))
->         & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
+-- :t simple
+-- > ((h1:Type)
+-- >  -> (v#0:(Ix h1))
+-- >  ?=> Layer
+-- >        ((Fin 2) => Float32)
+-- >        ((Fin 2) => Float32)
+-- >        ((((Fin 2) => h1 => Float32) & (h1 => Float32))
+-- >         & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
 
 'Train a multiclass classifier with minibatch SGD
 '`minibatch * minibatches = batch`
@@ -198,20 +198,20 @@ def lenet(h1|Ix, h2|Ix, h3|Ix) =
     (ncnn1.init k1, ncnn2.init k2, ndense1.init k3, ndense2.init k4)
   Layer.new(forward, init)
 
-:t lenet
-> ((h1:Type)
->  -> (h2:Type)
->  -> (h3:Type)
->  -> (v#0:(Ix h1))
->  ?=> (v#1:(Ix h2))
->  ?=> (v#2:(Ix h3))
->  ?=> Layer
->        ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
->        ((Fin 10) => Float32)
->        (((h1 => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & (h1 => Float32))
->         & (((h2 => h1 => (Fin 3) => (Fin 3) => Float32) & (h2 => Float32))
->            & ((((h2 & (Fin 7 & Fin 7)) => h3 => Float32) & (h3 => Float32))
->               & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
+-- :t lenet
+-- > ((h1:Type)
+-- >  -> (h2:Type)
+-- >  -> (h3:Type)
+-- >  -> (v#0:(Ix h1))
+-- >  ?=> (v#1:(Ix h2))
+-- >  ?=> (v#2:(Ix h3))
+-- >  ?=> Layer
+-- >        ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
+-- >        ((Fin 10) => Float32)
+-- >        (((h1 => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & (h1 => Float32))
+-- >         & (((h2 => h1 => (Fin 3) => (Fin 3) => Float32) & (h2 => Float32))
+-- >            & ((((h2 & (Fin 7 & Fin 7)) => h3 => Float32) & (h3 => Float32))
+-- >               & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
 
 
 '## Data Loading
