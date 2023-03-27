@@ -5,89 +5,120 @@ import png
 
 '## NN Prelude
 
-def relu (input : Float) : Float =
+def relu(input : Float) -> Float =
   select (input > 0.0) input 0.0
 
-struct Layer inp:Type out:Type params:Type =
-  forward:(params -> inp -> out)
-  init:(Key -> params)
+struct Layer(inp:Type, out:Type, params:Type) =
+  forward : (params, inp) -> out
+  init    : (Key) -> params
 
 '## Layers
 
 'Dense layer
 
-def DenseParams (a:Type) (b:Type) [Ix a, Ix b] : Type =
-   ((a=>b=>Float) & (b=>Float))
+struct DenseParams(a|Ix, b|Ix) =
+  weights : a=>b=>Float
+  biases  : b=>Float
 
-def dense (a:Type) (b:Type) [Ix a, Ix b] : Layer (a=>Float) (b=>Float) (DenseParams a b) =
-  Layer~new ((\ ((weight, bias)) x . for j. (bias.j + sum for i. weight.i.j * x.i))) arb
+-- TODO: these instances are all exactly the same as those for pairs. We should derive them!
+instance Add(DenseParams(a, b)) given (a|Ix, b|Ix)
+  def (+)(p1, p2) = DenseParams.new( p1.weights + p2.weights
+                                   , p1.biases  + p2.biases)
+  zero = DenseParams.new(zero, zero)
+
+instance Sub(DenseParams(a, b)) given (a|Ix, b|Ix)
+  def (-)(p1, p2) = DenseParams.new( p1.weights - p2.weights
+                                   , p1.biases  - p2.biases)
+
+instance Arbitrary(DenseParams(a, b)) given (a|Ix, b|Ix)
+  def arb(k) =
+    [k1, k2] = split_key k
+    DenseParams.new(arb k1, arb k2)
+
+instance VSpace(DenseParams(a, b)) given (a|Ix, b|Ix)
+  def (.*)(s, p) = DenseParams.new(s .* p.weights, s .* p.biases)
+
+def dense(a|Ix, b|Ix) -> Layer(a=>Float, b=>Float, DenseParams a b) =
+  def forward(p:DenseParams a b, x:a=>Float) = p.biases + x .** p.weights
+  def init(k:Key) = arb k
+  Layer.new(forward, init)
 
 'CNN layer
 
-def CNNParams (inc:Type) (outc:Type) [Ix inc, Ix outc] (kw:Nat) (kh:Nat) : Type =
-  ((outc=>inc=>Fin kh=>Fin kw=>Float) &
-   (outc=>Float))
+struct CNNParams(inc|Ix, outc|Ix, kw:Nat, kh:Nat) =
+  weights : outc=>inc=>Fin kh=>Fin kw=>Float
+  biases  : outc=>Float
 
-def conv2d
-      {inc outc h w kh kw}
-      (x:inc=>(Fin h)=>(Fin w)=>Float)
-      (kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float)
-      : outc=>(Fin h)=>(Fin w)=>Float =
+def conv2d(
+    x:inc=>(Fin h)=>(Fin w)=>Float,
+    kernel:outc=>inc=>(Fin kh)=>(Fin kw)=>Float
+    ) -> outc=>(Fin h)=>(Fin w)=>Float
+    given (inc|Ix, outc|Ix, h, w, kh, kw) =
   for o i j.
     (i', j') = (ordinal i, ordinal j)
     case (i' + kh) <= h && (j' + kw) <= w of
       True ->
-        sum for (ki, kj, inp).
-          (di, dj) = (from_ordinal (Fin h) (i' + (ordinal ki)),
-                      from_ordinal (Fin w) (j' + (ordinal kj)))
-          x.inp.di.dj * kernel.o.inp.ki.kj
+        sum for ixs.
+          (ki, kj, inp) = ixs
+          (di, dj) = (from_ordinal(n=Fin h, i' + (ordinal ki)),
+                      from_ordinal(n=Fin w, j' + (ordinal kj)))
+          x[inp,di,dj] * kernel[o,inp,ki,kj]
       False -> zero
 
-def cnn {h w} (inc:Type) (outc:Type) [Ix inc, Ix outc] (kw:Nat) (kh:Nat) :
-    Layer (inc=>(Fin h)=>(Fin w)=>Float)
-          (outc=>(Fin h)=>(Fin w)=>Float)
-          (CNNParams inc outc kw kh) =
-  Layer~new (\ (weight, bias) x. for o i j . (conv2d x weight).o.i.j + bias.o) arb
+def cnn(inc|Ix, outc|Ix, kw:Nat, kh:Nat)
+    -> Layer (inc=>(Fin h)=>(Fin w)=>Float)
+             (outc=>(Fin h)=>(Fin w)=>Float)
+             (CNNParams inc outc kw kh) given (h, w) =
+  def forward(p:CNNParams(_,_,_,_), x) =
+    for o i j . (conv2d x p.weights)[o,i,j] + p.biases[o]
+  def init(k:Key) =
+    [k1, k2] = split_key k
+    CNNParams.new(arb k, arb k)
+  Layer.new(forward, init)
 
 'Pooling
 
-def split {m n o v} [Ix m, Ix n, Ix o] (x: m=>v) : n=>o=>v =
-  for i j. x.((ordinal (i,j))@m)
+def split(x: m=>v) -> n=>o=>v given (m|Ix, n|Ix, o|Ix, v) =
+  for i j. x[(ordinal (i,j))@m]
 
-def imtile {a b n o p q v} [Ix a, Ix b, Ix n, Ix o, Ix p, Ix q]
-           (x: a=>b=>v) : n=>o=>p=>q=>v =
-  for kw kh w h. (split (split x).w.kw).h.kh
+def imtile(x: a=>b=>v) -> n=>o=>p=>q=>v given (a|Ix, b|Ix, n|Ix, o|Ix, p|Ix, q|Ix, v) =
+  for kw kh w h. (split (split x)[w,kw])[h,kh]
 
-def meanpool {m n h w} (kh: Type) (kw: Type) [Ix m, Ix n, Ix h, Ix w, Ix kh, Ix kw]
-             (x : m=>n=> Float) : ( h=>w=> Float) =
+def meanpool(kh|Ix, kw|Ix, x: m=>n=> Float)
+            -> h=>w=>Float
+            given (m|Ix, n|Ix, h|Ix, w|Ix) =
   out : (kh => kw => h => w => Float) = imtile x
-  mean for (i,j). out.i.j
+  mean for ixs.
+    (i,j) = ixs
+    out[i,j]
 
 '## Simple point classifier
 
 [k1, k2] = split_key $ new_key 1
 x1 : Fin 100 => Float = arb k1
 x2 : Fin 100 => Float = arb k2
-y = for i. case ((x1.i > 0.0) && (x2.i > 0.0)) || ((x1.i < 0.0) && (x2.i < 0.0)) of
+y = for i. case ((x1[i] > 0.0) && (x2[i] > 0.0)) || ((x1[i] < 0.0) && (x2[i] < 0.0)) of
   True -> 1
   False -> 0
-xs = for i. [x1.i, x2.i]
+xs = for i. [x1[i], x2[i]]
 
 
-:html show_plot $ xyc_plot x1 x2 $ for i. n_to_f y.i
+:html show_plot $ xyc_plot x1 x2 $ for i. n_to_f y[i]
 > <html output>
 
-def simple (h1:Type) [Ix h1] =
+def simple(h1|Ix) =
   ndense1 = dense (Fin 2) h1
   ndense2 = dense h1 (Fin 2)
-  (Layer~new
-     (\ (dense1, dense2) x.
-          x1' = ndense1~forward dense1 x
-          x1 = for i. relu x1'.i
-          logsoftmax $ ndense2~forward dense2 x1)
-     (\key.
-        [k1, k2] = split_key key
-        (ndense1~init k1, ndense2~init k2)))
+  Params : Type = (DenseParams(_, _), DenseParams(_, _))
+  def forward(params:Params, x) =
+    (p1, p2) = params
+    x1' = ndense1.forward p1 x
+    x1 = for i. relu x1'[i]
+    logsoftmax $ ndense2.forward p2 x1
+  def init(k) -> Params =
+    [k1, k2] = split_key k
+    (ndense1.init k1, ndense2.init k2)
+  Layer.new(forward, init)
 
 :t simple
 > ((h1:Type)
@@ -101,36 +132,37 @@ def simple (h1:Type) [Ix h1] =
 'Train a multiclass classifier with minibatch SGD
 '`minibatch * minibatches = batch`
 
-def trainClass {a b p batch} [VSpace p, Ix b, Ix batch]
-      (model: Layer a (b=>Float) p)
-      (x: batch=>a)
-      (y: batch=>b)
-      (epochs : Type) [Ix epochs]
-      (minibatch : Type) [Ix minibatch]
-      (minibatches : Type) [Ix minibatches]
-      : (epochs => p & epochs => Float ) =
+def trainClass(
+      model: Layer a (b=>Float) p,
+      x: batch=>a,
+      y: batch=>b,
+      epochs|Ix,
+      minibatch|Ix,
+      minibatches|Ix
+      ) -> (epochs=>p, epochs=>Float)
+      given (a, b|Ix, p|VSpace, batch|Ix) =
   xs : minibatches => minibatch => a = split x
   ys : minibatches => minibatch => b = split y
-  unzip $ with_state (model~init $ new_key 0) $ \params .
+  unzip $ with_state (model.init $ new_key 0) $ \params .
      for _ : epochs.
        loss = sum $ for b : minibatches.
               (loss, gradfn) =  vjp (\ params.
                             -sum for j.
-                                       result = model~forward params xs.b.j
-                                       result.(ys.b.j)) (get params)
+                                       result = model.forward params xs[b,j]
+                                       result[ys[b,j]]) (get params)
               gparams = gradfn 1.0
-              params := (get params) - scale_vec (0.05 / (i_to_f 100)) gparams
+              params := (get params) - (0.05 / (i_to_f 100)) .* gparams
               loss
        (get params, loss)
 
 -- todo : Do I have to give minibatches as a param?
 simple_model = simple (Fin 10)
-(all_params,losses) = trainClass simple_model xs (for i. (y.i @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
+(all_params,losses) = trainClass simple_model xs (for i. (y[i] @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
 
 span = linspace (Fin 10) (-1.0) (1.0)
 tests = for h : (Fin 50). for i . for j.
-    r = simple_model~forward all_params.((ordinal h * 10)@_) [span.i, span.j]
-    [exp r.(1@_), exp r.(0@_), 0.0]
+    r = simple_model.forward all_params[(ordinal h * 10)@_] [span[i], span[j]]
+    [exp r[1@_], exp r[0@_], 0.0]
 
 
 :html imseqshow tests
@@ -143,27 +175,28 @@ W = 28
 Image = Fin 1 => Fin H => Fin W => Float
 Class = Fin 10
 
-def lenet (h1:Type) (h2:Type) (h3:Type) [Ix h1, Ix h2, Ix h3] =
+def lenet(h1|Ix, h2|Ix, h3|Ix) =
   ncnn1 = cnn (Fin 1) h1 3 3
   ncnn2 = cnn h1 h2 3 3
-  Pooled = (h2 & Fin 7 & Fin 7)
+  Pooled :Type = (h2, Fin 7, Fin 7)
   ndense1 = dense Pooled h3
   ndense2 = dense h3 Class
-  (Layer~new
-    (\ (cnn1, cnn2, dense1, dense2) inp.
-         x:Image = inp
-         x1' = ncnn1~forward cnn1 x
-         x1 = for i j k. relu x1'.i.j.k
-         x2' = ncnn2~forward cnn2 x1
-         x2 = for i j k. relu x2'.i.j.k
-         x3 : (h2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2.c
-         x4' = ndense1~forward dense1 for (i,j,k). x3.i.j.k
-         x4 = for i. relu x4'.i
-         logsoftmax $ ndense2~forward dense2 x4)
-    (\key.
-         [k1, k2, k3, k4] = split_key key
-         (ncnn1~init k1, ncnn2~init k2,
-         ndense1~init k3, ndense2~init k4)))
+  def forward(params, x:Image) =
+    (cnn1, cnn2, dense1, dense2) = params
+    x1' = ncnn1.forward cnn1 x
+    x1 = for i j k. relu x1'[i,j,k]
+    x2' = ncnn2.forward cnn2 x1
+    x2 = for i j k. relu x2'[i,j,k]
+    x3 : (h2 => Fin 7 => Fin 7 => Float) = for c. meanpool (Fin 4) (Fin 4) x2[c]
+    x4' = ndense1.forward dense1 for ixs.
+      (i,j,k) = ixs
+      x3[i,j,k]
+    x4 = for i. relu x4'[i]
+    logsoftmax $ ndense2.forward dense2 x4
+  def init(k:Key) =
+    [k1, k2, k3, k4] = split_key k
+    (ncnn1.init k1, ncnn2.init k2, ndense1.init k3, ndense2.init k4)
+  Layer.new(forward, init)
 
 :t lenet
 > ((h1:Type)
@@ -186,11 +219,11 @@ def lenet (h1:Type) (h2:Type) (h3:Type) [Ix h1, Ix h2, Ix h3] =
 Batch = Fin 5000
 Full = Fin ((size Batch) * H * W)
 
-def pixel (x:Char) : Float32 =
-     r = w8_to_i x
-     i_to_f case r < 0 of
-               True -> (abs r) + 128
-               False -> r
+def pixel(x:Char) -> Float32 =
+  r = w8_to_i x
+  i_to_f case r < 0 of
+    True -> (abs r) + 128
+    False -> r
 
 '## Training loop
 
@@ -200,34 +233,34 @@ def pixel (x:Char) : Float32 =
 
 ' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
 
--- def getIm : Batch => Image =
---     (AsList _ im) = unsafe_io do read_file "examples/mnist.bin"
---     raw = unsafe_cast_table Full im
---     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
---         pixel raw.((ordinal (b, i, j)) @ Full)
---
--- def getLabel : Batch => Class =
---     (AsList _ im2) = unsafe_io do read_file "examples/labels.bin"
---     r = unsafe_cast_table Batch im2
---     for i. (w8_to_i r.i @ Class)
---
+-- getIm : Batch=>Image =
+--   AsList(_, im) = unsafe_io \. read_file "examples/mnist.bin"
+--   raw = unsafe_cast_table(to=Full, im)
+--   for b: Batch  c:(Fin 1) i:(Fin W) j:(Fin H).
+--     pixel raw[(ordinal (b, i, j)) @ Full]
+
+-- getLabel : Batch => Class =
+--   AsList(_, im2) = unsafe_io \. read_file "examples/labels.bin"
+--   r = unsafe_cast_table(to=Batch, im2)
+--   for i. (w8_to_n r[i] @ Class)
+
 -- ims = getIm
 -- labels = getLabel
---
--- small_ims = for i: (Fin 10). ims.((ordinal i)@_)
--- small_labels = for i: (Fin 10). labels.((ordinal i)@_)
---
+
+-- small_ims = for i: (Fin 10). ims[(ordinal i)@_]
+-- small_labels = for i: (Fin 10). labels[(ordinal i)@_]
+
 -- :p small_labels
---
+
 -- Epochs = (Fin 5)
 -- Minibatches = (Fin 1)
 -- Minibatch = (Fin 10)
---
--- :t ims.(2@_)
---
+
+-- :t ims[2@_]
+
 -- model = lenet (Fin 1) (Fin 1) (Fin 20)
--- init_param = (init model  $ new_key 0)
--- :p forward model init_param (ims.(2@Batch))
+-- init_param = model.init $ new_key 0
+-- :p model.forward(init_param, ims[2@Batch])
 
 ' Sanity check
 
