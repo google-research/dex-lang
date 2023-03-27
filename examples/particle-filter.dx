@@ -1,71 +1,63 @@
 '# Particle Filter
 
-def Distribution (range:Type) : Type =
-  ( Key -> range
-  & range -> Float)  -- log prob
+struct Distribution(range:Type) =
+  sample  : (Key) -> range
+  logprob : (range) -> Float
 
-def Model (state:Type) (observation:Type) : Type =
-  ( Distribution state                   -- initial state
-  & state -> Distribution state          -- dynamics
-  & state -> Distribution observation)   -- observations
+struct Model(state:Type, observation:Type) =
+  init     : Distribution state
+  dynamics : (state) -> Distribution state
+  observe  : (state) -> Distribution observation
 
-def sample {a} (d: Distribution a) (k: Key) : a =
-  (sampler, _) = d
-  sampler k
-
-def simulate {s v} [Data s]
-    (model: Model s v) (t: Nat) (key: Key) : Fin t=>(s & v) =
-  (init, dynamics, observe) = model
+def simulate(model: Model s v, t: Nat, key: Key) -> Fin t=>(s, v) given (s|Data, v) =
   [key, subkey] = split_key key
-  s0 = sample init subkey
+  s0 = model.init.sample(subkey)
   with_state s0 \s_ref .
     for i.
       [k1, k2] = split_key (ixkey key i)
       s = get s_ref
-      s_next = sample (dynamics s) k1
-      v = sample (observe s) k2
+      s_next = model.dynamics(s).sample(k1)
+      v = model.observe(s).sample(k2)
       s_ref := s_next
       (s, v)
 
-def particleFilter {s a v} [Data s]
-    (num_particles: Nat) (num_timesteps: Nat)
-    (model: Model s v)
-    (summarize: (Fin num_particles => s) -> a)
-    (obs: Fin num_timesteps=>v)
-    (key: Key)
-    : Fin num_timesteps => a =
-  (init, dynamics, observe) = model
+def particleFilter(
+    num_particles: Nat,
+    num_timesteps: Nat,
+    model: Model s v,
+    summarize: (Fin num_particles => s) -> a,
+    obs: Fin num_timesteps=>v,
+    key: Key
+    ) -> Fin num_timesteps => a given (s|Data, a, v) =
   [key, init_key] = split_key key
-  init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
+  init_particles = for i: (Fin num_particles). model.init.sample(ixkey init_key i)
   with_state init_particles \p_ref .
     for t: (Fin num_timesteps).
       p_prev = get p_ref
-      logLikelihoods = for i. snd (observe p_prev.i) obs.t
+      logLikelihoods = for i. model.observe(p_prev[i]).logprob(obs[t])
       [resample_key, dynamics_key] = split_key (ixkey key t)
       resampled_idxs = categorical_batch logLikelihoods resample_key
-      p_resampled = for i. p_prev.(resampled_idxs.i)
-      p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)
+      p_resampled = for i. p_prev[resampled_idxs[i]]
+      p_next = for i. model.dynamics(p_resampled[i]).sample(ixkey dynamics_key i)
       p_ref := p_next
       summarize p_resampled
 
-def normalDistn (mean: Float) (var: Float) : Distribution Float =
-  ( \k. (randn k) * (sqrt var) + mean
-  , \v. -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
-  )
+def normalDistn(mean: Float, var: Float) -> Distribution Float =
+  Distribution.new( \k. (randn k) * (sqrt var) + mean
+                  , \v. -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var))
 
-gaussModel : Model Float Float =
-  ( normalDistn 0.1 0.1
-  , \s. normalDistn s 1.0
-  , \s. normalDistn s 1.0
-  )
+gaussModel : Model Float Float = Model.new(
+  normalDistn 0.1 0.1,
+  \s. normalDistn s 1.0,
+  \s. normalDistn s 1.0)
 
 timesteps = 10
 num_particles = 10000
 
 truth = for i:(Fin timesteps).
   s = n_to_f (ordinal i)
-  (s, sample (normalDistn s 1.0) $ ixkey (new_key 0) i)
+  (s, (normalDistn s 1.0).sample(ixkey (new_key 0) i))
 
 filtered = particleFilter num_particles _ gaussModel mean (map snd truth) (new_key 0)
 
--- :p for i. (truth.i, filtered.i)
+-- :p for i. (truth[i], filtered[i])

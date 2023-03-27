@@ -197,7 +197,9 @@ def raymarch(scene:Scene n, ray:Ray) -> RayMarchResult given (n|Ix) =
             False ->
               -- We made it!
               Done $ case obj of
-                PassiveObject(_, surf) -> HitObj(ray, OrientedSurface.new(surfNorm, surf))
+                PassiveObject(_, surf) ->
+                  newRay = Ray.new(rayPos, ray.dir)
+                  HitObj(newRay, OrientedSurface.new(surfNorm, surf))
                 Light(_, _, radiance)  -> HitLight radiance
 
 def rayDirectRadiance(scene:Scene n, ray:Ray) -> Radiance given (n|Ix) =

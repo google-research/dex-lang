@@ -2592,8 +2592,8 @@ def (**)(
 
 def (**.)(mat: n=>m=>Float, v: m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
   for i. vdot(mat[i], v)
-def(.**)(v: m=>Float, mat: n=>m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
-  mat **. v
+def(.**)(v: n=>Float, mat: n=>m=>Float) -> (m=>Float) given (n|Ix, m|Ix) =
+  transpose mat **. v
 
 def inner(x:n=>Float, mat:n=>m=>Float, y:m=>Float) -> Float given (n|Ix, m|Ix) =
   fsum for p.

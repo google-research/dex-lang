@@ -2,7 +2,7 @@
 
 import linalg
 
-def psdsolve {n} (mat:n=>n=>Float) (b:n=>Float) : n=>Float =
+def psdsolve(mat:n=>n=>Float, b:n=>Float) -> n=>Float given (n|Ix) =
   l = chol mat
   b' = forward_substitute l b
   u = transpose_lower_to_upper l
@@ -18,10 +18,10 @@ psd : N=>N=>Float =
   x = a ** transpose a
   x + eye
 
-def padLowerTriMat {n v} [Add v] (mat:LowerTriMat n v) : n=>n=>v =
+def padLowerTriMat(mat:LowerTriMat n v) -> n=>n=>v given (n|Ix, v|Add) =
   for i j.
     if (ordinal j)<=(ordinal i)
-      then mat.i.(unsafe_project _ j)
+      then mat[i,unsafe_project j]
       else zero
 
 l = chol psd
@@ -31,7 +31,9 @@ l_full = padLowerTriMat l
 
 psdReconstructed = l_full ** transpose l_full
 
-:p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
+:p sum for pair.
+  (i, j) = pair
+  sq (psd[i,j] - psdReconstructed[i,j])
 > 1.421085e-12
 
 vec : N=>Float = arb k2

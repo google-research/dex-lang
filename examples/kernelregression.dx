@@ -3,23 +3,31 @@
 import linalg
 import plot
 
+struct ConjGradState(a|VSpace) =
+  x : a
+  r : a
+  p : a
+
 -- Conjugate gradients solver
-def solve' {m} (mat:m=>m=>Float) (b:m=>Float) : m=>Float =
-  x0 = for i:m. 0.0
+def solve'(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
+  x0 = zero
   ax = mat **. x0
   r0 = b - ax
-  (xOut, _, _) = fold (x0, r0, r0) $
-     \s:m (x, r, p).
-       ap = mat **. p
-       alpha = vdot r r / vdot p ap
-       x' = x + alpha .* p
-       r' = r - alpha .* ap
-       beta = vdot r' r' / (vdot r r + 0.000001)
-       p' = r' + beta .* p
-       (x', r', p')
-  xOut
+  init = ConjGradState.new(zero, r0, r0)
+  final = fold init \_:m state.
+    x = state.x
+    r = state.r
+    p = state.p
+    ap = mat **. p
+    alpha = vdot r r / vdot p ap
+    x' = x + alpha .* p
+    r' = r - alpha .* ap
+    beta = vdot r' r' / (vdot r r + 0.000001)
+    p' = r' + beta .* p
+    ConjGradState.new(x', r', p')
+  final.x
 
-def chol_solve {m} (l:LowerTriMat m Float) (b:m=>Float) : m=>Float =
+def chol_solve(l:LowerTriMat m Float, b:m=>Float) -> m=>Float given (m|Ix) =
     b' = forward_substitute l b
     u = transpose_lower_to_upper l
     backward_substitute u b'
@@ -39,23 +47,22 @@ Nx = Fin 100
 noise = 0.1
 [k1, k2] = split_key (new_key 0)
 
-def trueFun (x:Float) : Float =
+def trueFun(x:Float) -> Float =
   x + sin (20.0 * x)
 
 xs : Nx=>Float = for i. rand (ixkey k1 i)
-ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
+ys : Nx=>Float = for i. trueFun xs[i] + noise * randn (ixkey k2 i)
 
 -- Kernel ridge regression
-def regress {a} (kernel: a -> a -> Float) (xs: Nx=>a) (ys: Nx=>Float) : a -> Float =
-    gram = for i j. kernel xs.i xs.j + select (i==j) 0.0001 0.0
+def regress(kernel: (a, a) -> Float, xs: Nx=>a, ys: Nx=>Float) -> (a) -> Float given (a) =
+    gram = for i j. kernel xs[i] xs[j] + select (i==j) 0.0001 0.0
     alpha = solve' gram ys
-    predict = \x. sum for i. alpha.i * kernel xs.i x
-    predict
+    \x. sum for i. alpha[i] * kernel xs[i] x
 
-def rbf (lengthscale:Float) (x:Float) (y:Float) : Float =
+def rbf(lengthscale:Float, x:Float, y:Float) -> Float =
   exp (-0.5 * sq ((x - y) / lengthscale))
 
-predict = regress (rbf 0.2) xs ys
+predict = regress (\x y. rbf 0.2 x y) xs ys
 
 -- Evaluation
 Nxtest = Fin 1000
@@ -76,21 +83,24 @@ with the Bayes rule, gives the variance of the prediction.
 ' In this implementation, the conjugate gradient solver is replaced with the
 cholesky solver from `lib/linalg.dx` for efficiency.
 
-def gp_regress {n a} (kernel: a -> a -> Float) (xs: n=>a) (ys: n=>Float)
-    : (a -> (Float&Float)) =
+def gp_regress(
+    kernel: (a, a) -> Float,
+    xs: n=>a,
+    ys: n=>Float
+    ) -> ((a) -> (Float, Float)) given (n|Ix, a) =
     noise_var = 0.0001
-    gram = for i j. kernel xs.i xs.j
+    gram = for i j. kernel xs[i] xs[j]
     c = chol (gram + eye *. noise_var)
     alpha = chol_solve c ys
     predict = \x.
-        k' = for i. kernel xs.i x
-        mu = sum for i. alpha.i * k'.i
+        k' = for i. kernel xs[i] x
+        mu = sum for i. alpha[i] * k'[i]
         alpha' = chol_solve c k'
-        var = kernel x x + noise_var - sum for i. k'.i * alpha'.i
+        var = kernel x x + noise_var - sum for i. k'[i] * alpha'[i]
         (mu, var)
     predict
 
-gp_predict = gp_regress (rbf 0.2) xs ys
+gp_predict = gp_regress (\x y. rbf 0.2 x y) xs ys
 
 (gp_preds, vars) = unzip (map gp_predict xtest)
 
