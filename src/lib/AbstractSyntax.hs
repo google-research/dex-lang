@@ -252,7 +252,7 @@ pat = propagateSrcB pat' where
   pat' (CBin (WithSrc _ JuxtaposeWithSpace) lhs rhs) = do
     case lhs of
       WithSrc _ (CBin (WithSrc _ JuxtaposeWithSpace) _ _) ->
-        throw SyntaxErr "Only unary constructors can from patterns without parens"
+        throw SyntaxErr "Only unary constructors can form patterns without parens"
       _ -> return ()
     name <- identifier "pattern constructor name" lhs
     arg <- pat rhs
