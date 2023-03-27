@@ -16,8 +16,8 @@ import netpbm
 
 ' # Round 0: Creating a test image
 
-def bmatshow {h w} (mat: h=>w=>Bool) : Html =
-  matshow for i j. b_to_f mat.i.j
+def bmatshow(mat: h=>w=>Bool) -> Html given (h|Ix, w|Ix) =
+  matshow for i j. b_to_f mat[i, j]
 
 Height = Fin 100
 Width = Fin 300
@@ -32,16 +32,16 @@ img = img_ / (n_to_f (size Height + size Width))
 
 ' # Round 1: Threshold dithering
 
-def dither_threshold {h w} (img: h=>w=>Float) : (h=>w=>Bool) =
-  for i j. img.i.j > 0.5
+def dither_threshold(img: h=>w=>Float) -> (h=>w=>Bool) given (h|Ix, w|Ix) =
+  for i j. img[i, j] > 0.5
 
 :html bmatshow $ dither_threshold img
 > <html output>
 
 ' # Round 2: Noise dithering
 
-def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
-  for i j. img.i.j > rand (ixkey k (i, j))
+def dither_noise(k:Key, img: h=>w=>Float) -> (h=>w=>Bool) given (h|Ix, w|Ix) =
+  for i j. img[i, j] > rand (ixkey k (i, j))
 
 :html bmatshow $ dither_noise key img
 > <html output>
@@ -51,8 +51,8 @@ def dither_noise {h w} (k:Key) (img: h=>w=>Float) : (h=>w=>Bool) =
   image. We achieve this by wrapping the pixel indices i and j into the range of
   the small matrix `mat` to retrieve the threshold.
 
-def dither_ordered {mh mw h w} (mat: mh=>mw=>Float) (img: h=>w=>Float) : (h=>w=>Bool) =
-  for i j. img.i.j > mat.(wrap_periodic mh (ordinal i)).(wrap_periodic mw (ordinal j))
+def dither_ordered(mat: mh=>mw=>Float, img: h=>w=>Float) -> (h=>w=>Bool) given (mh|Ix, mw|Ix, h|Ix, w|Ix) =
+  for i j. img[i, j] > mat[wrap_periodic mh (ordinal i), wrap_periodic mw (ordinal j)]
 
 bayer = [[1.0,  9,  3, 11], 
          [ 13,  5, 15,  7],
@@ -83,24 +83,24 @@ halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
 
 -- conversion from RGB to grayscale
 
-def pixel (x:Char) : Float32 =
+def pixel(x:Char) -> Float32 =
   r = w8_to_i x
   i_to_f case r < 0 of
     True -> 256 + r
     False -> r
 
-def srgb_to_linear (c: Float) : Float =
+def srgb_to_linear(c: Float) -> Float =
   case c <= 0.04045 of
     True  -> c / 12.92
     False -> pow ((c + 0.055) / 1.055) 2.4
 
-def linear_to_srgb (c: Float) : Float = 
+def linear_to_srgb(c: Float) -> Float = 
   case c <= 0.0031308 of
     True  -> c * 12.92
     False -> 1.055 * (pow c (1.0 / 2.4)) - 0.055
 
-def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
-  vals = for c. srgb_to_linear $ (pixel pix.c) / 255.0
+def rbg_to_gray(pix: (Fin 3)=>Word8) -> Float =
+  vals = for c. srgb_to_linear $ (pixel pix[c]) / 255.0
   linear_to_srgb $ vdot vals [0.2126, 0.7152, 0.0722]
 
 
@@ -108,8 +108,8 @@ def rbg_to_gray (pix: (Fin 3)=>Word8) : Float =
 
 '  `wget https://gist.github.com/niklasschmitz/03be29c2850ac3bbdf6ce86229b71d8f/raw/300962b117fe8595913fb1f35db546b53974576c/camera.ppm`
 
-(MkImage rows cols img_camera_rgb) = from_just $ load_image_p6 "examples/camera.ppm"
-img_camera = for i j. rbg_to_gray img_camera_rgb.i.j
+MkImage(rows, cols, img_camera_rgb) = from_just $ load_image_p6 "examples/camera.ppm"
+img_camera = for i j. rbg_to_gray img_camera_rgb[i, j]
 
 :t img_camera
 > ((Fin 427) => (Fin 640) => Float32)
