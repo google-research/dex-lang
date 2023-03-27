@@ -17,16 +17,13 @@ in each dimension than the inputs.  By capturing the relationship
 statically we avoid both programmer off-by-one errors and runtime array
 bounds checks.
 
-def levenshtein_table
-    {n m a}
-    [Eq a]
-    (xs: n=>a) (ys: m=>a)
-    : (Post n => Post m => Nat) =
+def levenshtein_table(xs: n=>a, ys: m=>a)
+    -> (Post n => Post m => Nat) given (n|Ix, m|Ix, a|Eq) =
   yield_state (for _ _. 0) \tab.
     for i:(Post n). tab!i!first_ix := ordinal i
     for j:(Post m). tab!first_ix!j := ordinal j
     for i:n j:m.
-      subst_cost = if xs.i == ys.j then 0 else 1
+      subst_cost = if xs[i] == ys[j] then 0 else 1
       d_subst  = get tab!(left_post  i)!(left_post  j) + subst_cost
       d_delete = get tab!(left_post  i)!(right_post j) + 1
       d_insert = get tab!(right_post i)!(left_post  j) + 1
@@ -42,8 +39,8 @@ levenshtein_table ['k', 'i', 't', 't', 'e', 'n'] ['s', 'i', 't', 't', 'i', 'n', 
 
 'The actual distance is of course just the last element of the table.
 
-def levenshtein {n m a} [Eq a] (xs: n=>a) (ys: m=>a) : Nat =
-  (levenshtein_table xs ys).last_ix.last_ix
+def levenshtein(xs: n=>a, ys: m=>a) -> Nat given (n|Ix, m|Ix, a|Eq) =
+  levenshtein_table(xs, ys)[last_ix, last_ix]
 
 %time
 levenshtein (iota $ Fin 100) (iota $ Fin 100)
@@ -82,13 +79,13 @@ compiling the body 10,000 times (once for each pair of input sizes).
 'Just for fun, we can make a crude spelling correcter out of this
 distance function on words:
 
-(AsList ct words) = lines $ unsafe_io do read_file "/usr/share/dict/words"
+AsList(ct, words) = lines $ unsafe_io \. read_file "/usr/share/dict/words"
 
-def closest_word (s:String) : String =
-  (AsList _ s') = s
+def closest_word(s:String) -> String =
+  AsList(_, s') = s
   fst $ minimum_by snd for i.
-    (AsList _ word) = words.i
-    (words.i, levenshtein word s')
+    AsList(_, word) = words[i]
+    (words[i], levenshtein word s')
 
 %time
 closest_word "hello"
