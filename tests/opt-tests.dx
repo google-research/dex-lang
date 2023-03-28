@@ -21,13 +21,7 @@ def arange_f(off:Nat) -> (Fin n)=>Int given (n) =
 m = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
 
 %passes imp
-<<<<<<< HEAD
 m' = naive_matmul(m, m)
-||||||| c5a39c80
-m' = m ** m
-=======
-m' = naive_matmul m m
->>>>>>> main
 -- CHECK: alloc Float32[10000]
 -- CHECK-NOT: alloc
 
