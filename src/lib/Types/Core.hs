@@ -909,10 +909,6 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 class HasArgType (e::E) (r::IR) | e -> r where
   argType :: e n -> Type r n
 
-instance HasArgType CorePiType CoreIR where
-  argType _ = undefined
-  -- argType (CorePiType (_:>ty) _ _ _) = ty
-
 instance HasArgType (TabPiType r) r where
   argType (TabPiType (_:>IxType ty _) _) = ty
 
