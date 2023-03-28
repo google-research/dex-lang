@@ -476,7 +476,7 @@ instance InfBuilder (InfererM i) where
                 Abs infFrag' $ Abs b' result
             HoistFailure vs -> do
               throw EscapedNameErr $ (pprint vs)
-                ++ "\nFailed to exchage binders in buildAbsInf"
+                ++ "\nFailed to exchange binders in buildAbsInf"
                 ++ "\n" ++ pprint infFrag
     Abs b e <- return ab
     ty' <- zonk ty

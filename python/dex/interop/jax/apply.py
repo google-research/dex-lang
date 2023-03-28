@@ -202,7 +202,7 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   batched_dims_it = iter(batched_dims)
   for binder in native.argument_signature:
     if binder.implicit:
-      batched_args.append("{" + binder.name + "}")
+      batched_args.append("(given (" + binder.name + "))")
     else:
       ty = binder.type.dex_annotation()
       if next(batched_dims_it) is not batching.not_mapped:
@@ -304,7 +304,7 @@ def dex_call_jvp(arg_values, arg_tangents, func_atom):
   # ```
   # \ (given (n1)) (given (n2)) (given (n3)) (p1:ty1) (p2:ty2) (p3:ty3) (t1:ty1) (t2:ty2) (t3:ty3).
   #   linearized = linearize(func_uncurried, (p1, p2, p3))
-  #   snd(linearized((t1, t2, t3)))
+  #   snd(linearized)((t1, t2, t3))
   # ```
   evaluate_linearized = module.eval(
       f"\\ {juxt_string(implicit_args)} {juxt_arg_string(primals, name_to_ty)} {juxt_arg_string(tangents, name_to_ty)}." +
@@ -366,8 +366,8 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   # Concretely, if `f` has three primal arguments, `func_atom` should look like:
   # ```
   # \ (given (n0)) (given (n1)) (given (n2)) x0 x1 x2 t0 t1 t2.
-  #   intermediate_linearized = linearize f (x0, x1, x2)
-  #   snd intermediate_linearized (t0, t1, t2)
+  #   intermediate_linearized = linearize(f, (x0, x1, x2))
+  #   snd(intermediate_linearized)((t0, t1, t2))
   # ```
   # In particular, its explicit arguments are assumed to be
   # `num_primals` primal inputs, followed by `num_primals` tangent
@@ -472,12 +472,14 @@ def dex_call_evaluate_linearized_transpose(cotangents, *args, func_atom):
   linearized_inputs = juxt_string(primal_params + tangent_params)
 
   # \ (given (n0)) (given (n1)) (given (n2)) x0 x1 x2 t1 ct.
-  #   transpose_linear (\(t0, t2). linearized x0 x1 x2 t0 t1 t2) ct
+  #   transpose_linear(\<fresh name>.
+  #     (t0, t2) = <fresh name>
+  #     linearized x0 x1 x2 t0 t1 t2)(ct)
   transposed = module.eval(
-      f"\\ {transposed_atom_params}. transpose_linear" +
-      f"(\\ {linear_lambda_param}." +
-      f"\n   {tuple_unpack_string(tangent_name, tangent_inputs)}" +
-      f"\n   {linearized_name} {linearized_inputs})(ct)\n"
+      f"\\ {transposed_atom_params}."
+      f"\n  transpose_linear(\\ {linear_lambda_param}." +
+      f"\n    {tuple_unpack_string(tangent_name, tangent_inputs)}" +
+      f"\n    {linearized_name} {linearized_inputs})(ct)\n"
   )
 
   # Tuple of cotangents relating to linear tangent inputs. In the given

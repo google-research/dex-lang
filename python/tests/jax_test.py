@@ -226,7 +226,7 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_vmap(self):
     m = dex.Module(dedent("""
-    def sqr(x:(Fin n => Float)) : Fin n => Float given (n:Nat) =
+    def sqr(x:(Fin n => Float)) -> Fin n => Float given (n:Nat) =
       for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
@@ -237,7 +237,7 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_jvp(self):
     m = dex.Module(dedent("""
-    def sqr(x:(Fin n => Float)) : Fin n => Float given (n:Nat) =
+    def sqr(x:(Fin n => Float)) -> Fin n => Float given (n:Nat) =
       for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
@@ -338,7 +338,7 @@ class JAXTest(unittest.TestCase):
 
   def test_interleave_implicit_args_vjp(self):
     f_dex = primitive(dex.eval(
-        r'\(given (n:Nat)) x:((Fin n) => Float) {m} y:((Fin n) => (Fin m) => Float). '
+        r'\(given (n:Nat)) x:((Fin n) => Float) (given (m)) y:((Fin n) => (Fin m) => Float). '
         'for i. x[i] * x[i] + 2.0 * sum(y[i])'))
 
     def f_with_dex(x, y):
