@@ -160,7 +160,7 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m 
     -> m n (Abs (Nest CDecl) e n)
 
   buildAbsInf
-    :: (SinkableE e, HoistableE e, RenameE e)
+    :: (SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e)
     => EmitsInf n
     => NameHint -> Explicitness -> CType n
     -> (forall l. (EmitsInf l, DExt n l) => CAtomName l -> m l (e l))
@@ -468,8 +468,10 @@ instance InfBuilder (InfererM i) where
           v <- sinkM $ binderName b
           extendInplaceTLocal (extendSynthCandidatesInf expl v) do
             EmitsInf <- fabricateEmitsInfEvidenceM
-            runSubstReaderT (sink env) (runInfererM' $ cont v)
-        refreshAbs ab \infFrag result -> do
+            -- zonking is needed so that dceInfFrag works properly
+            runSubstReaderT (sink env) (runInfererM' $ cont v >>= zonk)
+        ab' <- dceInfFrag ab
+        refreshAbs ab' \infFrag result -> do
           case exchangeBs $ PairB b infFrag of
             HoistSuccess (PairB infFrag' b') -> do
               return $ withSubscopeDistinct b' $
@@ -481,6 +483,16 @@ instance InfBuilder (InfererM i) where
     Abs b e <- return ab
     ty' <- zonk ty
     return $ Abs (WithExpl expl (b:>ty')) e
+   where
+    dceInfFrag
+      :: (EnvReader m, EnvExtender m, Fallible1 m, RenameE e, HoistableE e)
+      => Abs InfOutFrag e n -> m n (Abs InfOutFrag e n)
+    dceInfFrag ab@(Abs frag@(InfOutFrag bs _ _) e) =
+      case bs of
+        REmpty -> return ab
+        _ -> hoistThroughDecls frag e >>= \case
+          Abs frag' (Abs Empty e') -> return $ Abs frag' e'
+          _ -> error "Shouldn't have any decls without `Emits` constraint"
 
 instance Inferer InfererM where
   liftSolverMInf m = InfererM $ SubstReaderT $ lift $
@@ -1123,7 +1135,7 @@ etaExpandExplicits (CorePiType _ bsTop effs _) contTop = do
       return $ PairE effs' body
   coreLamExpr ExplicitApp ab
  where
-  go :: (EmitsInf o, SinkableE e, RenameE e, HoistableE e )
+  go :: (EmitsInf o, SinkableE e, RenameE e, SubstE AtomSubstVal e, HoistableE e )
      => Nest (WithExpl CBinder) o any
      -> (forall o'. (EmitsInf o', DExt o o') => [CAtom o'] -> InfererM i o' (e o'))
      -> InfererM i o (Abs (Nest (WithExpl CBinder)) e o)
@@ -1152,7 +1164,8 @@ buildLamInf (CorePiType appExpl bsTop effs resultTy) contTop = do
       return $ PairE effs' body
   coreLamExpr appExpl ab
  where
-  go :: (EmitsInf o, HoistableE e, SinkableE e, RenameE e) => Nest (WithExpl CBinder) o any
+  go :: (EmitsInf o, HoistableE e, SinkableE e, SubstE AtomSubstVal e, RenameE e)
+     => Nest (WithExpl CBinder) o any
      -> (forall o'. (EmitsInf o', DExt o o')
            => [(Explicitness, CAtom o')] -> InfererM i o' (e o'))
      -> InfererM i o (Abs (Nest (WithExpl CBinder)) e o)
@@ -1665,7 +1678,7 @@ withUBinders bs cont = case bs of
         extendSubst (b@>sink v) $ withUBinders rest \vs -> cont (sink v : vs)
 
 withConstraintBinders
-  :: (EmitsInf o, HasNamesE e, RenameE e, SinkableE e)
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, RenameE e, SinkableE e)
   => [UConstraint i]
   -> CAtomName o
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
@@ -1758,7 +1771,7 @@ checkULam (ULamExpr lamBs lamAppExpl lamEffs lamResultTy body)
   coreLamExpr piAppExpl ab
 
 checkLamBinders
-  :: (EmitsInf o, SinkableE e, HoistableE e, RenameE e)
+  :: (EmitsInf o, SinkableE e, HoistableE e, SubstE AtomSubstVal e, RenameE e)
   => Nest (WithExpl CBinder) o any
   -> Nest (WithExpl UOptAnnBinder) i i'
   -> (forall o'. (EmitsInf o', DExt o o') => [CAtomName o'] -> InfererM i' o' (e o'))

@@ -619,3 +619,65 @@ instance I(A, extraneous) given (extraneous)
 instance I()
   m = todo
 > Type error:Wrong number of arugments provided. Expected 1 but got 0
+
+-- This example shows that constraints that we learn from the body of a function
+-- can be used outside the function.
+:p
+  -- u1 = <fresh_unif>
+  z = zero -- zero(at=u1)
+  def foo(aa:Type, x:Int) =
+     x + z -- implies `u1->Int`. We can hoist this constraint outside of `foo`
+           -- and use it to zonk the `z = zero(at=u1)` decl.
+  z
+> 0
+
+-- This example shows that we *have to* use the constraints outside the function
+-- (i.e. `u1->Int`) even if `u1` is sufficiently constrained elsewhere because
+-- the constraints might conflict.
+:p
+  -- u1 = <fresh_unif>
+  z = zero
+  def foo(aa:Type, x:Int) =
+     -- solved! u1->Int
+     x + z
+  1.0 + z
+> Type error:
+> Expected: Float32
+>   Actual: Int32
+>
+>   1.0 + z
+>         ^
+
+-- But sometimes the solution can't be hoisted because it refers to local
+-- variables. In that case we have to throw an error about leaked variables.
+:p
+  -- u1 = <fresh_unif>
+  z = zero -- zero(at=u1)
+  def foo(aa:Type, x:aa) =
+     x + z -- implies `u1->aa`, but we can't hoist solution above `aa`
+           -- Also, we can't ignore this solution because ...
+  1 + z
+> Leaked local variables:[aa]
+> Failed to exchange binders in buildAbsInf
+> Pending emissions: 
+> Defaults:  
+> Solver substitution: [(_.1, aa)]
+>
+>   def foo(aa:Type, x:aa) =
+>   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+-- We don't need to throw a leaked variable here. We know that `u1` can't be
+-- used outside because we introduced it underneath the `a` binder. So we can
+-- happily delete the `u1` binder and its solution once we've applied the
+-- solution,`u1 -> a`, to all the occurrences of `u1`.
+:p
+  def should_be_fine(
+      a:Type,
+      -- u1 = <fresh_unif>
+      x  -- x:u1
+      ) -> a = x  -- solved! u1 -> a This solution won't hoist outside of a's
+                  -- scope but that's ok. We know there are no other use sites
+                  -- of `u1` because it goes out of scope before `a` does.
+  1
+> 1
