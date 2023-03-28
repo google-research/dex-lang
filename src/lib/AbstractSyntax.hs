@@ -174,6 +174,10 @@ aDef (CDef name params optRhs optGivens body) = do
   body' <- block body
   return (name, ULamExpr allParams expl effs resultTy body')
 
+stripParens :: Group -> Group
+stripParens (WithSrc _ (CParens [g])) = stripParens g
+stripParens g = g
+
 aExplicitParams :: ExplicitParams -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
 aExplicitParams gs = generalBinders DataParam Explicit gs
 
@@ -214,8 +218,8 @@ patOptAnn g = (,Nothing) <$> pat g
 
 uBinder :: Group -> SyntaxM (UBinder c VoidS VoidS)
 uBinder (WithSrc src b) = addSrcContext src $ case b of
-  CHole -> return UIgnore
   CIdentifier name -> return $ fromString name
+  CHole -> return UIgnore
   _ -> throw SyntaxErr "Binder must be an identifier or `_`"
 
 -- Type annotation with an optional binder pattern
@@ -488,7 +492,7 @@ expr = propagateSrcE expr' where
       range :: UExpr VoidS -> UExpr VoidS -> UExpr' VoidS
       range rangeName lim = explicitApp rangeName [ns UHole, lim]
   expr' (CLambda params body) = do
-    params' <- aExplicitParams params
+    params' <- aExplicitParams $ map stripParens params
     body' <- block body
     return $ ULam $ ULamExpr params' ExplicitApp Nothing Nothing body'
   expr' (CFor kind indices body) = do

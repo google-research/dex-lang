@@ -212,7 +212,7 @@ def dex_call_batched(batched_args, batched_dims, func_atom):
   # Only index into the arguments which are batched. `i` is the index used for
   # the Dex for loop constructor.
   batched_fn_params = [
-      binder.name if dim is batching.not_mapped else f"{binder.name}.i"
+      binder.name if dim is batching.not_mapped else f"{binder.name}[i]"
       for dim, binder in zip(batched_dims, expl_args)
   ]
 
@@ -343,7 +343,7 @@ def tuple_ty_ref_string(names):
   if len(names) == 1:
     return names[0]
   else:
-    return "(" + " & ".join(names) + ")"
+    return "(" + " , ".join(names) + ")"
 
 # === transpose ===
 

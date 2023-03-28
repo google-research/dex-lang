@@ -23,13 +23,13 @@ class JAXTest(unittest.TestCase):
     np.testing.assert_allclose(add_two(x), x + 2.0)
 
   def test_impl_array(self):
-    add_two = primitive(dex.eval(r'\x:((Fin 10)=>Float). for i. x.i + 2.0'))
+    add_two = primitive(dex.eval(r'\x:((Fin 10)=>Float). for i. x[i] + 2.0'))
     x = jnp.arange(10, dtype=np.float32)
     np.testing.assert_allclose(add_two(x), x + 2.0)
 
   def test_abstract_eval_simple(self):
     add_two = primitive(
-        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x.i + 2.0'))
+        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x[i] + 2.0'))
     x = jax.ShapeDtypeStruct((10,), np.float32)
     output_shape = jax.eval_shape(add_two, x)
     assert output_shape.shape == (10,)
@@ -42,29 +42,29 @@ class JAXTest(unittest.TestCase):
 
   def test_jit_array(self):
     add_two = primitive(
-        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x.i + 2.0'))
+        dex.eval(r'\x:((Fin 10)=>Float). for i. f_to_i $ x[i] + 2.0'))
     x = jnp.zeros((10,), dtype=np.float32)
     np.testing.assert_allclose(jax.jit(add_two)(x), (x + 2.0).astype(np.int32))
 
   def test_jit_scale(self):
-    scale = primitive(dex.eval(r'\x:((Fin 10)=>Float) y:Float. for i. x.i * y'))
+    scale = primitive(dex.eval(r'\x:((Fin 10)=>Float) y:Float. for i. x[i] * y'))
     x = jnp.arange(10, dtype=np.float32)
     np.testing.assert_allclose(jax.jit(scale)(x, 5.0), x * 5.0)
 
   def test_vmap(self):
-    add_two = primitive(dex.eval(r'\x:((Fin 2)=>Float). for i. x.i + 2.0'))
+    add_two = primitive(dex.eval(r'\x:((Fin 2)=>Float). for i. x[i] + 2.0'))
     x = jnp.linspace(jnp.array([0, 3]), jnp.array([5, 8]), num=4, dtype=jnp.float32)
     np.testing.assert_allclose(jax.vmap(add_two)(x), x + 2.0)
 
   def test_vmap_nonzero_index(self):
-    add_two = primitive(dex.eval(r'\x:((Fin 4)=>Float). for i. x.i + 2.0'))
+    add_two = primitive(dex.eval(r'\x:((Fin 4)=>Float). for i. x[i] + 2.0'))
     x = jnp.linspace(jnp.array([0, 3]), jnp.array([5, 8]), num=4, dtype=jnp.float32)
     np.testing.assert_allclose(
         jax.vmap(add_two, in_axes=1, out_axes=1)(x), x + 2.0)
 
   def test_vmap_unbatched_array(self):
     add_arrays = primitive(
-        dex.eval(r'\x:((Fin 10)=>Float) y:((Fin 10)=>Float). for i. x.i + y.i'))
+        dex.eval(r'\x:((Fin 10)=>Float) y:((Fin 10)=>Float). for i. x[i] + y[i]'))
     x = jnp.arange(10, dtype=np.float32)
     y = jnp.linspace(
         jnp.arange(10), jnp.arange(10, 20), num=5, dtype=jnp.float32)
@@ -72,12 +72,12 @@ class JAXTest(unittest.TestCase):
         jax.vmap(add_arrays, in_axes=[None, 0])(x, y), x + y)
 
   def test_vmap_jit(self):
-    add_two = primitive(dex.eval(r'\x:((Fin 2)=>Float). for i. x.i + 2.0'))
+    add_two = primitive(dex.eval(r'\x:((Fin 2)=>Float). for i. x[i] + 2.0'))
     x = jnp.linspace(jnp.array([0, 3]), jnp.array([5, 8]), num=4, dtype=jnp.float32)
     np.testing.assert_allclose(jax.jit(jax.vmap(add_two))(x), x + 2.0)
 
   def test_vmap_jit_nonzero_index(self):
-    add_two = primitive(dex.eval(r'\x:((Fin 4)=>Float). for i. x.i + 2.0'))
+    add_two = primitive(dex.eval(r'\x:((Fin 4)=>Float). for i. x[i] + 2.0'))
     x = jnp.linspace(jnp.array([0, 3]), jnp.array([5, 8]), num=4, dtype=jnp.float32)
     np.testing.assert_allclose(
         jax.jit(jax.vmap(add_two, in_axes=1, out_axes=1))(x), x + 2.0)
@@ -85,7 +85,7 @@ class JAXTest(unittest.TestCase):
   def test_jvp(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
-        'for i. x.i * x.i + 2.0 * y.i'))
+        'for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return x**2 + 2 * y
@@ -104,7 +104,7 @@ class JAXTest(unittest.TestCase):
   def test_jvp_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
-        'for i. x.i * x.i + 2.0 * y.i'))
+        'for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return x**2 + 2 * y
@@ -129,7 +129,7 @@ class JAXTest(unittest.TestCase):
   def test_grad(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (n_to_f $ ordinal i) * x[i] * x[i]'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)
@@ -144,7 +144,7 @@ class JAXTest(unittest.TestCase):
   def test_grad_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float). '
-        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
+        'sum $ for i. (n_to_f $ ordinal i) * x[i] * x[i]'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)
@@ -165,7 +165,7 @@ class JAXTest(unittest.TestCase):
   def test_grad_binary_function(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
-        'sum $ for i. x.i * x.i + 2.0 * y.i'))
+        'sum $ for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return jnp.sum(x**2 + 2 * y)
@@ -188,7 +188,7 @@ class JAXTest(unittest.TestCase):
   def test_grad_binary_function_jit(self):
     f_dex = primitive(dex.eval(
         r'\x:((Fin 10) => Float) y:((Fin 10) => Float). '
-        'sum $ for i. x.i * x.i + 2.0 * y.i'))
+        'sum $ for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return jnp.sum(x**2 + 2 * y)
@@ -208,8 +208,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape(self):
     m = dex.Module(dedent("""
-    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
-      for i. x.i * x.i
+    def sqr(x:(Fin n => Float)) -> Fin n => Float given (n:Nat) =
+      for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
     x = jnp.linspace(-0.2, 0.5, num=10)
@@ -217,8 +217,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_jit(self):
     m = dex.Module(dedent("""
-    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
-      for i. x.i * x.i
+    def sqr(x:(Fin n => Float)) -> Fin n => Float given (n:Nat) =
+      for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
     x = jnp.linspace(-0.2, 0.5, num=10)
@@ -226,8 +226,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_vmap(self):
     m = dex.Module(dedent("""
-    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
-      for i. x.i * x.i
+    def sqr(x:(Fin n => Float)) : Fin n => Float given (n:Nat) =
+      for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
     x = jnp.linspace(jnp.array([1.0, -0.2]),
@@ -237,8 +237,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_jvp(self):
     m = dex.Module(dedent("""
-    def sqr {n: Nat} (x:(Fin n => Float)) : Fin n => Float =
-      for i. x.i * x.i
+    def sqr(x:(Fin n => Float)) : Fin n => Float given (n:Nat) =
+      for i. x[i] * x[i]
     """))
     dex_sqr = primitive(m.sqr)
 
@@ -255,8 +255,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_jvp_binary(self):
     f_dex = primitive(dex.eval(
-        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
-        'for i. x.i * x.i + 2.0 * y.i'))
+        r'\(given (n:Nat)) x:((Fin n) => Float) y:((Fin n) => Float). '
+        'for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return x**2 + 2 * y
@@ -274,8 +274,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_grad(self):
     f_dex = primitive(dex.eval(
-        r'\{n} x:((Fin n) => Float). '
-        'sum $ for i. (n_to_f $ ordinal i) * x.i * x.i'))
+        r'\(given (n:Nat)) x:((Fin n) => Float). '
+        'sum $ for i. (n_to_f $ ordinal i) * x[i] * x[i]'))
 
     def f_jax(x):
       return jnp.sum(jnp.arange(10.) * x**2)
@@ -289,8 +289,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_grad_binary_function(self):
     f_dex = primitive(dex.eval(
-        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
-        'sum $ for i. x.i * x.i + 2.0 * y.i'))
+        r'\(given (n:Nat)) x:((Fin n) => Float) y:((Fin n) => Float). '
+        'sum $ for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_jax(x, y):
       return jnp.sum(x**2 + 2 * y)
@@ -312,8 +312,8 @@ class JAXTest(unittest.TestCase):
 
   def test_dex_not_knowing_shape_of_cotangent(self):
     f_dex = primitive(dex.eval(
-        r'\{n} x:((Fin n) => Float) y:((Fin n) => Float). '
-        'for i. x.i * x.i + 2.0 * y.i'))
+        r'\(given (n:Nat)) x:((Fin n) => Float) y:((Fin n) => Float). '
+        'for i. x[i] * x[i] + 2.0 * y[i]'))
 
     def f_with_dex(x, y):
       return jnp.sum(f_dex(x, y))
@@ -338,8 +338,8 @@ class JAXTest(unittest.TestCase):
 
   def test_interleave_implicit_args_vjp(self):
     f_dex = primitive(dex.eval(
-        r'\{n} x:((Fin n) => Float) {m} y:((Fin n) => (Fin m) => Float). '
-        'for i. x.i * x.i + 2.0 * sum(y.i)'))
+        r'\(given (n:Nat)) x:((Fin n) => Float) {m} y:((Fin n) => (Fin m) => Float). '
+        'for i. x[i] * x[i] + 2.0 * sum(y[i])'))
 
     def f_with_dex(x, y):
       return jnp.sum(f_dex(x, y))
@@ -362,7 +362,7 @@ class JAXTest(unittest.TestCase):
   def test_underscore_name(self):
     # Regression test for Issue 1024 (underscores in function argument names)
     dex_sqr = primitive(dex.eval(
-        r"\{n} foo_b'ar:((Fin n) => Float). for i. foo_b'ar.i * foo_b'ar.i"))
+        r"\(given (n:Nat)) foo_b'ar:((Fin n) => Float). for i. foo_b'ar[i] * foo_b'ar[i]"))
 
     def jax_sqr(x):
       return x * x
