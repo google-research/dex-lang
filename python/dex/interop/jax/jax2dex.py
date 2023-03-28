@@ -67,7 +67,7 @@ class FinTabType(Type):
   size: int  # TODO Expr
   ty: Type
   def pprint(self) -> str:
-    return f'((Fin (%NatCon (%monoLit {self.size})))=>{self.ty.pprint()})'
+    return f'(Fin(%NatCon(%monoLit({self.size}))) => {self.ty.pprint()})'
 
 @dataclass
 class FinType(Type):
@@ -80,7 +80,7 @@ class PairType(Type):
   lhs: Type
   rhs: Type
   def pprint(self) -> str:
-    return f'({self.lhs.pprint()} & {self.rhs.pprint()})'
+    return f'({self.lhs.pprint()}, {self.rhs.pprint()})'
 
 @dataclass
 class Literal(Expr):
@@ -91,12 +91,12 @@ class Literal(Expr):
       return f'{self.val:f}' if self.val >= 0 else f'({self.val:f})'
     elif self.dtype == f64:
       val_str = f'{self.val:f}' if self.val >= 0 else f'({self.val:f})'
-      return f'(f_to_f64 {val_str})'
+      return f'f_to_f64({val_str})'
     elif self.dtype == i32:
       val_str = f'(+{self.val})' if self.val >= 0 else f'({self.val})'
-      return f'(%monoLit {val_str})'
+      return f'%monoLit({val_str})'
     elif self.dtype == u32:
-      return f'(%monoLit {self.val})'
+      return f'%monoLit({self.val})'
     else:
       raise NotImplementedError(f"Unsupported literal dtype: {dtype}")
 
@@ -140,12 +140,12 @@ class NaryApp(Expr):
   arguments: Sequence[Expr]
   def pprint(self) -> str:
     assert self.arguments
-    arg_strs = ' '.join(map(lambda a: f'({a.pprint()})', self.arguments))
+    arg_strs = ', '.join(map(lambda a: f'({a.pprint()})', self.arguments))
     if isinstance(self.fun, (Prim, Var)):
       fun_str = self.fun.pprint()
     else:
       fun_str = f'({self.fun.pprint()})'
-    return f'({fun_str} {arg_strs})'
+    return f'{fun_str}({arg_strs})'
 
 def App(fun, *args):
   return NaryApp(fun, args)
@@ -155,7 +155,7 @@ class TabApp(Expr):
   fun: Expr
   argument: Expr
   def pprint(self) -> str:
-    return f'({self.fun.pprint()}).({self.argument.pprint()})'
+    return f'({self.fun.pprint()})[{self.argument.pprint()}]'
 
 @dataclass
 class Pattern:
@@ -166,8 +166,8 @@ class ConPattern(Pattern):
   con: str
   fields: typing.Tuple[Optional[str]]
   def pprint(self) -> str:
-    fields_str = ' '.join(f if f is not None else '_' for f in self.fields)
-    return f'({self.con} {fields_str})'
+    fields_str = ', '.join(f if f is not None else '_' for f in self.fields)
+    return f'{self.con}({fields_str})'
 
 @dataclass
 class Decl:
@@ -184,16 +184,16 @@ class Block:
 
 @dataclass
 class Lam(Expr):
-  name: str  # TODO generalize to multiple binders?
-  ty: Type
+  names: List[str]
+  tys: List[Type]
   block: Block
   def pprint(self) -> str:
-    ty = self.ty.pprint()
+    args_ann = [f'{name}:{ty.pprint()}' for (name, ty) in zip(self.names, self.tys)]
     decls = '\n'.join(d.pprint() for d in self.block.decls)
     expr = self.block.expr.pprint()
     newline = '\n' if decls else ''
     block = textwrap.indent(f'{decls}{newline}{expr}', '  ')
-    return f'\\ {self.name}:{ty}.\n{block}'
+    return f'\\ {" ".join(args_ann)}.\n{block}\n'
 
 @dataclass
 class For(Expr):
@@ -210,8 +210,8 @@ class Idx(Expr):
   tab: Expr
   idxs: typing.Tuple[Expr]
   def pprint(self) -> str:
-    idx_strs = '.'.join(f'({i.pprint()})' for i in self.idxs)
-    return f'({self.tab.pprint()}).{idx_strs}'
+    idx_strs = ', '.join(f'({i.pprint()})' for i in self.idxs)
+    return f'({self.tab.pprint()})[{idx_strs}]'
 
 
 ### We build AST instances via a jaxpr interpreter.
@@ -341,11 +341,14 @@ def dex_atom(jaxpr: core.Jaxpr) -> Atom:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit output")
   fin_decls = [Decl(v.name, FinType(NatLiteral(n))) for n, v in fin_cache.items()]
   block = Block(fin_decls + decls, expr)
-  for v in reversed([*jaxpr.constvars, *jaxpr.invars]):
+  args = []
+  argtys = []
+  for v in [*jaxpr.invars, *jaxpr.constvars]:
     if v.aval.dtype not in _io_dtypes:
       raise NotImplementedError(f"dtype {v.aval.dtype} is not supported as dexjit input")
-    expr = Lam(read(v).name, aval_to_type(v.aval), block)
-    block = Block([], expr)
+    args.append(read(v).name)
+    argtys.append(aval_to_type(v.aval))
+  expr = Lam(args, argtys, block)
   return eval(expr.pprint())
 
 def aval_to_type(aval: core.AbstractValue) -> Type:
@@ -450,7 +453,7 @@ def _make_bcast_expr(ctx, idx_names, out_shape, in_shape, x):
           in zip(idx_names[-ndim:], out_shape[-ndim:], in_shape)]
   return Idx(x, tuple(idxs))
 def unitIdx(ctx):
-  return App(Var('unsafe_from_ordinal'), ctx.Fin(1), NatLiteral(0))
+  return App(Var('unsafe_from_ordinal'), NatLiteral(0))
 
 expr_makers[lax.add_p] = partial(_broadcasting_binop, Prim('iadd'), Prim('fadd'))
 expr_makers[lax.sub_p] = partial(_broadcasting_binop, Prim('isub'), Prim('fsub'))
@@ -503,7 +506,7 @@ def _slice_lowering(ctx, x, start_indices, limit_indices, strides):
   idx_names, idx_tys = unzip2((ctx.fresh('i'), ctx.Fin(sz))
                               for sz in out_aval.shape)
   input_ixs = [Var(ix) if in_size == out_size else
-               App(App(Var('unsafe_from_ordinal'), ctx.Fin(in_size)),
+               App(Var('unsafe_from_ordinal'),
                    BinOp(NatLiteral(start), '+', App(Var('ordinal'), Var(ix))))
                for ix, in_size, out_size, start
                in zip(idx_names, in_aval.shape, out_aval.shape, start_indices)]
@@ -529,7 +532,7 @@ def _dot_general_lowering(ctx, lhs, rhs, dimension_numbers, precision, preferred
     return For((i,), (ctx.Fin(n),),
                App(Var('sum'),
                    For((j,), (ctx.Fin(k),),
-                       App(Var('mul'), Idx(lhs, (Var(i), Var(j))), Idx(rhs, (Var(j),))))))
+                       BinOp(Idx(lhs, (Var(i), Var(j))), "*", Idx(rhs, (Var(j),))))))
   raise NotImplementedError("Unimplemented dot_general kind")
 expr_makers[lax.dot_general_p] = _dot_general_lowering
 
@@ -545,14 +548,16 @@ def _concatenate_lowering(ctx, *xs, dimension):
     xs_v = ctx.fresh('xs')
     return Block([
         Decl(xs_v, Table(tuple(xs)))
-      ], App(App(Var('unsafe_cast_table'), ctx.Fin(dim_size * len(xs))),
-              For((i,), (PairType(ctx.Fin(len(xs)), ctx.Fin(dim_size)),),
-                  TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i))))))
+      ], App(Var('the'), FinTabType(dim_size * len(xs), Var('_')),
+             App(Var('unsafe_cast_table'),
+                 For((i,), (PairType(ctx.Fin(len(xs)), ctx.Fin(dim_size)),),
+                     TabApp(TabApp(Var(xs_v), App(Var('fst'), Var(i))), App(Var('snd'), Var(i)))))))
   # Irregular concatenation
   # TODO: Generate specialized code
   xs_v = ctx.fresh('xs')
   return Block([
         Decl(ConPattern('AsList', (None, xs_v)),
              App(Var('concat'), Table(tuple(App(Var('to_list'), x) for x in xs)))),
-      ], App(App(Var('unsafe_cast_table'), ctx.Fin(out_aval.shape[0])), Var(xs_v)))
+      ], App(Var('the'), FinTabType(out_aval.shape[0], Var('_')),
+             App(Var('unsafe_cast_table'), Var(xs_v))))
 expr_makers[lax.concatenate_p] = _concatenate_lowering
