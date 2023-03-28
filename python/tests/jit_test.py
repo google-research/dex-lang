@@ -34,38 +34,38 @@ class JITTest(unittest.TestCase):
                            lambda x: np.float32(1.0) / (np.float32(1.0) + np.exp(-x)),
                            ((x,) for x in example_floats))
 
-  test_multi_arg = expr_test(r"\x:Float y:Float. atan2 x y",
+  test_multi_arg = expr_test(r"\x:Float y:Float. atan2(x, y)",
                              np.arctan2,
                              ((x + 0.01, y) for x, y in it.product(example_floats, repeat=2)
                               if (x, y) != (0.0, 0.0)))
 
-  test_int_arg = expr_test(r"\x:Int64 y:Int. i64_to_i x + y",
+  test_int_arg = expr_test(r"\x:Int64 y:Int. i64_to_i(x) + y",
                            lambda x, y: x + y,
                            it.product(example_ints, example_ints))
 
-  test_array_scalar = expr_test(r"\x:((Fin 10)=>Float). sum x",
+  test_array_scalar = expr_test(r"\x:((Fin 10)=>Float). sum(x)",
                                 np.sum,
                                 [(np.arange(10, dtype=np.float32),)])
 
-  test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + n_to_i (ordinal i)",
+  test_scalar_array = expr_test(r"\x:Int. for i:(Fin 10). x + n_to_i(ordinal(i))",
                                 lambda x: x + np.arange(10, dtype=np.int32),
                                 [(i,) for i in range(5)])
 
-  test_array_array = expr_test(r"\x:((Fin 10)=>Float). for i. exp x.i",
+  test_array_array = expr_test(r"\x:((Fin 10)=>Float). for i. exp(x[i])",
                                np.exp,
                                [(np.arange(10, dtype=np.float32),)])
 
   def test_polymorphic_array_1d(self):
     m = dex.Module(dedent("""
-    def addTwo {n} (x: (Fin n)=>Float) : (Fin n)=>Float = for i. x.i + 2.0
+    def addTwo(x: (Fin n)=>Float) -> (Fin n)=>Float given (n) = for i. x[i] + 2.0
     """))
     check_atom(m.addTwo, lambda x: x + 2,
                [(np.arange(l, dtype=np.float32),) for l in (2, 5, 10)])
 
   def test_polymorphic_array_2d(self):
     m = dex.Module(dedent("""
-    def myTranspose {n m} (x : (Fin n)=>(Fin m)=>Float) : (Fin m)=>(Fin n)=>Float =
-      for i j. x.j.i
+    def myTranspose(x : (Fin n)=>(Fin m)=>Float) -> (Fin m)=>(Fin n)=>Float given (n, m) =
+      for i j. x[j, i]
     """))
     check_atom(m.myTranspose, lambda x: x.T,
                [(np.arange(a*b, dtype=np.float32).reshape((a, b)),)
