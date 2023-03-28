@@ -379,7 +379,6 @@ data UAnnBinder (annReq::AnnRequirement) (n::S) (l::S) =
   UAnnBinder (UAtomBinder n l) (UAnn annReq n) [UConstraint n]
   deriving (Show, Generic)
 
-
 type UReqAnnBinder = UAnnBinder AnnRequired :: B
 type UOptAnnBinder = UAnnBinder AnnOptional :: B
 

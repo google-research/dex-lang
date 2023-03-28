@@ -290,7 +290,7 @@ instance IRRep r => PrettyPrec (Atom r n) where
     NewtypeCon con x -> prettyPrecNewtype con x
     NewtypeTyCon con -> prettyPrec con
     SimpInCore x -> prettyPrec x
-    DictHole _ e -> atPrec LowestPrec $ "synthesize" <+> pApp e
+    DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -380,7 +380,7 @@ groupByExpl (WithExpl expl b:bs) = do
 withExplParens :: Explicitness -> Doc ann -> Doc ann
 withExplParens Explicit x = parens x
 withExplParens (Inferred _ Unify) x = braces   $ x
-withExplParens (Inferred _ Synth) x = brackets x
+withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
   pretty (TabPiType (b :> IxType ty dict) body) = let
@@ -483,7 +483,7 @@ instance Pretty (Binding c n) where
     InstanceBinding instanceDef _ -> pretty instanceDef
     MethodBinding className idx -> "Method" <+> pretty idx <+> "of" <+> pretty className
     TopFunBinding f -> pretty f
-    FunObjCodeBinding _ _ -> "<object file>"
+    FunObjCodeBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding   _ _ -> "<ptr>"
     -- TODO(alex): do something actually useful here

@@ -181,7 +181,7 @@ aGivens :: GivenClause -> SyntaxM [WithExpl UOptAnnBinder VoidS VoidS]
 aGivens (implicits, optConstraints) = do
   implicits' <- mapM (generalBinder DataParam (Inferred Nothing Unify)) implicits
   constraints <- fromMaybeM optConstraints [] \gs -> do
-    mapM (generalBinder TypeParam (Inferred Nothing Synth)) gs
+    mapM (generalBinder TypeParam (Inferred Nothing (Synth Full))) gs
   return $ implicits' <> constraints
 
 generalBinders
@@ -195,7 +195,7 @@ generalBinders paramStyle expl params = toNest . concat <$>
 generalBinder :: ParamStyle -> Explicitness -> Group
               -> SyntaxM (WithExpl UOptAnnBinder VoidS VoidS)
 generalBinder paramStyle expl g = case expl of
-  Inferred _ Synth -> WithExpl expl <$> tyOptBinder g
+  Inferred _ (Synth _) -> WithExpl expl <$> tyOptBinder g
   Inferred _ Unify -> do
     b <- binderOptTy g
     expl' <- return case b of

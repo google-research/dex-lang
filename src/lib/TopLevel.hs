@@ -12,8 +12,8 @@ module TopLevel (
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
-  loadObject, toCFunction, evalLLVM, asImpFunction,
-  simpOptimizations, loweredOptimizations) where
+  loadObject, toCFunction, packageLLVMCallable,
+  simpOptimizations, loweredOptimizations, compileTopLevelFun) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -555,8 +555,10 @@ evalBlock typed = do
       checkEffects (OneEffect InitEffect) (NullaryDestLamApp lowered)
       NullaryDestLamExpr lOpt <- loweredOptimizations lowered
       checkEffects (OneEffect InitEffect) lOpt
-      impOpt <- asImpFunction lOpt
-      resultVals <- evalLLVM impOpt
+      cc <- getEntryFunCC
+      impOpt <- checkPass ImpPass $ toImpFunction cc (NullaryDestLamExpr lOpt)
+      llvmOpt <- packageLLVMCallable impOpt
+      resultVals <- liftIO $ callEntryFun llvmOpt []
       resultTy <- getDestBlockType lOpt
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
@@ -590,8 +592,10 @@ evalSpecializations fs = do
     -- (even without recursion in Dex itself this is possible via the
     -- specialization cache)
     updateTopFunStatus f Running
-    impl <- compileTopLevelFun (getNameHint f) simp
-    updateTopFunStatus f (Finished impl)
+    imp <- compileTopLevelFun StandardCC simp
+    objName <- toCFunction (getNameHint f) imp >>= emitObjFile
+    void $ loadObject objName
+    updateTopFunStatus f (Finished $ TopFunLowerings objName)
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -619,15 +623,13 @@ execUDecl mname decl = do
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
-compileTopLevelFun :: (Topper m, Mut n) => NameHint -> SLam n -> m n (TopFunLowerings n)
-compileTopLevelFun hint fSimp = do
+compileTopLevelFun :: (Topper m, Mut n)
+  => CallingConvention -> SLam n -> m n (ImpFunction n)
+compileTopLevelFun cc fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequential fOpt
+  fLower <- checkPass LowerPass $ lowerFullySequential fOpt
   flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction StandardCC flOpt
-  fObj <- toCFunction hint fImp
-  void $ loadObject fObj
-  return $ TopFunLowerings fObj
+  checkPass ImpPass $ toImpFunction cc flOpt
 {-# SCC compileTopLevelFun #-}
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
@@ -641,14 +643,17 @@ loadObject fname =
   lookupLoadedObject fname >>= \case
     Just p -> return p
     Nothing -> do
-      (objCode, LinktimeNames funNames ptrNames) <- lookupFunObjCode fname
-      funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
-      ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
-      dyvarStores <- getRuntimeEnv
-      f <- liftIO $ linkFunObjCode objCode dyvarStores
-        $ LinktimeVals funVals ptrVals
+      f <- lookupFunObjCode fname >>= loadObjectContent
       extendLoadedObjects fname f
       return f
+
+loadObjectContent :: (Topper m, Mut n) => CFunction n -> m n NativeFunction
+loadObjectContent CFunction{objectCode, linkerNames} = do
+  (LinktimeNames funNames ptrNames) <- return linkerNames
+  funVals <- forM funNames \name -> nativeFunPtr <$> loadObject name
+  ptrVals <- forM ptrNames \name -> snd <$> lookupPtrName name
+  dyvarStores <- getRuntimeEnv
+  liftIO $ linkFunObjCode objectCode dyvarStores $ LinktimeVals funVals ptrVals
 
 linkFunObjCode
   :: FunObjCode -> DynamicVarKeyPtrs -> LinktimeVals -> IO NativeFunction
@@ -667,51 +672,39 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
         destroyLinker l
   return $ NativeFunction ptr destructor
 
-toCFunction
-  :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (FunObjCodeName n)
+toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (CFunction n)
 toCFunction nameHint impFun = do
-  logger  <- getFilteredLogger
+  logger <- getFilteredLogger
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
   reqObjNames <- mapM funNameToObj reqFuns
-  emitObjFile nameHint obj (LinktimeNames reqObjNames reqPtrNames)
+  return $ CFunction nameHint obj (LinktimeNames reqObjNames reqPtrNames)
 
 getLLVMOptLevel :: EvalConfig -> LLVMOptLevel
 getLLVMOptLevel cfg = case optLevel cfg of
   NoOptimize -> OptALittle
   Optimize   -> OptAggressively
 
-asImpFunction :: (Topper m, Mut n) => DestBlock SimpIR n -> m n (ImpFunction n)
-asImpFunction block = do
-  backend <- backendName <$> getConfig
-  let (cc, _needsSync) =
-        case backend of LLVMCUDA -> (EntryFunCC CUDARequired   , True )
-                        _        -> (EntryFunCC CUDANotRequired, False)
-  checkPass ImpPass $ blockToImpFunction backend cc block
+getEntryFunCC :: Topper m => m n CallingConvention
+getEntryFunCC = getConfig <&> backendName <&> \case
+    LLVMCUDA -> EntryFunCC CUDARequired
+    _        -> EntryFunCC CUDANotRequired
 
-evalLLVM :: forall n m. (Topper m, Mut n) => ImpFunction n -> m n [LitVal]
-evalLLVM impFun = do
-  logger  <- getFilteredLogger
-  let IFunType _ _ resultTypes = impFunType impFun
-  (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
-  obj <- impToLLVM logger "main" closedImpFun >>= compileToObjCode
-  reqFunPtrs  <- forM reqFuns funNameToPtr
-  reqDataPtrs <- forM reqPtrNames \v -> snd <$> lookupPtrName v
-  dyvarStores <- getRuntimeEnv
+packageLLVMCallable :: forall n m. (Topper m, Mut n)
+  => ImpFunction n -> m n LLVMCallable
+packageLLVMCallable impFun = do
+  nativeFun <- toCFunction "main" impFun >>= loadObjectContent
   benchRequired <- requiresBench <$> getPassCtx
-  nativeFun <- liftIO $ linkFunObjCode obj dyvarStores
-    $ LinktimeVals reqFunPtrs reqDataPtrs
-  liftIO $ callNativeFun nativeFun benchRequired logger [] resultTypes
-{-# SCC evalLLVM #-}
+  logger <- getFilteredLogger
+  let IFunType _ _ resultTypes = impFunType impFun
+  return LLVMCallable{..}
+{-# SCC packageLLVMCallable #-}
 
 compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
 compileToObjCode astWithNames = forM astWithNames \ast -> do
   logger  <- getFilteredLogger
   opt <- getLLVMOptLevel <$> getConfig
   liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
-
-funNameToPtr :: (Topper m, Mut n) => ImpFunName n -> m n (FunPtr ())
-funNameToPtr v = nativeFunPtr <$> (loadObject =<< funNameToObj v)
 
 funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)

@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( blockToImpFunction, toImpFunction
+  ( toImpFunction
   , impFunType, getIType, abstractLinktimeObjects
   , repValFromFlatList, addImpTracing
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
@@ -46,46 +46,52 @@ import Types.Imp
 import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
--- used for top-level entry function. This implements the wrapper function
--- that can call internal (`StandardCC`) functions, allocating the buffers for
--- the results and returning them using multiple-return-value Imp function.
-blockToImpFunction :: EnvReader m
-  => Backend -> CallingConvention -> DestBlock SimpIR n -> m n (ImpFunction n)
-blockToImpFunction _ cc absBlock = liftImpM $ translateTopLevel cc absBlock
-
--- used for internal functions only
-toImpFunction
-  :: EnvReader m
+toImpFunction :: EnvReader m
   => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)
 toImpFunction cc lam = do
   (DestLamExpr bs bodyAbs) <- return lam
   ty <- getNaryDestLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
-    (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
-    extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-      (DestBlock destb body) <- return bodyAbs
-      extendSubst (destb @> SubstVal (destToAtom (sink resultDest))) do
-        void $ translateBlock Nothing body
-        return []
+    case cc of
+      EntryFunCC _ -> do
+        argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
+        extendSubst (bs @@> (SubstVal <$> argAtoms)) do
+          DestBlock (destb:>destTy) body <- return bodyAbs
+          dest <- case destTy of
+            RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
+            _ -> error "Expected a reference type for body destination"
+          extendSubst (destb @> SubstVal (destToAtom dest)) do
+            void $ translateBlock Nothing body
+          resultAtom <- loadAtom dest
+          repValToList <$> atomToRepVal resultAtom
+      _ -> do
+        (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
+        extendSubst (bs @@> (SubstVal <$> argAtoms)) do
+          (DestBlock destb body) <- return bodyAbs
+          extendSubst (destb @> SubstVal (destToAtom (sink resultDest))) do
+            void $ translateBlock Nothing body
+            return []
 
-getNaryLamImpArgTypesWithCC
-  :: EnvReader m => CallingConvention
-  -> PiType SimpIR n -> m n [BaseType]
+getNaryLamImpArgTypesWithCC :: EnvReader m
+  => CallingConvention -> PiType SimpIR n -> m n [BaseType]
 getNaryLamImpArgTypesWithCC XLACC _ = return [i8pp, i8pp]
   where i8pp = PtrType (CPU, PtrType (CPU, Scalar Word8Type))
+getNaryLamImpArgTypesWithCC (EntryFunCC _) t =
+  concat . fst <$> getNaryLamImpArgTypes t
 getNaryLamImpArgTypesWithCC _ t = do
   (argTyss, destTys) <- getNaryLamImpArgTypes t
   return $ concat argTyss ++ destTys
 
-getImpFunType :: EnvReader m => CallingConvention -> PiType SimpIR n -> m n IFunType
+getImpFunType :: EnvReader m
+  => CallingConvention -> PiType SimpIR n -> m n IFunType
 getImpFunType StandardCC piTy = do
   argTys <- getNaryLamImpArgTypesWithCC StandardCC piTy
   return $ IFunType StandardCC argTys []
 getImpFunType cc _ = error $ "unsupported calling convention: " ++ pprint cc
 
-interpretImpArgsWithCC
-  :: Emits n => CallingConvention -> PiType SimpIR n
+interpretImpArgsWithCC :: Emits n
+  => CallingConvention -> PiType SimpIR n
   -> [IExpr n] -> SubstImpM i n ([SAtom n], Dest n)
 interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
   (argBaseTys, resultBaseTys) <- getNaryLamImpArgTypes t
@@ -99,14 +105,15 @@ interpretImpArgsWithCC XLACC t [outsPtr, insPtr] = do
       forM (enumerate resultBaseTys) \(i, ty) -> case ty of
         PtrType (_, pointeeTy) -> loadPtr outsPtr i pointeeTy
         _ -> error "Destination arguments should all have pointer types"
-  interpretImpArgs t (argVals ++ resultPtrs)
+  interpretImpArgsWithDest t (argVals ++ resultPtrs)
   where
     loadPtr base i pointeeTy = do
       ptr <- load =<< impOffset base (IIdxRepVal $ fromIntegral i)
       cast ptr (PtrType (CPU, pointeeTy))
-interpretImpArgsWithCC _ t xsAll = interpretImpArgs t xsAll
+interpretImpArgsWithCC _ t xsAll = interpretImpArgsWithDest t xsAll
 
-getNaryLamImpArgTypes :: EnvReader m => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
+getNaryLamImpArgTypes :: EnvReader m
+  => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
   go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
   go (PiType bs effs resultTy) = case bs of
@@ -117,24 +124,40 @@ getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
         return (ts:argTys, resultTys)
     Empty -> ([],) <$> getDestBaseTypes resultTy
 
-interpretImpArgs :: EnvReader m => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
-interpretImpArgs t xsAll = liftEnvReaderM $ runSubstReaderT idSubst $ go t xsAll where
-  go :: PiType SimpIR i -> [IExpr o]
-     -> SubstReaderT AtomSubstVal EnvReaderM i o ([SAtom o], Dest o)
-  go (PiType bs effs resultTy) xs = case bs of
-    Nest (b:>argTy) rest -> do
-      argTy' <- substM argTy
-      (argTree, xsRest) <- listToTree argTy' xs
-      arg <- repValAtom $ RepVal argTy' argTree
-      (args, dest) <- extendSubst (b @> SubstVal arg) $ go (PiType rest effs resultTy) xsRest
-      return (arg:args, dest)
-    Empty -> do
-      resultTy' <- substM resultTy
-      (destTree, xsRest) <- listToTree resultTy' xs
-      case xsRest of
-        [] -> return ()
-        _  -> error "Shouldn't have any Imp arguments left"
-      return ([], Dest resultTy' destTree)
+interpretImpArgsWithDest :: EnvReader m
+  => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
+interpretImpArgsWithDest t xs = do
+  (PiType bs _ resultTy) <- return t
+  (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
+  resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
+  (destTree, xsRest) <- listToTree resultTy' xsLeft
+  case xsRest of
+    [] -> return ()
+    _  -> error "Shouldn't have any Imp arguments left"
+  return (args, Dest resultTy' destTree)
+
+interpretImpArgs :: EnvReader m
+  => EmptyAbs (Nest SBinder) n -> [IExpr n] -> m n [SAtom n]
+interpretImpArgs t args = do
+  (args', xsLeft) <- _interpretImpArgs t args
+  case xsLeft of
+    [] -> return args'
+    _  -> error "Shouldn't have any Imp arguments left"
+
+_interpretImpArgs :: EnvReader m
+  => EmptyAbs (Nest SBinder) n -> [IExpr n] -> m n ([SAtom n], [IExpr n])
+_interpretImpArgs t args =
+  liftEnvReaderM $ runSubstReaderT idSubst $ go t args where
+    go :: EmptyAbs (Nest SBinder) i -> [IExpr o]
+       -> SubstReaderT AtomSubstVal EnvReaderM i o ([SAtom o], [IExpr o])
+    go (Abs bs UnitE) xs = case bs of
+      Nest (b:>argTy) rest -> do
+        argTy' <- substM argTy
+        (argTree, xsRest) <- listToTree argTy' xs
+        arg <- repValAtom $ RepVal argTy' argTree
+        (args', xsLeft) <- extendSubst (b @> SubstVal arg) $ go (EmptyAbs rest) xsRest
+        return (arg:args', xsLeft)
+      Empty -> return ([], xs)
 
 -- === ImpM monad ===
 
@@ -242,19 +265,8 @@ liftImpM cont = do
 
 -- === the actual pass ===
 
--- We don't emit any results when a destination is provided, since they are already
--- going to be available through the dest.
-translateTopLevel :: CallingConvention -> DestBlock SimpIR i -> SubstImpM i o (ImpFunction o)
-translateTopLevel cc (DestBlock (destb:>destTy) body) = buildNullaryImpFunction cc do
-  dest <- case destTy of
-    RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
-    _ -> error "Expected a reference type for body destination"
-  extendSubst (destb @> SubstVal (destToAtom dest)) $ void $ translateBlock Nothing body
-  resultAtom <- loadAtom dest
-  repValToList <$> atomToRepVal resultAtom
-
 translateBlock :: forall i o. Emits o
-               => MaybeDest o -> SBlock i -> SubstImpM i o (SAtom o)
+  => MaybeDest o -> SBlock i -> SubstImpM i o (SAtom o)
 translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest $ Atom result
 
 translateDeclNestSubst
@@ -266,14 +278,16 @@ translateDeclNestSubst !s = \case
     x <- withSubst s $ translateExpr Nothing expr
     translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
-translateDeclNest :: Emits o => Nest SDecl i i' -> SubstImpM i' o a -> SubstImpM i o a
+translateDeclNest :: Emits o
+  => Nest SDecl i i' -> SubstImpM i' o a -> SubstImpM i o a
 translateDeclNest decls cont = do
   s  <- getSubst
   s' <- translateDeclNestSubst s decls
   withSubst s' cont
 {-# INLINE translateDeclNest #-}
 
-translateExpr :: forall i o. Emits o => MaybeDest o -> SExpr i -> SubstImpM i o (SAtom o)
+translateExpr :: forall i o. Emits o
+  => MaybeDest o -> SExpr i -> SubstImpM i o (SAtom o)
 translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> toImpHof maybeDest hof
   TopApp f' xs' -> do
@@ -355,7 +369,8 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
       Nothing   -> return atom
       Just dest -> storeAtom dest atom >> return atom
 
-toImpRefOp :: Emits o => MaybeDest o -> SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
+toImpRefOp :: Emits o
+  => MaybeDest o -> SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpRefOp maybeDest refDest' m = do
   refDest <- atomToDest =<< substM refDest'
   substM m >>= \case
@@ -1200,12 +1215,6 @@ emitCall maybeDest (PiType bs _ resultTy) f xs = do
   let impArgs = concat argsImp ++ destImp
   _ <- impCall f impArgs
   loadAtom dest
-
-buildNullaryImpFunction
-  :: CallingConvention
-  -> (forall l. (Emits l, DExt n l) => SubstImpM i l [IExpr l])
-  -> SubstImpM i n (ImpFunction n)
-buildNullaryImpFunction cc cont = buildImpFunction cc [] $ const cont
 
 buildImpFunction
   :: CallingConvention

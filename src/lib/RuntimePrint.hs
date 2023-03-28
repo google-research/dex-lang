@@ -68,7 +68,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       PtrType _  -> printTypeOnly "pointer"
       Scalar _ -> do
         (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
-        logicalTabTy <- finTabTy (NewtypeCon NatCon n) CharRepTy
+        logicalTabTy <- finTabTyCore (NewtypeCon NatCon n) CharRepTy
         tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
         emitCharTab tab'
     -- TODO: we could do better than this but it's not urgent because raw sum types
@@ -131,7 +131,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
                 rec =<< normalizeNaryProj (init projs) arg
-  DictHole _ _ -> error "shouldn't have DictHole past inference"
+  DictHole _ _ _ -> error "shouldn't have DictHole past inference"
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
@@ -226,7 +226,7 @@ pushBuffer buf x = do
 
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
-  t <- finTabTy (NatVal $ fromIntegral $ length s) CharRepTy
+  t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
@@ -245,9 +245,6 @@ applyPreludeFunction name args = do
 
 strType :: EnvReader m => m n (CType n)
 strType = constructPreludeType "List" $ TyConParams [Explicit] [CharRepTy]
-
-finTabTy :: EnvReader m => CAtom n -> CType n -> m n (CType n)
-finTabTy n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
 
 constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do

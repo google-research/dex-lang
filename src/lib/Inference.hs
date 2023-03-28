@@ -106,15 +106,14 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
       body <- checkInstanceBody className'' params' methods
       return (ListE params' `PairE` body)
   Abs bs' (ListE params' `PairE` body) <- return ab
-  def' <- traverseInstanceDefForSynth $ InstanceDef className' bs' params' body
-  instanceTy <- getInstanceType def'
-  instanceName <- emitBinding (getNameHint className') $ InstanceBinding def' instanceTy
+  let def = InstanceDef className' bs' params' body
   UDeclResultDone <$> case maybeName of
     RightB UnitB  -> do
-      -- only nameless instances become synthesis candidates
-      addInstanceSynthCandidate className' instanceName
+      void $ synthInstanceDefAndAddSynthCandidate def
       return result
     JustB instanceName' -> do
+      def' <- synthInstanceDef def
+      instanceName <- emitInstanceDef def'
       lam <- instanceFun instanceName expl
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> instanceAtomName) result
@@ -775,7 +774,7 @@ extendSynthCandidatesInf c v (InfOutMap env x y z w) =
 {-# INLINE extendSynthCandidatesInf #-}
 
 extendSynthCandidates :: Explicitness -> CAtomName n -> Env n -> Env n
-extendSynthCandidates (Inferred _ Synth) v (Env topEnv (ModuleEnv a b scs)) =
+extendSynthCandidates (Inferred _ (Synth _)) v (Env topEnv (ModuleEnv a b scs)) =
   Env topEnv (ModuleEnv a b scs')
   where scs' = scs <> SynthCandidates [v] mempty
 extendSynthCandidates _ _ env = env
@@ -830,9 +829,9 @@ inferRho hint expr = checkOrInferRho hint expr Infer
 getImplicitArg :: EmitsInf o => InferenceMechanism -> CType o -> InfererM i o (CAtom o)
 getImplicitArg inf argTy = case inf of
   Unify -> freshType argTy
-  Synth -> do
+  Synth reqMethodAccess -> do
     ctx <- srcPosCtx <$> getErrCtx
-    return $ DictHole (AlwaysEqual ctx) argTy
+    return $ DictHole (AlwaysEqual ctx) argTy reqMethodAccess
 
 -- The name hint names the object being computed
 checkOrInferRho
@@ -1012,7 +1011,7 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
       resultTyVar <- freshInferenceName TyKind
       dictTy <- DictTy <$> dictType className [Var resultTyVar]
       addDefault resultTyVar defaultTy
-      emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy) 0 [litVal]
+      emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
 
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
@@ -1555,7 +1554,7 @@ checkMaybeAnnExpr hint ty expr = confuseGHC >>= \_ -> case ty of
 
 inferRole :: CType o -> Explicitness -> InfererM i o ParamRole
 inferRole ty = \case
-  Inferred _ Synth -> return DictParam
+  Inferred _ (Synth _) -> return DictParam
   _ -> do
     zonk ty >>= \case
       TyKind -> return TypeParam
@@ -1629,7 +1628,7 @@ inferClassDef
 inferClassDef className methodNames paramBs methods = do
   let paramNames = catMaybes $ nestToList
         (\(WithExpl expl (UAnnBinder b _ _)) -> case expl of
-             Inferred _ Synth -> Nothing
+             Inferred _ (Synth _) -> Nothing
              _ -> Just $ Just $ uBinderSourceName b) paramBs
   ab <- withRoleUBinders paramBs \_ -> do
      ListE <$> forM methods \m -> do
@@ -1649,7 +1648,7 @@ identifySuperclasses ab = refreshAbs ab \bs e -> do
   bs' <- partitionBinders bs \b@(RolePiBinder _ (WithExpl expl b')) -> case expl of
     Explicit -> return $ LeftB b
     Inferred _ Unify -> throw TypeErr "Interfaces can't have implicit parameters"
-    Inferred _ Synth -> return $ RightB b'
+    Inferred _ (Synth _) -> return $ RightB b'
   return $ Abs bs' e
 
 withUBinders
@@ -1676,7 +1675,7 @@ withConstraintBinders (c:cs) v cont = do
   dictTy <- withReducibleEmissions "Can't reduce interface constraint" do
     c' <- inferWithoutInstantiation c >>= zonk
     dropSubst $ checkOrInferApp c' [Var $ sink v] [] (Check TyKind)
-  prependAbs <$> buildAbsInf "d" (Inferred Nothing Synth) dictTy \_ ->
+  prependAbs <$> buildAbsInf "d" (Inferred Nothing (Synth Full)) dictTy \_ ->
     withConstraintBinders cs (sink v) cont
 
 withRoleUBinders
@@ -1809,7 +1808,7 @@ checkInstanceBody className params methods = do
   ClassDef _ methodNames _ paramBs scBs methodTys <- lookupClassDef className
   Abs scBs' methodTys' <- applySubst (paramBs @@> (SubstVal <$> params)) $ Abs scBs $ ListE methodTys
   superclassTys <- superclassDictTys scBs'
-  superclassDicts <- mapM trySynthTerm superclassTys
+  superclassDicts <- mapM (flip trySynthTerm Full) superclassTys
   ListE methodTys'' <- applySubst (scBs'@@>(SubstVal<$>superclassDicts)) methodTys'
   methodsChecked <- mapM (checkMethodDef className methodTys'') methods
   let (idxs, methods') = unzip $ sortOn fst $ methodsChecked
@@ -2060,7 +2059,7 @@ inferTabCon hint xs reqTy = do
   let n = fromIntegral (length xs) :: Word32
   let finTy = FinConst n
   ctx <- srcPosCtx <$> getErrCtx
-  let dataDictHole dTy = Just $ WhenIRE $ DictHole (AlwaysEqual ctx) dTy
+  let dataDictHole dTy = Just $ WhenIRE $ DictHole (AlwaysEqual ctx) dTy Full
   case reqTy of
     Infer -> do
       elemTy <- case xs of
@@ -2135,7 +2134,7 @@ asIxType :: CType o -> InfererM i o (IxType CoreIR o)
 asIxType ty = do
   dictTy <- DictTy <$> ixDictType ty
   ctx <- srcPosCtx <$> getErrCtx
-  return $ IxType ty $ IxDictAtom $ DictHole (AlwaysEqual ctx) dictTy
+  return $ IxType ty $ IxDictAtom $ DictHole (AlwaysEqual ctx) dictTy Full
 {-# SCC asIxType #-}
 
 -- === Solver ===
@@ -2645,9 +2644,61 @@ generalizeInstanceArgs (Nest (RolePiBinder role (WithExpl _ (b:>ty))) bs) (arg:a
   return $ arg':args'
 generalizeInstanceArgs _ _ = error "zip error"
 
-traverseInstanceDefForSynth
+synthInstanceDefAndAddSynthCandidate
+  :: (Mut n, TopBuilder m, EnvReader m,  Fallible1 m) => InstanceDef n -> m n (InstanceName n)
+synthInstanceDefAndAddSynthCandidate def@(InstanceDef className bs params (InstanceBody superclasses _)) = do
+  let emptyDef = InstanceDef className bs params $ InstanceBody superclasses []
+  instanceName <- emitInstanceDef emptyDef
+  addInstanceSynthCandidate className instanceName
+  synthInstanceDefRec instanceName def
+  return instanceName
+
+emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
+emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
+  ty <- getInstanceType instanceDef
+  emitBinding (getNameHint className) $ InstanceBinding instanceDef ty
+
+type InstanceDefAbsBodyT =
+      ((ListE CType) `PairE` (ListE CAtom) `PairE` (ListE CAtom) `PairE` (ListE CAtom))
+
+pattern InstanceDefAbsBody :: [CType n] -> [CAtom n] -> [CAtom n] -> [CAtom n]
+                           -> InstanceDefAbsBodyT n
+pattern InstanceDefAbsBody params superclasses doneMethods todoMethods =
+  ListE params `PairE` (ListE superclasses) `PairE` (ListE doneMethods) `PairE` (ListE todoMethods)
+
+type InstanceDefAbsT = Abs (Nest RolePiBinder) InstanceDefAbsBodyT
+
+pattern InstanceDefAbs :: Nest RolePiBinder h n -> [CType n] -> [CAtom n] -> [CAtom n] -> [CAtom n]
+                       -> InstanceDefAbsT h
+pattern InstanceDefAbs bs params superclasses doneMethods todoMethods =
+  Abs bs (InstanceDefAbsBody params superclasses doneMethods todoMethods)
+
+synthInstanceDefRec
+  :: (Mut n, TopBuilder m, EnvReader m,  Fallible1 m) => InstanceName n -> InstanceDef n -> m n ()
+synthInstanceDefRec instanceName (InstanceDef className bs params (InstanceBody superclasses methods)) = do
+  let ab = InstanceDefAbs bs params superclasses [] methods
+  recur ab className instanceName
+  where
+    recur :: (Mut n, TopBuilder m, EnvReader m, Fallible1 m)
+          => InstanceDefAbsT n -> ClassName n -> InstanceName n -> m n ()
+    recur (InstanceDefAbs _ _ _ _ []) _ _ = return ()
+    recur ab cname iname = do
+      (def, ab') <- liftExceptEnvReaderM $ refreshAbs ab
+        \bs' (InstanceDefAbsBody ps scs doneMethods (m:ms)) -> do
+          EnvReaderT $ ReaderT \(Distinct, env) -> do
+            let env' = extendSynthCandidatess bs' env
+            flip runReaderT (Distinct, env') $ runEnvReaderT' do
+              m' <- synthTopE m
+              let doneMethods' = doneMethods ++ [m']
+              let ab' = InstanceDefAbs bs' ps scs doneMethods' ms
+              let def = InstanceDef cname bs' ps $ InstanceBody scs doneMethods'
+              return (def, ab')
+      updateInstanceDef iname def
+      recur ab' cname iname
+
+synthInstanceDef
   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
-traverseInstanceDefForSynth (InstanceDef className bs params body) = do
+synthInstanceDef (InstanceDef className bs params body) = do
   liftExceptEnvReaderM $ refreshAbs (Abs bs (ListE params `PairE` body))
     \bs' (ListE params' `PairE` InstanceBody superclasses methods) -> do
        EnvReaderT $ ReaderT \(Distinct, env) -> do
@@ -2657,13 +2708,13 @@ traverseInstanceDefForSynth (InstanceDef className bs params body) = do
            return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
 
 -- main entrypoint to dictionary synthesizer
-trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> m n (SynthAtom n)
-trySynthTerm ty = do
+trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
+trySynthTerm ty reqMethodAccess = do
   hasInferenceVars ty >>= \case
     True -> throw TypeErr "Can't synthesize a dictionary for a type with inference vars"
     False -> do
       synthTy <- liftExcept $ typeAsSynthType ty
-      solutions <- liftSyntherM $ synthTerm synthTy
+      solutions <- liftSyntherM $ synthTerm synthTy reqMethodAccess
       case solutions of
         [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
         [d] -> cheapNormalize d -- normalize to reduce code size
@@ -2768,11 +2819,11 @@ getSuperclassClosurePure env givens newGivens =
           return $ nestToList (const ()) superclassBs
       return $ enumerate superclasses <&> \(i, ()) -> DictCon $ SuperclassProj synthExpr i
 
-synthTerm :: SynthType n -> SyntherM n (SynthAtom n)
-synthTerm targetTy = confuseGHC >>= \_ -> case targetTy of
+synthTerm :: SynthType n -> RequiredMethodAccess -> SyntherM n (SynthAtom n)
+synthTerm targetTy reqMethodAccess = confuseGHC >>= \_ -> case targetTy of
   SynthPiType ab -> do
     ab' <- withGivenBinders ab \bs targetTy' -> do
-      Abs bs <$> synthTerm (SynthDictType targetTy')
+      Abs bs <$> synthTerm (SynthDictType targetTy') reqMethodAccess
     Abs bs synthExpr <- return ab'
     liftM Lam $ coreLamExpr ImplicitApp $ Abs bs $ PairE Pure (AtomicBlock synthExpr)
   SynthDictType dictTy -> case dictTy of
@@ -2780,7 +2831,15 @@ synthTerm targetTy = confuseGHC >>= \_ -> case targetTy of
     DictType "Data" _ [t] -> do
       void (synthDictForData dictTy <!> synthDictFromGiven dictTy)
       return $ DictCon $ DataData t
-    _ -> synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
+    _ -> do
+      dict <- synthDictFromInstance dictTy <!> synthDictFromGiven dictTy
+      case dict of
+        DictCon (InstanceDict instanceName _) -> do
+          isReqMethodAccessAllowed <- reqMethodAccess `isMethodAccessAllowedBy` instanceName
+          if isReqMethodAccessAllowed
+            then return dict
+            else empty
+        _ -> return dict
 {-# SCC synthTerm #-}
 
 withGivenBinders
@@ -2801,12 +2860,22 @@ withGivenBinders (Abs bsTop e) contTop =
        argTy <- renameM $ binderType b
        withFreshBinder (getNameHint b) argTy \b' -> do
          givens <- case expl of
-           Inferred _ Synth -> return [Var $ binderName b']
+           Inferred _ (Synth _) -> return [Var $ binderName b']
            _ -> return []
          s <- getSubst
          liftSubstReaderT $ extendGivens givens $
            runSubstReaderT (s <>> b@>binderName b') $
              go rest \rest' -> cont (Nest (WithExpl expl b') rest')
+
+isMethodAccessAllowedBy :: EnvReader m =>  RequiredMethodAccess -> InstanceName n -> m n Bool
+isMethodAccessAllowedBy access instanceName = do
+  InstanceDef className _ _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+  let numInstanceMethods = length methods
+  ClassDef _ _ _ _ _ methodTys <- lookupClassDef className
+  let numClassMethods = length methodTys
+  case access of
+    Full                  -> return $ numClassMethods == numInstanceMethods
+    Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven targetTy = do
@@ -2834,7 +2903,7 @@ instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do
     args <- runSubstReaderT idSubst $ go (sink targetTop) (sink $ Abs bsTop resultTyTop)
     zonk $ ListE args
   forM args \case
-    DictHole _ argTy -> liftExceptAlt (typeAsSynthType argTy) >>= synthTerm
+    DictHole _ argTy req -> liftExceptAlt (typeAsSynthType argTy) >>= flip synthTerm req
     arg -> return arg
  where
    go :: EmitsInf o
@@ -2850,7 +2919,7 @@ instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do
        arg <- liftSubstReaderT case expl of
          Explicit -> error "instances shouldn't have explicit args"
          Inferred _ Unify -> Var <$> freshInferenceName argTy
-         Inferred _ Synth -> return $ DictHole (AlwaysEqual Nothing) argTy
+         Inferred _ (Synth req) -> return $ DictHole (AlwaysEqual Nothing) argTy req
        liftM (arg:) $ extendSubst (b@>SubstVal arg) $ go target (Abs rest proposed)
 
 synthDictForData :: forall n. DictType n -> SyntherM n (SynthAtom n)
@@ -2917,9 +2986,9 @@ instance HoistableState DictSynthTraverserS where
 
 instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
   traverseAtom atom = case atom of
-    DictHole (AlwaysEqual ctx) ty -> do
+    DictHole (AlwaysEqual ctx) ty access -> do
       ty' <- cheapNormalize =<< traverseAtom ty
-      ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty'
+      ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty' access
       case ans of
         Failure errs -> put (DictSynthTraverserS errs) >> substM atom
         Success d    -> return d

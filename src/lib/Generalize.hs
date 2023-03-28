@@ -38,9 +38,9 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
     go (Nest (WithExpl expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
-      arg' <- case ty' of
-        TyKind -> liftSubstReaderT $ generalizeType arg
-        DictTy _ | expl == Inferred Nothing Synth -> generalizeDict ty' arg
+      arg' <- case (ty', expl) of
+        (TyKind, _) -> liftSubstReaderT $ generalizeType arg
+        (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
         _ -> isData ty' >>= \case
           True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
           False -> do

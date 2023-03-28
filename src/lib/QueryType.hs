@@ -164,7 +164,7 @@ instance HasType CoreIR MethodName where
           let scDicts = getSuperclassDicts (sink classDef) (Var $ binderName dictB)
           piTy' <- applySubst (scBinders'@@>(SubstVal<$>scDicts)) piTy
           CorePiType appExpl methodBs effs resultTy <- return piTy'
-          let dictBs = UnaryNest $ WithExpl (Inferred Nothing Synth) dictB
+          let dictBs = UnaryNest $ WithExpl (Inferred Nothing (Synth Full)) dictB
           return $ Pi $ CorePiType appExpl (paramBs'' >>> dictBs >>> methodBs) effs resultTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
@@ -322,7 +322,7 @@ instance IRRep r => HasType r (Atom r) where
         NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
         ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
     SimpInCore x -> getTypeE x
-    DictHole _ ty -> substM ty
+    DictHole _ ty _ -> substM ty
 
 instance HasType CoreIR SimpInCore where
   getTypeE = \case

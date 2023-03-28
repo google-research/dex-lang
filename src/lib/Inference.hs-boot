@@ -9,5 +9,6 @@ module Inference (trySynthTerm) where
 import Core
 import Name
 import Types.Core
+import Types.Primitives (RequiredMethodAccess)
 
-trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> m n (CAtom n)
+trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (CAtom n)

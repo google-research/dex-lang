@@ -317,8 +317,8 @@ lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m
 {-# INLINE lookupModule #-}
 
-lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (FunObjCode, LinktimeNames n)
-lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding obj m -> return (obj, m)
+lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (CFunction n)
+lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding cFun -> return cFun
 {-# INLINE lookupFunObjCode #-}
 
 lookupTyCon :: EnvReader m => TyConName n -> m n (TyConDef n)
@@ -439,6 +439,12 @@ nonDepTabPiType argTy resultTy =
 
 (==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b
+
+finTabTyCore :: EnvReader m => CAtom n -> CType n -> m n (CType n)
+finTabTyCore n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
+
+finIxTy :: Int -> IxType r n
+finIxTy n = IxType IdxRepTy (IxDictRawFin (IdxRepVal $ fromIntegral n))
 
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, CorePiType, respectively) up to the given maxDepth, and return the

@@ -153,7 +153,7 @@ type ForAnn = Direction
 data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
 -- TODO: add optional argument
-data InferenceMechanism = Unify | Synth  deriving (Show, Eq, Ord, Generic)
+data InferenceMechanism = Unify | Synth RequiredMethodAccess deriving (Show, Eq, Ord, Generic)
 data Explicitness =
     Explicit
   | Inferred (Maybe SourceName) InferenceMechanism  deriving (Show, Eq, Ord, Generic)
@@ -175,6 +175,8 @@ zipExpls _ _ = error "zip error"
 
 addExpls :: Explicitness -> Nest b n l -> Nest (WithExpl b) n l
 addExpls expl bs = fmapNest (\b -> WithExpl expl b) bs
+
+data RequiredMethodAccess = Full | Partial Int deriving (Show, Eq, Ord, Generic)
 
 data LetAnn =
   -- Binding with no additional information
@@ -297,6 +299,7 @@ emptyLit = \case
 
 -- === Typeclass instances ===
 
+instance Store RequiredMethodAccess
 instance Store LetAnn
 instance Store RWS
 instance Store Direction
@@ -334,6 +337,7 @@ instance Hashable LetAnn
 instance Hashable Explicitness
 instance Hashable AppExplicitness
 instance Hashable InferenceMechanism
+instance Hashable RequiredMethodAccess
 
 instance Hashable a => Hashable (PrimCon r a)
 instance Hashable a => Hashable (PrimTC  r a)

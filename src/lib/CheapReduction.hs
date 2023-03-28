@@ -194,11 +194,11 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
     Lam _ -> substM a
-    DictHole ctx ty' -> do
+    DictHole ctx ty' access -> do
       ty <- cheapReduceE ty'
-      runFallibleT1 (trySynthTerm ty) >>= \case
+      runFallibleT1 (trySynthTerm ty access) >>= \case
         Success d -> return d
-        Failure _ -> return $ DictHole ctx ty
+        Failure _ -> return $ DictHole ctx ty access
     TabPi (TabPiType (b:>ixTy) resultTy) -> do
       ixTy' <- cheapReduceE ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do

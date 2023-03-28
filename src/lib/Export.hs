@@ -8,9 +8,11 @@
 
 module Export (
     exportFunctions, prepareFunctionForExport, exportedSignatureDesc,
-    ExportedSignature (..), ExportType (..), ExportArg (..), ExportResult (..)
+    prepareSLamForExport,
+    ExportedSignature (..), ExportNativeFunction (..)
   ) where
 
+import Control.Category ((>>>))
 import Data.List (intercalate)
 import Foreign.Storable
 import Foreign.C.String
@@ -20,11 +22,10 @@ import Builder
 import Core
 import Err
 import IRVariants
-import Imp
-import Lower (lowerFullySequential)
 import Name
 import QueryType
 import Simplify
+import Subst hiding (Rename)
 import TopLevel
 import Types.Core
 import Types.Imp
@@ -36,8 +37,12 @@ exportFunctions :: FilePath -> [(String, CAtom n)] -> Env n -> IO ()
 exportFunctions = error "Not implemented"
 {-# SCC exportFunctions #-}
 
-prepareFunctionForExport
-  :: (Mut n, Topper m) => CallingConvention -> CAtom n -> m n (ImpFunction n, ExportedSignature VoidS)
+data ExportNativeFunction = ExportNativeFunction
+  { nativeFunction  :: NativeFunction
+  , nativeSignature :: ExportedSignature 'VoidS }
+
+prepareFunctionForExport :: (Mut n, Topper m)
+  => CallingConvention -> CAtom n -> m n ExportNativeFunction
 prepareFunctionForExport cc f = do
   naryPi <- getType f >>= \case
     Pi piTy -> return piTy
@@ -46,90 +51,145 @@ prepareFunctionForExport cc f = do
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess npi -> return npi
-  sig <- case runFallibleM $ runEnvReaderT emptyOutMap $ naryPiToExportSig closedNaryPi of
-    Success sig -> return sig
-    Failure err -> throwErrs err
+  sig <- liftExportSigM $ corePiToExportSig cc closedNaryPi
   CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
   fSimp <- simplifyTopFunction f'
-  fOpt <- simpOptimizations fSimp
-  fLower <- lowerFullySequential fOpt
-  flOpt <- loweredOptimizations fLower
-  fImp <- toImpFunction cc flOpt
-  return (fImp, sig)
-
-  where
-    naryPiToExportSig :: (EnvReader m, EnvExtender m, Fallible1 m)
-                      => CorePiType n -> m n (ExportedSignature n)
-    naryPiToExportSig (CorePiType _ tbs effs resultTy) = do
-        case effs of
-          Pure -> return ()
-          _    -> throw TypeErr "Only pure functions can be exported"
-        goArgs Empty [] tbs resultTy
-      where
-        goArgs :: (EnvReader m, EnvExtender m, Fallible1 m)
-               => Nest ExportArg n l' -> [CAtomName l'] -> Nest (WithExpl CBinder) l' l
-               -> CType l -> m l' (ExportedSignature n)
-        goArgs argSig argVs piBs piRes = case piBs of
-          Empty -> goResult piRes \resSig ->
-            return $ ExportedSignature argSig resSig $ case cc of
-              StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
-              XLACC      -> []
-              _ -> error $ "calling convention not supported: " ++ show cc
-          Nest (WithExpl expl b) bs -> do
-            refreshAbs (Abs b (Abs bs piRes)) \(v:>ty) (Abs bs' piRes') -> do
-              let invalidExplicitness = throw TypeErr
-                                   "Exported functions can only have regular and implicit arrow types"
-              vis <- case expl of
-                Explicit       -> return ExplicitArg
-                Inferred _ Unify -> return ImplicitArg
-                Inferred _ Synth -> invalidExplicitness
-              ety <- toExportType ty
-              goArgs (argSig `joinNest` Nest (ExportArg vis (v:>ety)) Empty)
-                     ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs' piRes'
-
-        goResult :: (EnvReader m, EnvExtender m, Fallible1 m)
-                 => CType l
-                 -> (forall q. DExt l q => Nest ExportResult l q -> m q a)
-                 -> m l a
-        goResult ty cont = case ty of
-          ProdTy [lty, rty] ->
-            goResult lty \lres ->
-              goResult (sink rty) \rres ->
-                cont $ joinNest lres rres
-          _ -> withFreshBinder noHint ty \(b:>_) -> do
-            ety <- toExportType ty
-            cont $ Nest (ExportResult (b:>ety)) Empty
-
-    toExportType :: Fallible m => CType n -> m (ExportType n)
-    toExportType ty = case ty of
-      BaseTy (Scalar sbt) -> return $ ScalarType sbt
-      NatTy               -> return $ ScalarType IdxRepScalarBaseTy
-      TabTy  _ _          -> case parseTabTy ty of
-        Nothing  -> unsupported
-        Just ety -> return ety
-      _ -> unsupported
-      where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
-
-    parseTabTy :: CType n -> Maybe (ExportType n)
-    parseTabTy = go []
-      where
-        go :: [ExportDim n] -> CType n -> Maybe (ExportType n)
-        go shape = \case
-          BaseTy (Scalar sbt) -> Just $ RectContArrayPtr sbt shape
-          NatTy               -> Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-          TabTy  (b:>(IxType (NewtypeTyCon (Fin n)) _)) a -> do
-            dim <- case n of
-              Var v    -> Just (ExportDimVar v)
-              NatVal s -> Just (ExportDimLit $ fromIntegral s)
-              _        -> Nothing
-            case hoist b a of
-              HoistSuccess a' -> go (shape ++ [dim]) a'
-              HoistFailure _  -> Nothing
-          _ -> Nothing
+  fImp <- compileTopLevelFun cc fSimp
+  nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
+  return $ ExportNativeFunction nativeFun sig
 {-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}
 
+prepareSLamForExport :: (Mut n, Topper m)
+  => CallingConvention -> SLam n -> m n ExportNativeFunction
+prepareSLamForExport cc f = do
+  naryPi <- getLamExprType f
+  closedNaryPi <- case hoistToTop naryPi of
+    HoistFailure _ ->
+      throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
+    HoistSuccess npi -> return npi
+  sig <- liftExportSigM $ simpPiToExportSig cc closedNaryPi
+  fImp <- compileTopLevelFun cc f
+  nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
+  return $ ExportNativeFunction nativeFun sig
+{-# INLINE prepareSLamForExport #-}
+{-# SCC prepareSLamForExport #-}
+
 -- === Exported function signature ===
+
+data Rename (r::IR) (c::C) (n::S) where
+  Rename :: (Name (AtomNameC CoreIR) n) -> Rename r (AtomNameC r) n
+  JustRefer :: Name c n -> Rename r c n
+
+instance SinkableE (Rename r c) where
+  sinkingProofE = todoSinkableProof
+instance SinkableV (Rename r)
+instance FromName (Rename r) where
+  fromName = JustRefer
+
+newtype ExportSigM (r::IR) (i::S) (o::S) (a:: *) = ExportSigM {
+  runExportSigM :: SubstReaderT (Rename r) (EnvReaderT FallibleM) i o a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
+           , EnvReader, SubstReader (Rename r), MonadFail)
+
+liftExportSigM :: Fallible m => ExportSigM r VoidS VoidS a -> m a
+liftExportSigM = liftExcept . runFallibleM . runEnvReaderT emptyOutMap
+  . runSubstReaderT idSubst . runExportSigM
+
+corePiToExportSig :: CallingConvention
+  -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
+corePiToExportSig cc (CorePiType _ tbs effs resultTy) = do
+    case effs of
+      Pure -> return ()
+      _    -> throw TypeErr "Only pure functions can be exported"
+    goArgs cc Empty [] tbs resultTy
+
+simpPiToExportSig :: CallingConvention
+  -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
+simpPiToExportSig cc (PiType bs effs resultTy) = do
+  case effs of
+    Pure -> return ()
+    _    -> throw TypeErr "Only pure functions can be exported"
+  bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
+  goArgs cc Empty [] bs' resultTy
+
+goArgs :: (IRRep r)
+  => CallingConvention
+  -> Nest ExportArg o o'
+  -> [CAtomName o']
+  -> Nest (WithExpl (Binder r)) i i'
+  -> Type r i'
+  -> ExportSigM r i o' (ExportedSignature o)
+goArgs cc argSig argVs piBs piRes = case piBs of
+  Empty -> goResult piRes \resSig ->
+    return $ ExportedSignature argSig resSig $ case cc of
+      StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+      XLACC      -> []
+      _ -> error $ "calling convention not supported: " ++ show cc
+  Nest (WithExpl expl (b:>ty)) bs -> do
+    ety <- toExportType ty
+    withFreshBinder (getNameHint b) ety \(v:>_) ->
+      extendSubst (b @> Rename (binderName v)) $ do
+        vis <- case expl of
+          Explicit    -> return ExplicitArg
+          Inferred _ _ -> return ImplicitArg
+        goArgs cc (argSig >>> Nest (ExportArg vis (v:>ety)) Empty)
+               ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs piRes
+
+goResult :: IRRep r => Type r i
+         -> (forall o'. DExt o o' =>
+             Nest ExportResult o o' -> ExportSigM r i o' a)
+         -> ExportSigM r i o a
+goResult ty cont = case ty of
+  ProdTy [one] ->
+    goResult one cont
+  ProdTy (lty:rest) ->
+    goResult lty \lres ->
+      goResult (ProdTy rest) \rres ->
+        cont $ lres >>> rres
+  _ -> do
+    ety <- toExportType ty
+    withFreshBinder noHint ety \(b:>_) -> do
+      cont $ Nest (ExportResult (b:>ety)) Empty
+
+toExportType :: IRRep r => Type r i -> ExportSigM r i o (ExportType o)
+toExportType ty = case ty of
+  BaseTy (Scalar sbt) -> return $ ScalarType sbt
+  NewtypeTyCon Nat    -> return $ ScalarType IdxRepScalarBaseTy
+  TabTy  _ _          -> parseTabTy ty >>= \case
+    Nothing  -> unsupported
+    Just ety -> return ety
+  _ -> unsupported
+  where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+{-# INLINE toExportType #-}
+
+parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
+parseTabTy = go []
+  where
+    go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
+      -> ExportSigM r i o (Maybe (ExportType o))
+    go shape = \case
+      BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
+      NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+      TabTy  (b:>ixty) a -> do
+        maybeN <- case ixty of
+          (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
+          (IxType _ (IxDictRawFin n)) -> return $ Just n
+          _ -> return Nothing
+        maybeDim <- case maybeN of
+          Just (Var v)    -> do
+            s <- getSubst
+            let (Rename v') = s ! v
+            return $ Just (ExportDimVar v')
+          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+          Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
+          _        -> return Nothing
+        case maybeDim of
+          Just dim -> case hoist b a of
+            HoistSuccess a' -> go (shape ++ [dim]) a'
+            HoistFailure _  -> return Nothing
+          Nothing -> return Nothing
+      _ -> return Nothing
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 
@@ -142,6 +202,7 @@ data ExportType n = RectContArrayPtr ScalarBaseType [ExportDim n]
 
 data    ExportArg    n l = ExportArg    ArgVisibility (BinderP ExportAtomNameC ExportType n l)
 newtype ExportResult n l = ExportResult               (BinderP ExportAtomNameC ExportType n l)
+  deriving (SinkableB)
 data ExportedSignature n = forall l l'.
   ExportedSignature { exportedArgSig   :: Nest ExportArg n l
                     , exportedResSig   :: Nest ExportResult l l'

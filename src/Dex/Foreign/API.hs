@@ -11,6 +11,7 @@ import Foreign.C
 
 import Dex.Foreign.Context
 import Dex.Foreign.Serialize
+import Dex.Foreign.JAX
 import Dex.Foreign.JIT
 
 -- Public API (commented out exports are defined in rts.c)
@@ -39,3 +40,7 @@ foreign export ccall "dexCompile"    dexCompile    :: Ptr Context -> CInt -> Ptr
 foreign export ccall "dexUnload"     dexUnload     :: Ptr Context -> ExportNativeFunctionAddr -> IO ()
 foreign export ccall "dexGetFunctionSignature"  dexGetFunctionSignature  :: Ptr Context -> ExportNativeFunctionAddr -> IO (Ptr ClosedExportedSignature)
 foreign export ccall "dexFreeFunctionSignature" dexFreeFunctionSignature :: Ptr ClosedExportedSignature -> IO ()
+
+-- JAX serialization
+foreign export ccall "dexRoundtripJaxprJson" dexRoundtripJaxprJson :: CString -> IO CString
+foreign export ccall "dexCompileJaxpr" dexCompileJaxpr :: Ptr Context -> CInt -> CString -> IO ExportNativeFunctionAddr

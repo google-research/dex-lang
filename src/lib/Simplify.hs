@@ -109,7 +109,7 @@ tryAsDataAtom atom = do
     Eff _           -> notData
     TC _            -> notData
     TabPi _         -> notData
-    DictHole _ _    -> notData
+    DictHole _ _ _  -> notData
     where
       notData = error $ "Not runtime-representable data: " ++ pprint atom
 
@@ -161,7 +161,7 @@ getRepType ty = go ty where
     Pi _           -> error notDataType
     DictTy _       -> error notDataType
     DictCon _      -> error notType
-    DictHole _ _   -> error notType
+    DictHole _ _ _ -> error notType
     Eff _          -> error notType
     Con _          -> error notType
     PtrVar _       -> error notType
@@ -648,7 +648,7 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   PtrVar v -> PtrVar <$> substM v
   DictCon d -> (DictCon <$> substM d) >>= cheapNormalize
   DictTy  d -> DictTy <$> substM d
-  DictHole _ _ -> error "shouldn't have dict holes past inference"
+  DictHole _ _ _ -> error "shouldn't have dict holes past inference"
   NewtypeCon _ _ -> substM atom
   NewtypeTyCon t -> NewtypeTyCon <$> substM t
   ProjectElt i x -> normalizeProj i =<< simplifyAtom x
