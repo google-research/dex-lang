@@ -221,7 +221,7 @@ endif
 
 test-names = uexpr-tests print-tests adt-tests type-tests struct-tests cast-tests eval-tests show-tests \
              read-tests shadow-tests monad-tests io-tests exception-tests sort-tests \
-             parser-tests standalone-function-tests \
+             parser-tests standalone-function-tests instance-methods-tests \
              ad-tests serialize-tests parser-combinator-tests \
              typeclass-tests complex-tests trig-tests \
              linalg-tests set-tests fft-tests stats-tests stack-tests
@@ -304,7 +304,6 @@ quine-tests: $(quine-test-targets)
 
 file-check-tests: just-build
 	misc/file-check tests/instance-interface-syntax-tests.dx $(dex) -O script
-	misc/file-check tests/instance-methods-tests.dx $(dex) -O script
 
 run-%: export DEX_ALLOW_CONTRACTIONS=0
 run-%: export DEX_TEST_MODE=t

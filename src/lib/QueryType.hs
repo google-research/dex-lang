@@ -164,7 +164,7 @@ instance HasType CoreIR MethodName where
           let scDicts = getSuperclassDicts (sink classDef) (Var $ binderName dictB)
           piTy' <- applySubst (scBinders'@@>(SubstVal<$>scDicts)) piTy
           CorePiType appExpl methodBs effs resultTy <- return piTy'
-          let dictBs = UnaryNest $ WithExpl (Inferred Nothing (Synth Full)) dictB
+          let dictBs = UnaryNest $ WithExpl (Inferred Nothing (Synth $ Partial $ succ i)) dictB
           return $ Pi $ CorePiType appExpl (paramBs'' >>> dictBs >>> methodBs) effs resultTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
