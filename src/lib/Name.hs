@@ -392,7 +392,7 @@ toConstAbs body = do
 toConstAbsPure :: (HoistableE e, SinkableE e)
                => e n -> (Abs (NameBinder c) e n)
 toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
-  where n = freshRawName noHint $ freeVarsE e
+  where n = freshRawName noHint $ fromNameSet $ freeVarsE e
 
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
@@ -1610,7 +1610,7 @@ emitDoubleInplaceTHoisted
   => Abs d1 e n -> DoubleInplaceT b d1 d2 m n (Maybe (e n))
 emitDoubleInplaceTHoisted emission = do
   Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
-  if R.containedIn (freeVarsE emission) topScopeFrag
+  if R.containedIn (fromNameSet $ freeVarsE emission) topScopeFrag
     then do
       scope <- unsafeGetScope
       Distinct <- getDistinct
@@ -1626,7 +1626,7 @@ canHoistToTopDoubleInplaceT
   => e n -> DoubleInplaceT b d1 d2 m n Bool
 canHoistToTopDoubleInplaceT e = do
   Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
-  return $ R.containedIn (freeVarsE e) topScopeFrag
+  return $ R.containedIn (fromNameSet $ freeVarsE e) topScopeFrag
 
 unsafeEmitDoubleInplaceTHoisted
   :: ( Monad m, ExtOutMap b d1, OutFrag d1
@@ -2170,7 +2170,7 @@ renameSubstPairBinders env (Nest (SubstPair b v) rest) cont =
       cont env'' (Nest (SubstPair b' v) rest')
 
 instance HoistableE (UniformNameSet c) where
-  freeVarsE (UniformNameSet s) = s
+  freeVarsE (UniformNameSet s) = UnsafeMakeNameSet s
 
 instance RenameE (UniformNameSet c) where
   renameE _ (UniformNameSet _) = undefined
@@ -2405,7 +2405,8 @@ type V = C -> E       -- value-y things that we might look up in an environment
 
 -- We use SubstItem for ColorRep to be able to unsafeCoerce scopes into name sets in O(1).
 type ColorRep = SubstItem GHC.Exts.Any UnsafeS
-type NameSet (n::S) = RawNameMap ColorRep
+newtype NameSet (n::S) = UnsafeMakeNameSet { fromNameSet :: RawNameMap ColorRep }
+        deriving (Monoid, Semigroup)
 newtype UniformNameSet (c::C) (n::S) = UniformNameSet (RawNameMap ColorRep)
         deriving (Monoid, Semigroup)
 
@@ -2674,7 +2675,7 @@ withScopeFromFreeVars :: HoistableE e => e n -> ClosedWithScope e
 withScopeFromFreeVars e =
   withFabricatedDistinct @UnsafeS $
     ClosedWithScope scope $ unsafeCoerceE e
-  where scope = (Scope $ UnsafeMakeScopeFrag $ freeVarsE e) :: Scope UnsafeS
+  where scope = (Scope $ UnsafeMakeScopeFrag $ fromNameSet $ freeVarsE e) :: Scope UnsafeS
 
 -- This renames internal binders in a way that doesn't depend on any extra
 -- context. The resuling binder names are arbitrary (we make no promises!) but
@@ -2703,10 +2704,10 @@ hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
   case R.disjoint fvs frag of
     True  -> HoistSuccess $ unsafeCoerceE e
-    False -> HoistFailure $ nameSetRawNames $ R.intersection fvs frag
+    False -> HoistFailure $ R.keys $ R.intersection fvs frag
   where
     UnsafeMakeScopeFrag frag = toScopeFrag b
-    fvs = freeVarsE e
+    fvs = fromNameSet $ freeVarsE e
 
 hoistToTop :: HoistableE e => e n -> HoistExcept (e VoidS)
 hoistToTop e =
@@ -2723,30 +2724,33 @@ freeVarsList e = nameSetToList $ freeVarsE e
 
 nameSetToList :: forall c n. Color c => NameSet n -> [Name c n]
 nameSetToList nameSet =
-  catMaybes $ flip map (R.toList nameSet) \(rawName, item) ->
+  catMaybes $ flip map (R.toList $ fromNameSet nameSet) \(rawName, item) ->
     case fromSubstItem item of
       Nothing -> Nothing
       Just (_ :: GHC.Exts.Any c UnsafeS) -> Just $ UnsafeMakeName rawName
+
+nameSetIntersection :: NameSet n -> NameSet n -> NameSet n
+nameSetIntersection s1 s2 = UnsafeMakeNameSet $ R.intersection (fromNameSet s1) (fromNameSet s2)
 
 boundNamesList :: (BindsNames b, Color c) => b n l -> [Name c l]
 boundNamesList b = nameSetToList $ toNameSet $ toScopeFrag b
 
 toNameSet :: ScopeFrag n l -> NameSet l
-toNameSet (UnsafeMakeScopeFrag s) = s
+toNameSet (UnsafeMakeScopeFrag s) = UnsafeMakeNameSet s
 
 nameSetRawNames :: NameSet n -> [RawName]
-nameSetRawNames m = R.keys m
+nameSetRawNames m = R.keys $ fromNameSet m
 
 isInNameSet :: Name c n -> NameSet n -> Bool
-isInNameSet v ns = getRawName v `R.member` ns
+isInNameSet v ns = getRawName v `R.member` fromNameSet ns
 
 isFreeIn :: HoistableE e => Name c n -> e n -> Bool
-isFreeIn v e = getRawName v `R.member` freeVarsE e
+isFreeIn v e = getRawName v `R.member` fromNameSet (freeVarsE e)
 
 anyFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
 anyFreeIn vs e =
   not $ R.disjoint (R.fromList $ map (\v -> (getRawName v, ())) vs)
-                   (freeVarsE e)
+                   (fromNameSet $ freeVarsE e)
 
 exchangeBs :: (Distinct l, BindsNames b1, SinkableB b1, HoistableB b2)
               => PairB b1 b2 n l
@@ -2754,10 +2758,10 @@ exchangeBs :: (Distinct l, BindsNames b1, SinkableB b1, HoistableB b2)
 exchangeBs (PairB b1 b2) =
   case R.disjoint fvs2 frag of
     True  -> HoistSuccess $ PairB (unsafeCoerceB b2) (unsafeCoerceB b1)
-    False -> HoistFailure $ nameSetRawNames $ R.intersection fvs2 frag
+    False -> HoistFailure $ nameSetRawNames $ UnsafeMakeNameSet $ R.intersection fvs2 frag
   where
     UnsafeMakeScopeFrag frag = toScopeFrag b1
-    fvs2 = freeVarsB b2
+    fvs2 = fromNameSet $ freeVarsB b2
 
 partitionBinders
   :: forall b b1 b2 m n l
@@ -2786,7 +2790,7 @@ exchangeNameBinder b nb = PairB (unsafeCoerceB nb) (unsafeCoerceB b)
 
 hoistFilterNameSet :: BindsNames b => b n l -> NameSet l -> NameSet n
 hoistFilterNameSet b nameSet =
-  unsafeCoerceNameSet $ nameSet `R.difference` frag
+  UnsafeMakeNameSet $ fromNameSet nameSet `R.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
 abstractFreeVar :: Name c n -> e n -> Abs (NameBinder c) e n
@@ -2811,7 +2815,7 @@ instance Color c => HoistableB (NameBinder c) where
   freeVarsB _ = mempty
 
 instance Color c => HoistableE (Name c) where
-  freeVarsE name = R.singleton (getRawName name) $
+  freeVarsE name = UnsafeMakeNameSet $ R.singleton (getRawName name) $
     toSubstItem DistinctName (TrulyUnsafe.unsafeCoerce UnitV :: GHC.Exts.Any c UnsafeS)
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
@@ -2926,11 +2930,11 @@ substFragAsScope m = UnsafeMakeScopeFrag $ TrulyUnsafe.unsafeCoerce m
 -- === garbage collection ===
 
 collectGarbage :: (HoistableV v, HoistableE e)
-               => Distinct l => RecSubstFrag v n l -> (Name c l -> NameSet l) -> e l
+               => Distinct l => RecSubstFrag v n l -> e l
                -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
                -> a
-collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) extraDeps e cont = do
-  let seedNames = R.keys $ freeVarsE e
+collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
+  let seedNames = R.keys $ fromNameSet $ freeVarsE e
   let accessibleNames = transitiveClosure getParents seedNames
   let env' = RecSubstFrag $ UnsafeMakeSubst $ R.restrictKeys env accessibleNames
   cont env' $ unsafeCoerceE e
@@ -2942,7 +2946,7 @@ collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) extraDeps e cont = do
       Just item | itemDistinctness item == ShadowingName ->
         error "shouldn't be possible, due to Distinct constraint"
 #endif
-      Just item -> (R.keys $ fromSubstItemPoly item freeVarsE) <> (R.keys $ extraDeps $ UnsafeMakeName name)
+      Just item -> R.keys $ fromSubstItemPoly item (fromNameSet . freeVarsE)
 
 -- === iterating through env pairs ===
 

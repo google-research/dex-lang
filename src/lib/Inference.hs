@@ -94,10 +94,6 @@ inferTopUDecl (UInterface paramBs methodTys className methodNames) result = do
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInstance className instanceBs params methods maybeName expl) result = do
   let (InternalName _ className') = className
-  -- XXX: we use `buildDeclsInf` even though we don't actually emit any decls
-  -- here. The reason is that it does some DCE of inference vars for us. If we
-  -- don't use it, we get spurious "Ambiguous type variable" errors. TODO: Fix
-  -- this.
   ab <- liftInfererM $ solveLocal do
     withRoleUBinders instanceBs \_ -> do
       ClassDef _ _ _ paramBinders _ _ <- lookupClassDef (sink className')

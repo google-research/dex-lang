@@ -31,7 +31,6 @@ import Subst
 import Name
 import PPrint (prettyBlock)
 import QueryType
-import RawName qualified as R
 import Types.Core
 import Types.Imp
 import Types.Primitives
@@ -1458,8 +1457,7 @@ localVarsAndTypeVars b e =
       return $ localVars b ty
 
 localVars :: (Color c, BindsNames b, HoistableE e) => b n l -> e l -> [Name c l]
-localVars b e = nameSetToList $
-  R.intersection (toNameSet (toScopeFrag b)) (freeVarsE e)
+localVars b e = nameSetToList $ nameSetIntersection (toNameSet (toScopeFrag b)) (freeVarsE e)
 
 -- See Note [Confuse GHC] from Simplify.hs
 -- (we use a Builder-specific name to avoid collisions, since we export everything from Builder)
