@@ -307,13 +307,14 @@ function render(renderMode) {
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Functions and function types</h1>
 </div></div><div class="cell"><div class="prose-block"><p>Generally Dex functions are defined with the <code>def</code> keyword, for example</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> square (x<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> square(x<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   x <span class="symbol">*</span> x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">square 5<span class="symbol">.</span>0
 </div><div class="result-block">25.</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The anatomy of a function definition is</p>
-<pre><code>def &lt;name&gt; &lt;parameters&gt; : &lt;effect annotation&gt; &lt;return type&gt; =
+<pre><code>def &lt;name&gt;(&lt;explicit params&gt;) -&gt; [&lt;effect&gt;] &lt;return type&gt;
+    [given (&lt;implicit params&gt;) [(&lt;constraints&gt;)]] =
   &lt;body&gt;
 </code></pre>
 </div></div><div class="cell"><div class="prose-block"><p>The <code>name</code> can be any Dex identifier, though it is an error to
@@ -332,47 +333,53 @@ not explicitly supply them, but we distinguish them because they are
 filled in by a different mechanism from the implicit parameters in
 item (2).</p>
 </div></div><div class="cell"><div class="prose-block"><p>Here's an example of a definition that uses all three:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> average {n<span class="symbol">:</span><span class="type-name">Type</span>} [_<span class="symbol">:</span><span class="type-name">Ix</span> n] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> average(xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (_<span class="symbol">:</span><span class="type-name">Ix</span> n) <span class="symbol">=</span>
   total <span class="symbol">=</span> sum xs
   total <span class="symbol">/</span> (n_to_f <span class="symbol">$</span> size n)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>This function depends on an implicitly-supplied type <code>n</code>, requires
 the constraint <code>Ix n</code> (which it does not bind to a name), and accepts an explicit parameter
 named <code>xs</code> of type <code>n=&gt;Float</code> to produce a <code>Float</code> result.</p>
-</div></div><div class="cell"><div class="prose-block"><p>Note that every parameter is in scope for all the subsequent
-parameters' type annotations, as well as the return type and the body.
-If you're not familiar with other dependently-typed programming
-languages this may seem strange, but it gives Dex a lot of its power.</p>
-</div></div><div class="cell"><div class="prose-block"><p>Each kind of parameter can be specified as <code>&lt;name&gt;:&lt;type&gt;</code>, with curly
-braces <code>{}</code> meaning an implicit parameter, square brackets <code>[]</code> meaning
-an interface constraint, and parens <code>()</code> meaning an explicit parameter.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Every parameter is in scope for all the subsequent parameters' type
+annotations, as well as the return type and the body.  (For purposes
+of scoping, the <code>given</code> clause comes before the main declaration, but
+it's syntactically later because it's usually less interesting.)  If
+you're not familiar with other dependently-typed programming languages
+this may seem strange, but it gives Dex a lot of its power.</p>
+</div></div><div class="cell"><div class="prose-block"><p>The set of each kind of parameter can be specified as a parenthesized
+comma-separated list of <code>&lt;name&gt;:&lt;type&gt;</code> clauses.  Explicit parameters
+go first, between the name and the arrow, since they are the most
+important.  If there are implicit parameters, they go after the
+<code>given</code> keyword.  If there are interface constraints too, they go in a
+second parenthesized comma-separated list after the implicit
+parameters.</p>
 </div></div><div class="cell"><div class="prose-block"><p>In addition, Dex has three short-hands for the common cases:</p>
 <ul>
-<li>Several consecutive implicit parameters can be written in a
-single pair of braces without type annotations, like <code>{n a b}</code>.  In
-this case, each parameter's type is inferred; the preceding is syntactic sugar
-for <code>{n:_} {a:_} {b:_}</code>.</li>
-<li>Several consecutive anonymous constraints can be written in a single pair
-of square brackets separated by commas, like <code>[Ix n, Ix m, VSpace v]</code>.</li>
-<li>A parameter not enclosed in any bracketing is assumed to be an
-explicit parameter with an inferred type, for example the function
-<code>\a. a + 1</code>.</li>
+<li>The <code>:&lt;type&gt;</code> section for an explicit or implicit parameter can be
+omitted, in which case the type will be inferred.  This is most
+useful for implicit parameters, because they are often easily
+inferred to be of type <code>Type</code>.</li>
+<li>The <code>&lt;name&gt;:</code> for a constraint can be omitted, since they usually
+don't need to be referred to.</li>
+<li>An anonymous unary constraint applied to a parameter can be written by
+postfixing <code>|&lt;Class name&gt;</code> after the parameter (recursively).  For example,
+<code>given (n|Eq|Ord)</code> desugars to <code>given (n:_) (_:Eq n, _:Ord n)</code></li>
+<li>The constraints section of a <code>given</code> clause can be omitted if it's
+empty, as can the whole <code>given</code> clause.  If you need a constraints
+section for <code>given</code>, you must include a section for implicit
+parameters, even if it's empty.</li>
 </ul>
-</div></div><div class="cell"><div class="prose-block"><p>Parameters tend to be specified in the order implicit, constraint,
-explicit, but that's not required; any interleaving is legal, subject
-to the caveat that type annotations cannot refer to names of subsequent
-parameters.</p>
 </div></div><div class="cell"><div class="prose-block"><p>An underscore <code>_</code> in place of a name means &quot;accept this parameter but
 do not name it&quot;.  An underscore <code>_</code> in place of a type means &quot;infer
 this type (if possible)&quot;.  We recommend always spelling out the types
 of top-level definitions explicitly, but <code>_</code> is especially handy in
 local contexts where the types are obvious and would only make the
 program unnecessarily verbose.</p>
-</div></div><div class="cell"><div class="prose-block"><p>While it's certainly common for implicit parameters to be arbitrary
-types, that's by no means required.  For example, here is the same
-<code>average</code> function explicitly specialized to a <code>Fin</code> index set of
-indeterminate size:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fin_average {n<span class="symbol">:</span><span class="type-name">Nat</span>} (xs<span class="symbol">:</span> (<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="prose-block"><p>While it's certainly common for implicit parameters to be types
+(i.e., have type <code>Type</code>), that's by no means required.  For example,
+here is the same <code>average</code> function explicitly specialized to a <code>Fin</code>
+index set of indeterminate size:</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fin_average(xs<span class="symbol">:</span> (<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">:</span><span class="type-name">Nat</span>)  <span class="symbol">=</span>
   average xs
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The size <code>n</code> of the input <code>xs</code> can be inferred from the latter's full
@@ -386,13 +393,13 @@ side-effects must be run in series.</p>
 prefixing the return type.  For example, here is an in-place integer
 increment function using the assignment operator <code>:=</code> from the
 Prelude:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inc {h} (ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inc(ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Int</span>) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (h)  <span class="symbol">=</span>
   current <span class="symbol">=</span> get ref
   ref <span class="symbol">:=</span> current <span class="symbol">+</span> 1
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>The effect-annotated return type, <code>{State h} Unit</code>, tells Dex that
+</div></div><div class="cell"><div class="prose-block"><p>The effect-annotated return type, <code>{State h} ()</code>, tells Dex that
 <code>inc</code> is not a pure function, but may have a side-effect before
-returning a value of type <code>Unit</code>.  Specifically, the side effect is
+returning a value of type <code>()</code>.  Specifically, the side effect is
 <code>State h</code>, namely destructively updating references tagged with the
 heap type <code>h</code>.  TODO(<a href="https://github.com/google-research/dex-lang/issues/949">Issue
 949</a>):
@@ -412,13 +419,13 @@ Reference full explanation of effects.</p>
 is useful for writing a higher-order function that accepts an
 effectful function as an argument.  For example, we can write an
 effect-polymorphic <code>map</code> function like this:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> my_map {n a b eff} (f<span class="symbol">:</span> a <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} b) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} n<span class="symbol">=&gt;</span>b <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> f xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> my_map(f<span class="symbol">:</span> (a) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} b<span class="symbol">,</span> xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} n<span class="symbol">=&gt;</span>b <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">,</span> b<span class="symbol">,</span> eff) <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> f xs[i]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>If we had left off the <code>{|eff}</code> bit, our <code>map</code> function would only
 work on pure functions.  As another example, <code>catch</code> from the
 Prelude has this type:</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> my_catch {a eff} (f<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} <span class="type-name">Maybe</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> my_catch(f<span class="symbol">:</span>() <span class="symbol">-&gt;</span> {<span class="type-name">Except</span><span class="symbol">|</span>eff} a) <span class="symbol">-&gt;</span> {<span class="symbol">|</span>eff} <span class="type-name">Maybe</span> a <span class="keyword">given</span> (a<span class="symbol">,</span> eff) <span class="symbol">=</span>
   catch f
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>It accepts a function <code>f</code> that is permitted to have an
@@ -429,66 +436,103 @@ Any effects except <code>Except</code> remain to be discharged by the caller of
 </div></div><div class="cell"><div class="prose-block"><p>The whole effect specifier can also be omitted, in which case the
 function must be pure.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Calling functions</h2>
-</div></div><div class="cell"><div class="prose-block"><p>As in many functional programming languages, calling a function in
-Dex is just writing it next to its argument(s), so:</p>
-<pre><code>f x y
+</div></div><div class="cell"><div class="prose-block"><p>Calling a function in
+Dex is just writing its argument(s) after it in parentheses, so:</p>
+<pre><code>f(x, y)
 </code></pre>
-</div></div><div class="cell"><div class="prose-block"><p>Juxtaposition is the tightest-binding operator, so <code>f x + 1</code> parses
-as <code>(f x) + 1</code>, not <code>f (x + 1)</code>.  It also associates to the left, so
-<code>f x y</code> parses as <code>(f x) y</code> (which is what we want for an binary
-function <code>f</code>).  This is not always convenient, so Dex (like Haskell) offers
-the <code>$</code> operator.  This operator means &quot;function call&quot; like whitespace, but has
-the loosest binding precedence and associates to the right.  Thus, <code>f $ x + 1</code> is
-<code>f (x + 1)</code> and <code>f $ g $ h x</code> is <code>f (g (h x))</code>.</p>
 </div></div><div class="cell"><div class="prose-block"><p>When calling a function, it is only necessary to supply the explicit
 arguments, because both the implicit and constraint arguments are
 filled in.  (Incidentally, the difference is in <em>how</em> they are filled
 in.  Implicit arguments are filled in by type unification, whereas
 constraint arguments are filled in by locating or synthesizing the
 appropriate instance.)  For example,</p>
-</div></div><div class="cell"><div class="code-block">average [1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="code-block">average([1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>])
 </div><div class="result-block">2.</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Here, the index set type <code>n</code> is inferred to be <code>Fin 3</code> from the type
 of the argument, and then the <code>Ix</code> constraint is satisfied by the
 instance for <code>Ix (Fin n)</code> instantiated at <code>n = 3</code>.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Because programmers apply function to arguments all day, Dex offers a
+few shortcuts.  First, borrowing from functional languages, you can
+also call a function just by writing its argument expression next to
+it:</p>
+<pre><code>f x y  is  f(x, y)
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>Juxtaposition is the tightest-binding operator, so <code>f x + 1</code> parses
+as <code>f(x) + 1</code>, not <code>f(x + 1)</code>.  A juxtaposition that occurs after any
+function call syntax adds its argument at the end of the existing
+argument list.  It also associates to the left, so all of these parse
+the same:</p>
+<pre><code>f x y z  is  f(x) y z  is  f(x, y) z  is  f(x, y, z)
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>This is particularly nice when the last argument is a long
+expression, such as an inline function definition:</p>
+<pre><code>each(xs) \x.
+  &lt;do something&gt;
+  &lt;do something else&gt;
+</code></pre>
+<p>is the same as</p>
+<pre><code>each(xs, \x.
+  &lt;do something&gt;
+  &lt;do something else&gt;)
+</code></pre>
+<p>but you don't have to worry about the long-range close-paren.</p>
+</div></div><div class="cell"><div class="prose-block"><p>The tight binding of juxtaposition is not always convenient, so Dex
+also borrows the <code>$</code> operator from Haskell.  This acts the same, but
+has the loosest binding precedence and associates to the right.  Thus,
+<code>f $ x + 1</code> is <code>f(x + 1)</code> and <code>f $ g $ h x</code> is <code>f(g(h x))</code>.</p>
+</div></div><div class="cell"><div class="prose-block"><p>Finally, to make it more convenient to write pipelines where the data
+flows from left to right, Dex borrows the pipe <code>|</code> operator from Unix
+shells.  Pipe makes the item on its left be the first argument of the
+function application on its right.  So,</p>
+<pre><code>x | f            is  f(x)
+x | f(y)         is  f(x, y)
+x | f(y) | g(z)  is  g(f(x, y), z)
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>As you can see, the <code>|</code> operator associates to chain applying functions, like <code>$</code>.
+The <code>|</code> and <code>$</code> operators also stack:</p>
+<pre><code>x | f(y) $ z     is  f(x, y, z)
+</code></pre>
 </div></div><div class="cell"><div class="prose-block"><h3>Underscore: Infer an explicit argument implicitly</h3>
 </div></div><div class="cell"><div class="prose-block"><p>Sometimes, a required function argument can be successfully inferred.
 In these cases one can write <code>_</code>, which means &quot;fill this in by
-unification&quot; (the same as implicit parameters).  For example,
-<code>from_ordinal</code> accepts the type to cast the ordinal to as an explicit
-argument, but when the index set of an array is obvious, there is no
-need to spell it:</p>
-</div></div><div class="cell"><div class="code-block">[&quot;foo&quot;<span class="symbol">,</span> &quot;bar&quot;]<span class="symbol">.</span>(from_ordinal _ 0)
+unification&quot; (the same as implicit parameters).  For example, the <code>@</code>
+operator casts a number to an index set, and accepts the type to cast
+to as an explicit argument.  However, when the index set of an array is
+obvious, there is no need to spell it:</p>
+</div></div><div class="cell"><div class="code-block">[&quot;foo&quot;<span class="symbol">,</span> &quot;bar&quot;][(0<span class="symbol">@</span>_)]
 </div><div class="result-block">&quot;foo&quot;</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Sadly, the reverse (explicitly supplying an implicit argument) is
-currently not possible (see <a href="https://github.com/google-research/dex-lang/issues/464">Issue
-464</a>).  This
-is actually why <code>from_ordinal</code> takes the type as an explicit argument,
-so that it <em>can</em> be supplied when it would not be inferrable.</p>
-</div></div><div class="cell"><div class="code-block">from_ordinal (<span class="type-name">Fin</span> 2) 0
+</div></div><div class="cell"><div class="prose-block"><h3>Supplying an implicit argument explicitly</h3>
+</div></div><div class="cell"><div class="prose-block"><p>We can also supply an implicit argument explicitly, by writing <code>&lt;parameter name&gt;=</code>
+in the application syntax:</p>
+</div></div><div class="cell"><div class="code-block">from_ordinal(0<span class="symbol">,</span> n<span class="symbol">=</span>(<span class="type-name">Fin</span> 2))
 </div><div class="result-block">0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>Since the implicit arguments are passed by name, the order in which
+they appear in the application syntax doesn't matter.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Standalone function types</h2>
-</div></div><div class="cell"><div class="prose-block"><p>The syntax for spelling bare function types is slightly different
-from the syntax for defining functions with their type signatures.  To
-wit, for now (but see <a href="https://github.com/google-research/dex-lang/issues/925">Issue
-925</a>), a
-function type uses different kinds of arrows to disambiguate different
-kinds of parameters.</p>
-<ul>
-<li>The <code>-&gt;</code> arrow means &quot;explicit parameter&quot;,</li>
-<li>The <code>?-&gt;</code> arrow means &quot;implicit parameter&quot;, and</li>
-<li>The <code>?=&gt;</code> arrow means &quot;interface constraint&quot;.</li>
-</ul>
-</div></div><div class="cell"><div class="prose-block"><p>(As usual, <code>=&gt;</code> means &quot;array type&quot;.)</p>
-</div></div><div class="cell"><div class="prose-block"><p>For instance, the type of our <code>average</code> function above is</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> average
-</div><div class="result-block">((n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Note that the colon <code>:</code> is looser-binding than the arrows <code>-&gt;</code>, so
-spelling a type like this that refers to previous arguments generally
-requires grouping parens.</p>
-</div></div><div class="cell"><div class="code-block">(n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="type-name">Ix</span> n <span class="symbol">?=&gt;</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
-</div><div class="result-block">((n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>If you need to write the type of a function outside its definition,
+just use the same arrow syntax:</p>
+<pre><code>(Float, Float) -&gt; Float
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>Naming the parameters in a type is not necessary unless the type
+itself refers to the names, in which case you can use colons as usual.
+For instance, the type of a function that accepts a size and an array
+of that size looks like this:</p>
+<pre><code>(n:Nat, (Fin n) =&gt; Float) -&gt; Float
+</code></pre>
+</div></div><div class="cell"><div class="prose-block"><p>You can write implcit and class parameters in types by writing the
+<code>given</code> clause inside the argument list:</p>
+<pre><code>(given (n:Nat), (Fin n) =&gt; Float) -&gt; Float
+</code></pre>
+<p>Note that unlike with <code>def</code>, the <code>given</code> is not automatically floated
+to the front, so scope usually makes one write it first.</p>
 </div></div><div class="cell"><div class="prose-block"><p>The effect specifier, as usual, is written in curly braces preceding the result type.</p>
+</div></div><div class="cell"><div class="prose-block"><p>TODO The printing of function types is a historical artifact.
+Instead of generating a <code>given</code> clause, the printer writes implicit
+arguments in curly braces, constraint arguments in square brackets,
+and explicit arguments in parens, in their scope order.</p>
+<p>'For instance, the type of our <code>average</code> function above prints like this:</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> average
+</div><div class="result-block">({n:Type}[v#0:(Ix n)](xs:(n =&gt; Float32)) -&gt; Float32)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Anonymous functions (lambda)</h2>
 </div></div><div class="cell"><div class="prose-block"><p>The syntax for anonymous functions is</p>
 <pre><code>\ &lt;parameters&gt; . &lt;body&gt;
@@ -497,13 +541,8 @@ requires grouping parens.</p>
 </div></div><div class="cell"><div class="prose-block"><p>For example, <code>\a. a + 1</code> means &quot;the add 1 function&quot;:</p>
 </div></div><div class="cell"><div class="code-block">map (<span class="symbol">\</span>a<span class="symbol">.</span> a <span class="symbol">+</span> 1) [1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>]
 </div><div class="result-block">[2., 3., 4.]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>We can also explicitly type-annotate the arguments if we want, by wrapping
-them in parens like <code>def</code>.</p>
-</div></div><div class="cell"><div class="code-block">map (<span class="symbol">\</span>(a<span class="symbol">:</span><span class="type-name">Float</span>)<span class="symbol">.</span> a <span class="symbol">+</span> 1) [1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>]
+</div></div><div class="cell"><div class="prose-block"><p>We can also explicitly type-annotate the arguments if we want.</p>
+</div></div><div class="cell"><div class="code-block">map (<span class="symbol">\</span>a<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">.</span> a <span class="symbol">+</span> 1) [1<span class="symbol">.,</span> 2<span class="symbol">.,</span> 3<span class="symbol">.</span>]
 </div><div class="result-block">[2., 3., 4.]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Also like <code>def</code>, we can specify implicit parameters with curly braces:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>{a} (x<span class="command">:a</span>)<span class="symbol">.</span> x
-</div><div class="result-block">((a:Type) ?-&gt; a -&gt; a)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>and class parameters with square brackets:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>{n} [<span class="type-name">Ix</span> n] (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">.</span> sum xs
-</div><div class="result-block">((n:Type) ?-&gt; (v#0:(Ix n)) ?=&gt; (n =&gt; Float32) -&gt; Float32)</div></div></div></body></html>
+</div></div><div class="cell"><div class="prose-block"><p>TODO How to specify implicit and constraint parameters?</p>
+</div></div></div></body></html>

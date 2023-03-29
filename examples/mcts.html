@@ -314,27 +314,28 @@ confidence bound for trees (uct) for the two-player mini-game <code>Count21</cod
 This demo implements a doubly-linked tree structure as a Dex array,
 and traverses its branches by indexing.
 <a href="http://www.incompleteideas.net/609%20dropbox/other%20readings%20and%20resources/MCTS-survey.pdf">reference</a></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+|</span>) {a} [<span class="type-name">Ix</span> a] (n<span class="command">:a</span>) (m<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> a <span class="symbol">=</span> ((ordinal n) <span class="symbol">+</span> m)<span class="symbol">@</span>a
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xor (a<span class="symbol">:</span><span class="type-name">Bool</span>) (b<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> ((not a) <span class="symbol">&amp;&amp;</span> b) <span class="symbol">||</span> (a <span class="symbol">&amp;&amp;</span> (not b))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+|</span>)(n<span class="command">:a</span><span class="symbol">,</span> m<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> ((ordinal n) <span class="symbol">+</span> m)<span class="symbol">@</span>a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> xor(a<span class="symbol">:</span><span class="type-name">Bool</span><span class="symbol">,</span> b<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span> ((not a) <span class="symbol">&amp;&amp;</span> b) <span class="symbol">||</span> (a <span class="symbol">&amp;&amp;</span> (not b))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">MAX</span>_<span class="type-name">TREE</span>_<span class="type-name">SIZE</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 70
 </div></div><div class="cell"><div class="code-block"><span class="type-name">SAMPLES</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 50
 </div></div><div class="cell"><div class="code-block"><span class="type-name">ROLLOUTS</span>_<span class="type-name">PER</span>_<span class="type-name">SAMPLE</span><span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> 10
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Tree types</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Node</span> node_ix a <span class="symbol">=</span>
-  <span class="type-name">Branch</span> content<span class="command">:a</span> parent<span class="symbol">:</span>(<span class="type-name">Maybe</span> node_ix) children<span class="symbol">:</span>(<span class="type-name">List</span> (node_ix))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Node</span>(node_ix<span class="symbol">,</span> a) <span class="symbol">=</span>
+  <span class="type-name">Branch</span>(content<span class="command">:a</span><span class="symbol">,</span> parent<span class="symbol">:</span>(<span class="type-name">Maybe</span> node_ix)<span class="symbol">,</span> children<span class="symbol">:</span>(<span class="type-name">List</span> (node_ix)))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tree</span> (node_ix<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> node_ix] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  (node_ix<span class="symbol">=&gt;</span>(<span class="type-name">Maybe</span> (<span class="type-name">Node</span> node_ix a)) <span class="symbol">&amp;</span> node_ix)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Tree</span>(node_ix<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (node_ix<span class="symbol">=&gt;</span>(<span class="type-name">Maybe</span> (<span class="type-name">Node</span> node_ix a))<span class="symbol">,</span> node_ix)
 </div></div><div class="cell"><div class="code-block">  <span class="comment">-- Node array, and pointer to last used node.
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> root_<span class="keyword">of</span> {node_ix a} (tree<span class="symbol">:</span><span class="type-name">Tree</span> node_ix a) <span class="symbol">:</span> node_ix <span class="symbol">=</span> 0<span class="symbol">@</span>node_ix
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> root_<span class="keyword">of</span>(tree<span class="symbol">:</span><span class="type-name">Tree</span>(node_ix<span class="symbol">,</span> a)) <span class="symbol">-&gt;</span> node_ix <span class="keyword">given</span> (node_ix<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span> 0<span class="symbol">@</span>node_ix
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_leaf {node a} ((<span class="type-name">Branch</span> _ _ children)<span class="symbol">:</span><span class="type-name">Node</span> node a) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_leaf(branch<span class="symbol">:</span><span class="type-name">Node</span> node a) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (node<span class="symbol">,</span> a) <span class="symbol">=</span>
+  <span class="type-name">Branch</span>(_<span class="symbol">,</span> _<span class="symbol">,</span> children) <span class="symbol">=</span> branch
   list_length children <span class="symbol">==</span> 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> init_tree {a} (max_size<span class="symbol">:</span><span class="type-name">Nat</span>) (default_content<span class="command">:a</span>)<span class="symbol">:</span> <span class="type-name">Tree</span> (<span class="type-name">Fin</span> max_size) a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> init_tree(max_size<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> default_content<span class="command">:a</span>) <span class="symbol">-&gt;</span> <span class="type-name">Tree</span> (<span class="type-name">Fin</span> max_size) a <span class="keyword">given</span> (a) <span class="symbol">=</span>
   root <span class="symbol">=</span> <span class="type-name">Branch</span> default_content <span class="type-name">Nothing</span> (<span class="type-name">AsList</span> 0 [])
   init_array <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> max_size)<span class="symbol">.</span>
     <span class="keyword">if</span> ordinal i <span class="symbol">==</span> 0
@@ -343,34 +344,34 @@ and traverses its branches by indexing.
   (init_array<span class="symbol">,</span> 0<span class="symbol">@</span>_)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Game and Node utilities</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Game</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) (move<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
-  possible_moves <span class="symbol">:</span> state <span class="symbol">-&gt;</span> (<span class="type-name">List</span> move)
-  win_or_lose <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
-  update <span class="symbol">:</span> state <span class="symbol">-&gt;</span> move <span class="symbol">-&gt;</span> state
-  game_over <span class="symbol">:</span> state <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Game</span>(state<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> move<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
+  possible_moves <span class="symbol">:</span> (state) <span class="symbol">-&gt;</span> (<span class="type-name">List</span> move)
+  win_or_lose <span class="symbol">:</span> (state) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
+  update <span class="symbol">:</span> (state<span class="symbol">,</span> move) <span class="symbol">-&gt;</span> state
+  game_over <span class="symbol">:</span> (state) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NodeStats</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span> <span class="symbol">&amp;</span> state)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NodeStats</span>(state<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (<span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> state)
 </div></div><div class="cell"><div class="code-block">  <span class="comment">-- (#winning rollouts for max/first player, #visit, level, state)
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_win_visit_stats {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
-  <span class="symbol">:</span> (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
-  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_win_visit_stats(node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
+  <span class="symbol">-&gt;</span> (<span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Nat</span>) <span class="keyword">given</span> (node_ix<span class="symbol">,</span> state) <span class="symbol">=</span>
+  <span class="type-name">Branch</span>(stats<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> node
   (wins<span class="symbol">,</span> visits<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> stats
   (wins<span class="symbol">,</span> visits)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_is_visited {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
-  <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_is_visited(node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state)))
+  <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (node_ix<span class="symbol">,</span> state) <span class="symbol">=</span>
   (_<span class="symbol">,</span> visits) <span class="symbol">=</span> node_win_visit_stats node
   visits <span class="symbol">&gt;</span> 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_state {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">:</span> state <span class="symbol">=</span>
-  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_state(node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">-&gt;</span> state <span class="keyword">given</span> (node_ix<span class="symbol">,</span> state) <span class="symbol">=</span>
+  <span class="type-name">Branch</span>(stats<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> node
   (_<span class="symbol">,</span> _<span class="symbol">,</span> _<span class="symbol">,</span> s) <span class="symbol">=</span> stats
   s
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_level {node_ix state} (node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
-  (<span class="type-name">Branch</span> stats _ _) <span class="symbol">=</span> node
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> node_level(node<span class="symbol">:</span>(<span class="type-name">Node</span> node_ix (<span class="type-name">NodeStats</span> state))) <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="keyword">given</span> (node_ix<span class="symbol">,</span> state) <span class="symbol">=</span>
+  <span class="type-name">Branch</span>(stats<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> node
   (_<span class="symbol">,</span> _<span class="symbol">,</span> level<span class="symbol">,</span> _) <span class="symbol">=</span> stats
   level
 </div></div><div class="cell"><div class="code-block">
@@ -381,32 +382,34 @@ The reward $Q(n)$ summarizes the performance of $n$'s subtree.
 $N(n)$ is the number of visits of $n$. $n_p$ is the parent of node $n$.
 The upper confidence bound for trees of node $n$ is
 $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uct (win<span class="symbol">:</span><span class="type-name">Nat</span>) (n<span class="symbol">:</span><span class="type-name">Nat</span>) (parent_n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> uct(win<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> parent_n<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   <span class="comment">-- wins stored at every node are w.r.t to the max_player
 </span>  (n_to_f win) <span class="symbol">/</span> (n_to_f n) <span class="symbol">+</span> sqrt (2<span class="symbol">.</span>0 <span class="symbol">/</span> (n_to_f n) <span class="symbol">*</span> (log (n_to_f parent_n)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Recursively find the most promising leaf (measured by UCT) to rollout next.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_select {move state node_ix}
-    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move) (tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)) (key<span class="symbol">:</span> <span class="type-name">Key</span>)
-    <span class="symbol">:</span> node_ix <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_select(
+    game<span class="symbol">:</span> <span class="type-name">Game</span> state move<span class="symbol">,</span>
+    tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)<span class="symbol">,</span>
+    key<span class="symbol">:</span> <span class="type-name">Key</span>)
+    <span class="symbol">-&gt;</span> node_ix <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">,</span> node_ix<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
     arr <span class="symbol">=</span> fst tree
 
     yield_state (root_<span class="keyword">of</span> tree) <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
-      node <span class="symbol">=</span> from_just arr<span class="symbol">.</span>(get ref)
+      node <span class="symbol">=</span> from_just arr[get ref]
       <span class="keyword">if</span> is_leaf node
         <span class="keyword">then</span>
           <span class="type-name">Done</span> ()
         <span class="keyword">else</span>
-          (<span class="type-name">Branch</span> stats _ children_list) <span class="symbol">=</span> node
-          (<span class="type-name">AsList</span> _ children) <span class="symbol">=</span> children_list
+          <span class="type-name">Branch</span>(stats<span class="symbol">,</span> _<span class="symbol">,</span> children_list) <span class="symbol">=</span> node
+          <span class="type-name">AsList</span>(_<span class="symbol">,</span> children) <span class="symbol">=</span> children_list
           fully_expanded <span class="symbol">=</span> all <span class="keyword">for</span> i<span class="symbol">.</span>
-            node_is_visited <span class="symbol">$</span> from_just arr<span class="symbol">.</span>(children<span class="symbol">.</span>i)
+            node_is_visited <span class="symbol">$</span> from_just arr[children[i]]
           <span class="keyword">if</span> not fully_expanded
             <span class="keyword">then</span>
               criterion <span class="symbol">=</span> <span class="symbol">\</span>child<span class="symbol">.</span>
-                not <span class="symbol">$</span> node_is_visited <span class="symbol">$</span> from_just arr<span class="symbol">.</span>child
-              (<span class="type-name">AsList</span> _ unvisited) <span class="symbol">=</span> filter criterion children
-              ref <span class="symbol">:=</span> unvisited<span class="symbol">.</span>(rand_idx key)
+                not <span class="symbol">$</span> node_is_visited <span class="symbol">$</span> from_just arr[child]
+              <span class="type-name">AsList</span>(_<span class="symbol">,</span> unvisited) <span class="symbol">=</span> filter children criterion
+              ref <span class="symbol">:=</span> unvisited[rand_idx key]
               <span class="type-name">Done</span> ()
             <span class="keyword">else</span>
               (_<span class="symbol">,</span> p_visits) <span class="symbol">=</span> node_win_visit_stats node
@@ -414,29 +417,30 @@ $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$</p>
 </span>              is_max_player <span class="symbol">=</span> is_even <span class="symbol">$</span> node_level node
               selector <span class="symbol">=</span> <span class="keyword">if</span> is_max_player <span class="keyword">then</span> argmax <span class="keyword">else</span> argmin
               best_child <span class="symbol">=</span> selector <span class="keyword">for</span> i<span class="symbol">.</span>
-                child <span class="symbol">=</span> from_just arr<span class="symbol">.</span>(children<span class="symbol">.</span>i)
+                child <span class="symbol">=</span> from_just arr[children[i]]
                 (win<span class="symbol">,</span> visits) <span class="symbol">=</span> node_win_visit_stats child
                 uct win visits p_visits
-              ref <span class="symbol">:=</span> children<span class="symbol">.</span>best_child
+              ref <span class="symbol">:=</span> children[best_child]
               <span class="type-name">Continue</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Expand the tree (in-place) by adding states one-move away from the current state.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_expand {move state node_ix h} [<span class="type-name">Ix</span> node_ix<span class="symbol">,</span> <span class="type-name">Data</span> state]
-    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
-    (tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)))
-    (node<span class="symbol">:</span> node_ix) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_expand(
+    game<span class="symbol">:</span> <span class="type-name">Game</span> state move<span class="symbol">,</span>
+    tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state))<span class="symbol">,</span>
+    node<span class="symbol">:</span> node_ix
+    ) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (node_ix<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> move<span class="symbol">,</span> h) <span class="symbol">=</span>
     <span class="comment">-- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
 </span>
     <span class="comment">-- extract info about the base node
 </span>    base_node <span class="symbol">=</span> from_just <span class="symbol">$</span> get (fst_ref tree_ref)<span class="symbol">!</span>node
-    (<span class="type-name">Branch</span> base_stats base_parent _) <span class="symbol">=</span> base_node
+    <span class="type-name">Branch</span>(base_stats<span class="symbol">,</span> base_parent<span class="symbol">,</span> _) <span class="symbol">=</span> base_node
     (_<span class="symbol">,</span> _<span class="symbol">,</span> base_level<span class="symbol">,</span> base_state) <span class="symbol">=</span> base_stats
 
     <span class="comment">-- prepare child nodes
-</span>    (<span class="type-name">AsList</span> n base_moves) <span class="symbol">=</span> game<span class="symbol">~</span>possible_moves base_state
+</span>    <span class="type-name">AsList</span>(n<span class="symbol">,</span> base_moves) <span class="symbol">=</span> game<span class="symbol">.</span>possible_moves base_state
     child_nodes <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span>
-      new_move <span class="symbol">=</span> base_moves<span class="symbol">.</span>i
-      new_state <span class="symbol">=</span> game<span class="symbol">~</span>update base_state new_move
+      new_move <span class="symbol">=</span> base_moves[i]
+      new_state <span class="symbol">=</span> game<span class="symbol">.</span>update base_state new_move
       new_stats <span class="symbol">=</span> (0<span class="symbol">,</span> 0<span class="symbol">,</span> base_level <span class="symbol">+</span> 1<span class="symbol">,</span> new_state)
       <span class="type-name">Branch</span> new_stats (<span class="type-name">Just</span> node) (to_list [])
 
@@ -448,43 +452,47 @@ $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$</p>
     (fst_ref tree_ref)<span class="symbol">!</span>node <span class="symbol">:=</span> <span class="type-name">Just</span> new_base_node
     <span class="comment">-- insert every child
 </span>    <span class="keyword">for</span> i<span class="symbol">.</span>
-      child_ix <span class="symbol">=</span> base_children_ix<span class="symbol">.</span>i
-      (fst_ref tree_ref)<span class="symbol">!</span>child_ix <span class="symbol">:=</span> <span class="type-name">Just</span> child_nodes<span class="symbol">.</span>i
+      child_ix <span class="symbol">=</span> base_children_ix[i]
+      (fst_ref tree_ref)<span class="symbol">!</span>child_ix <span class="symbol">:=</span> <span class="type-name">Just</span> child_nodes[i]
     snd_ref tree_ref <span class="symbol">:=</span> new_node <span class="symbol">+|</span> n
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Simulate the game starting at a given state until the game terminates and
 return the simulation result.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_rollout {move state} [<span class="type-name">Data</span> state]
-    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
-    (key<span class="symbol">:</span> <span class="type-name">Key</span>) (curr_state<span class="symbol">:</span> state) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_rollout(
+    game<span class="symbol">:</span> <span class="type-name">Game</span> state move<span class="symbol">,</span>
+    key<span class="symbol">:</span> <span class="type-name">Key</span><span class="symbol">,</span>
+    curr_state<span class="symbol">:</span> state
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span>)<span class="symbol">=</span>
     <span class="comment">-- output is w.r.t. current player
 </span>    with_state curr_state <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
       curr_state&#39; <span class="symbol">=</span> get ref
-      <span class="keyword">if</span> game<span class="symbol">~</span>game_over curr_state&#39;
+      <span class="keyword">if</span> game<span class="symbol">.</span>game_over curr_state&#39;
         <span class="keyword">then</span>
           <span class="comment">-- #win_or_lose is w.r.t. the last player
-</span>          result <span class="symbol">=</span> game<span class="symbol">~</span>win_or_lose curr_state&#39;
+</span>          result <span class="symbol">=</span> game<span class="symbol">.</span>win_or_lose curr_state&#39;
           <span class="type-name">Done</span> <span class="symbol">$</span> xor (is_even i) result
         <span class="keyword">else</span>
-          (<span class="type-name">AsList</span> _ new_moves) <span class="symbol">=</span> game<span class="symbol">~</span>possible_moves curr_state&#39;
+          <span class="type-name">AsList</span>(_<span class="symbol">,</span> new_moves) <span class="symbol">=</span> game<span class="symbol">.</span>possible_moves curr_state&#39;
           <span class="comment">-- rollout policy: uniform random
-</span>          new_move <span class="symbol">=</span> new_moves<span class="symbol">.</span>(rand_idx (hash key i))
-          ref <span class="symbol">:=</span> game<span class="symbol">~</span>update curr_state&#39; new_move
+</span>          new_move <span class="symbol">=</span> new_moves[rand_idx (hash key i)]
+          ref <span class="symbol">:=</span> game<span class="symbol">.</span>update curr_state&#39; new_move
           <span class="type-name">Continue</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Update the record of a node and its chain of ancestors,
 based on the simulation result.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_backpropagate {move state node_ix h} [<span class="type-name">Eq</span> node_ix<span class="symbol">,</span> <span class="type-name">Data</span> state]
-    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move)
-    (tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)))
-    (node<span class="symbol">:</span> node_ix) (new_rollout_wins<span class="symbol">:</span> <span class="type-name">Nat</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_backpropagate(
+    game<span class="symbol">:</span> <span class="type-name">Game</span> state move<span class="symbol">,</span>
+    tree_ref<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state))<span class="symbol">,</span>
+    node<span class="symbol">:</span> node_ix<span class="symbol">,</span>
+    new_rollout_wins<span class="symbol">:</span> <span class="type-name">Nat</span>
+    ) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> node_ix<span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h) <span class="symbol">=</span>
     <span class="comment">-- new_rollout_wins: #wins w.r.t max player
 </span>
     with_state node <span class="symbol">\</span>node_ref<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
       <span class="comment">-- update win and loss counts
 </span>      <span class="comment">-- -unpack
 </span>      curr_node <span class="symbol">=</span> from_just <span class="symbol">$</span> get (fst_ref tree_ref)<span class="symbol">!</span>(get node_ref)
-      (<span class="type-name">Branch</span> stats parent children) <span class="symbol">=</span> curr_node
+      <span class="type-name">Branch</span>(stats<span class="symbol">,</span> parent<span class="symbol">,</span> children) <span class="symbol">=</span> curr_node
       (wins<span class="symbol">,</span> visits<span class="symbol">,</span> level<span class="symbol">,</span> state) <span class="symbol">=</span> stats
       <span class="comment">-- -compute
 </span>      new_wins <span class="symbol">=</span> wins <span class="symbol">+</span> new_rollout_wins
@@ -503,19 +511,20 @@ based on the simulation result.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Wrap up the procedure for taking one sample and extend the tree.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- slow: every sample makes two copies of the tree array
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_sample {move state node_ix} [<span class="type-name">Eq</span> node_ix<span class="symbol">,</span> <span class="type-name">Data</span> state]
-    (game<span class="symbol">:</span> <span class="type-name">Game</span> state move) (key<span class="symbol">:</span> <span class="type-name">Key</span>)
-    (tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state))
-    <span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state) <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mcts_sample(
+    game<span class="symbol">:</span> <span class="type-name">Game</span> state move<span class="symbol">,</span>
+    key<span class="symbol">:</span> <span class="type-name">Key</span><span class="symbol">,</span>
+    tree<span class="symbol">:</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state)
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Tree</span> node_ix (<span class="type-name">NodeStats</span> state) <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> node_ix<span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
     [key1<span class="symbol">,</span> key2] <span class="symbol">=</span> split_key key
     leaf_ix <span class="symbol">=</span> mcts_select game tree key1
-    leaf <span class="symbol">=</span> from_just (fst tree)<span class="symbol">.</span>leaf_ix
+    leaf <span class="symbol">=</span> from_just (fst tree)[leaf_ix]
 
     tree&#39; <span class="symbol">=</span> yield_state tree <span class="symbol">\</span>tree_ref<span class="symbol">.</span>
-      <span class="keyword">if</span> not <span class="symbol">$</span> game<span class="symbol">~</span>game_over <span class="symbol">$</span> node_state leaf <span class="keyword">then</span>
+      <span class="keyword">if</span> not <span class="symbol">$</span> game<span class="symbol">.</span>game_over <span class="symbol">$</span> node_state leaf <span class="keyword">then</span>
         mcts_expand game tree_ref leaf_ix
 
-    leaf_min_player <span class="symbol">=</span> leaf <span class="symbol">|&gt;</span> node_level <span class="symbol">|&gt;</span> is_odd
+    leaf_min_player <span class="symbol">=</span> leaf <span class="symbol">|</span> node_level <span class="symbol">|</span> is_odd
     max_player_wins <span class="symbol">=</span> yield_accum (<span class="type-name">AddMonoid</span> <span class="type-name">Nat</span>) <span class="symbol">\</span>c<span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> <span class="type-name">ROLLOUTS</span>_<span class="type-name">PER</span>_<span class="type-name">SAMPLE</span>)<span class="symbol">.</span>
         key&#39; <span class="symbol">=</span> ixkey key i
@@ -533,7 +542,7 @@ between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 win
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Count21State</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Count21Move</span> <span class="symbol">=</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Count21</span> <span class="symbol">:</span> <span class="type-name">Game</span> <span class="type-name">Count21State</span> <span class="type-name">Count21Move</span> <span class="symbol">=</span>
-   (<span class="type-name">Game</span><span class="symbol">~</span>new (<span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span><span class="symbol">.</span> to_list [1<span class="symbol">,</span>2])
+   (<span class="type-name">Game</span><span class="symbol">.</span>new (<span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span><span class="symbol">.</span> to_list [1<span class="symbol">,</span>2])
              (<span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">==</span> 21)
              (<span class="symbol">\</span>sum<span class="symbol">:</span><span class="type-name">Count21State</span> move<span class="symbol">.</span> sum <span class="symbol">+</span> move)
              (<span class="symbol">\</span>sum<span class="symbol">.</span> sum <span class="symbol">&gt;=</span> 21))
@@ -546,14 +555,14 @@ since the opponent has a winning strategy by always choosing
 has a winning strategy.</p>
 </div></div><div class="cell"><div class="code-block">key <span class="symbol">=</span> new_key 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> test (key<span class="symbol">:</span><span class="type-name">Key</span>) (current_state<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> (<span class="type-name">Nat</span> <span class="symbol">&amp;</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> test(key<span class="symbol">:</span><span class="type-name">Key</span><span class="symbol">,</span> current_state<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> (<span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
   init_node_stats <span class="symbol">:</span> <span class="type-name">NodeStats</span> <span class="type-name">Count21State</span> <span class="symbol">=</span>
     (0<span class="symbol">,</span> 0<span class="symbol">,</span> 0<span class="symbol">,</span> current_state)
   <span class="comment">-- (0 wins, 0 visits, level 0, game state)
 </span>  start_tree <span class="symbol">=</span> init_tree <span class="type-name">MAX</span>_<span class="type-name">TREE</span>_<span class="type-name">SIZE</span> init_node_stats
-  end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> <span class="type-name">SAMPLES</span>)<span class="symbol">.</span>
-    mcts_sample <span class="type-name">Count21</span> (ixkey key i)
-  node_win_visit_stats <span class="symbol">$</span> from_just (fst end_tree)<span class="symbol">.</span>(root_<span class="keyword">of</span> end_tree)
+  end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> <span class="type-name">SAMPLES</span>) tree<span class="symbol">.</span>
+    mcts_sample <span class="type-name">Count21</span> (ixkey key i) tree
+  node_win_visit_stats <span class="symbol">$</span> from_just (fst end_tree)[root_<span class="keyword">of</span> end_tree]
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block">test key 21
@@ -578,8 +587,8 @@ considered a more promising choice by <code>uct</code> and sees more rollouts th
 the alternative (adding 2, the third node).</p>
 </div></div><div class="cell"><div class="code-block">init_node_stats <span class="symbol">:</span> <span class="type-name">NodeStats</span> <span class="type-name">Count21State</span> <span class="symbol">=</span> (0<span class="symbol">,</span> 0<span class="symbol">,</span> 0<span class="symbol">,</span> 17)
 </div></div><div class="cell"><div class="code-block">start_tree <span class="symbol">=</span> init_tree 15 init_node_stats
-</div></div><div class="cell"><div class="code-block">end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> 50)<span class="symbol">.</span>
-  mcts_sample <span class="type-name">Count21</span> (ixkey key i)
+</div></div><div class="cell"><div class="code-block">end_tree <span class="symbol">=</span> fold start_tree <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> 50) tree<span class="symbol">.</span>
+  mcts_sample <span class="type-name">Count21</span> (ixkey key i) tree
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">end_tree
-</div><div class="result-block">([(Just (Branch (475, (50, (0, 17))) Nothing (AsList 2 [1, 2]))), (Just (Branch (464, (48, (1, 18))) (Just 0) (AsList 2 [5, 6]))), (Just (Branch (3, (1, (1, 19))) (Just 0) (AsList 2 [3, 4]))), (Just (Branch (0, (0, (2, 20))) (Just 2) (AsList 0 []))), (Just (Branch (0, (0, (2, 21))) (Just 2) (AsList 0 []))), (Just (Branch (8, (1, (2, 19))) (Just 1) (AsList 2 [7, 8]))), (Just (Branch (448, (46, (2, 20))) (Just 1) (AsList 2 [9, 10]))), (Just (Branch (0, (0, (3, 20))) (Just 5) (AsList 0 []))), (Just (Branch (0, (0, (3, 21))) (Just 5) (AsList 0 []))), (Just (Branch (440, (44, (3, 21))) (Just 6) (AsList 0 []))), (Just (Branch (0, (1, (3, 22))) (Just 6) (AsList 0 []))), Nothing, Nothing, Nothing, Nothing], 10)</div></div></div></body></html>
+</div><div class="result-block">([(Just (Branch (475, 50, 0, 17) Nothing (AsList 2 [1, 2]))), (Just (Branch (464, 48, 1, 18) (Just 0) (AsList 2 [5, 6]))), (Just (Branch (3, 1, 1, 19) (Just 0) (AsList 2 [3, 4]))), (Just (Branch (0, 0, 2, 20) (Just 2) (AsList 0 []))), (Just (Branch (0, 0, 2, 21) (Just 2) (AsList 0 []))), (Just (Branch (8, 1, 2, 19) (Just 1) (AsList 2 [7, 8]))), (Just (Branch (448, 46, 2, 20) (Just 1) (AsList 2 [9, 10]))), (Just (Branch (0, 0, 3, 20) (Just 5) (AsList 0 []))), (Just (Branch (0, 0, 3, 21) (Just 5) (AsList 0 []))), (Just (Branch (440, 44, 3, 21) (Just 6) (AsList 0 []))), (Just (Branch (0, 1, 3, 22) (Just 6) (AsList 0 []))), Nothing, Nothing, Nothing, Nothing], 10)</div></div></div></body></html>

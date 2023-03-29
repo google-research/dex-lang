@@ -319,16 +319,13 @@ flexible index sets let us encode the fact that the table is 1 larger
 in each dimension than the inputs.  By capturing the relationship
 statically we avoid both programmer off-by-one errors and runtime array
 bounds checks.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein_table
-    {n m a}
-    [<span class="type-name">Eq</span> a]
-    (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a)
-    <span class="symbol">:</span> (<span class="type-name">Post</span> n <span class="symbol">=&gt;</span> <span class="type-name">Post</span> m <span class="symbol">=&gt;</span> <span class="type-name">Nat</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein_table(xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a)
+    <span class="symbol">-&gt;</span> (<span class="type-name">Post</span> n <span class="symbol">=&gt;</span> <span class="type-name">Post</span> m <span class="symbol">=&gt;</span> <span class="type-name">Nat</span>) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Eq</span>) <span class="symbol">=</span>
   yield_state (<span class="keyword">for</span> _ _<span class="symbol">.</span> 0) <span class="symbol">\</span>tab<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Post</span> n)<span class="symbol">.</span> tab<span class="symbol">!</span>i<span class="symbol">!</span>first_ix <span class="symbol">:=</span> ordinal i
     <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Post</span> m)<span class="symbol">.</span> tab<span class="symbol">!</span>first_ix<span class="symbol">!</span>j <span class="symbol">:=</span> ordinal j
     <span class="keyword">for</span> i<span class="command">:n</span> j<span class="command">:m</span><span class="symbol">.</span>
-      subst_cost <span class="symbol">=</span> <span class="keyword">if</span> xs<span class="symbol">.</span>i <span class="symbol">==</span> ys<span class="symbol">.</span>j <span class="keyword">then</span> 0 <span class="keyword">else</span> 1
+      subst_cost <span class="symbol">=</span> <span class="keyword">if</span> xs[i] <span class="symbol">==</span> ys[j] <span class="keyword">then</span> 0 <span class="keyword">else</span> 1
       d_subst  <span class="symbol">=</span> get tab<span class="symbol">!</span>(left_post  i)<span class="symbol">!</span>(left_post  j) <span class="symbol">+</span> subst_cost
       d_delete <span class="symbol">=</span> get tab<span class="symbol">!</span>(left_post  i)<span class="symbol">!</span>(right_post j) <span class="symbol">+</span> 1
       d_insert <span class="symbol">=</span> get tab<span class="symbol">!</span>(right_post i)<span class="symbol">!</span>(left_post  j) <span class="symbol">+</span> 1
@@ -338,17 +335,17 @@ bounds checks.</p>
 </div></div><div class="cell"><div class="code-block">%time
 levenshtein_table [&#39;k&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;e&#39;<span class="symbol">,</span> &#39;n&#39;] [&#39;s&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;t&#39;<span class="symbol">,</span> &#39;i&#39;<span class="symbol">,</span> &#39;n&#39;<span class="symbol">,</span> &#39;g&#39;]
 </div><div class="result-block">[[0, 1, 2, 3, 4, 5, 6, 7], [1, 1, 2, 3, 4, 5, 6, 7], [2, 2, 1, 2, 3, 4, 5, 6], [3, 3, 2, 1, 2, 3, 4, 5], [4, 4, 3, 2, 1, 2, 3, 4], [5, 5, 4, 3, 2, 2, 3, 4], [6, 6, 5, 4, 3, 3, 2, 3]]</div><div class="result-block">
-Compile time: 152.605 ms
-Run time:     299.800 us </div></div><div class="cell"><div class="code-block">
+Compile time: 143.749 ms
+Run time:     260.400 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The actual distance is of course just the last element of the table.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein {n m a} [<span class="type-name">Eq</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
-  (levenshtein_table xs ys)<span class="symbol">.</span>last_ix<span class="symbol">.</span>last_ix
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> levenshtein(xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="symbol">:</span> m<span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Eq</span>) <span class="symbol">=</span>
+  levenshtein_table(xs<span class="symbol">,</span> ys)[last_ix<span class="symbol">,</span> last_ix]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">%time
 levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> 100)
 </div><div class="result-block">0</div><div class="result-block">
-Compile time: 133.291 ms
-Run time:     174.500 us </div></div><div class="cell"><div class="code-block">
+Compile time: 100.472 ms
+Run time:     102.100 us </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Speed</h2>
 </div></div><div class="cell"><div class="prose-block"><p>To check that we don't embarrass ourselves on performance, let's run
 the Sountsov benchmark: Compute Levenshtein distances for all pairs of
@@ -361,8 +358,8 @@ answer <span class="symbol">=</span> <span class="keyword">for</span> i<span cla
     levenshtein (iota <span class="symbol">$</span> <span class="type-name">Fin</span> iint) (iota <span class="symbol">$</span> <span class="type-name">Fin</span> jint)
 </div><div class="result-block">
 Sountsov Benchmark
-Compile time: 144.408 ms
-Run time:     76.133 ms 	(based on 27 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
+Compile time: 131.841 ms
+Run time:     62.841 ms 	(based on 33 runs)</div></div><div class="cell"><div class="code-block">sum(sum(answer))
 </div><div class="result-block">333300</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The straightforward C++ program for this takes about 35ms on my
 workstation, so Dex performance is in the right ballpark.  (And we
@@ -372,19 +369,19 @@ compiling the body 10,000 times (once for each pair of input sizes).</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Real Data</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Just for fun, we can make a crude spelling correcter out of this
 distance function on words:</p>
-</div></div><div class="cell"><div class="code-block">(<span class="type-name">AsList</span> ct words) <span class="symbol">=</span> lines <span class="symbol">$</span> unsafe_io <span class="keyword">do</span> read_file &quot;<span class="symbol">/</span>usr<span class="symbol">/</span>share<span class="symbol">/</span>dict<span class="symbol">/</span>words&quot;
+</div></div><div class="cell"><div class="code-block"><span class="type-name">AsList</span>(ct<span class="symbol">,</span> words) <span class="symbol">=</span> lines <span class="symbol">$</span> unsafe_io <span class="symbol">\.</span> read_file &quot;<span class="symbol">/</span>usr<span class="symbol">/</span>share<span class="symbol">/</span>dict<span class="symbol">/</span>words&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> closest_word (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (<span class="type-name">AsList</span> _ s&#39;) <span class="symbol">=</span> s
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> closest_word(s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> s&#39;) <span class="symbol">=</span> s
   fst <span class="symbol">$</span> minimum_by snd <span class="keyword">for</span> i<span class="symbol">.</span>
-    (<span class="type-name">AsList</span> _ word) <span class="symbol">=</span> words<span class="symbol">.</span>i
-    (words<span class="symbol">.</span>i<span class="symbol">,</span> levenshtein word s&#39;)
+    <span class="type-name">AsList</span>(_<span class="symbol">,</span> word) <span class="symbol">=</span> words[i]
+    (words[i]<span class="symbol">,</span> levenshtein word s&#39;)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">%time
 closest_word &quot;hello&quot;
 </div><div class="result-block">&quot;hello&quot;</div><div class="result-block">
-Compile time: 148.517 ms
-Run time:     158.191 ms </div></div><div class="cell"><div class="code-block">
+Compile time: 136.440 ms
+Run time:     144.616 ms </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">closest_word &quot;kitttens&quot;
 </div><div class="result-block">&quot;kittens&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;functor&quot;
 </div><div class="result-block">&quot;function&quot;</div></div><div class="cell"><div class="code-block">closest_word &quot;applicative&quot;

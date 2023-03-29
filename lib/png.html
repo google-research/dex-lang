@@ -331,72 +331,76 @@ purpose is to be able to render images in Dex notebooks.</p>
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- This could go in the prelude, or in a library of array-dicing functions.
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- An explicit &quot;view&quot; builder would be good here, to avoid copies
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_chunks {n a}
-      (chunkSize<span class="symbol">:</span><span class="type-name">Nat</span>) (padVal<span class="command">:a</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a)
-      <span class="symbol">:</span> <span class="type-name">List</span> (<span class="type-name">Fin</span> chunkSize <span class="symbol">=&gt;</span> a) <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_chunks(chunkSize<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> padVal<span class="command">:a</span><span class="symbol">,</span> xs<span class="command">:n</span><span class="symbol">=&gt;</span>a)
+    <span class="symbol">-&gt;</span> <span class="type-name">List</span> (<span class="type-name">Fin</span> chunkSize <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span>
   numChunks <span class="symbol">=</span> idiv_ceil (size n) chunkSize
   paddedSize <span class="symbol">=</span> numChunks <span class="symbol">*</span> chunkSize
   xsPadded <span class="symbol">=</span> pad_to (<span class="type-name">Fin</span> paddedSize) padVal xs
   to_list <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> numChunks)<span class="symbol">.</span>
     slice xsPadded (ordinal i <span class="symbol">*</span> chunkSize) (<span class="type-name">Fin</span> chunkSize)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64s_to_bytes (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64s_to_bytes(chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span> <span class="symbol">=</span>
   [a<span class="symbol">,</span> b<span class="symbol">,</span> c<span class="symbol">,</span> d] <span class="symbol">=</span> chunk
   [ (a <span class="symbol">.&lt;&lt;.</span> 2) <span class="symbol">.|.</span> (b <span class="symbol">.&gt;&gt;.</span> 4)
   <span class="symbol">,</span> (b <span class="symbol">.&lt;&lt;.</span> 4) <span class="symbol">.|.</span> (c <span class="symbol">.&gt;&gt;.</span> 2)
   <span class="symbol">,</span> (c <span class="symbol">.&lt;&lt;.</span> 6) <span class="symbol">.|.</span>  d       ]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bytes_to_base64s (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bytes_to_base64s(chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Byte</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
   [a<span class="symbol">,</span> b<span class="symbol">,</span> c] <span class="symbol">=</span> chunk
   <span class="comment">-- &#39;?&#39; is 00111111
-</span>  map ((<span class="symbol">.&amp;.</span>) &#39;<span class="symbol">?</span>&#39;) <span class="symbol">$</span>
+</span>  map (<span class="symbol">\</span>x<span class="symbol">.</span> x <span class="symbol">.&amp;.</span> &#39;<span class="symbol">?</span>&#39;) <span class="symbol">$</span>
     [                 a <span class="symbol">.&gt;&gt;.</span> 2
     <span class="symbol">,</span> (a <span class="symbol">.&lt;&lt;.</span> 4) <span class="symbol">.|.</span> (b <span class="symbol">.&gt;&gt;.</span> 4)
     <span class="symbol">,</span> (b <span class="symbol">.&lt;&lt;.</span> 2) <span class="symbol">.|.</span> (c <span class="symbol">.&gt;&gt;.</span> 6)
     <span class="symbol">,</span>  c                    ]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_to_ascii (x<span class="symbol">:</span><span class="type-name">Base64</span>) <span class="symbol">:</span> <span class="type-name">Char</span> <span class="symbol">=</span>
-  encoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_n x))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_to_ascii(x<span class="symbol">:</span><span class="type-name">Base64</span>) <span class="symbol">-&gt;</span> <span class="type-name">Char</span> <span class="symbol">=</span>
+  encoding_table[from_ordinal (w8_to_n x)]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> encode_chunk (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> encode_chunk(chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span> <span class="symbol">=</span>
   map base64_to_ascii <span class="symbol">$</span> bytes_to_base64s chunk
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: the `AsList` unpacking is very tedious. Daniel&#39;s change will help
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_encode (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (<span class="type-name">AsList</span> n cs) <span class="symbol">=</span> s
-  (<span class="type-name">AsList</span> numChunks chunks) <span class="symbol">=</span> get_chunks 3 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; cs
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_encode(s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span>(n<span class="symbol">,</span> cs) <span class="symbol">=</span> s
+  <span class="type-name">AsList</span>(numChunks<span class="symbol">,</span> chunks) <span class="symbol">=</span> get_chunks 3 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; cs
   encodedChunks <span class="symbol">=</span> map encode_chunk chunks
-  flattened <span class="symbol">=</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> encodedChunks<span class="symbol">.</span>i<span class="symbol">.</span>j
+  flattened <span class="symbol">=</span> <span class="keyword">for</span> pair<span class="symbol">.</span>
+    (i<span class="symbol">,</span> j) <span class="symbol">=</span> pair
+    encodedChunks[i<span class="symbol">,</span> j]
   padChars <span class="symbol">=</span> rem (unsafe_nat_diff 3 (rem n 3)) 3
   validOutputChars <span class="symbol">=</span> unsafe_nat_diff (numChunks <span class="symbol">*</span> 4) padChars
   to_list <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> ordinal i <span class="symbol">&lt;</span> validOutputChars <span class="keyword">of</span>
-    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> flattened<span class="symbol">.</span>i
+    <span class="type-name">True</span>  <span class="symbol">-&gt;</span> flattened[i]
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> &#39;<span class="symbol">=</span>&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ascii_to_base64 (c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
-  decoding_table<span class="symbol">.</span>(from_ordinal _ (w8_to_n c))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ascii_to_base64(c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">Base64</span> <span class="symbol">=</span>
+  decoding_table[from_ordinal (w8_to_n c)]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> decode_chunk (chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> decode_chunk(chunk <span class="symbol">:</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> (<span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Char</span>) <span class="symbol">=</span>
   <span class="keyword">case</span> seq_maybes <span class="symbol">$</span> map ascii_to_base64 chunk <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
     <span class="type-name">Just</span> base64s <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> base64s_to_bytes base64s
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: put this in prelude?
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> replace {a} [<span class="type-name">Eq</span> a] ((old<span class="symbol">,</span>new)<span class="symbol">:</span>(a<span class="symbol">&amp;</span>a)) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> replace(pair<span class="symbol">:</span>(a<span class="symbol">,</span>a)<span class="symbol">,</span> x<span class="command">:a</span>) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Eq</span>) <span class="symbol">=</span>
+  (old<span class="symbol">,</span> new) <span class="symbol">=</span> pair
   <span class="keyword">case</span> x <span class="symbol">==</span> old <span class="keyword">of</span>
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> new
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_decode (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (<span class="type-name">AsList</span> n cs) <span class="symbol">=</span> s
-  numValidInputChars <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> b_to_n <span class="symbol">$</span> cs<span class="symbol">.</span>i <span class="symbol">/=</span> &#39;<span class="symbol">=</span>&#39;
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> base64_decode(s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span>(n<span class="symbol">,</span> cs) <span class="symbol">=</span> s
+  numValidInputChars <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> b_to_n <span class="symbol">$</span> cs[i] <span class="symbol">/=</span> &#39;<span class="symbol">=</span>&#39;
   numValidOutputChars <span class="symbol">=</span> idiv (numValidInputChars <span class="symbol">*</span> 3) 4
-  csZeroed <span class="symbol">=</span> map (replace (&#39;<span class="symbol">=</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">A</span>&#39;)) cs  <span class="comment">-- swap padding char with &#39;zero&#39; char
-</span>  (<span class="type-name">AsList</span> _ chunks) <span class="symbol">=</span> get_chunks 4 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; csZeroed
+  csZeroed <span class="symbol">=</span> map (<span class="symbol">\</span>x<span class="symbol">.</span> replace((&#39;<span class="symbol">=</span>&#39;<span class="symbol">,</span> &#39;<span class="type-name">A</span>&#39;)<span class="symbol">,</span> x)) cs  <span class="comment">-- swap padding char with &#39;zero&#39; char
+</span>  <span class="type-name">AsList</span>(_<span class="symbol">,</span> chunks) <span class="symbol">=</span> get_chunks 4 &#39;<span class="symbol">\</span><span class="type-name">NUL</span>&#39; csZeroed
   <span class="keyword">case</span> seq_maybes <span class="symbol">$</span> map decode_chunk chunks <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
     <span class="type-name">Just</span> decodedChunks <span class="symbol">-&gt;</span>
-      resultPadded <span class="symbol">=</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> decodedChunks<span class="symbol">.</span>i<span class="symbol">.</span>j
+      resultPadded <span class="symbol">=</span> <span class="keyword">for</span> pair<span class="symbol">.</span>
+        (i<span class="symbol">,</span> j) <span class="symbol">=</span> pair
+        decodedChunks[i<span class="symbol">,</span> j]
       <span class="type-name">Just</span> <span class="symbol">$</span> to_list <span class="symbol">$</span> slice resultPadded 0 (<span class="type-name">Fin</span> numValidOutputChars)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>PNG FFI</h2>
@@ -404,40 +408,42 @@ purpose is to be able to render images in Dex notebooks.</p>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Png</span>  <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Gif</span>  <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">String</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;encodePNG&quot; encodePNG <span class="symbol">:</span> <span class="type-name">RawPtr</span> <span class="symbol">-&gt;</span> <span class="type-name">Word32</span> <span class="symbol">-&gt;</span> <span class="type-name">Word32</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;encodePNG&quot; encodePNG <span class="symbol">:</span> (<span class="type-name">RawPtr</span><span class="symbol">,</span> <span class="type-name">Word32</span><span class="symbol">,</span> <span class="type-name">Word32</span>) <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span><span class="symbol">,</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> make_png {n m} (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Word8</span>) <span class="symbol">:</span> <span class="type-name">Png</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\</span>()<span class="symbol">.</span>
-  (<span class="type-name">AsList</span> _ imgFlat) <span class="symbol">=</span> to_list <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> img<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> make_png(img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Word8</span>) <span class="symbol">-&gt;</span> <span class="type-name">Png</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> imgFlat) <span class="symbol">=</span> to_list <span class="keyword">for</span> triple<span class="symbol">.</span>
+    (i<span class="symbol">,</span> (j<span class="symbol">,</span> k)) <span class="symbol">=</span> triple
+    img[i<span class="symbol">,</span> j<span class="symbol">,</span> k]
   with_table_ptr imgFlat <span class="symbol">\</span>ptr<span class="symbol">.</span>
-    (<span class="type-name">MkPtr</span> rawPtr) <span class="symbol">=</span> ptr
-    (n<span class="symbol">,</span> ptr&#39;) <span class="symbol">=</span> encodePNG rawPtr (nat_to_rep <span class="symbol">$</span> size m) (nat_to_rep <span class="symbol">$</span> size n)
-    to_list <span class="symbol">$</span> table_from_ptr (<span class="type-name">Fin</span> <span class="symbol">$</span> rep_to_nat n) <span class="symbol">$</span> <span class="type-name">MkPtr</span> ptr&#39;
+    rawPtr <span class="symbol">=</span> ptr<span class="symbol">.</span>val
+    (sz<span class="symbol">,</span> ptr&#39;) <span class="symbol">=</span> encodePNG rawPtr (nat_to_rep <span class="symbol">$</span> size m) (nat_to_rep <span class="symbol">$</span> size n)
+    <span class="type-name">AsList</span>((rep_to_nat sz)<span class="symbol">,</span> table_from_ptr(<span class="type-name">Ptr</span><span class="symbol">.</span>new(ptr&#39;)))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pngs_to_gif {t} (delay<span class="symbol">:</span><span class="type-name">Int</span>) (pngs<span class="command">:t</span><span class="symbol">=&gt;</span><span class="type-name">Png</span>) <span class="symbol">:</span> <span class="type-name">Gif</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\</span>()<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pngs_to_gif(delay<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span> pngs<span class="command">:t</span><span class="symbol">=&gt;</span><span class="type-name">Png</span>) <span class="symbol">-&gt;</span> <span class="type-name">Gif</span> <span class="keyword">given</span> (t<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
   with_temp_files <span class="symbol">\</span>pngFiles<span class="symbol">.</span>
-    <span class="keyword">for</span> i<span class="symbol">.</span> write_file pngFiles<span class="symbol">.</span>i pngs<span class="symbol">.</span>i
+    <span class="keyword">for</span> i<span class="symbol">.</span> write_file pngFiles[i] pngs[i]
     with_temp_file <span class="symbol">\</span>gifFile<span class="symbol">.</span>
       shell_out <span class="symbol">$</span>
          &quot;convert&quot; <span class="symbol">&lt;&gt;</span> &quot; <span class="symbol">-</span>delay &quot; <span class="symbol">&lt;&gt;</span> show delay <span class="symbol">&lt;&gt;</span> &quot; &quot; <span class="symbol">&lt;&gt;</span>
-          concat (<span class="keyword">for</span> i<span class="symbol">.</span> &quot;png<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> pngFiles<span class="symbol">.</span>i <span class="symbol">&lt;&gt;</span> &quot; &quot;) <span class="symbol">&lt;&gt;</span>
+          concat (<span class="keyword">for</span> i<span class="symbol">.</span> &quot;png<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> pngFiles[i] <span class="symbol">&lt;&gt;</span> &quot; &quot;) <span class="symbol">&lt;&gt;</span>
          &quot;gif<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> gifFile
       read_file gifFile
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> img_to_html (png<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">Html</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> img_to_html(png<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">Html</span> <span class="symbol">=</span>
   (&quot;<span class="symbol">&lt;</span>img class<span class="symbol">=\</span>&quot;plot<span class="symbol">-</span>img<span class="symbol">\</span>&quot; src<span class="symbol">=\</span>&quot;<span class="keyword">data</span><span class="command">:image</span><span class="symbol">/</span>png;base64<span class="symbol">,</span> &quot;
    <span class="symbol">&lt;&gt;</span> base64_encode png
    <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">\</span>&quot;<span class="symbol">&gt;</span>&quot;)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> float_to_8bit (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Word8</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> float_to_8bit(x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Word8</span> <span class="symbol">=</span>
   n_to_w8 <span class="symbol">$</span> f_to_n <span class="symbol">$</span> 255<span class="symbol">.</span>0 <span class="symbol">*</span> clip (0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0) x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> img_to_png {n m} (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Png</span> <span class="symbol">=</span>
-  make_png <span class="keyword">for</span> i j k<span class="symbol">.</span> float_to_8bit img<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> img_to_png(img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Png</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  make_png <span class="keyword">for</span> i j k<span class="symbol">.</span> float_to_8bit img[i<span class="symbol">,</span> j<span class="symbol">,</span> k]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>API entry point</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imshow {n m} (img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Html</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imshow(img<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Html</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   img_to_html <span class="symbol">$</span> img_to_png img
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imseqshow {t n m} (imgs<span class="command">:t</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Html</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imseqshow(imgs<span class="command">:t</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Html</span> <span class="keyword">given</span> (t<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   img_to_html <span class="symbol">$</span> pngs_to_gif 50 <span class="symbol">$</span> map img_to_png imgs
 </div></div></div></body></html>

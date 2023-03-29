@@ -322,16 +322,16 @@ structured maps.</p>
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Linear Endomorphisms</h2>
 <p>a.k.a. linear maps from a space back to that same space.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasDeterminant</span> m
-  determinant&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
-  transposeType m <span class="symbol">:</span> <span class="type-name">Type</span>  <span class="comment">-- unused for now
-</span>  transpose&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> m      <span class="comment">-- In future: m -&gt; transposeType m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasDeterminant</span>(m)
+  determinant&#39;<span class="symbol">:</span> (m) <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
+  transposeType <span class="symbol">:</span> <span class="type-name">Type</span>  <span class="comment">-- unused for now
+</span>  transpose&#39;<span class="symbol">:</span> (m) <span class="symbol">-&gt;</span> m      <span class="comment">-- In future: m -&gt; transposeType m
 </span>  identity&#39;<span class="symbol">:</span> m
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m] <span class="type-name">LinearEndo</span> m v
-  apply<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v <span class="symbol">-&gt;</span> v
-  diag<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v
-  solve&#39;<span class="symbol">:</span> m <span class="symbol">-&gt;</span> v <span class="symbol">-&gt;</span> v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">LinearEndo</span>(m<span class="symbol">|</span><span class="type-name">HasDeterminant</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">VSpace</span>)
+  apply<span class="symbol">:</span> (m<span class="symbol">,</span> v) <span class="symbol">-&gt;</span> v
+  diag<span class="symbol">:</span> (m) <span class="symbol">-&gt;</span> v
+  solve&#39;<span class="symbol">:</span> (m<span class="symbol">,</span> v) <span class="symbol">-&gt;</span> v
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>We'd like to remove <code>v</code> from the <code>LinearEndo</code> interface,
 and instead use associated types to specify a <code>v</code> for each <code>m</code>.
@@ -342,118 +342,113 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Instances</h2>
 </div></div><div class="cell"><div class="prose-block"><h3>Scalar maps</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ScalarMap</span> <span class="symbol">=</span>
-  <span class="type-name">MkScalarMap</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">ScalarMap</span> <span class="symbol">=</span> val<span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> <span class="type-name">ScalarMap</span>
-  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a)<span class="symbol">.</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(<span class="type-name">ScalarMap</span>)
+  <span class="keyword">def</span> determinant&#39;(a) <span class="symbol">=</span> a<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> id
-  identity&#39; <span class="symbol">=</span> <span class="type-name">MkScalarMap</span> 1<span class="symbol">.</span>0
+  <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> x
+  identity&#39; <span class="symbol">=</span> <span class="type-name">ScalarMap</span><span class="symbol">.</span>new(1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> <span class="type-name">ScalarMap</span> v <span class="keyword">given</span> {v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply <span class="symbol">=</span>  <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a) b<span class="symbol">.</span> a <span class="symbol">.*</span> b
-  diag <span class="symbol">=</span>   <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a)<span class="symbol">.</span>   a <span class="symbol">.*</span> one
-  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkScalarMap</span> a) b<span class="symbol">.</span> b <span class="symbol">/</span> a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">ScalarMap</span><span class="symbol">,</span> v) <span class="keyword">given</span> (v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(a<span class="symbol">,</span> b)  <span class="symbol">=</span> a<span class="symbol">.</span>val <span class="symbol">.*</span> b
+  <span class="keyword">def</span> diag(a)      <span class="symbol">=</span> a<span class="symbol">.</span>val <span class="symbol">.*</span> one
+  <span class="keyword">def</span> solve&#39;(a<span class="symbol">,</span> b) <span class="symbol">=</span> b <span class="symbol">/</span> a<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> <span class="type-name">ScalarMap</span>
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkScalarMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">ScalarMap</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">ScalarMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Diagonal maps</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">DiagMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkDiagMap</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">DiagMap</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> val<span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">DiagMap</span> n) <span class="keyword">given</span> {n}
-  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> x)<span class="symbol">.</span> prod x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(<span class="type-name">DiagMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> id
-  identity&#39; <span class="symbol">=</span> <span class="type-name">MkDiagMap</span> one
+  <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> x
+  identity&#39; <span class="symbol">=</span> <span class="type-name">DiagMap</span><span class="symbol">.</span>new one
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">DiagMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply <span class="symbol">=</span>  <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">.*</span> y<span class="symbol">.</span>i
-  diag <span class="symbol">=</span>   <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> a)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> a<span class="symbol">.</span>i <span class="symbol">.*</span> one
-  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagMap</span> a) b<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> b<span class="symbol">.</span>i <span class="symbol">/</span> a<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">DiagMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>val[i] <span class="symbol">.*</span> y[i]
+  <span class="keyword">def</span> diag(a)      <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> a<span class="symbol">.</span>val[i] <span class="symbol">.*</span> one
+  <span class="keyword">def</span> solve&#39;(a<span class="symbol">,</span> b) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> b[i] <span class="symbol">/</span> a<span class="symbol">.</span>val[i]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">DiagMap</span> n) <span class="keyword">given</span> {n}
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkDiagMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">DiagMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">DiagMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Full-rank matrices.</h3>
 <p>I didn't use a newtype for these, but I'm not sure if that's the right call.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="keyword">given</span> {n}
-  determinant&#39; <span class="symbol">=</span> determinant
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> determinant&#39;(m) <span class="symbol">=</span> determinant m
   transposeType <span class="symbol">=</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> transpose
+  <span class="keyword">def</span> transpose&#39;(m) <span class="symbol">=</span> transpose m
   identity&#39; <span class="symbol">=</span> eye
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>j
-  diag <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>i <span class="symbol">.*</span> one
-  solve&#39; <span class="symbol">=</span> solve
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(x<span class="symbol">,</span> y) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x[i<span class="symbol">,</span> j] <span class="symbol">.*</span> y[j]
+  <span class="keyword">def</span> diag(x) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x[i<span class="symbol">,</span> i] <span class="symbol">.*</span> one
+  <span class="keyword">def</span> solve&#39;(m<span class="symbol">,</span> vec) <span class="symbol">=</span> solve m vec
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Lower-triangular maps</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LowerTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkLowerTriMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">LowerTriMap</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> val <span class="symbol">:</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> {n}
-  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> lower_tri_diag x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod <span class="symbol">$</span> lower_tri_diag x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
-  identity&#39; <span class="symbol">=</span> <span class="type-name">MkLowerTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
+  <span class="keyword">def</span> transpose&#39;(_) <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  identity&#39; <span class="symbol">=</span> <span class="type-name">LowerTriMap</span><span class="symbol">.</span>new <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">LowerTriMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>(inject _ j)
-  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>(unsafe_project _ i) <span class="symbol">.*</span> one
-  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkLowerTriMap</span> x)<span class="symbol">.</span>   forward_substitute x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">LowerTriMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> j] <span class="symbol">.*</span> y[inject j]
+  <span class="keyword">def</span> diag(x)      <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> unsafe_project i] <span class="symbol">.*</span> one
+  <span class="keyword">def</span> solve&#39;(x<span class="symbol">,</span> y) <span class="symbol">=</span> forward_substitute x<span class="symbol">.</span>val y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> {n}
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkLowerTriMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">LowerTriMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Upper-triangular maps</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UpperTriMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkUpperTriMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">UpperTriMap</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> val<span class="symbol">:</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(i<span class="symbol">..</span>)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> {n}
-  determinant&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span> prod <span class="symbol">$</span> upper_tri_diag x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod <span class="symbol">$</span> upper_tri_diag x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>
-  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>_<span class="symbol">.</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
-  identity&#39; <span class="symbol">=</span> <span class="type-name">MkUpperTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
+  <span class="keyword">def</span> transpose&#39;(_) <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
+  identity&#39; <span class="symbol">=</span> <span class="type-name">UpperTriMap</span><span class="symbol">.</span>new <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">UpperTriMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x) y<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">.*</span> y<span class="symbol">.</span>(inject _ j)
-  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span>   <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>(0<span class="symbol">@</span>_) <span class="symbol">.*</span> one
-  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkUpperTriMap</span> x)<span class="symbol">.</span>   backward_substitute x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">UpperTriMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> j] <span class="symbol">.*</span> y[inject j]
+  <span class="keyword">def</span> diag(x)      <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> 0<span class="symbol">@</span>_] <span class="symbol">.*</span> one
+  <span class="keyword">def</span> solve&#39;(x<span class="symbol">,</span> y) <span class="symbol">=</span> backward_substitute x<span class="symbol">.</span>val y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> {n}
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkUpperTriMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">UpperTriMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Skew-symmetric maps</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">SkewSymmetricMap</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkSkewSymMap</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">SkewSymmetricMap</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> val<span class="symbol">:</span> ((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span> (<span class="type-name">SkewSymmetricMap</span> n) <span class="keyword">given</span> {n}
-  determinant&#39; <span class="symbol">=</span> <span class="keyword">case</span> is_odd (size n) <span class="keyword">of</span>
-    <span class="type-name">True</span> <span class="symbol">-&gt;</span> const zero
-    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> a)<span class="symbol">.</span>
-      dense_rep <span class="symbol">=</span> skew_symmetric_prod a eye
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasDeterminant</span>(<span class="type-name">SkewSymmetricMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> determinant&#39;(a) <span class="symbol">=</span> <span class="keyword">case</span> is_odd (size n) <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> zero
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span>
+      dense_rep <span class="symbol">=</span> skew_symmetric_prod a<span class="symbol">.</span>val eye
       determinant dense_rep  <span class="comment">-- Naive algorithm, could be done with Pfaffian
 </span>  transposeType <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>  <span class="comment">-- 
-</span>  transpose&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x)<span class="symbol">.</span> <span class="type-name">MkSkewSymMap</span> (<span class="symbol">-</span>x)
+</span>  <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span><span class="symbol">.</span>new (<span class="symbol">-</span>x<span class="symbol">.</span>val)
   identity&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Skew</span> symmetric matrices can&#39;t represent the identity map<span class="symbol">.</span>&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span> (<span class="type-name">SkewSymmetricMap</span> n) (n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> {n v} [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v]
-  apply  <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x) y<span class="symbol">.</span> skew_symmetric_prod x y
-  diag   <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x)<span class="symbol">.</span>   zero
-  solve&#39; <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkSkewSymMap</span> x) y<span class="symbol">.</span>
-    dense_rep <span class="symbol">=</span> skew_symmetric_prod x eye  <span class="comment">-- Fall back to naive algorithm
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">SkewSymmetricMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
+  <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> skew_symmetric_prod x<span class="symbol">.</span>val y
+  <span class="keyword">def</span> diag(x)      <span class="symbol">=</span> zero
+  <span class="keyword">def</span> solve&#39;(x<span class="symbol">,</span> y) <span class="symbol">=</span>
+    dense_rep <span class="symbol">=</span> skew_symmetric_prod x<span class="symbol">.</span>val eye  <span class="comment">-- Fall back to naive algorithm
 </span>    solve dense_rep y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">SkewSymmetricMap</span> n) <span class="keyword">given</span> {n}
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">MkSkewSymMap</span> <span class="symbol">$</span> arb k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">SkewSymmetricMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Sparse matrices. Need hashmaps for these to be practical.
@@ -462,35 +457,34 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 
 </div></div><div class="cell"><div class="prose-block"><h2>Application 1: Gaussians</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- This typeclass will be obsolete once the `Basis` typeclass can be written.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasStandardNormal</span> a<span class="symbol">:</span><span class="type-name">Type</span>
-  randNormal <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">HasStandardNormal</span>(a<span class="symbol">:</span><span class="type-name">Type</span>)
+  randNormal <span class="symbol">:</span> (<span class="type-name">Key</span>) <span class="symbol">-&gt;</span> a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span> <span class="type-name">Float32</span>
-  randNormal <span class="symbol">=</span> randn
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span> (n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> {a n} [<span class="type-name">HasStandardNormal</span> a]
-  randNormal <span class="symbol">=</span> <span class="symbol">\</span>key<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span>(<span class="type-name">Float32</span>)
+  <span class="keyword">def</span> randNormal(k) <span class="symbol">=</span> randn k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">HasStandardNormal</span>(n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">HasStandardNormal</span>)
+  <span class="keyword">def</span> randNormal(key) <span class="symbol">=</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> randNormal (ixkey key i)
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multivariate_gaussian_sample {v m} [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasStandardNormal</span> v]
-                   (mean<span class="command">:v</span>) (covroot<span class="command">:m</span>) (key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multivariate_gaussian_sample(mean<span class="command">:v</span><span class="symbol">,</span> covroot<span class="command">:m</span><span class="symbol">,</span> key<span class="symbol">:</span><span class="type-name">Key</span>)
+  <span class="symbol">-&gt;</span> v <span class="keyword">given</span> (v<span class="symbol">|</span><span class="type-name">HasStandardNormal</span><span class="symbol">,</span> m) (<span class="type-name">LinearEndo</span> m v) <span class="symbol">=</span>
   noise <span class="symbol">=</span> randNormal key
   mean <span class="symbol">+</span> apply covroot noise
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> multivariate_gaussian_sample 1<span class="symbol">.</span>0 (<span class="type-name">MkScalarMap</span> 2<span class="symbol">.</span>0) (new_key 0)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> multivariate_gaussian_sample 1<span class="symbol">.</span>0 (<span class="type-name">ScalarMap</span><span class="symbol">.</span>new 2<span class="symbol">.</span>0) (new_key 0)
 </div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Generic log pdf of a multivariate Gaussian</h3>
 <p>This single definition of a Gaussian log pdf should work
 efficiently for any type of covariance matrix for which
 an efficient solve and determinant is known.</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- This helper will be osbolete once the basis typeclass works.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_<span class="type-name">VSpace</span>_dim {v} [<span class="type-name">InnerProd</span> v<span class="symbol">,</span> <span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] (x<span class="command">:v</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get_<span class="type-name">VSpace</span>_dim(x<span class="command">:v</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">InnerProd</span>) <span class="symbol">=</span>
   one&#39; <span class="symbol">:</span> v <span class="symbol">=</span> one
   inner_prod one&#39; one&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gaussian_log_pdf {m v}
-    [<span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">InnerProd</span> v<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m v]
-    (mean<span class="command">:v</span>) (covroot<span class="command">:m</span>) (x<span class="command">:v</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gaussian_log_pdf(mean<span class="command">:v</span><span class="symbol">,</span> covroot<span class="command">:m</span><span class="symbol">,</span> x<span class="command">:v</span>)
+  <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (m<span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">InnerProd</span>) (<span class="type-name">LinearEndo</span> m v) <span class="symbol">=</span>
   dim <span class="symbol">=</span> get_<span class="type-name">VSpace</span>_dim x
   squarepart <span class="symbol">=</span> inner_prod (x <span class="symbol">-</span> mean) (solve&#39; (transpose&#39; covroot)
                                      (solve&#39;             covroot (x <span class="symbol">-</span> mean)))
@@ -506,8 +500,7 @@ an efficient solve and determinant is known.</p>
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Check application of the identity is a no-op.</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_identity (m<span class="symbol">:</span><span class="type-name">Type</span>)
-    [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_identity(m<span class="symbol">|</span><span class="type-name">HasDeterminant</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v)) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
   i <span class="symbol">:</span> m <span class="symbol">=</span> identity&#39;
   vec <span class="symbol">:</span> v <span class="symbol">=</span> (arb <span class="symbol">$</span> new_key 0)
   vec <span class="symbol">~~</span> apply i vec
@@ -518,7 +511,8 @@ an efficient solve and determinant is known.</p>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">DiagMap</span> vec_len
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_identity <span class="symbol">$</span> <span class="type-name">ScalarMap</span>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_inverse (m<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m full_mat_type] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_inverse(m<span class="symbol">|</span><span class="type-name">Arbitrary</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m full_mat_type))
+  <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
   a <span class="symbol">:</span> m   <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
   vec <span class="symbol">:</span> v <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
   inv  <span class="symbol">:</span> full_mat_type <span class="symbol">=</span> solve&#39; a eye
@@ -533,10 +527,9 @@ an efficient solve and determinant is known.</p>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">check_inverse <span class="type-name">ScalarMap</span>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_transpose (m<span class="symbol">:</span><span class="type-name">Type</span>)
-    [<span class="type-name">LinearEndo</span> m v<span class="symbol">,</span> <span class="type-name">HasDeterminant</span> m<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
-  a <span class="symbol">:</span> m                  <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
-  (vec1<span class="symbol">,</span> vec2) <span class="symbol">:</span> (v <span class="symbol">&amp;</span> v) <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 1
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_transpose(m<span class="symbol">|</span><span class="type-name">HasDeterminant</span><span class="symbol">|</span><span class="type-name">Arbitrary</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v)) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  a <span class="symbol">:</span> m                 <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
+  (vec1<span class="symbol">,</span> vec2) <span class="symbol">:</span> (v<span class="symbol">,</span> v) <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 1
   
   hitleft  <span class="symbol">=</span> inner_prod (apply a vec1) vec2
   hitright <span class="symbol">=</span> inner_prod (apply (transpose&#39; a) vec2) vec1
@@ -557,11 +550,11 @@ an efficient solve and determinant is known.</p>
 </div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> 10<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> linspace sizen (<span class="symbol">-</span>span) span
 </div></div><div class="cell"><div class="code-block">integral <span class="symbol">=</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> span <span class="symbol">*</span> mean <span class="keyword">for</span> i<span class="symbol">.</span>
-  exp <span class="symbol">$</span> gaussian_log_pdf (<span class="symbol">-</span>0<span class="symbol">.</span>1) (<span class="type-name">MkScalarMap</span> 0<span class="symbol">.</span>07) xs<span class="symbol">.</span>i
+  exp <span class="symbol">$</span> gaussian_log_pdf (<span class="symbol">-</span>0<span class="symbol">.</span>1) (<span class="type-name">ScalarMap</span><span class="symbol">.</span>new 0<span class="symbol">.</span>07) xs[i]
 </div></div><div class="cell"><div class="code-block">integral <span class="symbol">~~</span> 1<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes (m<span class="symbol">:</span><span class="type-name">Type</span>)
-    [<span class="type-name">LinearEndo</span> m ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>)<span class="symbol">,</span> <span class="type-name">Arbitrary</span> m] <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes(m<span class="symbol">|</span><span class="type-name">Arbitrary</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>)))
+  <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
 
   sizen <span class="symbol">=</span> <span class="type-name">Fin</span> 200
   span <span class="symbol">=</span> 10<span class="symbol">.</span>0
@@ -569,8 +562,9 @@ an efficient solve and determinant is known.</p>
 
   covroot <span class="symbol">:</span> m <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 0
   meanvec <span class="symbol">:</span> ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">=</span> arb <span class="symbol">$</span> new_key 1
-  integral <span class="symbol">=</span> (sq (2<span class="symbol">.</span>0 <span class="symbol">*</span> span)) <span class="symbol">*</span> mean <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">:</span>(sizen <span class="symbol">&amp;</span> sizen)<span class="symbol">.</span>
-    x <span class="symbol">=</span> [xs<span class="symbol">.</span>i<span class="symbol">,</span> xs<span class="symbol">.</span>j]
+  integral <span class="symbol">=</span> (sq (2<span class="symbol">.</span>0 <span class="symbol">*</span> span)) <span class="symbol">*</span> mean <span class="keyword">for</span> pair<span class="symbol">:</span>(sizen<span class="symbol">,</span> sizen)<span class="symbol">.</span>
+    (i<span class="symbol">,</span> j) <span class="symbol">=</span> pair
+    x <span class="symbol">=</span> [xs[i]<span class="symbol">,</span> xs[j]]
     exp <span class="symbol">$</span> gaussian_log_pdf meanvec covroot x
   integral <span class="symbol">~~</span> 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
@@ -587,19 +581,20 @@ an efficient solve and determinant is known.</p>
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Application 2: SDEs</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Time</span> <span class="symbol">=</span> <span class="type-name">MkTime</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Time</span> <span class="symbol">=</span> val<span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Drift</span> (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">VSpace</span> v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span><span class="type-name">Time</span><span class="symbol">-&gt;</span>v
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Diffusion</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  v<span class="symbol">-&gt;</span><span class="type-name">Time</span><span class="symbol">-&gt;</span>m
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SDE</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  (<span class="type-name">Drift</span> v <span class="symbol">&amp;</span> <span class="type-name">Diffusion</span> m v)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Drift</span>(v<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (v<span class="symbol">,</span> <span class="type-name">Time</span>) <span class="symbol">-&gt;</span> v
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Diffusion</span>(m<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> v<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v)) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (v<span class="symbol">,</span> <span class="type-name">Time</span>) <span class="symbol">-&gt;</span> m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SDE</span>(m<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> v<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v)) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (<span class="type-name">Drift</span> v<span class="symbol">,</span> <span class="type-name">Diffusion</span> m v)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> radon_nikodym {m s} [<span class="type-name">InnerProd</span> s<span class="symbol">,</span> <span class="type-name">LinearEndo</span> m s]
-  (drift1<span class="symbol">:</span><span class="type-name">Drift</span> s)
-  (drift2<span class="symbol">:</span><span class="type-name">Drift</span> s)
-  (diffusion<span class="symbol">:</span><span class="type-name">Diffusion</span> m s)
-  (state<span class="command">:s</span>) (t<span class="symbol">:</span><span class="type-name">Time</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> radon_nikodym(
+  drift1<span class="symbol">:</span><span class="type-name">Drift</span> s<span class="symbol">,</span>
+  drift2<span class="symbol">:</span><span class="type-name">Drift</span> s<span class="symbol">,</span>
+  diffusion<span class="symbol">:</span><span class="type-name">Diffusion</span> m s<span class="symbol">,</span>
+  state<span class="command">:s</span><span class="symbol">,</span>
+  t<span class="symbol">:</span><span class="type-name">Time</span>
+  ) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (m<span class="symbol">,</span> s<span class="symbol">|</span><span class="type-name">InnerProd</span>) (<span class="type-name">LinearEndo</span> m s) <span class="symbol">=</span>
   <span class="comment">-- By Girsanov&#39;s theorem, this gives a simple Monte Carlo estimator
 </span>  <span class="comment">-- of the (loosely speaking) instantaneous KL divergence between
 </span>  <span class="comment">-- two SDEs that share a diffusion function.
@@ -622,18 +617,16 @@ by:</p>
 </div></div><div class="cell"><div class="prose-block"><p>The function below converts these matrices into the drift and diffusion which,
 if followed, will converge to a stationary distribution whose marginal
 log-density is equal to the negative energy function (plus a constant).</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationaryDiffusion</span> (m<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">LinearEndo</span> m v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span>m
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NegEnergyFunc</span> (v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> v<span class="symbol">-&gt;</span><span class="type-name">Float</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SkewSymmetricFunc</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> n] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  v<span class="symbol">-&gt;</span>((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationarySDEParts</span> (n<span class="symbol">:</span><span class="type-name">Type</span>) (v<span class="symbol">:</span><span class="type-name">Type</span>)
-    [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">LinearEndo</span> n v<span class="symbol">,</span> <span class="type-name">VSpace</span> v] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  (<span class="type-name">NegEnergyFunc</span> v <span class="symbol">&amp;</span> <span class="type-name">SkewSymmetricFunc</span> n v <span class="symbol">&amp;</span> <span class="type-name">StationaryDiffusion</span> n v)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationaryDiffusion</span>(m<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> v<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m v)) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (v)<span class="symbol">-&gt;</span>m
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">NegEnergyFunc</span>(v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (v)<span class="symbol">-&gt;</span><span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">SkewSymmetricFunc</span>(n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (v)<span class="symbol">-&gt;</span>((i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">StationarySDEParts</span>(n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> n v)) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  (<span class="type-name">NegEnergyFunc</span> v<span class="symbol">,</span> <span class="type-name">SkewSymmetricFunc</span> n v<span class="symbol">,</span> <span class="type-name">StationaryDiffusion</span> n v)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stationary_<span class="type-name">SDE</span>_parts_to_<span class="type-name">SDE</span> {n v}
-  [<span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">VSpace</span> v<span class="symbol">,</span> <span class="type-name">Mul</span> v<span class="symbol">,</span> <span class="type-name">LinearEndo</span> n (n<span class="symbol">=&gt;</span>v)]
-  ((neg_energy_func<span class="symbol">,</span> skew_symm_map<span class="symbol">,</span> diffusion_func)<span class="symbol">:</span><span class="type-name">StationarySDEParts</span> n (n<span class="symbol">=&gt;</span>v)) <span class="symbol">:</span>
-    (<span class="type-name">SDE</span> n (n<span class="symbol">=&gt;</span>v)) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> stationary_<span class="type-name">SDE</span>_parts_to_<span class="type-name">SDE</span>(
+  parts<span class="symbol">:</span><span class="type-name">StationarySDEParts</span> n (n<span class="symbol">=&gt;</span>v)
+  ) <span class="symbol">-&gt;</span> (<span class="type-name">SDE</span> n (n<span class="symbol">=&gt;</span>v)) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>) (<span class="type-name">LinearEndo</span> n (n<span class="symbol">=&gt;</span>v)) <span class="symbol">=</span>
+  (neg_energy_func<span class="symbol">,</span> skew_symm_map<span class="symbol">,</span> diffusion_func) <span class="symbol">=</span> parts
   drift <span class="symbol">=</span> <span class="symbol">\</span>state time<span class="symbol">.</span>
 
     diffusion_prod <span class="symbol">=</span> <span class="symbol">\</span>vec<span class="symbol">.</span>  <span class="comment">-- Square the root of the covariance matrix

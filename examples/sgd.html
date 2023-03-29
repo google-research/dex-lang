@@ -306,14 +306,27 @@ function render(renderMode) {
     }
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Stochastic Gradient Descent with Momentum</h1>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sgd_step {a} [<span class="type-name">VSpace</span> a] (step_size<span class="symbol">:</span> <span class="type-name">Float</span>) (decay<span class="symbol">:</span> <span class="type-name">Float</span>) (gradfunc<span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> a) (x<span class="symbol">:</span> a) (m<span class="symbol">:</span> a) (iter<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sgd_step(
+    step_size<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span>
+    decay<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span>
+    gradfunc<span class="symbol">:</span> (a<span class="symbol">,</span> <span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> a<span class="symbol">,</span>
+    x<span class="symbol">:</span> a<span class="symbol">,</span>
+    m<span class="symbol">:</span> a<span class="symbol">,</span>
+    iter<span class="symbol">:</span><span class="type-name">Nat</span>
+    ) <span class="symbol">-&gt;</span>(a<span class="symbol">,</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
   g <span class="symbol">=</span> gradfunc x iter
   new_m <span class="symbol">=</span> decay <span class="symbol">.*</span> m <span class="symbol">+</span> g
   new_x <span class="symbol">=</span> x <span class="symbol">-</span> step_size <span class="symbol">.*</span> new_m
   (new_x<span class="symbol">,</span> new_m)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- In-place optimization loop.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sgd {a} [<span class="type-name">VSpace</span> a] (step_size<span class="symbol">:</span><span class="type-name">Float</span>) (decay<span class="symbol">:</span><span class="type-name">Float</span>) (num_steps<span class="symbol">:</span><span class="type-name">Nat</span>) (gradient<span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="symbol">-&gt;</span> a) (x0<span class="symbol">:</span> a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sgd(
+    step_size<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span>
+    decay<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span>
+    num_steps<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span>
+    gradient<span class="symbol">:</span> (a<span class="symbol">,</span> <span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> a<span class="symbol">,</span>
+    x0<span class="symbol">:</span> a
+    ) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
   m0 <span class="symbol">=</span> zero
   (x_final<span class="symbol">,</span> m_final) <span class="symbol">=</span> yield_state (x0<span class="symbol">,</span> m0) <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
@@ -325,8 +338,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><h2>Example quadratic optimization problem</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">D</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 4
 </div></div><div class="cell"><div class="code-block">optimum <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">.</span> 1<span class="symbol">.</span>1
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> objective (x<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq (optimum<span class="symbol">.</span>i <span class="symbol">-</span> x<span class="symbol">.</span>i)
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gradfunc (x<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) (iter<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> grad objective x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> objective(x<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq (optimum[i] <span class="symbol">-</span> x[i])
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gradfunc(x<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> iter<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> <span class="type-name">D</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> grad objective x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Run optimizer</h2>
 </div></div><div class="cell"><div class="code-block">x_init <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">D</span><span class="symbol">.</span> 0<span class="symbol">.</span>0

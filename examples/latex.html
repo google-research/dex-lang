@@ -322,20 +322,20 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><p>$$\begin{rcases} a &amp;\text{if } b \\ c &amp;\text{if } d \end{rcases} \Rightarrow \dots$$</p>
 </div></div><div class="cell"><div class="prose-block"><h2>No LaTeX rendering in non-prose-blocks</h2>
 </div></div><div class="cell"><div class="prose-block"><p>LaTeX rendering should not occur in code blocks, nor in error output cells.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> array_sum {a} (x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Int32</span>) <span class="symbol">:</span> <span class="type-name">Int32</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> array_sum(x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Int32</span>) <span class="symbol">-&gt;</span> <span class="type-name">Int32</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="comment">-- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
 </span>  <span class="comment">-- Note: the incorrect usage of `with_state` below is intentional to verify
 </span>  <span class="comment">--       that `$ ... $` is not rendered as LaTeX in error output cells.
-</span>  snd <span class="symbol">$</span> with_state 0 <span class="symbol">$</span> <span class="symbol">\</span>acc<span class="symbol">.</span>
+</span>  snd <span class="symbol">$</span> with_state 0 <span class="symbol">\</span>acc<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
-      acc <span class="symbol">:=</span> (get acc) <span class="symbol">+</span> x<span class="symbol">.</span>i
+      acc <span class="symbol">:=</span> (get acc) <span class="symbol">+</span> x[i]
 </div><div class="err-block">Type error:
-Expected: (a.1 &amp; b)
-  Actual: (a =&gt; Unit)
+Expected: (a.1, b)
+  Actual: (a =&gt; ())
 (Solving for: [a.1, b])
 
-  snd $ with_state 0 $ \acc.
-        ^^^^^^^^^^^^^^^^^^^^^
+  snd $ with_state 0 \acc.
+        ^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2><a href="https://katex.org/docs/supported.html#annotation">Layout annotation</a></h2>
 </div></div><div class="cell"><div class="prose-block"><p>$$\overbrace{a+b+c}^{\text{note}}$$</p>

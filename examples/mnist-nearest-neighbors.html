@@ -343,33 +343,33 @@ type NTest  = 10000
 If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 findNearestNeighbor : (a -&gt; a -&gt; Float) -&gt; n=&gt;a -&gt; a -&gt; n
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">findNearestNeighbor metric xs x <span class="symbol">=</span>
   distances<span class="symbol">.</span>i <span class="symbol">=</span> metric xs<span class="symbol">.</span>i x
   argmin distances
-</div><div class="err-block">Syntax error: Illegal pattern
+</div><div class="err-block">Syntax error: Only unary constructors can form patterns without parens
 
-  distances.i = metric xs.i x
-  ^^^^^^^^^^^^
+findNearestNeighbor metric xs x =
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">:</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 </div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
 If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 imgDistance : Img -&gt; Img -&gt; Float
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> sq (x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j)
-</div><div class="err-block">Error: variable not in scope: x
+</div><div class="err-block">Syntax error: Only unary constructors can form patterns without parens
 
 imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
-                                     ^
+^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Bool</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 </div><div class="err-block">Syntax error: Colon separates binders from their type annotations, is not a standalone operator.
 If you are trying to write a dependent type, use parens: (i:Fin 4) =&gt; (..i)
 
 fracTrue : n=&gt;Bool -&gt; Float
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> i<span class="symbol">.</span> float (b2i xs<span class="symbol">.</span>i)
 </div><div class="err-block">Error: variable not in scope: float
 
@@ -431,8 +431,10 @@ closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest&#39;.i
 ^^^^^^^^^^^^^^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">==</span> ysTest&#39;<span class="symbol">.</span>i
-</div><div class="err-block">Error: variable not in scope: fracTrue
-
-:p fracTrue for i. ysTrain.(closestTrainExample.i) == ysTest&#39;.i
-   ^^^^^^^^^
+</div><div class="err-block">Parse error:42:27:
+   |
+42 | :p fracTrue for i. ysTrain.(closestTrainExample.i) == ysTest&#39;.i
+   |                           ^^
+unexpected &quot;.(&quot;
+expecting &quot;-&gt;&quot;, &quot;..&quot;, &quot;&lt;..&quot;, backquoted name, end of input, end of line, infix operator, name, or symbol name
 </div></div></div></body></html>

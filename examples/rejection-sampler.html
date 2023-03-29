@@ -307,7 +307,7 @@ function render(renderMode) {
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Rejection Sampler for a Binomial Distribution</h1>
 </div></div><div class="cell"><div class="prose-block"><p>We implement rejection sampling from a Binomial distribution using a uniform proposal.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rejectionSample {a} [<span class="type-name">Data</span> a] (try<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rejectionSample(try<span class="symbol">:</span> (<span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a<span class="symbol">,</span> k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> a  <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Data</span>) <span class="symbol">=</span>
   iter <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> try <span class="symbol">$</span> hash k i <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Continue</span>
     <span class="type-name">Just</span> x  <span class="symbol">-&gt;</span> <span class="type-name">Done</span> x
@@ -316,7 +316,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="type-name">LogProb</span> <span class="symbol">=</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- log probability density of a Binomial distribution
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logBinomialProb (n&#39;<span class="symbol">:</span><span class="type-name">Nat</span>) (p<span class="symbol">:</span><span class="type-name">Prob</span>) (counts&#39;<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">LogProb</span> <span class="symbol">=</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> logBinomialProb(n&#39;<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Prob</span><span class="symbol">,</span> counts&#39;<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> <span class="type-name">LogProb</span> <span class="symbol">=</span>
   n      <span class="symbol">=</span> n_to_f n&#39;
   counts <span class="symbol">=</span> n_to_f counts&#39;
   pSuccess <span class="symbol">=</span> log p <span class="symbol">*</span> counts
@@ -325,7 +325,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
                log1p (n))
   pSuccess <span class="symbol">+</span> pFailure <span class="symbol">-</span> normConst
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trySampleBinomial (n<span class="symbol">:</span><span class="type-name">Nat</span>) (p<span class="symbol">:</span><span class="type-name">Prob</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trySampleBinomial(n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Prob</span><span class="symbol">,</span> k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
   proposal <span class="symbol">=</span> f_to_n <span class="symbol">$</span> floor <span class="symbol">$</span> rand k1 <span class="symbol">*</span> n_to_f (n <span class="symbol">+</span> 1)
   <span class="keyword">if</span> proposal <span class="symbol">&gt;</span> n
@@ -344,30 +344,31 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">numSamples <span class="symbol">=</span> 5000
 </div></div><div class="cell"><div class="code-block">k0 <span class="symbol">=</span> new_key 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rejectionSamples <span class="symbol">=</span> rand_vec numSamples (rejectionSample <span class="symbol">$</span> trySampleBinomial n p) k0
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use currying sugar (or even better, effects)
+</span></div></div><div class="cell"><div class="code-block">rejectionSamples <span class="symbol">=</span> rand_vec numSamples (<span class="symbol">\</span>k<span class="symbol">.</span> rejectionSample (<span class="symbol">\</span>k&#39;<span class="symbol">.</span> trySampleBinomial n p k&#39;) k) k0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> slice rejectionSamples 0 <span class="symbol">$</span> <span class="type-name">Fin</span> 10
 </div><div class="result-block">[5, 3, 3, 3, 4, 4, 5, 4, 3, 3]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The Binomial distribution has mean 4 and variance 2.4.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanAndVariance {n} (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Float</span><span class="symbol">&amp;</span><span class="type-name">Float</span>) <span class="symbol">=</span> (mean xs<span class="symbol">,</span> sq <span class="symbol">$</span> std xs)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanAndVariance(xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> (mean xs<span class="symbol">,</span> sq <span class="symbol">$</span> std xs)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> meanAndVariance <span class="symbol">$</span> map n_to_f rejectionSamples
 </div><div class="result-block">(4.019, 2.434638)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Alternative: Inversion sampling</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Alternatively, we can use inversion sampling.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> binomialSample (n<span class="symbol">:</span><span class="type-name">Nat</span>) (p<span class="symbol">:</span><span class="type-name">Prob</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> binomialSample(n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Prob</span><span class="symbol">,</span> k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
   m <span class="symbol">=</span> n <span class="symbol">+</span> 1
   logprobs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> m)<span class="symbol">.</span> logBinomialProb n p <span class="symbol">$</span> ordinal i
   ordinal <span class="symbol">$</span> categorical logprobs k
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">inversionSamples <span class="symbol">=</span> rand_vec numSamples (binomialSample n p) k0
+</div></div><div class="cell"><div class="code-block">inversionSamples <span class="symbol">=</span> rand_vec numSamples (<span class="symbol">\</span>k<span class="symbol">.</span> binomialSample n p k) k0
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> slice inversionSamples 0 <span class="symbol">$</span> <span class="type-name">Fin</span> 10
 </div><div class="result-block">[6, 3, 3, 3, 4, 5, 1, 3, 3, 6]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> meanAndVariance <span class="symbol">$</span> map n_to_f inversionSamples
 </div><div class="result-block">(3.9642, 2.468519)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The following variant is guaranteed to evaluate the CDF only once.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> binomialBatch {a} [<span class="type-name">Ix</span> a] (n<span class="symbol">:</span><span class="type-name">Nat</span>) (p<span class="symbol">:</span><span class="type-name">Prob</span>) (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=&gt;</span> <span class="type-name">Nat</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> binomialBatch(n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Prob</span><span class="symbol">,</span> k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> a <span class="symbol">=&gt;</span> <span class="type-name">Nat</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   m <span class="symbol">=</span> n <span class="symbol">+</span> 1
   logprobs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> m)<span class="symbol">.</span> logBinomialProb n p <span class="symbol">$</span> ordinal i
   map ordinal <span class="symbol">$</span> categorical_batch logprobs k

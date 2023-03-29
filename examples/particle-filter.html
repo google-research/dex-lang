@@ -306,73 +306,65 @@ function render(renderMode) {
     }
 }
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Particle Filter</h1>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Distribution</span> (range<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  ( <span class="type-name">Key</span> <span class="symbol">-&gt;</span> range
-  <span class="symbol">&amp;</span> range <span class="symbol">-&gt;</span> <span class="type-name">Float</span>)  <span class="comment">-- log prob
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Model</span> (state<span class="symbol">:</span><span class="type-name">Type</span>) (observation<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  ( <span class="type-name">Distribution</span> state                   <span class="comment">-- initial state
-</span>  <span class="symbol">&amp;</span> state <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> state          <span class="comment">-- dynamics
-</span>  <span class="symbol">&amp;</span> state <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> observation)   <span class="comment">-- observations
-</span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sample {a} (d<span class="symbol">:</span> <span class="type-name">Distribution</span> a) (k<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> a <span class="symbol">=</span>
-  (sampler<span class="symbol">,</span> _) <span class="symbol">=</span> d
-  sampler k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Distribution</span>(range<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
+  sample  <span class="symbol">:</span> (<span class="type-name">Key</span>) <span class="symbol">-&gt;</span> range
+  logprob <span class="symbol">:</span> (range) <span class="symbol">-&gt;</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate {s v} [<span class="type-name">Data</span> s]
-    (model<span class="symbol">:</span> <span class="type-name">Model</span> s v) (t<span class="symbol">:</span> <span class="type-name">Nat</span>) (key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s <span class="symbol">&amp;</span> v) <span class="symbol">=</span>
-  (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Model</span>(state<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> observation<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
+  init     <span class="symbol">:</span> <span class="type-name">Distribution</span> state
+  dynamics <span class="symbol">:</span> (state) <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> state
+  observe  <span class="symbol">:</span> (state) <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> observation
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate(model<span class="symbol">:</span> <span class="type-name">Model</span> s v<span class="symbol">,</span> t<span class="symbol">:</span> <span class="type-name">Nat</span><span class="symbol">,</span> key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s<span class="symbol">,</span> v) <span class="keyword">given</span> (s<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> v) <span class="symbol">=</span>
   [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> split_key key
-  s0 <span class="symbol">=</span> sample init subkey
+  s0 <span class="symbol">=</span> model<span class="symbol">.</span>init<span class="symbol">.</span>sample(subkey)
   with_state s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key (ixkey key i)
       s <span class="symbol">=</span> get s_ref
-      s_next <span class="symbol">=</span> sample (dynamics s) k1
-      v <span class="symbol">=</span> sample (observe s) k2
+      s_next <span class="symbol">=</span> model<span class="symbol">.</span>dynamics(s)<span class="symbol">.</span>sample(k1)
+      v <span class="symbol">=</span> model<span class="symbol">.</span>observe(s)<span class="symbol">.</span>sample(k2)
       s_ref <span class="symbol">:=</span> s_next
       (s<span class="symbol">,</span> v)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> particleFilter {s a v} [<span class="type-name">Data</span> s]
-    (num_particles<span class="symbol">:</span> <span class="type-name">Nat</span>) (num_timesteps<span class="symbol">:</span> <span class="type-name">Nat</span>)
-    (model<span class="symbol">:</span> <span class="type-name">Model</span> s v)
-    (summarize<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles <span class="symbol">=&gt;</span> s) <span class="symbol">-&gt;</span> a)
-    (obs<span class="symbol">:</span> <span class="type-name">Fin</span> num_timesteps<span class="symbol">=&gt;</span>v)
-    (key<span class="symbol">:</span> <span class="type-name">Key</span>)
-    <span class="symbol">:</span> <span class="type-name">Fin</span> num_timesteps <span class="symbol">=&gt;</span> a <span class="symbol">=</span>
-  (init<span class="symbol">,</span> dynamics<span class="symbol">,</span> observe) <span class="symbol">=</span> model
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> particleFilter(
+    num_particles<span class="symbol">:</span> <span class="type-name">Nat</span><span class="symbol">,</span>
+    num_timesteps<span class="symbol">:</span> <span class="type-name">Nat</span><span class="symbol">,</span>
+    model<span class="symbol">:</span> <span class="type-name">Model</span> s v<span class="symbol">,</span>
+    summarize<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles <span class="symbol">=&gt;</span> s) <span class="symbol">-&gt;</span> a<span class="symbol">,</span>
+    obs<span class="symbol">:</span> <span class="type-name">Fin</span> num_timesteps<span class="symbol">=&gt;</span>v<span class="symbol">,</span>
+    key<span class="symbol">:</span> <span class="type-name">Key</span>
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> num_timesteps <span class="symbol">=&gt;</span> a <span class="keyword">given</span> (s<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> a<span class="symbol">,</span> v) <span class="symbol">=</span>
   [key<span class="symbol">,</span> init_key] <span class="symbol">=</span> split_key key
-  init_particles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles)<span class="symbol">.</span> sample init (ixkey init_key i)
+  init_particles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles)<span class="symbol">.</span> model<span class="symbol">.</span>init<span class="symbol">.</span>sample(ixkey init_key i)
   with_state init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
     <span class="keyword">for</span> t<span class="symbol">:</span> (<span class="type-name">Fin</span> num_timesteps)<span class="symbol">.</span>
       p_prev <span class="symbol">=</span> get p_ref
-      logLikelihoods <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> snd (observe p_prev<span class="symbol">.</span>i) obs<span class="symbol">.</span>t
+      logLikelihoods <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> model<span class="symbol">.</span>observe(p_prev[i])<span class="symbol">.</span>logprob(obs[t])
       [resample_key<span class="symbol">,</span> dynamics_key] <span class="symbol">=</span> split_key (ixkey key t)
       resampled_idxs <span class="symbol">=</span> categorical_batch logLikelihoods resample_key
-      p_resampled <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> p_prev<span class="symbol">.</span>(resampled_idxs<span class="symbol">.</span>i)
-      p_next <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> fst (dynamics p_resampled<span class="symbol">.</span>i) (ixkey dynamics_key i)
+      p_resampled <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> p_prev[resampled_idxs[i]]
+      p_next <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> model<span class="symbol">.</span>dynamics(p_resampled[i])<span class="symbol">.</span>sample(ixkey dynamics_key i)
       p_ref <span class="symbol">:=</span> p_next
       summarize p_resampled
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalDistn (mean<span class="symbol">:</span> <span class="type-name">Float</span>) (var<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Distribution</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  ( <span class="symbol">\</span>k<span class="symbol">.</span> (randn k) <span class="symbol">*</span> (sqrt var) <span class="symbol">+</span> mean
-  <span class="symbol">,</span> <span class="symbol">\</span>v<span class="symbol">.</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (sq (v <span class="symbol">-</span> mean)) <span class="symbol">/</span> var <span class="symbol">-</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> log (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> var)
-  )
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalDistn(mean<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span> var<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="type-name">Distribution</span><span class="symbol">.</span>new( <span class="symbol">\</span>k<span class="symbol">.</span> (randn k) <span class="symbol">*</span> (sqrt var) <span class="symbol">+</span> mean
+                  <span class="symbol">,</span> <span class="symbol">\</span>v<span class="symbol">.</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (sq (v <span class="symbol">-</span> mean)) <span class="symbol">/</span> var <span class="symbol">-</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> log (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> var))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">gaussModel <span class="symbol">:</span> <span class="type-name">Model</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  ( normalDistn 0<span class="symbol">.</span>1 0<span class="symbol">.</span>1
-  <span class="symbol">,</span> <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0
-  <span class="symbol">,</span> <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0
-  )
+</div></div><div class="cell"><div class="code-block">gaussModel <span class="symbol">:</span> <span class="type-name">Model</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">Model</span><span class="symbol">.</span>new(
+  normalDistn 0<span class="symbol">.</span>1 0<span class="symbol">.</span>1<span class="symbol">,</span>
+  <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0<span class="symbol">,</span>
+  <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">timesteps <span class="symbol">=</span> 10
 </div></div><div class="cell"><div class="code-block">num_particles <span class="symbol">=</span> 10000
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">truth <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> timesteps)<span class="symbol">.</span>
   s <span class="symbol">=</span> n_to_f (ordinal i)
-  (s<span class="symbol">,</span> sample (normalDistn s 1<span class="symbol">.</span>0) <span class="symbol">$</span> ixkey (new_key 0) i)
+  (s<span class="symbol">,</span> (normalDistn s 1<span class="symbol">.</span>0)<span class="symbol">.</span>sample(ixkey (new_key 0) i))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">filtered <span class="symbol">=</span> particleFilter num_particles _ gaussModel mean (map snd truth) (new_key 0)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p for i. (truth.i, filtered.i)
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p for i. (truth[i], filtered[i])
 </span></div></div></div></body></html>

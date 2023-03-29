@@ -309,23 +309,31 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> linalg
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> plot
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">ConjGradState</span>(a<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
+  x <span class="symbol">:</span> a
+  r <span class="symbol">:</span> a
+  p <span class="symbol">:</span> a
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Conjugate gradients solver
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> solve&#39; {m} (mat<span class="command">:m</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
-  x0 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:m</span><span class="symbol">.</span> 0<span class="symbol">.</span>0
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> solve&#39;(mat<span class="command">:m</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> b<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  x0 <span class="symbol">=</span> zero
   ax <span class="symbol">=</span> mat <span class="symbol">**.</span> x0
   r0 <span class="symbol">=</span> b <span class="symbol">-</span> ax
-  (xOut<span class="symbol">,</span> _<span class="symbol">,</span> _) <span class="symbol">=</span> fold (x0<span class="symbol">,</span> r0<span class="symbol">,</span> r0) <span class="symbol">$</span>
-     <span class="symbol">\</span>s<span class="command">:m</span> (x<span class="symbol">,</span> r<span class="symbol">,</span> p)<span class="symbol">.</span>
-       ap <span class="symbol">=</span> mat <span class="symbol">**.</span> p
-       alpha <span class="symbol">=</span> vdot r r <span class="symbol">/</span> vdot p ap
-       x&#39; <span class="symbol">=</span> x <span class="symbol">+</span> alpha <span class="symbol">.*</span> p
-       r&#39; <span class="symbol">=</span> r <span class="symbol">-</span> alpha <span class="symbol">.*</span> ap
-       beta <span class="symbol">=</span> vdot r&#39; r&#39; <span class="symbol">/</span> (vdot r r <span class="symbol">+</span> 0<span class="symbol">.</span>000001)
-       p&#39; <span class="symbol">=</span> r&#39; <span class="symbol">+</span> beta <span class="symbol">.*</span> p
-       (x&#39;<span class="symbol">,</span> r&#39;<span class="symbol">,</span> p&#39;)
-  xOut
+  init <span class="symbol">=</span> <span class="type-name">ConjGradState</span><span class="symbol">.</span>new(zero<span class="symbol">,</span> r0<span class="symbol">,</span> r0)
+  final <span class="symbol">=</span> fold init <span class="symbol">\</span>_<span class="command">:m</span> state<span class="symbol">.</span>
+    x <span class="symbol">=</span> state<span class="symbol">.</span>x
+    r <span class="symbol">=</span> state<span class="symbol">.</span>r
+    p <span class="symbol">=</span> state<span class="symbol">.</span>p
+    ap <span class="symbol">=</span> mat <span class="symbol">**.</span> p
+    alpha <span class="symbol">=</span> vdot r r <span class="symbol">/</span> vdot p ap
+    x&#39; <span class="symbol">=</span> x <span class="symbol">+</span> alpha <span class="symbol">.*</span> p
+    r&#39; <span class="symbol">=</span> r <span class="symbol">-</span> alpha <span class="symbol">.*</span> ap
+    beta <span class="symbol">=</span> vdot r&#39; r&#39; <span class="symbol">/</span> (vdot r r <span class="symbol">+</span> 0<span class="symbol">.</span>000001)
+    p&#39; <span class="symbol">=</span> r&#39; <span class="symbol">+</span> beta <span class="symbol">.*</span> p
+    <span class="type-name">ConjGradState</span><span class="symbol">.</span>new(x&#39;<span class="symbol">,</span> r&#39;<span class="symbol">,</span> p&#39;)
+  final<span class="symbol">.</span>x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol_solve {m} (l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> m <span class="type-name">Float</span>) (b<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> chol_solve(l<span class="symbol">:</span><span class="type-name">LowerTriMat</span> m <span class="type-name">Float</span><span class="symbol">,</span> b<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
     b&#39; <span class="symbol">=</span> forward_substitute l b
     u <span class="symbol">=</span> transpose_lower_to_upper l
     backward_substitute u b&#39;
@@ -343,23 +351,22 @@ where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda&gt;0$ and $y = (y_1,\do
 </div></div><div class="cell"><div class="code-block">noise <span class="symbol">=</span> 0<span class="symbol">.</span>1
 </div></div><div class="cell"><div class="code-block">[k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key (new_key 0)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trueFun (x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trueFun(x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   x <span class="symbol">+</span> sin (20<span class="symbol">.</span>0 <span class="symbol">*</span> x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">xs <span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> rand (ixkey k1 i)
-</div></div><div class="cell"><div class="code-block">ys <span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> trueFun xs<span class="symbol">.</span>i <span class="symbol">+</span> noise <span class="symbol">*</span> randn (ixkey k2 i)
+</div></div><div class="cell"><div class="code-block">ys <span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> trueFun xs[i] <span class="symbol">+</span> noise <span class="symbol">*</span> randn (ixkey k2 i)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Kernel ridge regression
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> regress {a} (kernel<span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) (xs<span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> a <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-    gram <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> kernel xs<span class="symbol">.</span>i xs<span class="symbol">.</span>j <span class="symbol">+</span> select (i<span class="symbol">==</span>j) 0<span class="symbol">.</span>0001 0<span class="symbol">.</span>0
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> regress(kernel<span class="symbol">:</span> (a<span class="symbol">,</span> a) <span class="symbol">-&gt;</span> <span class="type-name">Float</span><span class="symbol">,</span> xs<span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="symbol">:</span> <span class="type-name">Nx</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> (a) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (a) <span class="symbol">=</span>
+    gram <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> kernel xs[i] xs[j] <span class="symbol">+</span> select (i<span class="symbol">==</span>j) 0<span class="symbol">.</span>0001 0<span class="symbol">.</span>0
     alpha <span class="symbol">=</span> solve&#39; gram ys
-    predict <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> alpha<span class="symbol">.</span>i <span class="symbol">*</span> kernel xs<span class="symbol">.</span>i x
-    predict
+    <span class="symbol">\</span>x<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> alpha[i] <span class="symbol">*</span> kernel xs[i] x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rbf (lengthscale<span class="symbol">:</span><span class="type-name">Float</span>) (x<span class="symbol">:</span><span class="type-name">Float</span>) (y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rbf(lengthscale<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span> x<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span> y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   exp (<span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> sq ((x <span class="symbol">-</span> y) <span class="symbol">/</span> lengthscale))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">predict <span class="symbol">=</span> regress (rbf 0<span class="symbol">.</span>2) xs ys
+</div></div><div class="cell"><div class="code-block">predict <span class="symbol">=</span> regress (<span class="symbol">\</span>x y<span class="symbol">.</span> rbf 0<span class="symbol">.</span>2 x y) xs ys
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Evaluation
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">Nxtest</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 1000
@@ -375,21 +382,24 @@ where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda&gt;0$ and $y = (y_1,\do
 with the Bayes rule, gives the variance of the prediction.</p>
 </div></div><div class="cell"><div class="prose-block"><p>In this implementation, the conjugate gradient solver is replaced with the
 cholesky solver from <code>lib/linalg.dx</code> for efficiency.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gp_regress {n a} (kernel<span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) (ys<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-    <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> (<span class="type-name">Float</span><span class="symbol">&amp;</span><span class="type-name">Float</span>)) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> gp_regress(
+    kernel<span class="symbol">:</span> (a<span class="symbol">,</span> a) <span class="symbol">-&gt;</span> <span class="type-name">Float</span><span class="symbol">,</span>
+    xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a<span class="symbol">,</span>
+    ys<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+    ) <span class="symbol">-&gt;</span> ((a) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span>
     noise_var <span class="symbol">=</span> 0<span class="symbol">.</span>0001
-    gram <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> kernel xs<span class="symbol">.</span>i xs<span class="symbol">.</span>j
+    gram <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> kernel xs[i] xs[j]
     c <span class="symbol">=</span> chol (gram <span class="symbol">+</span> eye <span class="symbol">*.</span> noise_var)
     alpha <span class="symbol">=</span> chol_solve c ys
     predict <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span>
-        k&#39; <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> kernel xs<span class="symbol">.</span>i x
-        mu <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> alpha<span class="symbol">.</span>i <span class="symbol">*</span> k&#39;<span class="symbol">.</span>i
+        k&#39; <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> kernel xs[i] x
+        mu <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> alpha[i] <span class="symbol">*</span> k&#39;[i]
         alpha&#39; <span class="symbol">=</span> chol_solve c k&#39;
-        var <span class="symbol">=</span> kernel x x <span class="symbol">+</span> noise_var <span class="symbol">-</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> k&#39;<span class="symbol">.</span>i <span class="symbol">*</span> alpha&#39;<span class="symbol">.</span>i
+        var <span class="symbol">=</span> kernel x x <span class="symbol">+</span> noise_var <span class="symbol">-</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> k&#39;[i] <span class="symbol">*</span> alpha&#39;[i]
         (mu<span class="symbol">,</span> var)
     predict
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">gp_predict <span class="symbol">=</span> gp_regress (rbf 0<span class="symbol">.</span>2) xs ys
+</div></div><div class="cell"><div class="code-block">gp_predict <span class="symbol">=</span> gp_regress (<span class="symbol">\</span>x y<span class="symbol">.</span> rbf 0<span class="symbol">.</span>2 x y) xs ys
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">(gp_preds<span class="symbol">,</span> vars) <span class="symbol">=</span> unzip (map gp_predict xtest)
 </div></div><div class="cell"><div class="code-block">

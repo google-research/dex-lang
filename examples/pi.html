@@ -312,18 +312,18 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><p>$$\text{Area of unit square: } \\ A_{square} = 1$$</p>
 </div></div><div class="cell"><div class="prose-block"><p>$$\text{Compute } \pi \text{ via ratios: } \\ \frac{A_{quadrant}}{A_{square}} = \frac{\pi}{4}, \; \pi = 4 \thinspace \frac{A_{quadrant}}{A_{square}} $$</p>
 </div></div><div class="cell"><div class="prose-block"><p>To compute $\pi$, randomly sample points in the first quadrant unit square to estimate the $\frac{A_{quadrant}}{A_{square}}$ ratio. Then, multiply by $4$.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> estimatePiArea (key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> estimatePiArea(key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
   x <span class="symbol">=</span> rand k1
   y <span class="symbol">=</span> rand k2
   inBounds <span class="symbol">=</span> (sq x <span class="symbol">+</span> sq y) <span class="symbol">&lt;</span> 1<span class="symbol">.</span>0
   4<span class="symbol">.</span>0 <span class="symbol">*</span> b_to_f inBounds
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> estimatePiAvgVal (key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> estimatePiAvgVal(key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   x <span class="symbol">=</span> rand key
   4<span class="symbol">.</span>0 <span class="symbol">*</span> sqrt (1<span class="symbol">.</span>0 <span class="symbol">-</span> sq x)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanAndStdDev (n<span class="symbol">:</span><span class="type-name">Nat</span>) (f<span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> <span class="type-name">Float</span>) (key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanAndStdDev(n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> f<span class="symbol">:</span> (<span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span><span class="symbol">,</span> key<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
   samps <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span> many f key i
   (mean samps<span class="symbol">,</span> std samps)
 </div></div><div class="cell"><div class="code-block">

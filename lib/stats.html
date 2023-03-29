@@ -324,28 +324,32 @@ actual value being represented (the raw probability) can be computed with
 <code>n=&gt;LogSpace f</code>, it may be slightly more accurate and/or performant to instead
 use <code>ls_sum</code>, which applies the standard max-sweep log-sum-exp trick directly,
 rather than relying on monoid reduction using <code>add</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span> <span class="type-name">Exp</span> f
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">LogSpace</span>(a) <span class="symbol">=</span>
+  log <span class="symbol">:</span> a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Add</span> f]
-  mul <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">+</span> lb
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Exp</span>(x<span class="command">:a</span>) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> a <span class="keyword">given</span> (a) <span class="symbol">=</span> <span class="type-name">LogSpace</span><span class="symbol">.</span>new x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Mul</span>(<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Add</span>)
+  <span class="keyword">def</span> (<span class="symbol">*</span>)(x<span class="symbol">,</span> y) <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> x<span class="symbol">.</span>log <span class="symbol">+</span> y<span class="symbol">.</span>log
   one <span class="symbol">=</span> <span class="type-name">Exp</span> zero
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Fractional</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Sub</span> f]
-  divide <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> la <span class="symbol">-</span> lb
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Fractional</span>(<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Sub</span>)
+  <span class="keyword">def</span> divide(x<span class="symbol">,</span> y) <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> x<span class="symbol">.</span>log <span class="symbol">-</span> y<span class="symbol">.</span>log
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span> (<span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
-  arb <span class="symbol">=</span> <span class="symbol">\</span>k<span class="symbol">.</span> <span class="type-name">Exp</span> (randn k)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">Exp</span> (randn k)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_infinite {f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (x<span class="command">:f</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_infinite(x<span class="command">:f</span>) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Sub</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   <span class="comment">-- Note: According to this function, nan is not infinite.
 </span>  <span class="comment">-- Todo: Make polymorphic versions of these and put them in the prelude.
-</span>  infinity <span class="symbol">=</span> (divide one zero)
-  neg_infinity <span class="symbol">=</span> sub zero infinity
+</span>  infinity <span class="symbol">=</span> divide one zero
+  neg_infinity <span class="symbol">=</span> zero <span class="symbol">-</span> infinity
   x <span class="symbol">==</span> infinity <span class="symbol">||</span> x <span class="symbol">==</span> neg_infinity
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_add_exp {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (la<span class="command">:f</span>) (lb<span class="command">:f</span>) <span class="symbol">:</span> f <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_add_exp(la<span class="command">:f</span><span class="symbol">,</span> lb<span class="command">:f</span>) <span class="symbol">-&gt;</span> f
+    <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Add</span><span class="symbol">|</span><span class="type-name">Sub</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   infinity <span class="symbol">=</span> (divide one zero)
-  neg_infinity <span class="symbol">=</span> sub zero infinity
+  neg_infinity <span class="symbol">=</span> zero <span class="symbol">-</span> infinity
   <span class="keyword">if</span> la <span class="symbol">==</span> infinity <span class="symbol">&amp;&amp;</span> lb <span class="symbol">==</span> infinity
     <span class="keyword">then</span> infinity
     <span class="keyword">else</span> <span class="keyword">if</span> la <span class="symbol">==</span> neg_infinity <span class="symbol">&amp;&amp;</span> lb <span class="symbol">==</span> neg_infinity
@@ -354,108 +358,113 @@ rather than relying on monoid reduction using <code>add</code>.</p>
         <span class="keyword">then</span> la <span class="symbol">+</span> log1p (exp (lb <span class="symbol">-</span> la))
         <span class="keyword">else</span> lb <span class="symbol">+</span> log1p (exp (la <span class="symbol">-</span> lb))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span> (<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> {f} [<span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Add</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f]
-  add <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exp</span> la) (<span class="type-name">Exp</span> lb)<span class="symbol">.</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log_add_exp la lb
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span>(<span class="type-name">LogSpace</span> f) <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Add</span><span class="symbol">|</span><span class="type-name">Sub</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Ord</span>)
+  <span class="keyword">def</span> (<span class="symbol">+</span>)(x<span class="symbol">,</span> y) <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log_add_exp x<span class="symbol">.</span>log y<span class="symbol">.</span>log
   zero <span class="symbol">=</span> <span class="type-name">Exp</span> (zero <span class="symbol">-</span> (divide one zero))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_ls {f} [<span class="type-name">Floating</span> f] (a<span class="command">:f</span>) <span class="symbol">:</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> f_to_ls(a<span class="command">:f</span>) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Floating</span>)  <span class="symbol">=</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_to_f {f} [<span class="type-name">Floating</span> f] ((<span class="type-name">Exp</span> la)<span class="symbol">:</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> f <span class="symbol">=</span> exp la
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_to_f(x<span class="symbol">:</span><span class="type-name">LogSpace</span> f) <span class="symbol">-&gt;</span> f <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Floating</span>) <span class="symbol">=</span> exp x<span class="symbol">.</span>log
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ln {f} [<span class="type-name">Floating</span> f] ((<span class="type-name">Exp</span> la)<span class="symbol">:</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> f <span class="symbol">=</span> la
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ln(x<span class="symbol">:</span><span class="type-name">LogSpace</span> f) <span class="symbol">-&gt;</span> f <span class="keyword">given</span> (f<span class="symbol">|</span><span class="type-name">Floating</span>) <span class="symbol">=</span> x<span class="symbol">.</span>log
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_sum_exp {n f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>f) <span class="symbol">:</span> f <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log_sum_exp(xs<span class="command">:n</span><span class="symbol">=&gt;</span>f) <span class="symbol">-&gt;</span> f
+    <span class="keyword">given</span>(n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> f<span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Sub</span><span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   m_raw <span class="symbol">=</span> maximum xs
   m <span class="symbol">=</span> <span class="keyword">case</span> is_infinite m_raw <span class="keyword">of</span>
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> m_raw
     <span class="type-name">True</span>  <span class="symbol">-&gt;</span> zero
-  m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (xs<span class="symbol">.</span>i <span class="symbol">-</span> m))
+  m <span class="symbol">+</span> (log <span class="symbol">$</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> exp (xs[i] <span class="symbol">-</span> m))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_sum {n f} [<span class="type-name">Fractional</span> f<span class="symbol">,</span> <span class="type-name">Sub</span> f<span class="symbol">,</span> <span class="type-name">Floating</span> f<span class="symbol">,</span> <span class="type-name">Mul</span> f<span class="symbol">,</span> <span class="type-name">Ord</span> f] (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> f) <span class="symbol">:</span> <span class="type-name">LogSpace</span> f <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ls_sum(x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> f) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f
+    <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> f<span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Sub</span><span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   lx <span class="symbol">=</span> map ln x
   <span class="type-name">Exp</span> <span class="symbol">$</span> log_sum_exp lx
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Probability distributions</h2>
 <p>Simulation and evaluation of <a href="https://en.wikipedia.org/wiki/Probability_distribution">probability distributions</a>. Probability distributions which can be sampled should implement <code>Random</code>, and those which can be evaluated should implement the <code>Dist</code> interface. Distributions over an ordered space (such as typical <em>univariate</em> distributions) should also implement <code>OrderedDist</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Random</span> d a
-  draw <span class="symbol">:</span> d <span class="symbol">-&gt;</span> <span class="type-name">Key</span> <span class="symbol">-&gt;</span> a                <span class="comment">-- function for random draws
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Random</span>(d<span class="symbol">,</span> a)
+  draw <span class="symbol">:</span> (d<span class="symbol">,</span> <span class="type-name">Key</span>) <span class="symbol">-&gt;</span> a                <span class="comment">-- function for random draws
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Dist</span> d a f
-  density <span class="symbol">:</span> d <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f      <span class="comment">-- either the density function or mass function
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">Dist</span>(d<span class="symbol">,</span> a<span class="symbol">,</span> f)
+  density <span class="symbol">:</span> (d<span class="symbol">,</span> a) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f      <span class="comment">-- either the density function or mass function
 </span></div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> [<span class="type-name">Dist</span> d a f] <span class="type-name">OrderedDist</span> d a f
-  cumulative <span class="symbol">:</span> d <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f   <span class="comment">-- the cumulative distribution function (CDF)
-</span>  survivor <span class="symbol">:</span> d <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f     <span class="comment">-- the survivor function (complement of CDF)
-</span>  quantile <span class="symbol">:</span> d <span class="symbol">-&gt;</span> f <span class="symbol">-&gt;</span> a              <span class="comment">-- the quantile function (inverse CDF)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">interface</span> <span class="type-name">OrderedDist</span>(d<span class="symbol">,</span> a<span class="symbol">,</span> f<span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">Dist</span> d a f))
+  cumulative <span class="symbol">:</span> (d<span class="symbol">,</span> a) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f   <span class="comment">-- the cumulative distribution function (CDF)
+</span>  survivor   <span class="symbol">:</span> (d<span class="symbol">,</span> a) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> f   <span class="comment">-- the survivor function (complement of CDF)
+</span>  quantile   <span class="symbol">:</span> (d<span class="symbol">,</span> f) <span class="symbol">-&gt;</span> a            <span class="comment">-- the quantile function (inverse CDF)
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Univariate probability distributions</h2>
 <p>Some commonly encountered univariate distributions.</p>
 <h3>Bernoulli distribution</h3>
 <p>The <a href="https://en.wikipedia.org/wiki/Bernoulli_distribution">Bernoulli distribution</a> is parameterised by its &quot;success&quot; probability, <code>prob</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">BernoulliDist</span> <span class="symbol">=</span> <span class="type-name">Bernoulli</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Bernoulli</span> <span class="symbol">=</span>
+  prob<span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">BernoulliDist</span> <span class="type-name">Bool</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Bernoulli</span> prob) k<span class="symbol">.</span>
-    rand k <span class="symbol">&lt;</span> prob
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Bernoulli</span> <span class="symbol">,</span><span class="type-name">Bool</span>)
+  <span class="keyword">def</span> draw(bern<span class="symbol">,</span> k) <span class="symbol">=</span>
+    rand k <span class="symbol">&lt;</span> bern<span class="symbol">.</span>prob
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">BernoulliDist</span> <span class="type-name">Bool</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Bernoulli</span> prob) b<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Bernoulli</span><span class="symbol">,</span> <span class="type-name">Bool</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(bern<span class="symbol">,</span> b) <span class="symbol">=</span>
     <span class="keyword">if</span> b
-     <span class="keyword">then</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log prob
-     <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>prob)
+     <span class="keyword">then</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log bern<span class="symbol">.</span>prob
+     <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>bern<span class="symbol">.</span>prob)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">BernoulliDist</span> <span class="type-name">Bool</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Bernoulli</span> prob) b<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Bernoulli</span><span class="symbol">,</span> <span class="type-name">Bool</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(bern<span class="symbol">,</span> b) <span class="symbol">=</span>
     <span class="keyword">if</span> b
       <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>prob)
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Bernoulli</span> prob) b<span class="symbol">.</span>
+      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>bern<span class="symbol">.</span>prob)
+  <span class="keyword">def</span> survivor(bern<span class="symbol">,</span> b) <span class="symbol">=</span>
     <span class="keyword">if</span> b
       <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log prob
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Bernoulli</span> prob) q<span class="symbol">.</span>
-    q <span class="symbol">&gt;</span> (1 <span class="symbol">-</span> prob)
+      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log bern<span class="symbol">.</span>prob
+  <span class="keyword">def</span> quantile(bern<span class="symbol">,</span> q) <span class="symbol">=</span>
+    q <span class="symbol">&gt;</span> (1 <span class="symbol">-</span> bern<span class="symbol">.</span>prob)
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Binomial distribution</h3>
 <p>The <a href="https://en.wikipedia.org/wiki/Binomial_distribution">binomial distribution</a> is parameterised by the number of trials, <code>trials</code>, and the success probability, <code>prob</code>. Mean is <code>trials*prob</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">BinomialDist</span> <span class="symbol">=</span> <span class="type-name">Binomial</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Binomial</span> <span class="symbol">=</span>
+  trials <span class="symbol">:</span> <span class="type-name">Nat</span>
+  prob   <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">BinomialDist</span> <span class="type-name">Nat</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Binomial</span> trials prob) k<span class="symbol">.</span>
-    sum <span class="symbol">$</span> map b_to_n (rand_vec trials (draw <span class="symbol">$</span> <span class="type-name">Bernoulli</span> prob) k)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Binomial</span><span class="symbol">,</span> <span class="type-name">Nat</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span>
+    sum <span class="symbol">$</span> map b_to_n (rand_vec d<span class="symbol">.</span>trials (<span class="symbol">\</span>k_<span class="symbol">.</span> draw(<span class="type-name">Bernoulli</span><span class="symbol">.</span>new(d<span class="symbol">.</span>prob)<span class="symbol">,</span> k_)) k)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">BinomialDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Binomial</span> trials prob) x<span class="symbol">.</span>
-    <span class="keyword">if</span> (prob <span class="symbol">==</span> 0<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Binomial</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="keyword">if</span> (d<span class="symbol">.</span>prob <span class="symbol">==</span> 0<span class="symbol">.</span>0)
       <span class="keyword">then</span>
         <span class="keyword">if</span> (x <span class="symbol">==</span> 0)
           <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
           <span class="keyword">else</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
       <span class="keyword">else</span>
-        <span class="keyword">if</span> (prob <span class="symbol">==</span> 1<span class="symbol">.</span>0)
+        <span class="keyword">if</span> (d<span class="symbol">.</span>prob <span class="symbol">==</span> 1<span class="symbol">.</span>0)
           <span class="keyword">then</span>
-            <span class="keyword">if</span> (x <span class="symbol">==</span> trials)
+            <span class="keyword">if</span> (x <span class="symbol">==</span> d<span class="symbol">.</span>trials)
               <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
               <span class="keyword">else</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
           <span class="keyword">else</span>
-            tf <span class="symbol">=</span> n_to_f trials
+            tf <span class="symbol">=</span> n_to_f d<span class="symbol">.</span>trials
             xf <span class="symbol">=</span> n_to_f x
             <span class="keyword">if</span> (xf <span class="symbol">&gt;</span> tf)
               <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-              <span class="keyword">else</span> <span class="type-name">Exp</span> ( (xf <span class="symbol">*</span> log prob) <span class="symbol">+</span> ((tf <span class="symbol">-</span> xf) <span class="symbol">*</span> log1p (<span class="symbol">-</span>prob)) <span class="symbol">+</span>
+              <span class="keyword">else</span> <span class="type-name">Exp</span> ( (xf <span class="symbol">*</span> log d<span class="symbol">.</span>prob) <span class="symbol">+</span> ((tf <span class="symbol">-</span> xf) <span class="symbol">*</span> log1p (<span class="symbol">-</span>d<span class="symbol">.</span>prob)) <span class="symbol">+</span>
                 lgamma (tf <span class="symbol">+</span> 1) <span class="symbol">-</span> lgamma (xf <span class="symbol">+</span> 1) <span class="symbol">-</span> lgamma (tf <span class="symbol">+</span> 1 <span class="symbol">-</span> xf) )
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">BinomialDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Binomial</span> trials prob) x<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Binomial</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     xp1<span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> x <span class="symbol">+</span> 1
-    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density (<span class="type-name">Binomial</span> trials prob) (ordinal i)
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Binomial</span> trials prob) x<span class="symbol">.</span>
-    tmx <span class="symbol">=</span> trials <span class="symbol">-|</span> x
-    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> tmx)<span class="symbol">.</span> density (<span class="type-name">Binomial</span> trials prob) (x <span class="symbol">+</span> 1 <span class="symbol">+</span> ordinal i)
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Binomial</span> trials prob) q<span class="symbol">.</span>
-    tp1<span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> trials <span class="symbol">+</span> 1
-    lpdf <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> tp1)<span class="symbol">.</span> ln <span class="symbol">$</span> density (<span class="type-name">Binomial</span> trials prob) (ordinal i)
+    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density d (ordinal i)
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    tmx <span class="symbol">=</span> d<span class="symbol">.</span>trials <span class="symbol">-|</span> x
+    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> tmx)<span class="symbol">.</span> density d (x <span class="symbol">+</span> 1 <span class="symbol">+</span> ordinal i)
+  <span class="keyword">def</span> quantile(d<span class="symbol">,</span> q) <span class="symbol">=</span>
+    tp1<span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> d<span class="symbol">.</span>trials <span class="symbol">+</span> 1
+    lpdf <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> tp1)<span class="symbol">.</span> ln <span class="symbol">$</span> density d (ordinal i)
     cdf <span class="symbol">=</span> cdf_<span class="keyword">for</span>_categorical lpdf
     mi <span class="symbol">=</span> search_sorted cdf q
     ordinal <span class="symbol">$</span> from_just mi
@@ -463,91 +472,92 @@ rather than relying on monoid reduction using <code>add</code>.</p>
 
 </div></div><div class="cell"><div class="prose-block"><h3>Exponential distribution</h3>
 <p>The <a href="https://en.wikipedia.org/wiki/Exponential_distribution">exponential distribution</a> is parameterised by its <em>rate</em>, <code>rate &gt; 0</code>, so that the mean of the distribution is <code>1/rate</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ExponentialDist</span> <span class="symbol">=</span> <span class="type-name">Exponential</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Exponential</span> <span class="symbol">=</span>
+  rate <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">ExponentialDist</span> <span class="type-name">Float</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exponential</span> rate) k<span class="symbol">.</span>
-    log1p (<span class="symbol">-</span>rand k) <span class="symbol">/</span> <span class="symbol">-</span>rate
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Exponential</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span> log1p (<span class="symbol">-</span>rand k) <span class="symbol">/</span> <span class="symbol">-</span>d<span class="symbol">.</span>rate
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">ExponentialDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exponential</span> rate) x<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Exponential</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     <span class="keyword">if</span> (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)
       <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log rate <span class="symbol">-</span> (rate <span class="symbol">*</span> x)
+      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log d<span class="symbol">.</span>rate <span class="symbol">-</span> (d<span class="symbol">.</span>rate <span class="symbol">*</span> x)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">ExponentialDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exponential</span> rate) x<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Exponential</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     <span class="keyword">if</span> (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)
       <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>exp (<span class="symbol">-</span>rate <span class="symbol">*</span> x))
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exponential</span> rate) x<span class="symbol">.</span>
+      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>exp (<span class="symbol">-</span>d<span class="symbol">.</span>rate <span class="symbol">*</span> x))
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     <span class="keyword">if</span> (x <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)
       <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
-      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>rate <span class="symbol">*</span> x
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Exponential</span> rate) q<span class="symbol">.</span>
-    log1p (<span class="symbol">-</span>q) <span class="symbol">/</span> <span class="symbol">-</span>rate
+      <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>d<span class="symbol">.</span>rate <span class="symbol">*</span> x
+  <span class="keyword">def</span> quantile(d<span class="symbol">,</span> q) <span class="symbol">=</span> log1p (<span class="symbol">-</span>q) <span class="symbol">/</span> <span class="symbol">-</span>d<span class="symbol">.</span>rate
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Geometric distribution</h3>
 <p>This <a href="https://en.wikipedia.org/wiki/Geometric_distribution">geometric distribution</a> is defined as the number of trials until a success (<strong>not</strong> the number of failures). Parameterised by success probability, <code>prob</code>. Mean is <code>1/prob</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">GeometricDist</span> <span class="symbol">=</span> <span class="type-name">Geometric</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Geometric</span> <span class="symbol">=</span>
+  prob <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">GeometricDist</span> <span class="type-name">Nat</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Geometric</span> prob) k<span class="symbol">.</span>
-    f_to_n <span class="symbol">$</span> ceil <span class="symbol">$</span> log1p (<span class="symbol">-</span>rand k) <span class="symbol">/</span> log1p (<span class="symbol">-</span>prob)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Geometric</span><span class="symbol">,</span> <span class="type-name">Nat</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span> f_to_n <span class="symbol">$</span> ceil <span class="symbol">$</span> log1p (<span class="symbol">-</span>rand k) <span class="symbol">/</span> log1p (<span class="symbol">-</span>d<span class="symbol">.</span>prob)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">GeometricDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Geometric</span> prob) n<span class="symbol">.</span>
-    <span class="keyword">if</span> (prob <span class="symbol">==</span> 1)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Geometric</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> n) <span class="symbol">=</span>
+    <span class="keyword">if</span> (d<span class="symbol">.</span>prob <span class="symbol">==</span> 1)
       <span class="keyword">then</span>
         <span class="keyword">if</span> (n <span class="symbol">==</span> 1)
           <span class="keyword">then</span> <span class="type-name">Exp</span> 0
           <span class="keyword">else</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
       <span class="keyword">else</span>
         nf <span class="symbol">=</span> n_to_f n
-        <span class="type-name">Exp</span> <span class="symbol">$</span> ((nf<span class="symbol">-</span>1)<span class="symbol">*</span>log1p (<span class="symbol">-</span>prob)) <span class="symbol">+</span> log prob
+        <span class="type-name">Exp</span> <span class="symbol">$</span> ((nf<span class="symbol">-</span>1)<span class="symbol">*</span>log1p (<span class="symbol">-</span>d<span class="symbol">.</span>prob)) <span class="symbol">+</span> log d<span class="symbol">.</span>prob
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">GeometricDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Geometric</span> prob) n<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Geometric</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> n) <span class="symbol">=</span>
     nf <span class="symbol">=</span> n_to_f n
-    <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>pow (1<span class="symbol">-</span>prob) nf)
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Geometric</span> prob) n<span class="symbol">.</span>
-    <span class="type-name">Exp</span> <span class="symbol">$</span> n_to_f n <span class="symbol">*</span> log1p (<span class="symbol">-</span>prob)
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Geometric</span> prob) q<span class="symbol">.</span>
-    f_to_n <span class="symbol">$</span> ceil <span class="symbol">$</span> log1p (<span class="symbol">-</span>q) <span class="symbol">/</span> log1p (<span class="symbol">-</span>prob)
+    <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>pow (1<span class="symbol">-</span>d<span class="symbol">.</span>prob) nf)
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> n) <span class="symbol">=</span>
+    <span class="type-name">Exp</span> <span class="symbol">$</span> n_to_f n <span class="symbol">*</span> log1p (<span class="symbol">-</span>d<span class="symbol">.</span>prob)
+  <span class="keyword">def</span> quantile(d<span class="symbol">,</span> q) <span class="symbol">=</span>
+    f_to_n <span class="symbol">$</span> ceil <span class="symbol">$</span> log1p (<span class="symbol">-</span>q) <span class="symbol">/</span> log1p (<span class="symbol">-</span>d<span class="symbol">.</span>prob)
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Normal distribution</h3>
 <p>The Gaussian, or <a href="https://en.wikipedia.org/wiki/Normal_distribution">normal distribution</a> is parameterised by its <em>mean</em>, <code>loc</code>, and <em>standard deviation</em>, <code>scale</code>. ie. <strong>not</strong> variance or precision.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">NormalDist</span> <span class="symbol">=</span> <span class="type-name">Normal</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Normal</span> <span class="symbol">=</span>
+  loc <span class="symbol">:</span> <span class="type-name">Float</span>
+  scale <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">NormalDist</span> <span class="type-name">Float</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Normal</span> loc scale) k<span class="symbol">.</span>
-    loc <span class="symbol">+</span> (scale <span class="symbol">*</span> randn k)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Normal</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span> d<span class="symbol">.</span>loc <span class="symbol">+</span> (d<span class="symbol">.</span>scale <span class="symbol">*</span> randn k)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">NormalDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Normal</span> loc scale) x<span class="symbol">.</span>
-    <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (log (2 <span class="symbol">*</span> pi <span class="symbol">*</span> (sq scale)) <span class="symbol">+</span> (sq ((x <span class="symbol">-</span> loc) <span class="symbol">/</span> scale)))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Normal</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (log (2 <span class="symbol">*</span> pi <span class="symbol">*</span> (sq d<span class="symbol">.</span>scale)) <span class="symbol">+</span> (sq ((x <span class="symbol">-</span> d<span class="symbol">.</span>loc) <span class="symbol">/</span> d<span class="symbol">.</span>scale)))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">NormalDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Normal</span> loc scale) x<span class="symbol">.</span>
-    <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((loc <span class="symbol">-</span> x) <span class="symbol">/</span> (scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Normal</span> loc scale) x<span class="symbol">.</span>
-    <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((x <span class="symbol">-</span> loc) <span class="symbol">/</span> (scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>_ _<span class="symbol">.</span> todo  <span class="comment">-- Add `erfinv`.
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Normal</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((d<span class="symbol">.</span>loc <span class="symbol">-</span> x) <span class="symbol">/</span> (d<span class="symbol">.</span>scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="type-name">Exp</span> <span class="symbol">$</span> log (0<span class="symbol">.</span>5 <span class="symbol">*</span> erfc ((x <span class="symbol">-</span> d<span class="symbol">.</span>loc) <span class="symbol">/</span> (d<span class="symbol">.</span>scale <span class="symbol">*</span> sqrt(2<span class="symbol">.</span>0))))
+  <span class="keyword">def</span> quantile(_<span class="symbol">,</span> _)  <span class="symbol">=</span> todo  <span class="comment">-- Add `erfinv`.
 </span></div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Poisson distribution</h3>
 <p>The <a href="https://en.wikipedia.org/wiki/Poisson_distribution">Poisson distribution</a> is parameterised by its rate, <code>rate &gt; 0</code>. Mean is <code>rate</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">PoissonDist</span> <span class="symbol">=</span> <span class="type-name">Poisson</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Poisson</span> <span class="symbol">=</span>
+  rate <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">PoissonDist</span> <span class="type-name">Nat</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Poisson</span> rate) k<span class="symbol">.</span>
-    exp_neg_rate <span class="symbol">=</span> exp (<span class="symbol">-</span>rate)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Poisson</span><span class="symbol">,</span> <span class="type-name">Nat</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span>
+    exp_neg_rate <span class="symbol">=</span> exp (<span class="symbol">-</span>d<span class="symbol">.</span>rate)
     [current_k<span class="symbol">,</span> next_k] <span class="symbol">=</span> split_key k
     yield_state 0 <span class="symbol">\</span>ans<span class="symbol">.</span>
       with_state (rand current_k) <span class="symbol">\</span>p<span class="symbol">.</span> with_state next_k <span class="symbol">\</span>k&#39;<span class="symbol">.</span>
-        while <span class="keyword">do</span>
+        while <span class="symbol">\.</span>
           <span class="keyword">if</span> get p <span class="symbol">&gt;</span> exp_neg_rate
             <span class="keyword">then</span>
               [ck<span class="symbol">,</span> nk] <span class="symbol">=</span> split_key (get k&#39;)
@@ -558,108 +568,109 @@ rather than relying on monoid reduction using <code>add</code>.</p>
             <span class="keyword">else</span>
               <span class="type-name">False</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">PoissonDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Poisson</span> rate) n<span class="symbol">.</span>
-    <span class="keyword">if</span> ((rate <span class="symbol">==</span> 0<span class="symbol">.</span>0)<span class="symbol">&amp;&amp;</span>(n <span class="symbol">==</span> 0))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Poisson</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> n) <span class="symbol">=</span>
+    <span class="keyword">if</span> ((d<span class="symbol">.</span>rate <span class="symbol">==</span> 0<span class="symbol">.</span>0)<span class="symbol">&amp;&amp;</span>(n <span class="symbol">==</span> 0))
       <span class="keyword">then</span>
         <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
       <span class="keyword">else</span>
         nf <span class="symbol">=</span> n_to_f n
-        <span class="type-name">Exp</span> <span class="symbol">$</span> (nf <span class="symbol">*</span> log rate) <span class="symbol">-</span> rate <span class="symbol">-</span> lgamma (nf <span class="symbol">+</span> 1)
+        <span class="type-name">Exp</span> <span class="symbol">$</span> (nf <span class="symbol">*</span> log d<span class="symbol">.</span>rate) <span class="symbol">-</span> d<span class="symbol">.</span>rate <span class="symbol">-</span> lgamma (nf <span class="symbol">+</span> 1)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">PoissonDist</span> <span class="type-name">Nat</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Poisson</span> rate) x<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Poisson</span><span class="symbol">,</span> <span class="type-name">Nat</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     xp1<span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> x <span class="symbol">+</span> 1
-    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density (<span class="type-name">Poisson</span> rate) (ordinal i)
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Poisson</span> rate) x<span class="symbol">.</span>
+    ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density d (ordinal i)
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> x) <span class="symbol">=</span>
     xp1<span class="symbol">:</span><span class="type-name">Nat</span> <span class="symbol">=</span> x <span class="symbol">+</span> 1
-    cdf <span class="symbol">=</span> ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density (<span class="type-name">Poisson</span> rate) (ordinal i)
+    cdf <span class="symbol">=</span> ls_sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> xp1)<span class="symbol">.</span> density d (ordinal i)
     <span class="type-name">Exp</span> <span class="symbol">$</span> log1p (<span class="symbol">-</span>ls_to_f cdf)
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Poisson</span> rate) q<span class="symbol">.</span>
+  <span class="keyword">def</span> quantile(d<span class="symbol">,</span> q) <span class="symbol">=</span>
     yield_state (0<span class="symbol">::</span><span class="type-name">Nat</span>) <span class="symbol">\</span>x<span class="symbol">.</span>
       with_state 0<span class="symbol">.</span>0 <span class="symbol">\</span>cdf<span class="symbol">.</span>
-        while <span class="keyword">do</span>
-          cdf <span class="symbol">:=</span> (get cdf) <span class="symbol">+</span> ls_to_f (density (<span class="type-name">Poisson</span> rate) (get x))
+        while <span class="symbol">\.</span>
+          cdf <span class="symbol">:=</span> (get cdf) <span class="symbol">+</span> ls_to_f (density d (get x))
           <span class="keyword">if</span> (get cdf) <span class="symbol">&gt;</span> q
             <span class="keyword">then</span>
               <span class="type-name">False</span>
             <span class="keyword">else</span>
               x <span class="symbol">:=</span> (get x) <span class="symbol">+</span> 1
               <span class="type-name">True</span>
-</div></div><div class="cell"><div class="code-block">  
 </div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h3>Uniform distribution</h3>
 <p>The <a href="https://en.wikipedia.org/wiki/Continuous_uniform_distribution">uniform distribution</a> is continuous on an interval determined by a lower bound, <code>low</code>, and upper bound, <code>high &gt; low</code>. Mean is <code>(low+high)/2</code>.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">UniformDist</span> <span class="symbol">=</span> <span class="type-name">Uniform</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Uniform</span> <span class="symbol">=</span>
+  low  <span class="symbol">:</span> <span class="type-name">Float</span>
+  high <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span> <span class="type-name">UniformDist</span> <span class="type-name">Float</span>
-  draw <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Uniform</span> low high) k<span class="symbol">.</span>
-    low <span class="symbol">+</span> ((high <span class="symbol">-</span> low) <span class="symbol">*</span> rand k)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Random</span>(<span class="type-name">Uniform</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> draw(d<span class="symbol">,</span> k) <span class="symbol">=</span> d<span class="symbol">.</span>low <span class="symbol">+</span> ((d<span class="symbol">.</span>high <span class="symbol">-</span> d<span class="symbol">.</span>low) <span class="symbol">*</span> rand k)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span> <span class="type-name">UniformDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  density <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Uniform</span> low high) x<span class="symbol">.</span>
-    <span class="keyword">if</span> (x <span class="symbol">&gt;=</span> low)<span class="symbol">&amp;&amp;</span>(x <span class="symbol">&lt;=</span> high)
-      <span class="keyword">then</span> <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>log (high <span class="symbol">-</span> low)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Dist</span>(<span class="type-name">Uniform</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> density(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="keyword">if</span> (x <span class="symbol">&gt;=</span> d<span class="symbol">.</span>low)<span class="symbol">&amp;&amp;</span>(x <span class="symbol">&lt;=</span> d<span class="symbol">.</span>high)
+      <span class="keyword">then</span> <span class="type-name">Exp</span> <span class="symbol">$</span> <span class="symbol">-</span>log (d<span class="symbol">.</span>high <span class="symbol">-</span> d<span class="symbol">.</span>low)
       <span class="keyword">else</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span> <span class="type-name">UniformDist</span> <span class="type-name">Float</span> <span class="type-name">Float</span>
-  cumulative <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Uniform</span> low high) x<span class="symbol">.</span>
-    <span class="keyword">if</span> (x <span class="symbol">&lt;</span> low)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">OrderedDist</span>(<span class="type-name">Uniform</span><span class="symbol">,</span> <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)
+  <span class="keyword">def</span> cumulative(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="keyword">if</span> (x <span class="symbol">&lt;</span> d<span class="symbol">.</span>low)
       <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-      <span class="keyword">else</span> <span class="keyword">if</span> (x <span class="symbol">&gt;</span> high)
+      <span class="keyword">else</span> <span class="keyword">if</span> (x <span class="symbol">&gt;</span> d<span class="symbol">.</span>high)
         <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
-        <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log (x <span class="symbol">-</span> low) <span class="symbol">-</span> log (high <span class="symbol">-</span> low)
-  survivor <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Uniform</span> low high) x<span class="symbol">.</span>
-    <span class="keyword">if</span> (x <span class="symbol">&lt;</span> low)
+        <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log (x <span class="symbol">-</span> d<span class="symbol">.</span>low) <span class="symbol">-</span> log (d<span class="symbol">.</span>high <span class="symbol">-</span> d<span class="symbol">.</span>low)
+  <span class="keyword">def</span> survivor(d<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="keyword">if</span> (x <span class="symbol">&lt;</span> d<span class="symbol">.</span>low)
       <span class="keyword">then</span> <span class="type-name">Exp</span> 0<span class="symbol">.</span>0
-      <span class="keyword">else</span> <span class="keyword">if</span> (x <span class="symbol">&gt;</span> high)
+      <span class="keyword">else</span> <span class="keyword">if</span> (x <span class="symbol">&gt;</span> d<span class="symbol">.</span>high)
         <span class="keyword">then</span> <span class="type-name">Exp</span> (<span class="symbol">-</span>infinity)
-        <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log (high <span class="symbol">-</span> x) <span class="symbol">-</span> log (high <span class="symbol">-</span> low)
-  quantile <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">Uniform</span> low high) q<span class="symbol">.</span>
-    low <span class="symbol">+</span> ((high <span class="symbol">-</span> low) <span class="symbol">*</span> q)
-</div></div><div class="cell"><div class="code-block">  
+        <span class="keyword">else</span> <span class="type-name">Exp</span> <span class="symbol">$</span> log (d<span class="symbol">.</span>high <span class="symbol">-</span> x) <span class="symbol">-</span> log (d<span class="symbol">.</span>high <span class="symbol">-</span> d<span class="symbol">.</span>low)
+  <span class="keyword">def</span> quantile(d<span class="symbol">,</span> q) <span class="symbol">=</span> d<span class="symbol">.</span>low <span class="symbol">+</span> ((d<span class="symbol">.</span>high <span class="symbol">-</span> d<span class="symbol">.</span>low) <span class="symbol">*</span> q)
 </div></div><div class="cell"><div class="code-block">
+
 </div></div><div class="cell"><div class="prose-block"><h2>Data summaries</h2>
 <p>Some data summary functions. Note that <code>mean</code> is provided by the prelude.</p>
 </div></div><div class="cell"><div class="prose-block"><h3>Summaries for vector quantities</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean_and_variance {n a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean_and_variance(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> (a<span class="symbol">,</span> a) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span>) <span class="symbol">=</span>
   m <span class="symbol">=</span> mean xs
-  ss <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq (xs<span class="symbol">.</span>i <span class="symbol">-</span> m)
+  ss <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> sq (xs[i] <span class="symbol">-</span> m)
   v <span class="symbol">=</span> ss <span class="symbol">/</span> (n_to_f (size n) <span class="symbol">-</span> 1)
   (m<span class="symbol">,</span> v)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> variance {n a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> variance(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span>) <span class="symbol">=</span>
   snd <span class="symbol">$</span> mean_and_variance xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> std_dev {n a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a<span class="symbol">,</span> <span class="type-name">Floating</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> std_dev(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Floating</span>) <span class="symbol">=</span>
   sqrt <span class="symbol">$</span> variance xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> covariance {n a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> covariance(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span>) <span class="symbol">=</span>
   xm <span class="symbol">=</span> mean xs
   ym <span class="symbol">=</span> mean ys
-  ss <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> (xs<span class="symbol">.</span>i <span class="symbol">-</span> xm) <span class="symbol">*</span> (ys<span class="symbol">.</span>i <span class="symbol">-</span> ym)
+  ss <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> (xs[i] <span class="symbol">-</span> xm) <span class="symbol">*</span> (ys[i] <span class="symbol">-</span> ym)
   ss <span class="symbol">/</span> (n_to_f (size n) <span class="symbol">-</span> 1)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> correlation {n a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a<span class="symbol">,</span> <span class="type-name">Floating</span> a<span class="symbol">,</span> <span class="type-name">Fractional</span> a]
-    (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> correlation(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> a
+    <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Fractional</span>) <span class="symbol">=</span>
   divide (covariance xs ys) (std_dev xs <span class="symbol">*</span> std_dev ys)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Summaries for matrix quantities</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean_and_variance_matrix {n d a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> (d<span class="symbol">=&gt;</span>a <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
-  xsMean<span class="command">:d</span><span class="symbol">=&gt;</span>a <span class="symbol">=</span> (<span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> xs<span class="symbol">.</span>j<span class="symbol">.</span>i) <span class="symbol">/</span> n_to_f (size n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean_and_variance_matrix(xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> (d<span class="symbol">=&gt;</span>a<span class="symbol">,</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a)
+    <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
+  xsMean<span class="command">:d</span><span class="symbol">=&gt;</span>a <span class="symbol">=</span> (<span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> xs[j<span class="symbol">,</span>i]) <span class="symbol">/</span> n_to_f (size n)
   xsCov<span class="command">:d</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a <span class="symbol">=</span> (<span class="keyword">for</span> i i&#39;<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span>
-                         (xs<span class="symbol">.</span>j<span class="symbol">.</span>i&#39; <span class="symbol">-</span> xsMean<span class="symbol">.</span>i&#39;) <span class="symbol">*</span>
-                           (xs<span class="symbol">.</span>j<span class="symbol">.</span>i  <span class="symbol">-</span> xsMean<span class="symbol">.</span>i ) ) <span class="symbol">/</span> (n_to_f (size n) <span class="symbol">-</span> 1)
+                         (xs[j<span class="symbol">,</span>i&#39;] <span class="symbol">-</span> xsMean[i&#39;]) <span class="symbol">*</span>
+                         (xs[j<span class="symbol">,</span>i]  <span class="symbol">-</span> xsMean[i] ) ) <span class="symbol">/</span> (n_to_f (size n) <span class="symbol">-</span> 1)
   (xsMean<span class="symbol">,</span> xsCov)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> variance_matrix {n d a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> variance_matrix(xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a
+    <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Mul</span>)<span class="symbol">=</span>
   snd <span class="symbol">$</span> mean_and_variance_matrix xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> correlation_matrix {n d a} [<span class="type-name">VSpace</span> a<span class="symbol">,</span> <span class="type-name">Mul</span> a<span class="symbol">,</span> <span class="type-name">Floating</span> a<span class="symbol">,</span> <span class="type-name">Fractional</span> a]
-    (xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> correlation_matrix(xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> d<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span>a
+    <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">|</span><span class="type-name">Floating</span><span class="symbol">|</span><span class="type-name">Fractional</span>) <span class="symbol">=</span>
   cvm <span class="symbol">=</span> variance_matrix xs
-  <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> divide cvm<span class="symbol">.</span>i<span class="symbol">.</span>j (sqrt cvm<span class="symbol">.</span>i<span class="symbol">.</span>i <span class="symbol">*</span> sqrt cvm<span class="symbol">.</span>j<span class="symbol">.</span>j)
+  <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> divide cvm[i<span class="symbol">,</span>j] (sqrt cvm[i<span class="symbol">,</span>i] <span class="symbol">*</span> sqrt cvm[j<span class="symbol">,</span>j])
 </div></div><div class="cell"><div class="code-block">
-
 
 </div></div></div></body></html>

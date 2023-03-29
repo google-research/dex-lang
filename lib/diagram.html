@@ -308,22 +308,24 @@ function render(renderMode) {
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>Vector Graphics</h1>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">Point</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Float</span> <span class="symbol">&amp;</span> <span class="type-name">Float</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Point</span> <span class="symbol">=</span>
+ x <span class="symbol">:</span> <span class="type-name">Float</span>
+ y <span class="symbol">:</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Geom</span> <span class="symbol">=</span>
   <span class="type-name">PointGeom</span>
-  <span class="type-name">Circle</span> <span class="type-name">Float</span>
-  <span class="type-name">Rectangle</span> <span class="type-name">Float</span> <span class="type-name">Float</span>  <span class="comment">-- width, height
-</span>  <span class="type-name">Line</span> <span class="type-name">Point</span>
-  <span class="type-name">Text</span> <span class="type-name">String</span>
+  <span class="type-name">Circle</span>(<span class="type-name">Float</span>)
+  <span class="type-name">Rectangle</span>(<span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>)  <span class="comment">-- width, height
+</span>  <span class="type-name">Line</span>(<span class="type-name">Point</span>)
+  <span class="type-name">Text</span>(<span class="type-name">String</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="type-name">HtmlColor</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Word8</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showHex&quot; showHexFFI <span class="symbol">:</span> <span class="type-name">Word8</span> <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span> <span class="symbol">&amp;</span> <span class="type-name">RawPtr</span>)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">foreign</span> &quot;showHex&quot; showHexFFI <span class="symbol">:</span> (<span class="type-name">Word8</span>) <span class="symbol">-&gt;</span> {<span class="type-name">IO</span>} (<span class="type-name">Word32</span><span class="symbol">,</span> <span class="type-name">RawPtr</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showHex (x<span class="symbol">:</span><span class="type-name">Word8</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\</span>()<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showHex(x<span class="symbol">:</span><span class="type-name">Word8</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
   (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showHexFFI x
-  string_from_char_ptr n (<span class="type-name">MkPtr</span> ptr)
+  string_from_char_ptr n (<span class="type-name">Ptr</span><span class="symbol">.</span>new ptr)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">black <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8   0<span class="symbol">,</span> i_to_w8   0<span class="symbol">,</span> i_to_w8   0]
 </div></div><div class="cell"><div class="code-block">white <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8 255<span class="symbol">,</span> i_to_w8 255<span class="symbol">,</span> i_to_w8 255]
@@ -336,224 +338,236 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
  strokeColor <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
  strokeWidth <span class="symbol">:</span> <span class="type-name">Int</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">~</span>new <span class="type-name">Nothing</span> (<span class="type-name">Just</span> black) 1
+</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new <span class="type-name">Nothing</span> (<span class="type-name">Just</span> black) 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: consider sharing attributes among a set of objects for efficiency
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="type-name">MkDiagram</span> (<span class="type-name">List</span> (<span class="type-name">GeomStyle</span> <span class="symbol">&amp;</span> <span class="type-name">Point</span> <span class="symbol">&amp;</span> <span class="type-name">Geom</span>))
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  val <span class="symbol">:</span> (<span class="type-name">List</span> (<span class="type-name">GeomStyle</span><span class="symbol">,</span> <span class="type-name">Point</span><span class="symbol">,</span> <span class="type-name">Geom</span>))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span> <span class="type-name">Diagram</span>
-  mempty <span class="symbol">=</span> <span class="type-name">MkDiagram</span> mempty
-  mcombine <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkDiagram</span> d1) (<span class="type-name">MkDiagram</span> d2)<span class="symbol">.</span> <span class="type-name">MkDiagram</span> <span class="symbol">$</span> d1 <span class="symbol">&lt;&gt;</span> d2
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span>(<span class="type-name">Diagram</span>)
+  mempty <span class="symbol">=</span> <span class="type-name">Diagram</span><span class="symbol">.</span>new mempty
+  <span class="keyword">def</span> (<span class="symbol">&lt;&gt;</span>)(d1<span class="symbol">,</span> d2) <span class="symbol">=</span> <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> d1<span class="symbol">.</span>val <span class="symbol">&lt;&gt;</span> d2<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat_diagrams {n} (diagrams<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  <span class="type-name">MkDiagram</span> <span class="symbol">$</span> concat <span class="keyword">for</span> i<span class="symbol">.</span>
-    (<span class="type-name">MkDiagram</span> d) <span class="symbol">=</span> diagrams<span class="symbol">.</span>i
-    d
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat_diagrams(diagrams<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> concat <span class="keyword">for</span> i<span class="symbol">.</span> diagrams[i]<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: arbitrary affine transformations. Our current representation of
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- rectangles and circles means we can only do scale/flip/rotate90.
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Should we use lenses/isomorphisms for these instead?
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_transformation
-      (transformPoint<span class="symbol">:</span> <span class="type-name">Point</span> <span class="symbol">-&gt;</span> <span class="type-name">Point</span>)
-      (transformGeom<span class="symbol">:</span>  <span class="type-name">Geom</span> <span class="symbol">-&gt;</span> <span class="type-name">Geom</span>)
-      (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  (<span class="type-name">MkDiagram</span> (<span class="type-name">AsList</span> _ objs)) <span class="symbol">=</span> d
-  <span class="type-name">MkDiagram</span> <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
-    (attr<span class="symbol">,</span> p<span class="symbol">,</span> geom) <span class="symbol">=</span> objs<span class="symbol">.</span>i
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_transformation(
+    transformPoint<span class="symbol">:</span> (<span class="type-name">Point</span>) <span class="symbol">-&gt;</span> <span class="type-name">Point</span><span class="symbol">,</span>
+    transformGeom<span class="symbol">:</span>  (<span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Geom</span><span class="symbol">,</span>
+    d<span class="symbol">:</span><span class="type-name">Diagram</span>
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
+  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
+    (attr<span class="symbol">,</span> p<span class="symbol">,</span> geom) <span class="symbol">=</span> objs[i]
     (attr<span class="symbol">,</span> transformPoint p<span class="symbol">,</span> transformGeom geom)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">flip_y <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  apply_transformation (<span class="symbol">\</span>(x<span class="symbol">,</span>y)<span class="symbol">.</span> (x<span class="symbol">,</span> <span class="symbol">-</span>y)) <span class="symbol">\</span>geom<span class="symbol">.</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
-    <span class="type-name">PointGeom</span>     <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
-    <span class="type-name">Circle</span> r      <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> r
-    <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> w h
-    <span class="type-name">Line</span> (x<span class="symbol">,</span> y)   <span class="symbol">-&gt;</span> <span class="type-name">Line</span> (x<span class="symbol">,</span> <span class="symbol">-</span>y)
-    <span class="type-name">Text</span> x        <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> flip_y(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  <span class="keyword">def</span> flip_y_geom(geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Geom</span> <span class="symbol">=</span>
+    <span class="keyword">case</span> geom <span class="keyword">of</span>
+      <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
+      <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> r
+      <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h)
+      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)
+      <span class="type-name">Text</span> x          <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)) flip_y_geom d
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scale (s<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> (<span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span>) <span class="symbol">=</span>
-  apply_transformation ( <span class="symbol">\</span>(x<span class="symbol">,</span>y)<span class="symbol">.</span> (s <span class="symbol">*</span> x<span class="symbol">,</span> s <span class="symbol">*</span> y) ) <span class="symbol">\</span>geom<span class="symbol">.</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
-    <span class="type-name">PointGeom</span>     <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
-    <span class="type-name">Circle</span> r      <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> (s <span class="symbol">*</span> r)
-    <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> (s <span class="symbol">*</span> w) (s <span class="symbol">*</span> h)
-    <span class="type-name">Line</span> (x<span class="symbol">,</span> y)   <span class="symbol">-&gt;</span> <span class="type-name">Line</span> (s <span class="symbol">*</span> x<span class="symbol">,</span> s <span class="symbol">*</span> y)
-    <span class="type-name">Text</span> x        <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scale(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> s<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  <span class="keyword">def</span> scale_geom(geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Geom</span> <span class="symbol">=</span>
+    <span class="keyword">case</span> geom <span class="keyword">of</span>
+      <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
+      <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> (s <span class="symbol">*</span> r)
+      <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> (s <span class="symbol">*</span> w) (s <span class="symbol">*</span> h)
+      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span><span class="symbol">.</span>new(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)
+      <span class="type-name">Text</span> x          <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)) scale_geom d
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> move_xy ((offX<span class="symbol">,</span> offY) <span class="symbol">:</span> <span class="type-name">Point</span>) <span class="symbol">:</span> (<span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span>) <span class="symbol">=</span>
-  apply_transformation (<span class="symbol">\</span>(x<span class="symbol">,</span>y)<span class="symbol">.</span> (x <span class="symbol">+</span> offX<span class="symbol">,</span> y <span class="symbol">+</span> offY) ) id
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> move_xy(d<span class="symbol">:</span> <span class="type-name">Diagram</span><span class="symbol">,</span> offx<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span> offy<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x <span class="symbol">+</span> offx<span class="symbol">,</span> p<span class="symbol">.</span>y <span class="symbol">+</span> offy) ) id d
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> singleton_default (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  <span class="type-name">MkDiagram</span> <span class="symbol">$</span> to_list [(default_geom_style<span class="symbol">,</span> (0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> geom)]
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> singleton_default(geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list [(default_geom_style<span class="symbol">,</span> <span class="type-name">Point</span><span class="symbol">.</span>new(0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> geom)]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> point_diagram               <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="type-name">PointGeom</span>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> circle (r<span class="symbol">:</span><span class="type-name">Float</span>)           <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Circle</span> r
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rect   (w<span class="symbol">:</span><span class="type-name">Float</span>) (h<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Rectangle</span> w h
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> line   (p<span class="symbol">:</span><span class="type-name">Point</span>)           <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Line</span> p
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> text   (x<span class="symbol">:</span><span class="type-name">String</span>)          <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Text</span> x
+</div></div><div class="cell"><div class="code-block">point_diagram               <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="type-name">PointGeom</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> circle(r<span class="symbol">:</span><span class="type-name">Float</span>)        <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Circle</span> r
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rect(w<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span> h<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Rectangle</span> w h
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> line(p<span class="symbol">:</span><span class="type-name">Point</span>)          <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Line</span> p
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> text(x<span class="symbol">:</span><span class="type-name">String</span>)         <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Text</span> x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> update_geom (update<span class="symbol">:</span> <span class="type-name">GeomStyle</span> <span class="symbol">-&gt;</span> <span class="type-name">GeomStyle</span>) (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  (<span class="type-name">MkDiagram</span> (<span class="type-name">AsList</span> _ objs)) <span class="symbol">=</span> d
-  <span class="type-name">MkDiagram</span> <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
-    (attr       <span class="symbol">,</span> geoms) <span class="symbol">=</span> objs<span class="symbol">.</span>i
-    (update attr<span class="symbol">,</span> geoms)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> update_geom(update<span class="symbol">:</span> (<span class="type-name">GeomStyle</span>) <span class="symbol">-&gt;</span> <span class="type-name">GeomStyle</span><span class="symbol">,</span> d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
+  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
+    (       attr<span class="symbol">,</span> point<span class="symbol">,</span> geoms) <span class="symbol">=</span> objs[i]
+    (update attr<span class="symbol">,</span> point<span class="symbol">,</span> geoms)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these would be better if we had field-access-based ref projections, so we could
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- write `geom~fillColor := c` instead of unpack and packing explicitly.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_fill_color   (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
- <span class="type-name">GeomStyle</span><span class="symbol">~</span>new (<span class="type-name">Just</span> c) s<span class="symbol">~</span>strokeColor s<span class="symbol">~</span>strokeWidth
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_color (c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
- <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor (<span class="type-name">Just</span> c) s<span class="symbol">~</span>strokeWidth
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_width (w<span class="symbol">:</span><span class="type-name">Int</span>)      <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
- <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor s<span class="symbol">~</span>strokeColor w
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_stroke                 <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
- <span class="type-name">GeomStyle</span><span class="symbol">~</span>new s<span class="symbol">~</span>fillColor <span class="type-name">Nothing</span> s<span class="symbol">~</span>strokeWidth
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_fill                   <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> update_geom <span class="symbol">\</span>s<span class="symbol">.</span>
- <span class="type-name">GeomStyle</span><span class="symbol">~</span>new <span class="type-name">Nothing</span> s<span class="symbol">~</span>strokeColor s<span class="symbol">~</span>strokeWidth
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_fill_color(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_color(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeWidth) d
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_width(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> w<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor s<span class="symbol">.</span>strokeColor w) d
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_stroke(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeWidth) d
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_fill(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Serialization to SVG string</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).</p>
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> str_cat (xs<span class="symbol">:</span><span class="type-name">String</span>) (ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> xs <span class="symbol">&lt;&gt;</span> ys
+<span class="keyword">def</span> str_cat(xs<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> xs <span class="symbol">&lt;&gt;</span> ys
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;.&gt;</span>) (xs<span class="symbol">:</span><span class="type-name">String</span>) (ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> str_cat xs ys
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;.&gt;</span>)(xs<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> ys<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> str_cat xs ys
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quote (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">\</span>&quot;&quot;
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> quote(s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">\</span>&quot;&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">\</span>&quot;&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> str_space_cat_uncurried ((s1<span class="symbol">,</span>s2)<span class="symbol">:</span>(<span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">String</span>)) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+<span class="keyword">def</span> str_space_cat_uncurried(pair<span class="symbol">:</span>(<span class="type-name">String</span><span class="symbol">,</span> <span class="type-name">String</span>)) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (s1<span class="symbol">,</span> s2) <span class="symbol">=</span> pair
   s1 <span class="symbol">&lt;.&gt;</span> &quot; &quot; <span class="symbol">&lt;.&gt;</span> s2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;+&gt;</span>) {a b} [<span class="type-name">Show</span> a<span class="symbol">,</span> <span class="type-name">Show</span> b] (s1<span class="command">:a</span>) (s2<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;+&gt;</span>)(s1<span class="command">:a</span><span class="symbol">,</span> s2<span class="command">:b</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Show</span>) <span class="symbol">=</span>
   str_space_cat_uncurried ((show s1)<span class="symbol">,</span> (show s2))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> self_closing_brackets (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">&lt;</span>&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">/&gt;</span>&quot;
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> self_closing_brackets(s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> &quot;<span class="symbol">&lt;</span>&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">/&gt;</span>&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tag_brackets (tag<span class="symbol">:</span><span class="type-name">String</span>) (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tag_brackets(tag<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
   &quot;<span class="symbol">&lt;</span>&quot; <span class="symbol">&lt;.&gt;</span> tag <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&gt;</span>&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&lt;/</span>&quot; <span class="symbol">&lt;.&gt;</span> tag <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&gt;</span>&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> tag_brackets_attr_uncurried ((tag<span class="symbol">,</span> attr<span class="symbol">,</span> s)<span class="symbol">:</span>(<span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">String</span> <span class="symbol">&amp;</span> <span class="type-name">String</span>)) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+<span class="keyword">def</span> tag_brackets_attr_uncurried(triple<span class="symbol">:</span>(<span class="type-name">String</span><span class="symbol">,</span> <span class="type-name">String</span><span class="symbol">,</span> <span class="type-name">String</span>)) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (tag<span class="symbol">,</span> attr<span class="symbol">,</span> s) <span class="symbol">=</span> triple
   &quot;<span class="symbol">&lt;</span>&quot; <span class="symbol">&lt;.&gt;</span> tag <span class="symbol">&lt;+&gt;</span> attr <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&gt;</span>&quot; <span class="symbol">&lt;.&gt;</span> s <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&lt;/</span>&quot; <span class="symbol">&lt;.&gt;</span> tag <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">&gt;</span>&quot;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tag_brackets_attr (tag<span class="symbol">:</span><span class="type-name">String</span>) (attr<span class="symbol">:</span><span class="type-name">String</span>) (s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tag_brackets_attr(tag<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> attr<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> s<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
   tag_brackets_attr_uncurried (tag<span class="symbol">,</span> attr<span class="symbol">,</span> s)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;=&gt;</span>) {b} [<span class="type-name">Show</span> b] (attr<span class="symbol">:</span><span class="type-name">String</span>) (val<span class="command">:b</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;=&gt;</span>)(attr<span class="symbol">:</span><span class="type-name">String</span><span class="symbol">,</span> val<span class="command">:b</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="keyword">given</span> (b<span class="symbol">|</span><span class="type-name">Show</span>) <span class="symbol">=</span>
   attr <span class="symbol">&lt;.&gt;</span> &quot;<span class="symbol">=</span>&quot; <span class="symbol">&lt;.&gt;</span> quote (show val)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> html_color(cs<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  &quot;<span class="symbol">#</span>&quot; <span class="symbol">&lt;&gt;</span> (concat <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> showHex cs<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> html_color(cs<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  &quot;<span class="symbol">#</span>&quot; <span class="symbol">&lt;&gt;</span> (concat <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> showHex cs[i])
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> optional_html_color(c<span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> optional_html_color(c<span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
   <span class="keyword">case</span> c <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> &quot;none&quot;
     <span class="type-name">Just</span> c&#39; <span class="symbol">-&gt;</span> html_color c&#39;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> attr_string (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  (   (&quot;stroke&quot;       <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">~</span>strokeColor))
-  <span class="symbol">&lt;+&gt;</span> (&quot;fill&quot;         <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">~</span>fillColor))
-  <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (attr<span class="symbol">~</span>strokeWidth)))
+<span class="keyword">def</span> attr_string(attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (   (&quot;stroke&quot;       <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">.</span>strokeColor))
+  <span class="symbol">&lt;+&gt;</span> (&quot;fill&quot;         <span class="symbol">&lt;=&gt;</span> (optional_html_color attr<span class="symbol">.</span>fillColor))
+  <span class="symbol">&lt;+&gt;</span> (&quot;stroke<span class="symbol">-</span>width&quot; <span class="symbol">&lt;=&gt;</span> (attr<span class="symbol">.</span>strokeWidth)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> render_geom (attr<span class="symbol">:</span><span class="type-name">GeomStyle</span>) ((x<span class="symbol">,</span>y)<span class="symbol">:</span><span class="type-name">Point</span>) (geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
+<span class="keyword">def</span> render_geom(attr<span class="symbol">:</span><span class="type-name">GeomStyle</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Point</span><span class="symbol">,</span> geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
   <span class="comment">-- For things that are solid. SVG says they have fill=stroke.
-</span>  solidAttr <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">~</span>new attr<span class="symbol">~</span>strokeColor attr<span class="symbol">~</span>strokeColor attr<span class="symbol">~</span>strokeWidth
-  groupEle <span class="symbol">=</span> <span class="symbol">\</span>attr<span class="symbol">.</span> tag_brackets_attr &quot;g&quot; (attr_string attr)
+</span>  solidAttr <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeWidth
+  groupEle <span class="symbol">=</span> <span class="symbol">\</span>attr s<span class="symbol">.</span> tag_brackets_attr &quot;g&quot; (attr_string attr) s
   <span class="keyword">case</span> geom <span class="keyword">of</span>
     <span class="type-name">PointGeom</span> <span class="symbol">-&gt;</span>
       groupEle solidAttr <span class="symbol">$</span> self_closing_brackets <span class="symbol">$</span>
         (&quot;circle&quot; <span class="symbol">&lt;+&gt;</span>
-         &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>
-         &quot;cy&quot; <span class="symbol">&lt;=&gt;</span> y <span class="symbol">&lt;.&gt;</span>
+         &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>x <span class="symbol">&lt;.&gt;</span>
+         &quot;cy&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>y <span class="symbol">&lt;.&gt;</span>
          &quot;r<span class="symbol">=\</span>&quot;1<span class="symbol">\</span>&quot;&quot;)
     <span class="type-name">Circle</span> r <span class="symbol">-&gt;</span>
       groupEle attr <span class="symbol">$</span> self_closing_brackets <span class="symbol">$</span>
         (&quot;circle&quot; <span class="symbol">&lt;+&gt;</span>
-         &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>
-         &quot;cy&quot; <span class="symbol">&lt;=&gt;</span> y <span class="symbol">&lt;.&gt;</span>
+         &quot;cx&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>x <span class="symbol">&lt;.&gt;</span>
+         &quot;cy&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>y <span class="symbol">&lt;.&gt;</span>
          &quot;r&quot;  <span class="symbol">&lt;=&gt;</span> r)
-    <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span>
+    <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span>
       groupEle attr <span class="symbol">$</span> self_closing_brackets <span class="symbol">$</span>
         (&quot;rect&quot; <span class="symbol">&lt;+&gt;</span>
          &quot;width&quot;  <span class="symbol">&lt;=&gt;</span> w <span class="symbol">&lt;.&gt;</span>
          &quot;height&quot; <span class="symbol">&lt;=&gt;</span> h <span class="symbol">&lt;.&gt;</span>
-         &quot;x&quot;      <span class="symbol">&lt;=&gt;</span> (x <span class="symbol">-</span> (w<span class="symbol">/</span>2<span class="symbol">.</span>0)) <span class="symbol">&lt;.&gt;</span>
-         &quot;y&quot;      <span class="symbol">&lt;=&gt;</span> (y <span class="symbol">-</span> (h<span class="symbol">/</span>2<span class="symbol">.</span>0)))
+         &quot;x&quot;      <span class="symbol">&lt;=&gt;</span> (p<span class="symbol">.</span>x <span class="symbol">-</span> (w<span class="symbol">/</span>2<span class="symbol">.</span>0)) <span class="symbol">&lt;.&gt;</span>
+         &quot;y&quot;      <span class="symbol">&lt;=&gt;</span> (p<span class="symbol">.</span>y <span class="symbol">-</span> (h<span class="symbol">/</span>2<span class="symbol">.</span>0)))
     <span class="type-name">Text</span> content <span class="symbol">-&gt;</span>
-      textEle <span class="symbol">=</span> tag_brackets_attr &quot;text&quot; <span class="symbol">$</span>
-        (&quot;x&quot; <span class="symbol">&lt;=&gt;</span> x <span class="symbol">&lt;.&gt;</span>
-         &quot;y&quot; <span class="symbol">&lt;=&gt;</span> y <span class="symbol">&lt;.&gt;</span>
+      textEle <span class="symbol">=</span> <span class="symbol">\</span>s<span class="symbol">.</span> tag_brackets_attr(&quot;text&quot;<span class="symbol">,</span>
+        (&quot;x&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>x <span class="symbol">&lt;.&gt;</span>
+         &quot;y&quot; <span class="symbol">&lt;=&gt;</span> p<span class="symbol">.</span>y <span class="symbol">&lt;.&gt;</span>
          &quot;text<span class="symbol">-</span>anchor&quot; <span class="symbol">&lt;=&gt;</span> &quot;middle&quot; <span class="symbol">&lt;.&gt;</span>    <span class="comment">-- horizontal center
 </span>         &quot;dominant<span class="symbol">-</span>baseline&quot; <span class="symbol">&lt;=&gt;</span> &quot;middle&quot;  <span class="comment">-- vertical center
-</span>        )
+</span>        )<span class="symbol">,</span> s)
       groupEle solidAttr <span class="symbol">$</span> textEle content
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="type-name">BoundingBox</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Point</span> <span class="symbol">&amp;</span> <span class="type-name">Point</span>)
+</div></div><div class="cell"><div class="code-block"><span class="type-name">BoundingBox</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">Point</span><span class="symbol">,</span> <span class="type-name">Point</span>)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> compute_bounds (d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">:</span> <span class="type-name">BoundingBox</span> <span class="symbol">=</span>
-  computeSubBound <span class="symbol">=</span> <span class="symbol">\</span>sel op (_<span class="symbol">,</span> p<span class="symbol">,</span> geom)<span class="symbol">.</span>
-    sel p <span class="symbol">+</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
-      <span class="type-name">PointGeom</span>     <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
-      <span class="type-name">Circle</span> r      <span class="symbol">-&gt;</span> op r
-      <span class="type-name">Rectangle</span> w h <span class="symbol">-&gt;</span> op <span class="symbol">$</span> (sel (w<span class="symbol">,</span>h))<span class="symbol">/</span>2<span class="symbol">.</span>0
-      <span class="type-name">Line</span> q        <span class="symbol">-&gt;</span> op <span class="symbol">$</span> max 0<span class="symbol">.</span>0 <span class="symbol">$</span> op <span class="symbol">$</span> sel q  <span class="comment">-- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
-</span>      <span class="type-name">Text</span> _        <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0  <span class="comment">-- no size info possible as it is scale invariant
+<span class="keyword">def</span> compute_bounds(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">BoundingBox</span> <span class="symbol">=</span>
+  computeSubBound <span class="symbol">=</span> <span class="symbol">\</span>sel op<span class="symbol">.</span>
+    <span class="symbol">\</span>triple<span class="symbol">.</span>
+      (_<span class="symbol">,</span> p<span class="symbol">,</span> geom) <span class="symbol">=</span> triple
+      sel p <span class="symbol">+</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
+        <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
+        <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> op r
+        <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> op <span class="symbol">$</span> (sel <span class="type-name">Point</span><span class="symbol">.</span>new(w<span class="symbol">,</span>h))<span class="symbol">/</span>2<span class="symbol">.</span>0
+        <span class="type-name">Line</span> q          <span class="symbol">-&gt;</span> op <span class="symbol">$</span> max 0<span class="symbol">.</span>0 <span class="symbol">$</span> op <span class="symbol">$</span> sel q  <span class="comment">-- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
+</span>        <span class="type-name">Text</span> _          <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0  <span class="comment">-- no size info possible as it is scale invariant
 </span>
-  (<span class="type-name">MkDiagram</span> (<span class="type-name">AsList</span> _ objs)) <span class="symbol">=</span> d
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
   (
-    (
-      minimum <span class="symbol">$</span> map (computeSubBound fst neg) objs<span class="symbol">,</span>
-      minimum <span class="symbol">$</span> map (computeSubBound snd neg) objs
+    <span class="type-name">Point</span><span class="symbol">.</span>new(
+      minimum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>x) neg) objs<span class="symbol">,</span>
+      minimum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>y) neg) objs
     )<span class="symbol">,</span>
-    (
-      maximum <span class="symbol">$</span> map (computeSubBound fst id)  objs<span class="symbol">,</span>
-      maximum <span class="symbol">$</span> map (computeSubBound snd id)  objs
+    <span class="type-name">Point</span><span class="symbol">.</span>new(
+      maximum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>x) id)  objs<span class="symbol">,</span>
+      maximum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>y) id)  objs
     )
   )
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
-<span class="keyword">def</span> render_svg (d<span class="symbol">:</span><span class="type-name">Diagram</span>) (bounds<span class="symbol">:</span><span class="type-name">BoundingBox</span>) <span class="symbol">:</span> <span class="type-name">String</span> <span class="symbol">=</span>
-  ((xmin<span class="symbol">,</span> ymin)<span class="symbol">,</span> (xmax<span class="symbol">,</span> ymax)) <span class="symbol">=</span> bounds
+<span class="keyword">def</span> render_svg(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> bounds<span class="symbol">:</span><span class="type-name">BoundingBox</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
+  (min<span class="symbol">,</span> max) <span class="symbol">=</span> bounds
   imgWidth <span class="symbol">=</span> 400<span class="symbol">.</span>0
-  scaleFactor <span class="symbol">=</span> imgWidth <span class="symbol">/</span> (xmax <span class="symbol">-</span> xmin)
-  imgHeight <span class="symbol">=</span> (ymax <span class="symbol">-</span> ymin) <span class="symbol">*</span> scaleFactor
-  imgXMin   <span class="symbol">=</span>  xmin <span class="symbol">*</span> scaleFactor
-  imgYMin   <span class="symbol">=</span> <span class="symbol">-</span>ymax <span class="symbol">*</span> scaleFactor
-  (<span class="type-name">MkDiagram</span> (<span class="type-name">AsList</span> _ objs)) <span class="symbol">=</span> d <span class="symbol">|&gt;</span> flip_y <span class="symbol">|&gt;</span> scale scaleFactor
+  scaleFactor <span class="symbol">=</span> imgWidth <span class="symbol">/</span> (max<span class="symbol">.</span>x <span class="symbol">-</span> min<span class="symbol">.</span>x)
+  imgHeight <span class="symbol">=</span> (max<span class="symbol">.</span>y <span class="symbol">-</span> min<span class="symbol">.</span>y) <span class="symbol">*</span> scaleFactor
+  imgXMin   <span class="symbol">=</span>  min<span class="symbol">.</span>x <span class="symbol">*</span> scaleFactor
+  imgYMin   <span class="symbol">=</span> <span class="symbol">-</span>max<span class="symbol">.</span>y <span class="symbol">*</span> scaleFactor
+  <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> (d <span class="symbol">|</span> flip_y <span class="symbol">|</span> scale(scaleFactor))<span class="symbol">.</span>val
   svgAttrStr <span class="symbol">=</span> (    &quot;width&quot;   <span class="symbol">&lt;=&gt;</span> imgWidth
                 <span class="symbol">&lt;+&gt;</span> &quot;height&quot;  <span class="symbol">&lt;=&gt;</span> imgHeight
                 <span class="symbol">&lt;+&gt;</span> &quot;viewBox&quot; <span class="symbol">&lt;=&gt;</span> (imgXMin <span class="symbol">&lt;+&gt;</span> imgYMin <span class="symbol">&lt;+&gt;</span> imgWidth <span class="symbol">&lt;+&gt;</span> imgHeight))
   tag_brackets_attr &quot;svg&quot; svgAttrStr <span class="symbol">$</span>
     concat <span class="keyword">for</span> i<span class="symbol">.</span>
-      (attr<span class="symbol">,</span> pos<span class="symbol">,</span> geom) <span class="symbol">=</span> objs<span class="symbol">.</span>i
+      (attr<span class="symbol">,</span> pos<span class="symbol">,</span> geom) <span class="symbol">=</span> objs[i]
       render_geom attr pos geom
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">render_scaled_svg <span class="symbol">=</span> <span class="symbol">\</span>d<span class="symbol">.</span> render_svg d (compute_bounds d)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Derived convenience methods and combinators</h2>
-</div></div><div class="cell"><div class="code-block">move_x <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> move_xy (x<span class="symbol">,</span> 0<span class="symbol">.</span>0)
-</div></div><div class="cell"><div class="code-block">move_y <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> <span class="symbol">\</span>y<span class="symbol">.</span> move_xy (0<span class="symbol">.</span>0<span class="symbol">,</span> y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> move_x(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> x<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> move_xy(d<span class="symbol">,</span> x<span class="symbol">,</span> 0<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> move_y(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> y<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> move_xy(d<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Demos</h2>
 </div></div><div class="cell"><div class="prose-block"><p>A generic diagram</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span>
   mydiagram <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> (
-     (circle 7<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0)
-       <span class="symbol">|&gt;</span> set_fill_color blue <span class="symbol">|&gt;</span> set_stroke_color red)
-  <span class="symbol">&lt;&gt;</span> (circle 5<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (40<span class="symbol">.</span>0<span class="symbol">,</span> 41<span class="symbol">.</span>0))
-  <span class="symbol">&lt;&gt;</span> (rect  10<span class="symbol">.</span>0 20<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> move_xy (5<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color red)
-  <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot;  <span class="symbol">|&gt;</span> move_xy (30<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color green)
-  <span class="symbol">&lt;&gt;</span> (point_diagram <span class="symbol">|&gt;</span> move_xy (15<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0) <span class="symbol">|&gt;</span> set_stroke_color red)
+     (circle 7<span class="symbol">.</span>0 <span class="symbol">|</span> move_xy(20<span class="symbol">.</span>0<span class="symbol">,</span> 20<span class="symbol">.</span>0)
+       <span class="symbol">|</span> set_fill_color blue <span class="symbol">|</span> set_stroke_color red)
+  <span class="symbol">&lt;&gt;</span> (circle 5<span class="symbol">.</span>0 <span class="symbol">|</span> move_xy(40<span class="symbol">.</span>0<span class="symbol">,</span> 41<span class="symbol">.</span>0))
+  <span class="symbol">&lt;&gt;</span> (rect  10<span class="symbol">.</span>0 20<span class="symbol">.</span>0 <span class="symbol">|</span> move_xy(5<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0)  <span class="symbol">|</span> set_stroke_color red)
+  <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot;  <span class="symbol">|</span> move_xy(30<span class="symbol">.</span>0<span class="symbol">,</span> 10<span class="symbol">.</span>0) <span class="symbol">|</span> set_stroke_color green)
+  <span class="symbol">&lt;&gt;</span> (point_diagram   <span class="symbol">|</span> move_xy(15<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0)  <span class="symbol">|</span> set_stroke_color red)
   )
   render_scaled_svg mydiagram
 </div><svg width="400" height="408.888916" viewBox="0 -408.888916 400 408.888916"><g stroke="#FF0000" fill="#0000FF" stroke-width="1"><circle cx="177.777786"cy="-177.777786"r="62.2222252"/></g><g stroke="#000000" fill="none" stroke-width="1"><circle cx="355.555573"cy="-364.444458"r="44.4444466"/></g><g stroke="#FF0000" fill="none" stroke-width="1"><rect width="88.8888931"height="177.777786"x="0"y="-177.777786"/></g><g stroke="#00FF00" fill="#00FF00" stroke-width="1"><text x="266.666687"y="-88.8888931"text-anchor="middle"dominant-baseline="middle">DexLang</text></g><g stroke="#FF0000" fill="#FF0000" stroke-width="1"><circle cx="133.333344"cy="-44.4444466"r="1"/></g></svg></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Another diagram, showing things are all center aligned</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span>
   concentric_diagram <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> (
-       (rect 2<span class="symbol">.</span>0 2<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> set_fill_color red)
-    <span class="symbol">&lt;&gt;</span> (circle 1<span class="symbol">.</span>0 <span class="symbol">|&gt;</span> set_fill_color blue)
-    <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot; <span class="symbol">|&gt;</span> set_stroke_color white)
-  ) <span class="symbol">|&gt;</span> move_xy (5<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0)
+       (rect 2<span class="symbol">.</span>0 2<span class="symbol">.</span>0 <span class="symbol">|</span> set_fill_color red)
+    <span class="symbol">&lt;&gt;</span> (circle 1<span class="symbol">.</span>0 <span class="symbol">|</span> set_fill_color blue)
+    <span class="symbol">&lt;&gt;</span> (text &quot;<span class="type-name">DexLang</span>&quot; <span class="symbol">|</span> set_stroke_color white)
+  ) <span class="symbol">|</span> move_xy(5<span class="symbol">.</span>0<span class="symbol">,</span> 5<span class="symbol">.</span>0)
   render_scaled_svg concentric_diagram
 </div><svg width="400" height="400" viewBox="800 -1200 400 400"><g stroke="#000000" fill="#FF0000" stroke-width="1"><rect width="400"height="400"x="800"y="-1200"/></g><g stroke="#000000" fill="#0000FF" stroke-width="1"><circle cx="1000"cy="-1000"r="200"/></g><g stroke="#FFFFFF" fill="#FFFFFF" stroke-width="1"><text x="1000"y="-1000"text-anchor="middle"dominant-baseline="middle">DexLang</text></g></svg></div></div></body></html>

@@ -308,7 +308,7 @@ function render(renderMode) {
 render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>PSD Solver Based on Cholesky Decomposition</h1>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> linalg
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> psdsolve {n} (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> psdsolve(mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> b<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   l <span class="symbol">=</span> chol mat
   b&#39; <span class="symbol">=</span> forward_substitute l b
   u <span class="symbol">=</span> transpose_lower_to_upper l
@@ -323,10 +323,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   x <span class="symbol">=</span> a <span class="symbol">**</span> transpose a
   x <span class="symbol">+</span> eye
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> padLowerTriMat {n v} [<span class="type-name">Add</span> v] (mat<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> padLowerTriMat(mat<span class="symbol">:</span><span class="type-name">LowerTriMat</span> n v) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Add</span>) <span class="symbol">=</span>
   <span class="keyword">for</span> i j<span class="symbol">.</span>
     <span class="keyword">if</span> (ordinal j)<span class="symbol">&lt;=</span>(ordinal i)
-      <span class="keyword">then</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>(unsafe_project _ j)
+      <span class="keyword">then</span> mat[i<span class="symbol">,</span>unsafe_project j]
       <span class="keyword">else</span> zero
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">l <span class="symbol">=</span> chol psd
@@ -335,7 +335,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div><div class="result-block">[[1.621016, 0., 0., 0.], [0.7793013, 2.965358, 0., 0.], [-0.6449394, 1.054188, 2.194109, 0.], [0.1620137, -1.009056, -1.49802, 1.355752]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">psdReconstructed <span class="symbol">=</span> l_full <span class="symbol">**</span> transpose l_full
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span> j)<span class="symbol">.</span> sq (psd<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> psdReconstructed<span class="symbol">.</span>i<span class="symbol">.</span>j)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sum <span class="keyword">for</span> pair<span class="symbol">.</span>
+  (i<span class="symbol">,</span> j) <span class="symbol">=</span> pair
+  sq (psd[i<span class="symbol">,</span>j] <span class="symbol">-</span> psdReconstructed[i<span class="symbol">,</span>j])
 </div><div class="result-block">3.979039e-13</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">vec <span class="symbol">:</span> <span class="type-name">N</span><span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span> arb k2
 </div></div><div class="cell"><div class="code-block">

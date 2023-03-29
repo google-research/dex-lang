@@ -325,25 +325,25 @@ most implementations.</p>
 <p>Here we create a custom datatype and index set
 that interleaves the elements of a table with another set
 of values representing all the spaces in between those elements.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">FenceAndPosts</span> n [<span class="type-name">Ix</span> n] <span class="symbol">=</span>
-  <span class="type-name">Fence</span> n
-  <span class="type-name">Posts</span> (<span class="type-name">Post</span> n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">FenceAndPosts</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  <span class="type-name">Fence</span>(n)
+  <span class="type-name">Posts</span>(<span class="type-name">Post</span> n)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a}
-  size <span class="symbol">=</span> 2 <span class="symbol">*</span> size a <span class="symbol">+</span> 1
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>i<span class="symbol">.</span> <span class="keyword">case</span> i <span class="keyword">of</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span>(<span class="type-name">FenceAndPosts</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> size&#39;() <span class="symbol">=</span> 2 <span class="symbol">*</span> size n <span class="symbol">+</span> 1
+  <span class="keyword">def</span> ordinal(i) <span class="symbol">=</span> <span class="keyword">case</span> i <span class="keyword">of</span>
     <span class="type-name">Fence</span> j <span class="symbol">-&gt;</span> 2 <span class="symbol">*</span> ordinal j <span class="symbol">+</span> 1
     <span class="type-name">Posts</span> j <span class="symbol">-&gt;</span> 2 <span class="symbol">*</span> ordinal j
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span>
+  <span class="keyword">def</span> unsafe_from_ordinal(o) <span class="symbol">=</span>
     <span class="keyword">case</span> is_odd o <span class="keyword">of</span>
-      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Fence</span> <span class="symbol">$</span> unsafe_from_ordinal _ (intdiv2 o)
-      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Posts</span> <span class="symbol">$</span> unsafe_from_ordinal _ (intdiv2 o)
+      <span class="type-name">True</span>  <span class="symbol">-&gt;</span> <span class="type-name">Fence</span> <span class="symbol">$</span> unsafe_from_ordinal (intdiv2 o)
+      <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Posts</span> <span class="symbol">$</span> unsafe_from_ordinal (intdiv2 o)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a}
-  first_ix <span class="symbol">=</span> unsafe_from_ordinal _ 0
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">NonEmpty</span>(<span class="type-name">FenceAndPosts</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
+  first_ix <span class="symbol">=</span> unsafe_from_ordinal 0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
-  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>x y<span class="symbol">.</span> <span class="keyword">case</span> x <span class="keyword">of</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span>(<span class="type-name">FenceAndPosts</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">|</span><span class="type-name">Eq</span>)
+  <span class="keyword">def</span> (<span class="symbol">==</span>)(x<span class="symbol">,</span> y) <span class="symbol">=</span> <span class="keyword">case</span> x <span class="keyword">of</span>
     <span class="type-name">Fence</span> x <span class="symbol">-&gt;</span> <span class="keyword">case</span> y <span class="keyword">of</span>
       <span class="type-name">Fence</span> y <span class="symbol">-&gt;</span> x <span class="symbol">==</span> y
       <span class="type-name">Posts</span> y <span class="symbol">-&gt;</span> <span class="type-name">False</span>
@@ -353,105 +353,104 @@ of values representing all the spaces in between those elements.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Test FenceAndPosts</h4>
 </div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">FenceAndPosts</span> <span class="type-name">Bool</span>)<span class="symbol">.</span>
-  i <span class="symbol">==</span> (unsafe_from_ordinal _ <span class="symbol">$</span> ordinal i)
+  i <span class="symbol">==</span> (unsafe_from_ordinal <span class="symbol">$</span> ordinal i)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>All but First</h3>
 <p>Next we make an index set from any non-empty set
 that doesn't contain the first element.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">AllButFirst</span> n [<span class="type-name">NonEmpty</span> n] <span class="symbol">=</span>
-  <span class="type-name">MkAllButFirst</span> n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">AllButFirst</span>(n<span class="symbol">|</span><span class="type-name">NonEmpty</span>) <span class="symbol">=</span>
+  val <span class="symbol">:</span> n
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">AllButFirst</span> a) <span class="keyword">given</span> {a}
-  size <span class="symbol">=</span> unsafe_nat_diff (size a) 1
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkAllButFirst</span> i)<span class="symbol">.</span> ordinal i
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>o<span class="symbol">.</span> <span class="type-name">MkAllButFirst</span> <span class="symbol">$</span> unsafe_from_ordinal _ o
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span>(<span class="type-name">AllButFirst</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">|</span><span class="type-name">NonEmpty</span>)
+  <span class="keyword">def</span> size&#39;() <span class="symbol">=</span> unsafe_nat_diff (size n) 1
+  <span class="keyword">def</span> ordinal(i) <span class="symbol">=</span> ordinal i<span class="symbol">.</span>val
+  <span class="keyword">def</span> unsafe_from_ordinal(o) <span class="symbol">=</span> <span class="type-name">AllButFirst</span><span class="symbol">.</span>new <span class="symbol">$</span> unsafe_from_ordinal o
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span> (<span class="type-name">AllButFirst</span> a) a <span class="keyword">given</span> {a}
-  inject&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> unsafe_from_ordinal _ ((ordinal x) <span class="symbol">+</span> 1)
-  project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> (ordinal x) <span class="symbol">&gt;</span> 0 <span class="keyword">of</span>
-    <span class="type-name">True</span> <span class="symbol">-&gt;</span> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span>(<span class="type-name">AllButFirst</span> a<span class="symbol">,</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">NonEmpty</span>)
+  <span class="keyword">def</span> inject&#39;(x) <span class="symbol">=</span> unsafe_from_ordinal ((ordinal x) <span class="symbol">+</span> 1)
+  <span class="keyword">def</span> project&#39;(x) <span class="symbol">=</span> <span class="keyword">case</span> ordinal x <span class="symbol">&gt;</span> 0 <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> unsafe_from_ordinal (unsafe_nat_diff (ordinal x) 1)
     <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-  unsafe_project&#39; <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span>
-    unsafe_from_ordinal _ (unsafe_nat_diff (ordinal x) 1)
+  <span class="keyword">def</span> unsafe_project&#39;(x) <span class="symbol">=</span> unsafe_from_ordinal (unsafe_nat_diff (ordinal x) 1)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">AllButFirst</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
-  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">MkAllButFirst</span> x) (<span class="type-name">MkAllButFirst</span> y)<span class="symbol">.</span> x <span class="symbol">==</span> y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span>(<span class="type-name">AllButFirst</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">|</span><span class="type-name">NonEmpty</span>)
+  <span class="keyword">def</span> (<span class="symbol">==</span>)(x<span class="symbol">,</span> y) <span class="symbol">=</span> x<span class="symbol">.</span>val <span class="symbol">==</span> y<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h4>Test AllButFirst</h4>
-</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Unit</span> <span class="symbol">|</span> <span class="type-name">Fin</span> 2))<span class="symbol">.</span>
-  i <span class="symbol">==</span> (unsafe_from_ordinal _ <span class="symbol">$</span> ordinal i)
+</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (() `<span class="type-name">Either</span>` <span class="type-name">Fin</span> 2))<span class="symbol">.</span>
+  i <span class="symbol">==</span> (unsafe_from_ordinal <span class="symbol">$</span> ordinal i)
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>))<span class="symbol">.</span>
-  <span class="type-name">Just</span> i <span class="symbol">==</span> (project _ <span class="symbol">$</span> inject (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>) i)
+</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span>))<span class="symbol">.</span>
+  <span class="type-name">Just</span> i <span class="symbol">==</span> (project <span class="symbol">$</span> inject(to<span class="symbol">=</span><span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span><span class="symbol">,</span> i))
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>))<span class="symbol">.</span>
-  i <span class="symbol">==</span> (unsafe_project _ <span class="symbol">$</span> inject (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>) i)
+</div></div><div class="cell"><div class="code-block">all <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span>))<span class="symbol">.</span>
+  i <span class="symbol">==</span> (unsafe_project <span class="symbol">$</span> inject(to<span class="symbol">=</span><span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span><span class="symbol">,</span> i))
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>))<span class="symbol">.</span>
-  inject (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>) i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span>))<span class="symbol">.</span>
+  inject(to<span class="symbol">=</span><span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span><span class="symbol">,</span> i)
 </div><div class="result-block">[(Left True), (Right False), (Right True)]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">project (<span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>)) (0<span class="symbol">@</span>(<span class="type-name">Bool</span> <span class="symbol">|</span> <span class="type-name">Bool</span>))
+</div></div><div class="cell"><div class="code-block">project(to<span class="symbol">=</span><span class="type-name">AllButFirst</span> (<span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span>)<span class="symbol">,</span> 0<span class="symbol">@</span>(<span class="type-name">Bool</span> `<span class="type-name">Either</span>` <span class="type-name">Bool</span>))
 </div><div class="result-block">Nothing</div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Helper functions</h3>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interleave_blanks {m v} (blank<span class="command">:v</span>) (seq<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> ((<span class="type-name">FenceAndPosts</span> m)<span class="symbol">=&gt;</span>v) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> interleave_blanks(blank<span class="command">:v</span><span class="symbol">,</span> seq<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> (<span class="type-name">FenceAndPosts</span> m)<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v) <span class="symbol">=</span>
   <span class="comment">-- Turns &quot;text&quot; into &quot; t e x t &quot;.
 </span>  <span class="keyword">for</span> idx<span class="symbol">.</span> <span class="keyword">case</span> idx <span class="keyword">of</span>
-    <span class="type-name">Fence</span> i <span class="symbol">-&gt;</span> seq<span class="symbol">.</span>i
+    <span class="type-name">Fence</span> i <span class="symbol">-&gt;</span> seq[i]
     <span class="type-name">Posts</span> i <span class="symbol">-&gt;</span> blank
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize {n v} [<span class="type-name">Fractional</span> v<span class="symbol">,</span> <span class="type-name">Add</span> v] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalize(xs<span class="command">:n</span><span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Fractional</span><span class="symbol">|</span><span class="type-name">Add</span>) <span class="symbol">=</span>
   total <span class="symbol">=</span> sum xs
-  <span class="keyword">for</span> i<span class="symbol">.</span> divide xs<span class="symbol">.</span>i total
+  <span class="keyword">for</span> i<span class="symbol">.</span> divide xs[i] total
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Main CTC algorithm</h3>
 <p>Computes <code>p(labels | logits)</code>, marginalizing over possible alignments,
 and over insertion of blanks between characters.
 Todo: add a <code>[Subset position time]</code> constraint.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ctc_non_empty {vocab time position}
-  [<span class="type-name">NonEmpty</span> vocab<span class="symbol">,</span> <span class="type-name">NonEmpty</span> position<span class="symbol">,</span> <span class="type-name">NonEmpty</span> time<span class="symbol">,</span> <span class="type-name">Eq</span> time<span class="symbol">,</span> <span class="type-name">Eq</span> vocab]
-    (blank<span class="symbol">:</span> vocab)
-    (logits<span class="symbol">:</span> time<span class="symbol">=&gt;</span>vocab<span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
-    (labels<span class="symbol">:</span> position<span class="symbol">=&gt;</span>vocab)
-      <span class="symbol">:</span> <span class="type-name">LogSpace</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ctc_non_empty(
+    blank<span class="symbol">:</span> vocab<span class="symbol">,</span>
+    logits<span class="symbol">:</span> time<span class="symbol">=&gt;</span>vocab<span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> <span class="type-name">Float</span><span class="symbol">,</span>
+    labels<span class="symbol">:</span> position<span class="symbol">=&gt;</span>vocab
+    ) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> <span class="type-name">Float</span>
+    <span class="keyword">given</span> (vocab<span class="symbol">|</span><span class="type-name">NonEmpty</span><span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">,</span> time<span class="symbol">|</span><span class="type-name">NonEmpty</span><span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">,</span> position<span class="symbol">|</span><span class="type-name">NonEmpty</span>) <span class="symbol">=</span>
   ilabels <span class="symbol">=</span> interleave_blanks blank labels
-  label_probs <span class="symbol">=</span> <span class="keyword">for</span> t<span class="symbol">.</span> normalize logits<span class="symbol">.</span>t
+  label_probs <span class="symbol">=</span> <span class="keyword">for</span> t<span class="symbol">.</span> normalize logits[t]
 
   <span class="comment">-- Initialize dynamic programming table to all zeros
 </span>  <span class="comment">-- except for starting with either a blank or the first token.
 </span>  prob_seq_at_start <span class="symbol">=</span> yield_state zero <span class="symbol">\</span>lpRef<span class="symbol">.</span>
-    lpRef<span class="symbol">!</span>(<span class="type-name">Posts</span> first_ix) <span class="symbol">:=</span> label_probs<span class="symbol">.</span>first_ix<span class="symbol">.</span>blank
-    lpRef<span class="symbol">!</span>(<span class="type-name">Fence</span> first_ix) <span class="symbol">:=</span> label_probs<span class="symbol">.</span>first_ix<span class="symbol">.</span>(labels<span class="symbol">.</span>first_ix)
+    lpRef<span class="symbol">!</span>(<span class="type-name">Posts</span> first_ix) <span class="symbol">:=</span> label_probs[first_ix<span class="symbol">,</span>blank]
+    lpRef<span class="symbol">!</span>(<span class="type-name">Fence</span> first_ix) <span class="symbol">:=</span> label_probs[first_ix<span class="symbol">,</span>labels[first_ix]]
 
   safe_idx_sub <span class="symbol">=</span> <span class="symbol">\</span>prev s y<span class="symbol">.</span>
     <span class="keyword">if</span> (ordinal s) <span class="symbol">&lt;</span> y
       <span class="keyword">then</span> zero
-      <span class="keyword">else</span> prev<span class="symbol">.</span>(unsafe_from_ordinal _ (unsafe_nat_diff (ordinal s) y))
+      <span class="keyword">else</span> prev[unsafe_from_ordinal (unsafe_nat_diff (ordinal s) y)]
 
   same_token_as_last <span class="symbol">=</span> <span class="symbol">\</span>s<span class="symbol">.</span> <span class="keyword">if</span> (ordinal s) <span class="symbol">&gt;=</span> 2
     <span class="keyword">then</span>
-      s_minus_2 <span class="symbol">=</span> unsafe_from_ordinal _ (unsafe_nat_diff (ordinal s) 2)
-      ilabels<span class="symbol">.</span>s <span class="symbol">==</span> ilabels<span class="symbol">.</span>s_minus_2
+      s_minus_2 <span class="symbol">=</span> unsafe_from_ordinal (unsafe_nat_diff (ordinal s) 2)
+      ilabels[s] <span class="symbol">==</span> ilabels[s_minus_2]
     <span class="keyword">else</span> <span class="type-name">False</span>
 
   prob_seq_final <span class="symbol">=</span> fold prob_seq_at_start <span class="symbol">\</span>t<span class="symbol">:</span>(<span class="type-name">AllButFirst</span> time) prev<span class="symbol">.</span>
     <span class="keyword">for</span> s<span class="symbol">.</span>
-      prob_no_transition              <span class="symbol">=</span> prev<span class="symbol">.</span>s
+      prob_no_transition              <span class="symbol">=</span> prev[s]
       prob_transition_from_blank      <span class="symbol">=</span> safe_idx_sub prev s 1
       prob_transition_from_last_token <span class="symbol">=</span> safe_idx_sub prev s 2
 
       <span class="comment">-- Equation 6 from CTC paper.
-</span>      transition_prob <span class="symbol">=</span> <span class="keyword">if</span> ilabels<span class="symbol">.</span>s <span class="symbol">==</span> blank <span class="symbol">||</span> same_token_as_last s
+</span>      transition_prob <span class="symbol">=</span> <span class="keyword">if</span> ilabels[s] <span class="symbol">==</span> blank <span class="symbol">||</span> same_token_as_last s
         <span class="keyword">then</span> prob_no_transition <span class="symbol">+</span> prob_transition_from_blank
         <span class="keyword">else</span> prob_no_transition <span class="symbol">+</span> prob_transition_from_blank <span class="symbol">+</span>
           prob_transition_from_last_token
-      transition_prob <span class="symbol">*</span> label_probs<span class="symbol">.</span>(inject _ t)<span class="symbol">.</span>(ilabels<span class="symbol">.</span>s)
+      transition_prob <span class="symbol">*</span> label_probs[inject t<span class="symbol">,</span> ilabels[s]]
 
   <span class="comment">-- Sum over last two entries in the table.  Eq 8 from paper.
-</span>  end_with_label <span class="symbol">=</span> prob_seq_final<span class="symbol">.</span>(<span class="type-name">Fence</span> last_ix)
-  end_with_space <span class="symbol">=</span> prob_seq_final<span class="symbol">.</span>(<span class="type-name">Posts</span> last_ix)
+</span>  end_with_label <span class="symbol">=</span> prob_seq_final[<span class="type-name">Fence</span> last_ix]
+  end_with_space <span class="symbol">=</span> prob_seq_final[<span class="type-name">Posts</span> last_ix]
   end_with_label <span class="symbol">+</span> end_with_space
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Wrapper function to provide proof of <code>NonEmpty</code></h3>
@@ -459,26 +458,27 @@ Todo: add a <code>[Subset position time]</code> constraint.</p>
 and if not, casts them to an equivalent but provably <code>NonEmpty</code> form.</p>
 </div></div><div class="cell"><div class="prose-block"><p>If the compiler could generate <code>NonEmpty</code> instances for all
 <code>Fin N</code> where <code>N &gt; 0</code>, this function would be unnecessary.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ctc {vocab time position} [<span class="type-name">Eq</span> time<span class="symbol">,</span> <span class="type-name">Eq</span> vocab]
-    (blank<span class="symbol">:</span> vocab)
-    (logits<span class="symbol">:</span> time<span class="symbol">=&gt;</span>vocab<span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> <span class="type-name">Float</span>)
-    (labels<span class="symbol">:</span> position<span class="symbol">=&gt;</span>vocab)
-      <span class="symbol">:</span> <span class="type-name">LogSpace</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ctc(
+    blank<span class="symbol">:</span> vocab<span class="symbol">,</span>
+    logits<span class="symbol">:</span> time<span class="symbol">=&gt;</span>vocab<span class="symbol">=&gt;</span><span class="type-name">LogSpace</span> <span class="type-name">Float</span><span class="symbol">,</span>
+    labels<span class="symbol">:</span> position<span class="symbol">=&gt;</span>vocab
+    ) <span class="symbol">-&gt;</span> <span class="type-name">LogSpace</span> <span class="type-name">Float</span>
+    <span class="keyword">given</span> (vocab<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">,</span> time<span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> position<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="keyword">if</span> ((size vocab) <span class="symbol">&gt;</span> 0) <span class="symbol">&amp;&amp;</span> ((size time) <span class="symbol">&gt;</span> 0) <span class="symbol">&amp;&amp;</span> ((size position) <span class="symbol">&gt;</span> 0)
     <span class="keyword">then</span>
       vocab_size_m1    <span class="symbol">=</span> unsafe_nat_diff (size vocab) 1
       time_size_m1     <span class="symbol">=</span> unsafe_nat_diff (size time) 1
       position_size_m1 <span class="symbol">=</span> unsafe_nat_diff (size position) 1
 
-      vocab&#39;    <span class="symbol">=</span> (<span class="type-name">Unit</span> <span class="symbol">|</span> <span class="type-name">Fin</span> vocab_size_m1)
-      time&#39;     <span class="symbol">=</span> (<span class="type-name">Unit</span> <span class="symbol">|</span> <span class="type-name">Fin</span> time_size_m1)
-      position&#39; <span class="symbol">=</span> (<span class="type-name">Unit</span> <span class="symbol">|</span> <span class="type-name">Fin</span> position_size_m1)
+      vocab&#39;    <span class="symbol">=</span> (() `<span class="type-name">Either</span>` <span class="type-name">Fin</span> vocab_size_m1)
+      time&#39;     <span class="symbol">=</span> (() `<span class="type-name">Either</span>` <span class="type-name">Fin</span> time_size_m1)
+      position&#39; <span class="symbol">=</span> (() `<span class="type-name">Either</span>` <span class="type-name">Fin</span> position_size_m1)
 
-      blank&#39;  <span class="symbol">=</span> unsafe_from_ordinal vocab&#39; (ordinal blank)
+      blank&#39;  <span class="symbol">=</span> unsafe_from_ordinal(n<span class="symbol">=</span>vocab&#39;<span class="symbol">,</span> ordinal blank)
       logits&#39; <span class="symbol">=</span> <span class="keyword">for</span> t<span class="command">:time</span>&#39; v<span class="command">:vocab</span>&#39;<span class="symbol">.</span>
-        logits<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal t))<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal v))
+        logits[unsafe_from_ordinal (ordinal t)<span class="symbol">,</span> unsafe_from_ordinal (ordinal v)]
       labels&#39; <span class="symbol">=</span> <span class="keyword">for</span> p<span class="command">:position</span>&#39;<span class="symbol">.</span>
-        unsafe_from_ordinal _ (ordinal labels<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal p)))
+        unsafe_from_ordinal (ordinal labels[unsafe_from_ordinal (ordinal p)])
 
       ctc_non_empty blank&#39; logits&#39; labels&#39;
     <span class="keyword">else</span> zero

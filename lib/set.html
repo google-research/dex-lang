@@ -309,31 +309,31 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> sort
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Monoidal enforcement of uniqueness in sorted lists</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last {n a} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Maybe</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> last(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span>
   s <span class="symbol">=</span> size n
   <span class="keyword">case</span> s <span class="symbol">==</span> 0 <span class="keyword">of</span>
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Just</span> xs<span class="symbol">.</span>(unsafe_from_ordinal n (unsafe_nat_diff s 1))
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Just</span> xs[unsafe_from_ordinal (unsafe_nat_diff s 1)]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> first {n a} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Maybe</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> first(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span>
   s <span class="symbol">=</span> size n
   <span class="keyword">case</span> s <span class="symbol">==</span> 0 <span class="keyword">of</span>
     <span class="type-name">True</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
-    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Just</span> xs<span class="symbol">.</span>(unsafe_from_ordinal n 0)
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> <span class="type-name">Just</span> xs[unsafe_from_ordinal 0]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> all_except_last {n a} (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> all_except_last(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">List</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a) <span class="symbol">=</span>
   shortSize <span class="symbol">=</span> <span class="type-name">Fin</span> (size n <span class="symbol">-|</span> 1)
-  allButLast <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:shortSize</span><span class="symbol">.</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ (ordinal i))
-  (<span class="type-name">AsList</span> _ allButLast)
+  allButLast <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:shortSize</span><span class="symbol">.</span> xs[unsafe_from_ordinal (ordinal i)]
+  <span class="type-name">AsList</span> _ allButLast
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_unique_sorted_lists {a} [<span class="type-name">Eq</span> a] (xlist<span class="symbol">:</span><span class="type-name">List</span> a) (ylist<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_unique_sorted_lists(xlist<span class="symbol">:</span><span class="type-name">List</span> a<span class="symbol">,</span> ylist<span class="symbol">:</span><span class="type-name">List</span> a) <span class="symbol">-&gt;</span> <span class="type-name">List</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Eq</span>) <span class="symbol">=</span>
   <span class="comment">-- This function is associative, for use in a monoidal reduction.
 </span>  <span class="comment">-- Assumes all xs are &lt;= all ys.
 </span>  <span class="comment">-- The element at the end of xs might equal the
 </span>  <span class="comment">-- element at the beginning of ys.  If so, this
 </span>  <span class="comment">-- function removes the duplicate when concatenating the lists.
-</span>  (<span class="type-name">AsList</span> nx xs) <span class="symbol">=</span> xlist
-  (<span class="type-name">AsList</span> _  ys) <span class="symbol">=</span> ylist
+</span>  <span class="type-name">AsList</span>(nx<span class="symbol">,</span> xs) <span class="symbol">=</span> xlist
+  <span class="type-name">AsList</span>(_ <span class="symbol">,</span> ys) <span class="symbol">=</span> ylist
   <span class="keyword">case</span> last xs <span class="keyword">of</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> ylist
     <span class="type-name">Just</span> last_x <span class="symbol">-&gt;</span> <span class="keyword">case</span> first ys <span class="keyword">of</span>
@@ -342,74 +342,84 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
         <span class="type-name">False</span> <span class="symbol">-&gt;</span> concat [xlist<span class="symbol">,</span>            ylist]
         <span class="type-name">True</span> <span class="symbol">-&gt;</span>  concat [all_except_last xs<span class="symbol">,</span> ylist]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_duplicates_from_sorted {n a} [<span class="type-name">Eq</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
-  xlists <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> (<span class="type-name">AsList</span> 1 [xs<span class="symbol">.</span>i])
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_duplicates_from_sorted(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">List</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Eq</span>) <span class="symbol">=</span>
+  xlists <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> (<span class="type-name">AsList</span> 1 [xs[i]])
   reduce (<span class="type-name">AsList</span> 0 []) merge_unique_sorted_lists xlists
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Sets</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Set</span> a [<span class="type-name">Ord</span> a] <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Set</span>(a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   <span class="comment">-- Guaranteed to be in sorted order with unique elements,
 </span>  <span class="comment">-- as long as no one else uses this constructor.
 </span>  <span class="comment">-- Instead use the &quot;toSet&quot; function below.
-</span>  <span class="type-name">UnsafeAsSet</span> n<span class="symbol">:</span><span class="type-name">Nat</span> elements<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a)
+</span>  <span class="type-name">UnsafeAsSet</span>(n<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> elements<span class="symbol">:</span>(<span class="type-name">Fin</span> n <span class="symbol">=&gt;</span> a))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> to_set {n a} [<span class="type-name">Ord</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Set</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> to_set(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">Set</span> a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   sorted_xs <span class="symbol">=</span> sort xs
-  (<span class="type-name">AsList</span> n&#39; sorted_unique_xs) <span class="symbol">=</span> remove_duplicates_from_sorted sorted_xs
+  <span class="type-name">AsList</span>(n&#39;<span class="symbol">,</span> sorted_unique_xs) <span class="symbol">=</span> remove_duplicates_from_sorted sorted_xs
   <span class="type-name">UnsafeAsSet</span> n&#39; sorted_unique_xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_size {a} ((<span class="type-name">UnsafeAsSet</span> n _)<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">:</span> <span class="type-name">Nat</span> <span class="symbol">=</span> n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_size(p<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">-&gt;</span> <span class="type-name">Nat</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeAsSet</span>(n<span class="symbol">,</span> _) <span class="symbol">=</span> p
+  n
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">Set</span> a) <span class="keyword">given</span> {a} [<span class="type-name">Eq</span> a]
-  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeAsSet</span> _ xs) (<span class="type-name">UnsafeAsSet</span> _ ys)<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span>(<span class="type-name">Set</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>)
+  <span class="keyword">def</span> (<span class="symbol">==</span>)(sx<span class="symbol">,</span> sy) <span class="symbol">=</span>
+    <span class="type-name">UnsafeAsSet</span>(_<span class="symbol">,</span> xs) <span class="symbol">=</span> sx
+    <span class="type-name">UnsafeAsSet</span>(_<span class="symbol">,</span> ys) <span class="symbol">=</span> sy
     (<span class="type-name">AsList</span> _ xs) <span class="symbol">==</span> (<span class="type-name">AsList</span> _ ys)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_union {a}
-      ((<span class="type-name">UnsafeAsSet</span> nx xs)<span class="symbol">:</span><span class="type-name">Set</span> a)
-      ((<span class="type-name">UnsafeAsSet</span> ny ys)<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">:</span> <span class="type-name">Set</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_union(
+    sx<span class="symbol">:</span><span class="type-name">Set</span> a<span class="symbol">,</span>
+    sy<span class="symbol">:</span><span class="type-name">Set</span> a
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Set</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeAsSet</span>(nx<span class="symbol">,</span> xs) <span class="symbol">=</span> sx
+  <span class="type-name">UnsafeAsSet</span>(ny<span class="symbol">,</span> ys) <span class="symbol">=</span> sy
   combined <span class="symbol">=</span> merge_sorted_tables xs ys
-  (<span class="type-name">AsList</span> n&#39; sorted_unique_xs) <span class="symbol">=</span> remove_duplicates_from_sorted combined
+  <span class="type-name">AsList</span>(n&#39;<span class="symbol">,</span> sorted_unique_xs) <span class="symbol">=</span> remove_duplicates_from_sorted combined
   <span class="type-name">UnsafeAsSet</span> _ sorted_unique_xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_intersect {a}
-      ((<span class="type-name">UnsafeAsSet</span> nx xs)<span class="symbol">:</span><span class="type-name">Set</span> a)
-      ((<span class="type-name">UnsafeAsSet</span> ny ys)<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">:</span> <span class="type-name">Set</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_intersect(
+    sx<span class="symbol">:</span><span class="type-name">Set</span> a<span class="symbol">,</span>
+    sy<span class="symbol">:</span><span class="type-name">Set</span> a
+    ) <span class="symbol">-&gt;</span> <span class="type-name">Set</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeAsSet</span>(nx<span class="symbol">,</span> xs) <span class="symbol">=</span> sx
+  <span class="type-name">UnsafeAsSet</span>(ny<span class="symbol">,</span> ys) <span class="symbol">=</span> sy
   <span class="comment">-- This could be done in O(nx + ny) instead of O(nx log ny).
 </span>  isInYs <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">case</span> search_sorted ys x <span class="keyword">of</span>
     <span class="type-name">Just</span> x <span class="symbol">-&gt;</span> <span class="type-name">True</span>
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">False</span>
-  (<span class="type-name">AsList</span> n&#39; intersection) <span class="symbol">=</span> filter isInYs xs
+  <span class="type-name">AsList</span>(n&#39;<span class="symbol">,</span> intersection) <span class="symbol">=</span> filter xs isInYs
   <span class="type-name">UnsafeAsSet</span> _ intersection
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Sets as a type, whose inhabitants can index arrays</h2>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO Implicit arguments to data definitions
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- (Probably `a` should be implicit)
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Element</span> a<span class="symbol">:</span><span class="type-name">Type</span> [<span class="type-name">Ord</span> a] set<span class="symbol">:</span>(<span class="type-name">Set</span> a) <span class="symbol">=</span> <span class="type-name">UnsafeElement</span> <span class="type-name">Nat</span>
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Element</span>(a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span>(<span class="type-name">Set</span> a)) <span class="symbol">=</span>
+  val<span class="symbol">:</span> <span class="type-name">Nat</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO The set argument could be implicit (inferred from the Element
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- type), but maybe it&#39;s easier to read if it&#39;s explicit.
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> member {a} (x<span class="command">:a</span>) (set<span class="symbol">:</span>(<span class="type-name">Set</span> a)) <span class="symbol">:</span> <span class="type-name">Maybe</span> (<span class="type-name">Element</span> a set) <span class="symbol">=</span>
-  (<span class="type-name">UnsafeAsSet</span> _ elts) <span class="symbol">=</span> set
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> member(x<span class="command">:a</span><span class="symbol">,</span> set<span class="symbol">:</span>(<span class="type-name">Set</span> a)) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
+  <span class="type-name">UnsafeAsSet</span>(_<span class="symbol">,</span> elts) <span class="symbol">=</span> set
   <span class="keyword">case</span> search_sorted elts x <span class="keyword">of</span>
-    <span class="type-name">Just</span> n <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">UnsafeElement</span> <span class="symbol">$</span> ordinal n
+    <span class="type-name">Just</span> n <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">Element</span><span class="symbol">.</span>new (ordinal n)
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> value {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)} (x<span class="symbol">:</span><span class="type-name">Element</span> a set) <span class="symbol">:</span> a <span class="symbol">=</span>
-  (<span class="type-name">UnsafeAsSet</span> _ elts) <span class="symbol">=</span> set
-  <span class="type-name">UnsafeElement</span> ix <span class="symbol">=</span> x
-  elts<span class="symbol">.</span>(unsafe_from_ordinal _ ix)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> value(x<span class="symbol">:</span><span class="type-name">Element</span> a set) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">=</span>
+  <span class="type-name">UnsafeAsSet</span>(_<span class="symbol">,</span> elts) <span class="symbol">=</span> set
+  elts[unsafe_from_ordinal x<span class="symbol">.</span>val]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
-  size <span class="symbol">=</span> set_size set
-  ordinal <span class="symbol">=</span> <span class="symbol">\</span>(<span class="type-name">UnsafeElement</span> n)<span class="symbol">.</span> n
-  unsafe_from_ordinal <span class="symbol">=</span> <span class="symbol">\</span>n<span class="symbol">.</span> <span class="type-name">UnsafeElement</span> n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span>(<span class="type-name">Element</span> a set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a)
+  <span class="keyword">def</span> size&#39;() <span class="symbol">=</span> set_size set
+  <span class="keyword">def</span> ordinal(n) <span class="symbol">=</span> n<span class="symbol">.</span>val
+  <span class="keyword">def</span> unsafe_from_ordinal(n) <span class="symbol">=</span> <span class="type-name">Element</span><span class="symbol">.</span>new(n)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
-  (<span class="symbol">==</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">==</span> ordinal ix2
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span>(<span class="type-name">Element</span> a set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a)
+  <span class="keyword">def</span> (<span class="symbol">==</span>)(ix1<span class="symbol">,</span> ix2) <span class="symbol">=</span> ordinal ix1 <span class="symbol">==</span> ordinal ix2
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span> (<span class="type-name">Element</span> a set) <span class="keyword">given</span> {a} {set<span class="symbol">:</span>(<span class="type-name">Set</span> a)}
-  (<span class="symbol">&lt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">&lt;</span> ordinal ix2
-  (<span class="symbol">&gt;</span>) <span class="symbol">=</span> <span class="symbol">\</span>ix1 ix2<span class="symbol">.</span> ordinal ix1 <span class="symbol">&gt;</span> ordinal ix2
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ord</span>(<span class="type-name">Element</span> a set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a)
+  <span class="keyword">def</span> (<span class="symbol">&lt;</span>)(ix1<span class="symbol">,</span> ix2) <span class="symbol">=</span> ordinal ix1 <span class="symbol">&lt;</span> ordinal ix2
+  <span class="keyword">def</span> (<span class="symbol">&gt;</span>)(ix1<span class="symbol">,</span> ix2) <span class="symbol">=</span> ordinal ix1 <span class="symbol">&gt;</span> ordinal ix2
 </div></div></div></body></html>

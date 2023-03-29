@@ -310,124 +310,157 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> png
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>NN Prelude</h2>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu (input <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">:</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> relu(input <span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
   select (input <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) input 0<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Layer</span> inp<span class="symbol">:</span><span class="type-name">Type</span> out<span class="symbol">:</span><span class="type-name">Type</span> params<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
-  forward<span class="symbol">:</span>(params <span class="symbol">-&gt;</span> inp <span class="symbol">-&gt;</span> out)
-  init<span class="symbol">:</span>(<span class="type-name">Key</span> <span class="symbol">-&gt;</span> params)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Layer</span>(inp<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> out<span class="symbol">:</span><span class="type-name">Type</span><span class="symbol">,</span> params<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">=</span>
+  forward <span class="symbol">:</span> (params<span class="symbol">,</span> inp) <span class="symbol">-&gt;</span> out
+  init    <span class="symbol">:</span> (<span class="type-name">Key</span>) <span class="symbol">-&gt;</span> params
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Layers</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Dense layer</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">DenseParams</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-   ((a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span> (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">DenseParams</span>(a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  weights <span class="symbol">:</span> a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+  biases  <span class="symbol">:</span> b<span class="symbol">=&gt;</span><span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dense (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b] <span class="symbol">:</span> <span class="type-name">Layer</span> (a<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) (<span class="type-name">DenseParams</span> a b) <span class="symbol">=</span>
-  <span class="type-name">Layer</span><span class="symbol">~</span>new ((<span class="symbol">\</span> ((weight<span class="symbol">,</span> bias)) x <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span> (bias<span class="symbol">.</span>j <span class="symbol">+</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> weight<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> x<span class="symbol">.</span>i))) arb
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these instances are all exactly the same as those for pairs. We should derive them!
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> (<span class="symbol">+</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new( p1<span class="symbol">.</span>weights <span class="symbol">+</span> p2<span class="symbol">.</span>weights
+                                   <span class="symbol">,</span> p1<span class="symbol">.</span>biases  <span class="symbol">+</span> p2<span class="symbol">.</span>biases)
+  zero <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new(zero<span class="symbol">,</span> zero)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> (<span class="symbol">-</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new( p1<span class="symbol">.</span>weights <span class="symbol">-</span> p2<span class="symbol">.</span>weights
+                                   <span class="symbol">,</span> p1<span class="symbol">.</span>biases  <span class="symbol">-</span> p2<span class="symbol">.</span>biases)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span>
+    [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
+    <span class="type-name">DenseParams</span><span class="symbol">.</span>new(arb k1<span class="symbol">,</span> arb k2)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
+  <span class="keyword">def</span> (<span class="symbol">.*</span>)(s<span class="symbol">,</span> p) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new(s <span class="symbol">.*</span> p<span class="symbol">.</span>weights<span class="symbol">,</span> s <span class="symbol">.*</span> p<span class="symbol">.</span>biases)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dense(a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">-&gt;</span> <span class="type-name">Layer</span>(a<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> b<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">DenseParams</span> a b) <span class="symbol">=</span>
+  <span class="keyword">def</span> forward(p<span class="symbol">:</span><span class="type-name">DenseParams</span> a b<span class="symbol">,</span> x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> p<span class="symbol">.</span>biases <span class="symbol">+</span> x <span class="symbol">.**</span> p<span class="symbol">.</span>weights
+  <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span> arb k
+  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>CNN layer</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">CNNParams</span> (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span>
-  ((outc<span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kh<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kw<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">&amp;</span>
-   (outc<span class="symbol">=&gt;</span><span class="type-name">Float</span>))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">CNNParams</span>(inc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> outc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> kw<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">=</span>
+  weights <span class="symbol">:</span> outc<span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kh<span class="symbol">=&gt;</span><span class="type-name">Fin</span> kw<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+  biases  <span class="symbol">:</span> outc<span class="symbol">=&gt;</span><span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conv2d
-      {inc outc h w kh kw}
-      (x<span class="command">:inc</span><span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-      (kernel<span class="command">:outc</span><span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kh)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kw)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-      <span class="symbol">:</span> outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span> <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conv2d(
+    x<span class="command">:inc</span><span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>
+    kernel<span class="command">:outc</span><span class="symbol">=&gt;</span>inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kh)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> kw)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+    ) <span class="symbol">-&gt;</span> outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+    <span class="keyword">given</span> (inc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> outc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h<span class="symbol">,</span> w<span class="symbol">,</span> kh<span class="symbol">,</span> kw) <span class="symbol">=</span>
   <span class="keyword">for</span> o i j<span class="symbol">.</span>
     (i&#39;<span class="symbol">,</span> j&#39;) <span class="symbol">=</span> (ordinal i<span class="symbol">,</span> ordinal j)
     <span class="keyword">case</span> (i&#39; <span class="symbol">+</span> kh) <span class="symbol">&lt;=</span> h <span class="symbol">&amp;&amp;</span> (j&#39; <span class="symbol">+</span> kw) <span class="symbol">&lt;=</span> w <span class="keyword">of</span>
       <span class="type-name">True</span> <span class="symbol">-&gt;</span>
-        sum <span class="keyword">for</span> (ki<span class="symbol">,</span> kj<span class="symbol">,</span> inp)<span class="symbol">.</span>
-          (di<span class="symbol">,</span> dj) <span class="symbol">=</span> (from_ordinal (<span class="type-name">Fin</span> h) (i&#39; <span class="symbol">+</span> (ordinal ki))<span class="symbol">,</span>
-                      from_ordinal (<span class="type-name">Fin</span> w) (j&#39; <span class="symbol">+</span> (ordinal kj)))
-          x<span class="symbol">.</span>inp<span class="symbol">.</span>di<span class="symbol">.</span>dj <span class="symbol">*</span> kernel<span class="symbol">.</span>o<span class="symbol">.</span>inp<span class="symbol">.</span>ki<span class="symbol">.</span>kj
+        sum <span class="keyword">for</span> ixs<span class="symbol">.</span>
+          (ki<span class="symbol">,</span> kj<span class="symbol">,</span> inp) <span class="symbol">=</span> ixs
+          (di<span class="symbol">,</span> dj) <span class="symbol">=</span> (from_ordinal(n<span class="symbol">=</span><span class="type-name">Fin</span> h<span class="symbol">,</span> i&#39; <span class="symbol">+</span> (ordinal ki))<span class="symbol">,</span>
+                      from_ordinal(n<span class="symbol">=</span><span class="type-name">Fin</span> w<span class="symbol">,</span> j&#39; <span class="symbol">+</span> (ordinal kj)))
+          x[inp<span class="symbol">,</span>di<span class="symbol">,</span>dj] <span class="symbol">*</span> kernel[o<span class="symbol">,</span>inp<span class="symbol">,</span>ki<span class="symbol">,</span>kj]
       <span class="type-name">False</span> <span class="symbol">-&gt;</span> zero
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cnn {h w} (inc<span class="symbol">:</span><span class="type-name">Type</span>) (outc<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> inc<span class="symbol">,</span> <span class="type-name">Ix</span> outc] (kw<span class="symbol">:</span><span class="type-name">Nat</span>) (kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span>
-    <span class="type-name">Layer</span> (inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-          (outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
-          (<span class="type-name">CNNParams</span> inc outc kw kh) <span class="symbol">=</span>
-  <span class="type-name">Layer</span><span class="symbol">~</span>new (<span class="symbol">\</span> (weight<span class="symbol">,</span> bias) x<span class="symbol">.</span> <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x weight)<span class="symbol">.</span>o<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">+</span> bias<span class="symbol">.</span>o) arb
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cnn(inc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> outc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> kw<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> kh<span class="symbol">:</span><span class="type-name">Nat</span>)
+    <span class="symbol">-&gt;</span> <span class="type-name">Layer</span> (inc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+             (outc<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> h)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> w)<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+             (<span class="type-name">CNNParams</span> inc outc kw kh) <span class="keyword">given</span> (h<span class="symbol">,</span> w) <span class="symbol">=</span>
+  <span class="keyword">def</span> forward(p<span class="symbol">:</span><span class="type-name">CNNParams</span>(_<span class="symbol">,</span>_<span class="symbol">,</span>_<span class="symbol">,</span>_)<span class="symbol">,</span> x) <span class="symbol">=</span>
+    <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x p<span class="symbol">.</span>weights)[o<span class="symbol">,</span>i<span class="symbol">,</span>j] <span class="symbol">+</span> p<span class="symbol">.</span>biases[o]
+  <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span>
+    [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
+    <span class="type-name">CNNParams</span><span class="symbol">.</span>new(arb k<span class="symbol">,</span> arb k)
+  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Pooling</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split {m n o v} [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> o] (x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>((ordinal (i<span class="symbol">,</span>j))<span class="symbol">@</span>m)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split(x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> o<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v) <span class="symbol">=</span>
+  <span class="keyword">for</span> i j<span class="symbol">.</span> x[(ordinal (i<span class="symbol">,</span>j))<span class="symbol">@</span>m]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imtile {a b n o p q v} [<span class="type-name">Ix</span> a<span class="symbol">,</span> <span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> o<span class="symbol">,</span> <span class="type-name">Ix</span> p<span class="symbol">,</span> <span class="type-name">Ix</span> q]
-           (x<span class="symbol">:</span> a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>p<span class="symbol">=&gt;</span>q<span class="symbol">=&gt;</span>v <span class="symbol">=</span>
-  <span class="keyword">for</span> kw kh w h<span class="symbol">.</span> (split (split x)<span class="symbol">.</span>w<span class="symbol">.</span>kw)<span class="symbol">.</span>h<span class="symbol">.</span>kh
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imtile(x<span class="symbol">:</span> a<span class="symbol">=&gt;</span>b<span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>p<span class="symbol">=&gt;</span>q<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> o<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> p<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> q<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v) <span class="symbol">=</span>
+  <span class="keyword">for</span> kw kh w h<span class="symbol">.</span> (split (split x)[w<span class="symbol">,</span>kw])[h<span class="symbol">,</span>kh]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanpool {m n h w} (kh<span class="symbol">:</span> <span class="type-name">Type</span>) (kw<span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> m<span class="symbol">,</span> <span class="type-name">Ix</span> n<span class="symbol">,</span> <span class="type-name">Ix</span> h<span class="symbol">,</span> <span class="type-name">Ix</span> w<span class="symbol">,</span> <span class="type-name">Ix</span> kh<span class="symbol">,</span> <span class="type-name">Ix</span> kw]
-             (x <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">:</span> ( h<span class="symbol">=&gt;</span>w<span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> meanpool(kh<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> kw<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span> <span class="type-name">Float</span>)
+            <span class="symbol">-&gt;</span> h<span class="symbol">=&gt;</span>w<span class="symbol">=&gt;</span><span class="type-name">Float</span>
+            <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> w<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   out <span class="symbol">:</span> (kh <span class="symbol">=&gt;</span> kw <span class="symbol">=&gt;</span> h <span class="symbol">=&gt;</span> w <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> imtile x
-  mean <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> out<span class="symbol">.</span>i<span class="symbol">.</span>j
+  mean <span class="keyword">for</span> ixs<span class="symbol">.</span>
+    (i<span class="symbol">,</span>j) <span class="symbol">=</span> ixs
+    out[i<span class="symbol">,</span>j]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Simple point classifier</h2>
 </div></div><div class="cell"><div class="code-block">[k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key <span class="symbol">$</span> new_key 1
 </div></div><div class="cell"><div class="code-block">x1 <span class="symbol">:</span> <span class="type-name">Fin</span> 100 <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb k1
 </div></div><div class="cell"><div class="code-block">x2 <span class="symbol">:</span> <span class="type-name">Fin</span> 100 <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> arb k2
-</div></div><div class="cell"><div class="code-block">y <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> ((x1<span class="symbol">.</span>i <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2<span class="symbol">.</span>i <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0)) <span class="symbol">||</span> ((x1<span class="symbol">.</span>i <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2<span class="symbol">.</span>i <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)) <span class="keyword">of</span>
+</div></div><div class="cell"><div class="code-block">y <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> ((x1[i] <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2[i] <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0)) <span class="symbol">||</span> ((x1[i] <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0) <span class="symbol">&amp;&amp;</span> (x2[i] <span class="symbol">&lt;</span> 0<span class="symbol">.</span>0)) <span class="keyword">of</span>
   <span class="type-name">True</span> <span class="symbol">-&gt;</span> 1
   <span class="type-name">False</span> <span class="symbol">-&gt;</span> 0
-</div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> [x1<span class="symbol">.</span>i<span class="symbol">,</span> x2<span class="symbol">.</span>i]
+</div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> [x1[i]<span class="symbol">,</span> x2[i]]
 </div></div><div class="cell"><div class="code-block">
 
-</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show_plot <span class="symbol">$</span> xyc_plot x1 x2 <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> n_to_f y<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show_plot <span class="symbol">$</span> xyc_plot x1 x2 <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> n_to_f y[i]
 </div><svg width="400" height="400" viewBox="0 -400 400 400"><g stroke="#000000" fill="none" stroke-width="1"><rect width="400"height="400"x="0"y="-400"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="147.897568"cy="-139.939499"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="315.509033"cy="-243.287201"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="175.161163"cy="-269.965393"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="64.9514542"cy="-237.314362"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="18.1818199"cy="-237.646301"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="260.305206"cy="-294.717102"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="191.345688"cy="-217.397736"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="99.2007599"cy="-192.221619"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="82.5510941"cy="-18.1818199"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="292.841339"cy="-228.702972"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="76.5255737"cy="-211.33754"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="42.6318665"cy="-270.596985"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="159.892899"cy="-277.579987"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="86.3488617"cy="-159.99585"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="288.9823"cy="-289.095642"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="269.202698"cy="-254.139969"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="360.511505"cy="-227.494781"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="348.090759"cy="-177.294113"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="109.358658"cy="-265.402893"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="120.154617"cy="-171.911499"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="94.7702332"cy="-225.412247"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="333.22641"cy="-223.842407"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="178.826767"cy="-52.6753006"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="345.182037"cy="-241.64502"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="157.719666"cy="-171.823013"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="381.818176"cy="-119.621132"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="82.806221"cy="-291.761963"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="55.3149757"cy="-339.60907"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="176.813675"cy="-265.982819"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="176.235947"cy="-161.934586"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="124.649597"cy="-71.1800308"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="116.639801"cy="-244.282745"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="130.505051"cy="-178.421478"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="120.99221"cy="-197.825775"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="185.26799"cy="-167.408371"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="263.936371"cy="-75.9191284"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="308.109436"cy="-240.969116"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="264.631714"cy="-235.66658"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="119.784126"cy="-301.741455"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="234.344177"cy="-262.18988"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="242.584274"cy="-214.999741"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="216.362885"cy="-186.323944"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="177.868729"cy="-261.32193"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="194.351562"cy="-149.263245"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="108.855644"cy="-296.829834"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="257.458557"cy="-230.602341"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="144.299988"cy="-169.940521"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="84.2805023"cy="-246.707703"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="65.997818"cy="-188.75296"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="204.263092"cy="-210.430557"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="114.529083"cy="-216.965454"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="68.3272018"cy="-198.972473"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="158.891052"cy="-168.829529"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="48.5307426"cy="-301.467194"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="132.403915"cy="-321.320709"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="141.082855"cy="-174.038483"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="119.32814"cy="-282.370209"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="293.41095"cy="-196.485428"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="269.683533"cy="-117.506813"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="158.894531"cy="-272.953125"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="294.510498"cy="-174.806015"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="271.530701"cy="-115.037682"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="32.5761757"cy="-145.7052"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="163.351624"cy="-303.576172"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="211.86705"cy="-208.579803"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="132.014008"cy="-152.71991"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="370.980347"cy="-215.339279"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="158.434448"cy="-172.044189"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="115.739426"cy="-115.123383"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="68.2906342"cy="-254.671646"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="131.101318"cy="-188.520187"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="247.680161"cy="-381.818176"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="113.700951"cy="-211.7995"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="177.381256"cy="-255.624222"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="195.592346"cy="-156.814484"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="139.526321"cy="-236.683029"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="103.826378"cy="-239.057709"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="270.278107"cy="-271.614777"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="129.17778"cy="-153.776291"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="251.797104"cy="-243.865707"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="116.022339"cy="-99.0964966"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="261.6716"cy="-246.856857"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="105.205688"cy="-240.652878"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="186.06308"cy="-149.779816"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="116.116989"cy="-219.243317"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="322.367584"cy="-233.817032"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="215.940567"cy="-185.217972"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="193.390945"cy="-245.369843"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="273.309418"cy="-145.614212"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="222.414474"cy="-250.799515"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="195.775787"cy="-301.620483"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="238.649277"cy="-194.720642"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="233.884293"cy="-144.471161"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="40.9188614"cy="-234.329605"r="1"/></g><g stroke="#F37F0B" fill="#F37F0B" stroke-width="1"><circle cx="140.598419"cy="-205.431122"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="63.067524"cy="-238.703827"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="95.7090988"cy="-261.557037"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="151.615082"cy="-261.954468"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="258.55014"cy="-196.776047"r="1"/></g><g stroke="#0B7FF3" fill="#0B7FF3" stroke-width="1"><circle cx="113.616241"cy="-246.686966"r="1"/></g></svg></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simple (h1<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> h1] <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simple(h1<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   ndense1 <span class="symbol">=</span> dense (<span class="type-name">Fin</span> 2) h1
   ndense2 <span class="symbol">=</span> dense h1 (<span class="type-name">Fin</span> 2)
-  (<span class="type-name">Layer</span><span class="symbol">~</span>new
-     (<span class="symbol">\</span> (dense1<span class="symbol">,</span> dense2) x<span class="symbol">.</span>
-          x1&#39; <span class="symbol">=</span> ndense1<span class="symbol">~</span>forward dense1 x
-          x1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i
-          logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">~</span>forward dense2 x1)
-     (<span class="symbol">\</span>key<span class="symbol">.</span>
-        [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key key
-        (ndense1<span class="symbol">~</span>init k1<span class="symbol">,</span> ndense2<span class="symbol">~</span>init k2)))
+  <span class="type-name">Params</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> (<span class="type-name">DenseParams</span>(_<span class="symbol">,</span> _)<span class="symbol">,</span> <span class="type-name">DenseParams</span>(_<span class="symbol">,</span> _))
+  <span class="keyword">def</span> forward(params<span class="symbol">:</span><span class="type-name">Params</span><span class="symbol">,</span> x) <span class="symbol">=</span>
+    (p1<span class="symbol">,</span> p2) <span class="symbol">=</span> params
+    x1&#39; <span class="symbol">=</span> ndense1<span class="symbol">.</span>forward p1 x
+    x1 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x1&#39;[i]
+    logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">.</span>forward p2 x1
+  <span class="keyword">def</span> init(k) <span class="symbol">-&gt;</span> <span class="type-name">Params</span> <span class="symbol">=</span>
+    [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
+    (ndense1<span class="symbol">.</span>init k1<span class="symbol">,</span> ndense2<span class="symbol">.</span>init k2)
+  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> simple
-</div><div class="result-block">((h1:Type)
- -&gt; (v#0:(Ix h1))
- ?=&gt; Layer
-       ((Fin 2) =&gt; Float32)
-       ((Fin 2) =&gt; Float32)
-       ((((Fin 2) =&gt; h1 =&gt; Float32) &amp; (h1 =&gt; Float32))
-        &amp; ((h1 =&gt; (Fin 2) =&gt; Float32) &amp; ((Fin 2) =&gt; Float32))))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t simple
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; ((h1:Type)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  -&gt; (v#0:(Ix h1))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  ?=&gt; Layer
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        ((Fin 2) =&gt; Float32)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        ((Fin 2) =&gt; Float32)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        ((((Fin 2) =&gt; h1 =&gt; Float32) &amp; (h1 =&gt; Float32))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;         &amp; ((h1 =&gt; (Fin 2) =&gt; Float32) &amp; ((Fin 2) =&gt; Float32))))
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Train a multiclass classifier with minibatch SGD
 '<code>minibatch * minibatches = batch</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trainClass {a b p batch} [<span class="type-name">VSpace</span> p<span class="symbol">,</span> <span class="type-name">Ix</span> b<span class="symbol">,</span> <span class="type-name">Ix</span> batch]
-      (model<span class="symbol">:</span> <span class="type-name">Layer</span> a (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) p)
-      (x<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>a)
-      (y<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>b)
-      (epochs <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> epochs]
-      (minibatch <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> minibatch]
-      (minibatches <span class="symbol">:</span> <span class="type-name">Type</span>) [<span class="type-name">Ix</span> minibatches]
-      <span class="symbol">:</span> (epochs <span class="symbol">=&gt;</span> p <span class="symbol">&amp;</span> epochs <span class="symbol">=&gt;</span> <span class="type-name">Float</span> ) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> trainClass(
+      model<span class="symbol">:</span> <span class="type-name">Layer</span> a (b<span class="symbol">=&gt;</span><span class="type-name">Float</span>) p<span class="symbol">,</span>
+      x<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>a<span class="symbol">,</span>
+      y<span class="symbol">:</span> batch<span class="symbol">=&gt;</span>b<span class="symbol">,</span>
+      epochs<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span>
+      minibatch<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span>
+      minibatches<span class="symbol">|</span><span class="type-name">Ix</span>
+      ) <span class="symbol">-&gt;</span> (epochs<span class="symbol">=&gt;</span>p<span class="symbol">,</span> epochs<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+      <span class="keyword">given</span> (a<span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> p<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">,</span> batch<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   xs <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> a <span class="symbol">=</span> split x
   ys <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> b <span class="symbol">=</span> split y
-  unzip <span class="symbol">$</span> with_state (model<span class="symbol">~</span>init <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
+  unzip <span class="symbol">$</span> with_state (model<span class="symbol">.</span>init <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
      <span class="keyword">for</span> _ <span class="symbol">:</span> epochs<span class="symbol">.</span>
        loss <span class="symbol">=</span> sum <span class="symbol">$</span> <span class="keyword">for</span> b <span class="symbol">:</span> minibatches<span class="symbol">.</span>
               (loss<span class="symbol">,</span> gradfn) <span class="symbol">=</span>  vjp (<span class="symbol">\</span> params<span class="symbol">.</span>
                             <span class="symbol">-</span>sum <span class="keyword">for</span> j<span class="symbol">.</span>
-                                       result <span class="symbol">=</span> model<span class="symbol">~</span>forward params xs<span class="symbol">.</span>b<span class="symbol">.</span>j
-                                       result<span class="symbol">.</span>(ys<span class="symbol">.</span>b<span class="symbol">.</span>j)) (get params)
+                                       result <span class="symbol">=</span> model<span class="symbol">.</span>forward params xs[b<span class="symbol">,</span>j]
+                                       result[ys[b<span class="symbol">,</span>j]]) (get params)
               gparams <span class="symbol">=</span> gradfn 1<span class="symbol">.</span>0
-              params <span class="symbol">:=</span> (get params) <span class="symbol">-</span> scale_vec (0<span class="symbol">.</span>05 <span class="symbol">/</span> (i_to_f 100)) gparams
+              params <span class="symbol">:=</span> (get params) <span class="symbol">-</span> (0<span class="symbol">.</span>05 <span class="symbol">/</span> (i_to_f 100)) <span class="symbol">.*</span> gparams
               loss
        (get params<span class="symbol">,</span> loss)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- todo : Do I have to give minibatches as a param?
 </span></div></div><div class="cell"><div class="code-block">simple_model <span class="symbol">=</span> simple (<span class="type-name">Fin</span> 10)
-</div></div><div class="cell"><div class="code-block">(all_params<span class="symbol">,</span>losses) <span class="symbol">=</span> trainClass simple_model xs (<span class="keyword">for</span> i<span class="symbol">.</span> (y<span class="symbol">.</span>i <span class="symbol">@</span> (<span class="type-name">Fin</span> 2))) (<span class="type-name">Fin</span> 500) (<span class="type-name">Fin</span> 100) (<span class="type-name">Fin</span> 1)
+</div></div><div class="cell"><div class="code-block">(all_params<span class="symbol">,</span>losses) <span class="symbol">=</span> trainClass simple_model xs (<span class="keyword">for</span> i<span class="symbol">.</span> (y[i] <span class="symbol">@</span> (<span class="type-name">Fin</span> 2))) (<span class="type-name">Fin</span> 500) (<span class="type-name">Fin</span> 100) (<span class="type-name">Fin</span> 1)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> linspace (<span class="type-name">Fin</span> 10) (<span class="symbol">-</span>1<span class="symbol">.</span>0) (1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">tests <span class="symbol">=</span> <span class="keyword">for</span> h <span class="symbol">:</span> (<span class="type-name">Fin</span> 50)<span class="symbol">.</span> <span class="keyword">for</span> i <span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">.</span>
-    r <span class="symbol">=</span> simple_model<span class="symbol">~</span>forward all_params<span class="symbol">.</span>((ordinal h <span class="symbol">*</span> 10)<span class="symbol">@</span>_) [span<span class="symbol">.</span>i<span class="symbol">,</span> span<span class="symbol">.</span>j]
-    [exp r<span class="symbol">.</span>(1<span class="symbol">@</span>_)<span class="symbol">,</span> exp r<span class="symbol">.</span>(0<span class="symbol">@</span>_)<span class="symbol">,</span> 0<span class="symbol">.</span>0]
+    r <span class="symbol">=</span> simple_model<span class="symbol">.</span>forward all_params[(ordinal h <span class="symbol">*</span> 10)<span class="symbol">@</span>_] [span[i]<span class="symbol">,</span> span[j]]
+    [exp r[1<span class="symbol">@</span>_]<span class="symbol">,</span> exp r[0<span class="symbol">@</span>_]<span class="symbol">,</span> 0<span class="symbol">.</span>0]
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> imseqshow tests
@@ -438,85 +471,87 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Image</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 1 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> <span class="type-name">H</span> <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> <span class="type-name">W</span> <span class="symbol">=&gt;</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Class</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 10
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lenet (h1<span class="symbol">:</span><span class="type-name">Type</span>) (h2<span class="symbol">:</span><span class="type-name">Type</span>) (h3<span class="symbol">:</span><span class="type-name">Type</span>) [<span class="type-name">Ix</span> h1<span class="symbol">,</span> <span class="type-name">Ix</span> h2<span class="symbol">,</span> <span class="type-name">Ix</span> h3] <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lenet(h1<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h2<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h3<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   ncnn1 <span class="symbol">=</span> cnn (<span class="type-name">Fin</span> 1) h1 3 3
   ncnn2 <span class="symbol">=</span> cnn h1 h2 3 3
-  <span class="type-name">Pooled</span> <span class="symbol">=</span> (h2 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7 <span class="symbol">&amp;</span> <span class="type-name">Fin</span> 7)
+  <span class="type-name">Pooled</span> <span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> (h2<span class="symbol">,</span> <span class="type-name">Fin</span> 7<span class="symbol">,</span> <span class="type-name">Fin</span> 7)
   ndense1 <span class="symbol">=</span> dense <span class="type-name">Pooled</span> h3
   ndense2 <span class="symbol">=</span> dense h3 <span class="type-name">Class</span>
-  (<span class="type-name">Layer</span><span class="symbol">~</span>new
-    (<span class="symbol">\</span> (cnn1<span class="symbol">,</span> cnn2<span class="symbol">,</span> dense1<span class="symbol">,</span> dense2) inp<span class="symbol">.</span>
-         x<span class="symbol">:</span><span class="type-name">Image</span> <span class="symbol">=</span> inp
-         x1&#39; <span class="symbol">=</span> ncnn1<span class="symbol">~</span>forward cnn1 x
-         x1 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x1&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
-         x2&#39; <span class="symbol">=</span> ncnn2<span class="symbol">~</span>forward cnn2 x1
-         x2 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x2&#39;<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
-         x3 <span class="symbol">:</span> (h2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> c<span class="symbol">.</span> meanpool (<span class="type-name">Fin</span> 4) (<span class="type-name">Fin</span> 4) x2<span class="symbol">.</span>c
-         x4&#39; <span class="symbol">=</span> ndense1<span class="symbol">~</span>forward dense1 <span class="keyword">for</span> (i<span class="symbol">,</span>j<span class="symbol">,</span>k)<span class="symbol">.</span> x3<span class="symbol">.</span>i<span class="symbol">.</span>j<span class="symbol">.</span>k
-         x4 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x4&#39;<span class="symbol">.</span>i
-         logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">~</span>forward dense2 x4)
-    (<span class="symbol">\</span>key<span class="symbol">.</span>
-         [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> split_key key
-         (ncnn1<span class="symbol">~</span>init k1<span class="symbol">,</span> ncnn2<span class="symbol">~</span>init k2<span class="symbol">,</span>
-         ndense1<span class="symbol">~</span>init k3<span class="symbol">,</span> ndense2<span class="symbol">~</span>init k4)))
+  <span class="keyword">def</span> forward(params<span class="symbol">,</span> x<span class="symbol">:</span><span class="type-name">Image</span>) <span class="symbol">=</span>
+    (cnn1<span class="symbol">,</span> cnn2<span class="symbol">,</span> dense1<span class="symbol">,</span> dense2) <span class="symbol">=</span> params
+    x1&#39; <span class="symbol">=</span> ncnn1<span class="symbol">.</span>forward cnn1 x
+    x1 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x1&#39;[i<span class="symbol">,</span>j<span class="symbol">,</span>k]
+    x2&#39; <span class="symbol">=</span> ncnn2<span class="symbol">.</span>forward cnn2 x1
+    x2 <span class="symbol">=</span> <span class="keyword">for</span> i j k<span class="symbol">.</span> relu x2&#39;[i<span class="symbol">,</span>j<span class="symbol">,</span>k]
+    x3 <span class="symbol">:</span> (h2 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 7 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">=</span> <span class="keyword">for</span> c<span class="symbol">.</span> meanpool (<span class="type-name">Fin</span> 4) (<span class="type-name">Fin</span> 4) x2[c]
+    x4&#39; <span class="symbol">=</span> ndense1<span class="symbol">.</span>forward dense1 <span class="keyword">for</span> ixs<span class="symbol">.</span>
+      (i<span class="symbol">,</span>j<span class="symbol">,</span>k) <span class="symbol">=</span> ixs
+      x3[i<span class="symbol">,</span>j<span class="symbol">,</span>k]
+    x4 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> relu x4&#39;[i]
+    logsoftmax <span class="symbol">$</span> ndense2<span class="symbol">.</span>forward dense2 x4
+  <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span>
+    [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> split_key k
+    (ncnn1<span class="symbol">.</span>init k1<span class="symbol">,</span> ncnn2<span class="symbol">.</span>init k2<span class="symbol">,</span> ndense1<span class="symbol">.</span>init k3<span class="symbol">,</span> ndense2<span class="symbol">.</span>init k4)
+  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> lenet
-</div><div class="result-block">((h1:Type)
- -&gt; (h2:Type)
- -&gt; (h3:Type)
- -&gt; (v#0:(Ix h1))
- ?=&gt; (v#1:(Ix h2))
- ?=&gt; (v#2:(Ix h3))
- ?=&gt; Layer
-       ((Fin 1) =&gt; (Fin 28) =&gt; (Fin 28) =&gt; Float32)
-       ((Fin 10) =&gt; Float32)
-       (((h1 =&gt; (Fin 1) =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h1 =&gt; Float32))
-        &amp; (((h2 =&gt; h1 =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h2 =&gt; Float32))
-           &amp; ((((h2 &amp; (Fin 7 &amp; Fin 7)) =&gt; h3 =&gt; Float32) &amp; (h3 =&gt; Float32))
-              &amp; ((h3 =&gt; (Fin 10) =&gt; Float32) &amp; ((Fin 10) =&gt; Float32))))))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t lenet
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; ((h1:Type)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  -&gt; (h2:Type)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  -&gt; (h3:Type)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  -&gt; (v#0:(Ix h1))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  ?=&gt; (v#1:(Ix h2))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  ?=&gt; (v#2:(Ix h3))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;  ?=&gt; Layer
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        ((Fin 1) =&gt; (Fin 28) =&gt; (Fin 28) =&gt; Float32)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        ((Fin 10) =&gt; Float32)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;        (((h1 =&gt; (Fin 1) =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h1 =&gt; Float32))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;         &amp; (((h2 =&gt; h1 =&gt; (Fin 3) =&gt; (Fin 3) =&gt; Float32) &amp; (h2 =&gt; Float32))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;            &amp; ((((h2 &amp; (Fin 7 &amp; Fin 7)) =&gt; h3 =&gt; Float32) &amp; (h3 =&gt; Float32))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;               &amp; ((h3 =&gt; (Fin 10) =&gt; Float32) &amp; ((Fin 10) =&gt; Float32))))))
+</span></div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h2>Data Loading</h2>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Batch</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 5000
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Full</span> <span class="symbol">=</span> <span class="type-name">Fin</span> ((size <span class="type-name">Batch</span>) <span class="symbol">*</span> <span class="type-name">H</span> <span class="symbol">*</span> <span class="type-name">W</span>)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pixel (x<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">:</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
-     r <span class="symbol">=</span> w8_to_i x
-     i_to_f <span class="keyword">case</span> r <span class="symbol">&lt;</span> 0 <span class="keyword">of</span>
-               <span class="type-name">True</span> <span class="symbol">-&gt;</span> (abs r) <span class="symbol">+</span> 128
-               <span class="type-name">False</span> <span class="symbol">-&gt;</span> r
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pixel(x<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float32</span> <span class="symbol">=</span>
+  r <span class="symbol">=</span> w8_to_i x
+  i_to_f <span class="keyword">case</span> r <span class="symbol">&lt;</span> 0 <span class="keyword">of</span>
+    <span class="type-name">True</span> <span class="symbol">-&gt;</span> (abs r) <span class="symbol">+</span> 128
+    <span class="type-name">False</span> <span class="symbol">-&gt;</span> r
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Training loop</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Comment out these lines once you get the binary files from:</p>
 </div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/mnist.bin</code></p>
 </div></div><div class="cell"><div class="prose-block"><p><code>wget https://github.com/srush/learns-dex/raw/main/labels.bin</code></p>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- def getIm : Batch =&gt; Image =
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     (AsList _ im) = unsafe_io do read_file &quot;examples/mnist.bin&quot;
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     raw = unsafe_cast_table Full im
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     for b: Batch  c: (Fin 1) i:(Fin W) j:(Fin H).
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--         pixel raw.((ordinal (b, i, j)) @ Full)
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- def getLabel : Batch =&gt; Class =
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     (AsList _ im2) = unsafe_io do read_file &quot;examples/labels.bin&quot;
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     r = unsafe_cast_table Batch im2
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     for i. (w8_to_i r.i @ Class)
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- getIm : Batch=&gt;Image =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   AsList(_, im) = unsafe_io \. read_file &quot;examples/mnist.bin&quot;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   raw = unsafe_cast_table(to=Full, im)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   for b: Batch  c:(Fin 1) i:(Fin W) j:(Fin H).
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     pixel raw[(ordinal (b, i, j)) @ Full]
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- getLabel : Batch =&gt; Class =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   AsList(_, im2) = unsafe_io \. read_file &quot;examples/labels.bin&quot;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   r = unsafe_cast_table(to=Batch, im2)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   for i. (w8_to_n r[i] @ Class)
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- ims = getIm
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- labels = getLabel
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- small_ims = for i: (Fin 10). ims.((ordinal i)@_)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- small_labels = for i: (Fin 10). labels.((ordinal i)@_)
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- small_ims = for i: (Fin 10). ims[(ordinal i)@_]
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- small_labels = for i: (Fin 10). labels[(ordinal i)@_]
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- :p small_labels
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Epochs = (Fin 5)
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Minibatches = (Fin 1)
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- Minibatch = (Fin 10)
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t ims.(2@_)
-</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :t ims[2@_]
+</span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- model = lenet (Fin 1) (Fin 1) (Fin 20)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- init_param = (init model  $ new_key 0)
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :p forward model init_param (ims.(2@Batch))
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- init_param = model.init $ new_key 0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :p model.forward(init_param, ims[2@Batch])
 </span></div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Sanity check</p>
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param

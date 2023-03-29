@@ -316,59 +316,61 @@ if the compiler does the reduction one element at a time,
 it's doing bubble / insertion sort with quadratic time cost.
 However, if it breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently the Dex compiler will do the quadratic-time version.</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat_table {a b v} (leftin<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v) (rightin<span class="symbol">:</span> b<span class="symbol">=&gt;</span>v) <span class="symbol">:</span> ((a<span class="symbol">|</span>b)<span class="symbol">=&gt;</span>v) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat_table(leftin<span class="symbol">:</span> a<span class="symbol">=&gt;</span>v<span class="symbol">,</span> rightin<span class="symbol">:</span> b<span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> (<span class="type-name">Either</span> a b<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v) <span class="symbol">=</span>
   <span class="keyword">for</span> idx<span class="symbol">.</span> <span class="keyword">case</span> idx <span class="keyword">of</span>
-    <span class="type-name">Left</span> i  <span class="symbol">-&gt;</span> leftin<span class="symbol">.</span>i
-    <span class="type-name">Right</span> i <span class="symbol">-&gt;</span> rightin<span class="symbol">.</span>i
+    <span class="type-name">Left</span> i  <span class="symbol">-&gt;</span> leftin[i]
+    <span class="type-name">Right</span> i <span class="symbol">-&gt;</span> rightin[i]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_sorted_tables {a m n} [<span class="type-name">Ord</span> a] (xs<span class="command">:m</span><span class="symbol">=&gt;</span>a) (ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> ((m<span class="symbol">|</span>n)<span class="symbol">=&gt;</span>a) <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_sorted_tables(xs<span class="command">:m</span><span class="symbol">=&gt;</span>a<span class="symbol">,</span> ys<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> (<span class="type-name">Either</span> m n<span class="symbol">=&gt;</span>a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="comment">-- Possible improvements:
 </span>  <span class="comment">--  1) Using a SortedTable type.
 </span>  <span class="comment">--  2) Avoid needlessly initializing the return array.
 </span>  init <span class="symbol">=</span> concat_table xs ys  <span class="comment">-- Initialize array of correct size.
 </span>  yield_state init <span class="symbol">\</span>buf<span class="symbol">.</span>
     with_state (0<span class="symbol">,</span> 0) <span class="symbol">\</span>countrefs<span class="symbol">.</span>
-      <span class="keyword">for</span> i<span class="symbol">:</span>(m<span class="symbol">|</span>n)<span class="symbol">.</span>
+      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Either</span> m n)<span class="symbol">.</span>
         (cur_x<span class="symbol">,</span> cur_y) <span class="symbol">=</span> get countrefs
         <span class="keyword">if</span> cur_y <span class="symbol">&gt;=</span> size n  <span class="comment">-- no ys left
 </span>          <span class="keyword">then</span>
             countrefs <span class="symbol">:=</span> (cur_x <span class="symbol">+</span> 1<span class="symbol">,</span> cur_y)
-            buf<span class="symbol">!</span>i <span class="symbol">:=</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ cur_x)
+            buf<span class="symbol">!</span>i <span class="symbol">:=</span> xs[unsafe_from_ordinal cur_x]
           <span class="keyword">else</span>
             <span class="keyword">if</span> cur_x <span class="symbol">&lt;</span> size m <span class="comment">-- still xs left
-</span>              <span class="keyword">then</span> 
-                <span class="keyword">if</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ cur_x) <span class="symbol">&lt;=</span> ys<span class="symbol">.</span>(unsafe_from_ordinal _ cur_y)
+</span>              <span class="keyword">then</span>
+                <span class="keyword">if</span> xs[unsafe_from_ordinal cur_x] <span class="symbol">&lt;=</span> ys[unsafe_from_ordinal cur_y]
                   <span class="keyword">then</span>
                     countrefs <span class="symbol">:=</span> (cur_x <span class="symbol">+</span> 1<span class="symbol">,</span> cur_y)
-                    buf<span class="symbol">!</span>i <span class="symbol">:=</span> xs<span class="symbol">.</span>(unsafe_from_ordinal _ cur_x)
+                    buf<span class="symbol">!</span>i <span class="symbol">:=</span> xs[unsafe_from_ordinal cur_x]
                   <span class="keyword">else</span>
                     countrefs <span class="symbol">:=</span> (cur_x<span class="symbol">,</span> cur_y <span class="symbol">+</span> 1)
-                    buf<span class="symbol">!</span>i <span class="symbol">:=</span> ys<span class="symbol">.</span>(unsafe_from_ordinal _ cur_y)
+                    buf<span class="symbol">!</span>i <span class="symbol">:=</span> ys[unsafe_from_ordinal cur_y]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_sorted_lists {a} [<span class="type-name">Ord</span> a] (<span class="type-name">AsList</span> nx xs<span class="symbol">:</span> <span class="type-name">List</span> a) (<span class="type-name">AsList</span> ny ys<span class="symbol">:</span> <span class="type-name">List</span> a) <span class="symbol">:</span> <span class="type-name">List</span> a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> merge_sorted_lists(lx<span class="symbol">:</span> <span class="type-name">List</span> a<span class="symbol">,</span> ly<span class="symbol">:</span> <span class="type-name">List</span> a) <span class="symbol">-&gt;</span> <span class="type-name">List</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   <span class="comment">-- Need this wrapper because Dex can&#39;t automatically weaken
 </span>  <span class="comment">-- (a | b)=&gt;c to ((Fin d)=&gt;c)
-</span>  sorted <span class="symbol">=</span> merge_sorted_tables xs ys
+</span>  <span class="type-name">AsList</span>(nx<span class="symbol">,</span> xs) <span class="symbol">=</span> lx
+  <span class="type-name">AsList</span>(ny<span class="symbol">,</span> ys) <span class="symbol">=</span> ly
+  sorted <span class="symbol">=</span> merge_sorted_tables xs ys
   newsize <span class="symbol">=</span> nx <span class="symbol">+</span> ny
-  <span class="type-name">AsList</span> _ <span class="symbol">$</span> unsafe_cast_table (<span class="type-name">Fin</span> newsize) sorted
+  <span class="type-name">AsList</span> _ <span class="symbol">$</span> unsafe_cast_table(to<span class="symbol">=</span><span class="type-name">Fin</span> newsize<span class="symbol">,</span> sorted)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sort {a n} [<span class="type-name">Ord</span> a] (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sort(xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   <span class="comment">-- Warning: Has quadratic runtime cost for now.
 </span>
-  xlists <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> (<span class="type-name">AsList</span> 1 [xs<span class="symbol">.</span>i])
+  xlists <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> (<span class="type-name">AsList</span> 1 [xs[i]])
 
   <span class="comment">-- Merge sort monoid:
 </span>  mempty <span class="symbol">=</span> <span class="type-name">AsList</span> 0 []
   mcombine <span class="symbol">=</span> merge_sorted_lists
 
   <span class="comment">-- reduce might someday recursively subdivide the problem.
-</span>  (<span class="type-name">AsList</span> _ r) <span class="symbol">=</span> reduce mempty mcombine xlists
-  unsafe_cast_table n r
+</span>  <span class="type-name">AsList</span>(_<span class="symbol">,</span> r) <span class="symbol">=</span> reduce mempty mcombine xlists
+  unsafe_cast_table(to<span class="symbol">=</span>n<span class="symbol">,</span> r)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+|</span>) {n} [<span class="type-name">Ix</span> n] (i<span class="command">:n</span>) (delta<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+|</span>)(i<span class="command">:n</span><span class="symbol">,</span> delta<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">-&gt;</span> n  <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   i&#39; <span class="symbol">=</span> ordinal i <span class="symbol">+</span> delta
-  from_ordinal _ <span class="symbol">$</span> select (i&#39; <span class="symbol">&gt;=</span> size n) (size n <span class="symbol">-|</span> 1) i&#39;
+  from_ordinal <span class="symbol">$</span> select (i&#39; <span class="symbol">&gt;=</span> size n) (size n <span class="symbol">-|</span> 1) i&#39;
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_sorted {a n} [<span class="type-name">Ord</span> a] (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
-  all <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i <span class="symbol">&lt;=</span> xs<span class="symbol">.</span>(i <span class="symbol">+|</span> 1)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> is_sorted(xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  all <span class="keyword">for</span> i<span class="symbol">.</span> xs[i] <span class="symbol">&lt;=</span> xs[i <span class="symbol">+|</span> 1]
 </div></div></div></body></html>

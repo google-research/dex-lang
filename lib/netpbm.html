@@ -310,9 +310,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">import</span> parser
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Image</span> <span class="symbol">=</span>
-  <span class="type-name">MkImage</span> rows<span class="symbol">:</span><span class="type-name">Nat</span> cols<span class="symbol">:</span><span class="type-name">Nat</span> pixels<span class="symbol">:</span>(<span class="type-name">Fin</span> rows <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> cols <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Word8</span>)
+  <span class="type-name">MkImage</span>(rows<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> cols<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> pixels<span class="symbol">:</span>(<span class="type-name">Fin</span> rows <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> cols <span class="symbol">=&gt;</span> <span class="type-name">Fin</span> 3 <span class="symbol">=&gt;</span> <span class="type-name">Word8</span>))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> parse_p6 <span class="symbol">:</span> <span class="type-name">Parser</span> <span class="type-name">Image</span> <span class="symbol">=</span> <span class="type-name">MkParser</span> <span class="symbol">\</span>h<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block">parse_p6 <span class="symbol">:</span> <span class="type-name">Parser</span> <span class="type-name">Image</span> <span class="symbol">=</span> <span class="type-name">MkParser</span> <span class="symbol">\</span>h<span class="symbol">.</span>
   <span class="comment">-- Loads a raw PPM file in P6 format.
 </span>  <span class="comment">-- The header will look something like:
 </span>  <span class="comment">--   P6
@@ -334,7 +334,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
         parse h parse_any
   <span class="type-name">MkImage</span> rows cols pixels
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> load_image_p6 (filename<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">Image</span> <span class="symbol">=</span>
-  image_raw <span class="symbol">=</span> unsafe_io <span class="keyword">do</span> read_file filename
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> load_image_p6(filename<span class="symbol">:</span><span class="type-name">String</span>) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> <span class="type-name">Image</span> <span class="symbol">=</span>
+  image_raw <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span> read_file filename
   run_parser_partial image_raw parse_p6
 </div></div></div></body></html>
