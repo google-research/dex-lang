@@ -171,15 +171,21 @@ foldCast sTy l = case sTy of
     -- candidate answer, and using one of those if the reverse cast is closer
     -- to the original input.
     --
-    -- This rounds to nearest.  Empirically (see test suite), it also seems to
-    -- break ties the same way LLVM does, but I don't have a proof of that.
-    -- LLVM's tie-breaking may be system-specific?
-    fixUlp orig candidate = closest [candidate, candidatem1, candidatep1] where
+    -- This rounds to nearest.  We round to nearest *even* by considering the
+    -- candidates in decreasing order of the number of trailing zeros they
+    -- exhibit when cast back to the original integer type.
+    fixUlp :: forall a b w. (Num a, Integral a, FiniteBits a, RealFrac b, FloatingBits b w)
+      => a -> b -> b
+    fixUlp orig candidate = res where
+      res = closest $ sortBy moreLowBits [candidate, candidatem1, candidatep1]
       candidatem1 = nextDown candidate
       candidatep1 = nextUp candidate
-      closest items = minimumBy (\ca cb -> err ca `compare` err cb) items
+      closest = minimumBy (\ca cb -> err ca `compare` err cb)
       err cand = absdiff orig (round cand)
       absdiff a b = if a >= b then a - b else b - a
+      moreLowBits a b =
+        compare (0 - countTrailingZeros (round @b @a a))
+                (0 - countTrailingZeros (round @b @a b))
 
 peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
 peepholeExpr expr = case expr of
