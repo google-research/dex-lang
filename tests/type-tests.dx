@@ -681,3 +681,14 @@ instance I()
                   -- of `u1` because it goes out of scope before `a` does.
   1
 > 1
+
+def my_id(x:a) -> a given (a, b) = x
+> Type error:Couldn't infer type of unannotated binder b
+
+def my_id2(x:a) -> a given (a, b:Type) = x
+
+:p my_id2 1.0
+> Type error:Couldn't infer implicit argument b of my_id2
+>
+> :p my_id2 1.0
+>    ^^^^^^^^^^

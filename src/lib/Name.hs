@@ -696,6 +696,11 @@ nestToList f (Nest b rest) = b' : nestToList f rest
   where b' = withExtEvidence (toExtEvidence rest) $
                withExtEvidence (toExtEvidence b) $
                  f b
+nestToListFlip :: BindsNames b
+           => Nest b n l
+           -> (forall n' l'. (Ext n' l', Ext l' l, Ext n' l) => b n' l' -> a)
+           -> [a]
+nestToListFlip bs f = nestToList f bs
 
 nestToNames :: (Distinct l, Ext n l, BindsOneName b c, BindsNames b)
             => Nest b n l -> [Name c l]
