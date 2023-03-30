@@ -55,7 +55,7 @@ traverseNames
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- flip R.traverseWithKey vs \rawName (SubstItem d c _) ->
+  m <- flip R.traverseWithKey (fromNameSet vs) \rawName (SubstItem d c _) ->
     interpretColor c \(ColorProxy :: ColorProxy c) -> do
       v' <- f (UnsafeMakeName rawName :: Name c i)
       return $ SubstItem d c (unsafeCoerceVC v')

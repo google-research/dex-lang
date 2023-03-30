@@ -847,17 +847,13 @@ fromSerializedEnv (SerializedEnv defs rules cache) = do
 
 toSerializedEnv :: MonadIO m => TopStateEx -> m TopSerializedStateEx
 toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _) _) = do
-  collectGarbage (RecSubstFrag defs) ruleFreeVars cache
-    \defsFrag'@(RecSubstFrag defs') cache' -> do
+  collectGarbage (RecSubstFrag defs) (PairE (CustomRules rules) cache)
+    \defsFrag'@(RecSubstFrag defs') (PairE (CustomRules rules') cache') -> do
       let liveNames = toNameSet $ toScopeFrag defsFrag'
-      let rules' = unsafeCoerceE $ CustomRules
-           $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
+      let rules'' = CustomRules
+           $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules'
       defs'' <- snapshotPtrs (RecSubst defs')
-      return $ TopSerializedStateEx $ SerializedEnv defs'' rules' cache'
-  where
-    ruleFreeVars v = case M.lookup v rules of
-      Nothing -> mempty
-      Just r  -> freeVarsE r
+      return $ TopSerializedStateEx $ SerializedEnv defs'' rules'' cache'
 
 getCacheDir :: MonadIO m => m FilePath
 getCacheDir = liftIO $ getXdgDirectory XdgCache "dex"

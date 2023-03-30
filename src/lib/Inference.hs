@@ -83,8 +83,8 @@ inferTopUDecl (UDataDefDecl def tc dcs) result = do
   let subst = tc @> tc' <.> dcs @@> dcs'
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInterface paramBs methodTys className methodNames) result = do
-  let sn = uBinderSourceName className
-  let methodSourceNames = nestToList uBinderSourceName methodNames
+  let sn = getSourceName className
+  let methodSourceNames = nestToList getSourceName methodNames
   classDef <- liftInfererM $ solveLocal $ inferClassDef sn methodSourceNames paramBs methodTys
   className' <- emitBinding (getNameHint sn) $ ClassBinding classDef
   methodNames' <-
@@ -94,10 +94,6 @@ inferTopUDecl (UInterface paramBs methodTys className methodNames) result = do
   UDeclResultDone <$> applyRename subst result
 inferTopUDecl (UInstance className instanceBs params methods maybeName expl) result = do
   let (InternalName _ className') = className
-  -- XXX: we use `buildDeclsInf` even though we don't actually emit any decls
-  -- here. The reason is that it does some DCE of inference vars for us. If we
-  -- don't use it, we get spurious "Ambiguous type variable" errors. TODO: Fix
-  -- this.
   ab <- liftInfererM $ solveLocal do
     withRoleUBinders instanceBs \_ -> do
       ClassDef _ _ _ paramBinders _ _ <- lookupClassDef (sink className')
@@ -445,12 +441,23 @@ instance Solver (InfererM i) where
   {-# INLINE emitSolver #-}
 
   solveLocal cont = do
-    Abs (InfOutFrag unsolvedInfNames _ _) result <- runLocalInfererM cont
-    case unsolvedInfNames of
-      REmpty -> return result
-      _      -> case hoist unsolvedInfNames result of
-        HoistSuccess result' -> return result'
-        HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+    Abs (InfOutFrag unsolvedInfVars _ _) result <- dceInfFrag =<< runLocalInfererM cont
+    case unRNest unsolvedInfVars of
+      Empty -> return result
+      Nest (b:>RightE (InfVarBound ty (ctx, desc))) _ -> addSrcContext ctx $
+        throw TypeErr $ formatAmbiguousVarErr (binderName b) ty desc
+      _ -> error "shouldn't be possible"
+
+formatAmbiguousVarErr :: CAtomName n -> CType n' -> InfVarDesc -> String
+formatAmbiguousVarErr infVar ty = \case
+  AnnotationInfVar v ->
+    "Couldn't infer type of unannotated binder " <> v
+  ImplicitArgInfVar (f, argName) ->
+    "Couldn't infer implicit argument " <> argName <> " of " <> f
+  TypeInstantiationInfVar t ->
+    "Couldn't infer instantiation of type " <> t
+  MiscInfVar ->
+    "Ambiguous type variable: " ++ pprint infVar ++ ": " ++ pprint ty
 
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
@@ -483,16 +490,16 @@ instance InfBuilder (InfererM i) where
     Abs b e <- return ab
     ty' <- zonk ty
     return $ Abs (WithExpl expl (b:>ty')) e
-   where
-    dceInfFrag
-      :: (EnvReader m, EnvExtender m, Fallible1 m, RenameE e, HoistableE e)
-      => Abs InfOutFrag e n -> m n (Abs InfOutFrag e n)
-    dceInfFrag ab@(Abs frag@(InfOutFrag bs _ _) e) =
-      case bs of
-        REmpty -> return ab
-        _ -> hoistThroughDecls frag e >>= \case
-          Abs frag' (Abs Empty e') -> return $ Abs frag' e'
-          _ -> error "Shouldn't have any decls without `Emits` constraint"
+
+dceInfFrag
+  :: (EnvReader m, EnvExtender m, Fallible1 m, RenameE e, HoistableE e)
+  => Abs InfOutFrag e n -> m n (Abs InfOutFrag e n)
+dceInfFrag ab@(Abs frag@(InfOutFrag bs _ _) e) =
+  case bs of
+    REmpty -> return ab
+    _ -> hoistThroughDecls frag e >>= \case
+      Abs frag' (Abs Empty e') -> return $ Abs frag' e'
+      _ -> error "Shouldn't have any decls without `Emits` constraint"
 
 instance Inferer InfererM where
   liftSolverMInf m = InfererM $ SubstReaderT $ lift $
@@ -838,9 +845,9 @@ inferRho :: EmitsBoth o =>
 inferRho hint expr = checkOrInferRho hint expr Infer
 {-# INLINE inferRho #-}
 
-getImplicitArg :: EmitsInf o => InferenceMechanism -> CType o -> InfererM i o (CAtom o)
-getImplicitArg inf argTy = case inf of
-  Unify -> freshType argTy
+getImplicitArg :: EmitsInf o => InferenceArgDesc -> InferenceMechanism -> CType o -> InfererM i o (CAtom o)
+getImplicitArg desc inf argTy = case inf of
+  Unify -> Var <$> freshInferenceName (ImplicitArgInfVar desc) argTy
   Synth reqMethodAccess -> do
     ctx <- srcPosCtx <$> getErrCtx
     return $ DictHole (AlwaysEqual ctx) argTy reqMethodAccess
@@ -878,7 +885,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     matchRequirement $ Pi $ CorePiType appExpl bs' effs' body'
   UTabPi (UTabPiExpr (UAnnBinder b ann cs) ty) -> do
     unless (null cs) $ throw TypeErr "`=>` shouldn't have constraints"
-    ann' <- asIxType =<< checkAnn ann
+    ann' <- asIxType =<< checkAnn (getSourceName b) ann
     piTy <- case b of
       UIgnore ->
         buildTabPiInf noHint ann' \_ -> checkUType ty
@@ -888,7 +895,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     matchRequirement $ TabPi piTy
   UDepPairTy (UDepPairType (UAnnBinder b ann cs) rhs) -> do
     unless (null cs) $ throw TypeErr "Dependent pair binders shouldn't have constraints"
-    ann' <- checkAnn ann
+    ann' <- checkAnn (getSourceName b) ann
     matchRequirement =<< liftM DepPairTy do
       buildDepPairTyInf (getNameHint b) ann' \v -> extendRenamer (b@>v) do
         let msg =  "Can't reduce type expression: " ++ docAsStr (pretty rhs)
@@ -966,7 +973,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
           rec' <- emitExpr . RecordOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
           return (Just rec', mempty)
         UDynFields   v -> do
-          anyFields <- freshInferenceName LabeledRowKind
+          anyFields <- freshInferenceName MiscInfVar LabeledRowKind
           v' <- checkRho noHint v $ RecordTyWithElems [DynFields anyFields]
           case delayedRec of
             (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
@@ -1020,22 +1027,30 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
     Nothing -> return defaultVal
     Just ~(UMethodVar methodName') -> do
       MethodBinding className _ <- lookupEnv methodName'
-      resultTyVar <- freshInferenceName TyKind
+      resultTyVar <- freshInferenceName MiscInfVar TyKind
       dictTy <- DictTy <$> dictType className [Var resultTyVar]
       addDefault resultTyVar defaultTy
       emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
 
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
-    SigmaAtom (CAtom n)
-  | SigmaUVar (UVar n)
+    SigmaAtom (Maybe SourceName) (CAtom n)
+  | SigmaUVar SourceName (UVar n)
   | SigmaFieldDef (TyConName n) (Maybe (CAtom n)) (FieldDef n)
     deriving (Show)
 
+instance HasSourceName (SigmaAtom n) where
+  getSourceName = \case
+    SigmaAtom sn _ -> case sn of
+      Just sn' -> sn'
+      Nothing  -> "<expr>"
+    SigmaUVar sn _ -> sn
+    SigmaFieldDef _ _ _ -> "<field>"
+
 instance HasType CoreIR SigmaAtom where
   getTypeE = \case
-    SigmaAtom x -> getTypeE x
-    SigmaUVar v -> getTypeE v
+    SigmaAtom _ x -> getTypeE x
+    SigmaUVar _ v -> getTypeE v
     SigmaFieldDef tyConName (Just arg) (FieldProj i) -> do
       NewtypeTyCon (UserADTType _ _ (TyConParams _ params)) <- getTypeE arg
       TyConDef _ bs [DataConDef _ _ repTy projs] <- lookupTyCon =<< substM tyConName
@@ -1053,13 +1068,13 @@ instance SinkableE SigmaAtom where
   sinkingProofE = undefined
 
 instance SubstE AtomSubstVal SigmaAtom where
-  substE env (SigmaAtom x) = SigmaAtom $ substE env x
-  substE env (SigmaUVar uvar) = case uvar of
-    UAtomVar v -> substE env $ SigmaAtom $ Var v
-    UTyConVar   v -> SigmaUVar $ UTyConVar   $ substE env v
-    UDataConVar v -> SigmaUVar $ UDataConVar $ substE env v
-    UClassVar   v -> SigmaUVar $ UClassVar   $ substE env v
-    UMethodVar  v -> SigmaUVar $ UMethodVar  $ substE env v
+  substE env (SigmaAtom sn x) = SigmaAtom sn $ substE env x
+  substE env (SigmaUVar sn uvar) = case uvar of
+    UAtomVar v -> substE env $ SigmaAtom (Just sn) $ Var v
+    UTyConVar   v -> SigmaUVar sn $ UTyConVar   $ substE env v
+    UDataConVar v -> SigmaUVar sn $ UDataConVar $ substE env v
+    UClassVar   v -> SigmaUVar sn $ UClassVar   $ substE env v
+    UMethodVar  v -> SigmaUVar sn $ UMethodVar  $ substE env v
     UEffectVar   _ -> error "not implemented"
     UEffectOpVar _ -> error "not implemented"
     UHandlerVar  _ -> error "not implemented"
@@ -1073,12 +1088,12 @@ inferWithoutInstantiation
   => UExpr i -> InfererM i o (SigmaAtom o)
 inferWithoutInstantiation (WithSrcE pos expr) =
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
-   UVar ~(InternalName _ v) ->  SigmaUVar <$> renameM v
+   UVar ~(InternalName sn v) ->  SigmaUVar sn <$> renameM v
    UFieldAccess x f -> do
      (tyConName, maybeArg) <- inferFieldLHS x
      def <- lookupFieldName tyConName f
      return $ SigmaFieldDef tyConName maybeArg def
-   _ -> SigmaAtom <$> inferRho noHint (WithSrcE pos expr)
+   _ -> SigmaAtom Nothing <$> inferRho noHint (WithSrcE pos expr)
 
 inferFieldLHS
   :: EmitsBoth o
@@ -1105,14 +1120,14 @@ lookupFieldName dataDefName (WithSrc src name) = addSrcContext src do
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
   Pi piTy@(CorePiType ExplicitApp _ _ _) -> do
-    Lam <$> etaExpandExplicits piTy \args ->
+    Lam <$> etaExpandExplicits fDesc piTy \args ->
       applySigmaAtom (sink sigmaAtom) args
   Pi (CorePiType ImplicitApp bs _ resultTy) -> do
-    args <- inferMixedArgs @UExpr (Abs bs resultTy) [] []
+    args <- inferMixedArgs @UExpr fDesc (Abs bs resultTy) [] []
     applySigmaAtom sigmaAtom args
   _ -> case sigmaAtom of
-    SigmaAtom x -> return x
-    SigmaUVar v -> case v of
+    SigmaAtom _ x -> return x
+    SigmaUVar _ v -> case v of
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
     SigmaFieldDef tyCon (Just arg) (FieldProj i) -> do
@@ -1120,14 +1135,17 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
       normalizeNaryProj (projs!!i) arg
     SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
     _ -> error "not implemented"
+ where
+   fDesc :: SourceName
+   fDesc = getSourceName sigmaAtom
 
 -- creates a lambda term with just the explicit binders, but provides
 -- args corresponding to all the binders (explicit and implicit)
 etaExpandExplicits
-  :: EmitsInf o => CorePiType o
+  :: EmitsInf o => SourceName -> CorePiType o
   -> (forall o'. (EmitsBoth o', DExt o o') => [CAtom o'] -> InfererM i o' (CAtom o'))
   -> InfererM i o (CoreLamExpr o)
-etaExpandExplicits (CorePiType _ bsTop effs _) contTop = do
+etaExpandExplicits fSourceName (CorePiType _ bsTop effs _) contTop = do
   ab <- go bsTop \xs -> do
     effs' <- applySubst (bsTop@@>(SubstVal<$>xs)) effs
     withAllowedEffects effs' do
@@ -1145,8 +1163,8 @@ etaExpandExplicits (CorePiType _ bsTop effs _) contTop = do
       prependAbs <$> buildAbsInf (getNameHint b) expl ty \v -> do
         Abs rest' UnitE <- applyRename (b@>v) $ Abs rest UnitE
         go rest' \args -> cont (sink (Var v) : args)
-    Inferred _ infMech -> do
-      arg <- getImplicitArg infMech ty
+    Inferred argSourceName infMech -> do
+      arg <- getImplicitArg (fSourceName, fromMaybe "_" argSourceName) infMech ty
       Abs rest' UnitE <- applySubst (b@>SubstVal arg) $ Abs rest UnitE
       go rest' \args -> cont (sink arg : args)
 
@@ -1205,13 +1223,13 @@ checkOrInferApp f posArgs namedArgs reqTy = getType f >>= \case
     ExplicitApp -> do
       checkArity bs posArgs
       let bsAbs = Abs bs $ PairE effs resultTy
-      args' <- inferMixedArgs bsAbs posArgs namedArgs
+      args' <- inferMixedArgs fDesc bsAbs posArgs namedArgs
       applySigmaAtom f args' >>= matchRequirement
     ImplicitApp -> do
       -- TODO: should this already have been done by the time we get `f`?
       let bsAbs = Abs bs $ PairE effs resultTy
-      implicitArgs <- inferMixedArgs @UExpr bsAbs [] []
-      f' <- SigmaAtom <$> applySigmaAtom f implicitArgs
+      implicitArgs <- inferMixedArgs @UExpr fDesc bsAbs [] []
+      f' <- SigmaAtom (Just fDesc) <$> applySigmaAtom f implicitArgs
       checkOrInferApp f' posArgs namedArgs Infer >>= matchRequirement
   -- TODO: special-case error for when `fTy` can't possibly be a function
   fTy -> do
@@ -1224,6 +1242,9 @@ checkOrInferApp f posArgs namedArgs reqTy = getType f >>= \case
     constrainEq (Pi expected) fTy
     applySigmaAtom f args'
  where
+  fDesc :: SourceName
+  fDesc = getSourceName f
+
   getResultTy :: InfererM i o (CType o)
   getResultTy = case reqTy of
     Infer -> freshType TyKind
@@ -1240,8 +1261,8 @@ checkOrInferApp f posArgs namedArgs reqTy = getType f >>= \case
 type IsDependent = Bool
 
 applySigmaAtom :: EmitsBoth o => SigmaAtom o -> [CAtom o] -> InfererM i o (CAtom o)
-applySigmaAtom (SigmaAtom f) args = emitExprWithEffects $ App f args
-applySigmaAtom (SigmaUVar f) args = case f of
+applySigmaAtom (SigmaAtom _ f) args = emitExprWithEffects $ App f args
+applySigmaAtom (SigmaUVar _ f) args = case f of
   UAtomVar f' -> emitExprWithEffects $ App (Var f') args
   UTyConVar f' -> do
     TyConDef sn bs _ <- lookupTyCon f'
@@ -1320,9 +1341,10 @@ checkArity bs args = do
 inferMixedArgs
   :: forall arg i o e
   .  (ExplicitArg arg, EmitsBoth o, SubstE (SubstVal Atom) e, SinkableE e, HoistableE e)
-  => Abs (Nest (WithExpl CBinder)) e o -> [arg i] -> [(SourceName, arg i)]
+  => SourceName
+  -> Abs (Nest (WithExpl CBinder)) e o -> [arg i] -> [(SourceName, arg i)]
   -> InfererM i o [CAtom o]
-inferMixedArgs bsAbs posArgs namedArgs = do
+inferMixedArgs fSourceName bsAbs posArgs namedArgs = do
   checkNamedArgValidity bsAbs (map fst namedArgs)
   liftM fst $ runStreamReaderT1 posArgs $ go bsAbs
  where
@@ -1347,7 +1369,7 @@ inferMixedArgs bsAbs posArgs namedArgs = do
       lift11 $ checkExplicitArg isDependent arg argTy
     Inferred argName infMech -> lift11 do
       case lookupNamedArg argName of
-        Nothing -> getImplicitArg infMech argTy
+        Nothing -> getImplicitArg (fSourceName, fromMaybe "_" argName) infMech argTy
         Just arg -> checkExplicitArg isDependent arg argTy
 
   lookupNamedArg :: Maybe SourceName -> Maybe (arg i)
@@ -1642,7 +1664,7 @@ inferClassDef className methodNames paramBs methods = do
   let paramNames = catMaybes $ nestToList
         (\(WithExpl expl (UAnnBinder b _ _)) -> case expl of
              Inferred _ (Synth _) -> Nothing
-             _ -> Just $ Just $ uBinderSourceName b) paramBs
+             _ -> Just $ Just $ getSourceName b) paramBs
   ab <- withRoleUBinders paramBs \_ -> do
      ListE <$> forM methods \m -> do
        checkUType m >>= \case
@@ -1672,7 +1694,7 @@ withUBinders
 withUBinders bs cont = case bs of
   Empty -> getDistinct >>= \Distinct -> Abs Empty <$> cont []
   Nest (WithExpl expl (UAnnBinder b ann cs)) rest -> do
-    ann' <- checkAnn ann
+    ann' <- checkAnn (getSourceName b) ann
     prependAbs <$> buildAbsInf (getNameHint b) expl ann' \v ->
       concatAbs <$> withConstraintBinders cs v do
         extendSubst (b@>sink v) $ withUBinders rest \vs -> cont (sink v : vs)
@@ -1699,7 +1721,7 @@ withRoleUBinders
 withRoleUBinders bs cont = case bs of
   Empty -> getDistinct >>= \Distinct -> Abs Empty <$> cont []
   Nest (WithExpl expl (UAnnBinder b ann cs)) rest -> do
-    ann' <- checkAnn ann
+    ann' <- checkAnn (getSourceName b) ann
     Abs b' (Abs bs' e) <- buildAbsInf (getNameHint b) expl ann' \v -> do
       Abs ds (Abs bs' e) <- withConstraintBinders cs v $
         extendSubst (b@>sink v) $ withRoleUBinders rest \vs -> cont (sink v : vs)
@@ -1744,7 +1766,7 @@ checkUForExpr (UForExpr (UAnnBinder bFor ann cs) body) tabPi@(TabPiType bPi _) =
 inferUForExpr :: EmitsBoth o => UForExpr i -> InfererM i o (LamExpr CoreIR o)
 inferUForExpr (UForExpr (UAnnBinder bFor ann cs) body) = do
   unless (null cs) $ throw TypeErr "`for` binders shouldn't have constraints"
-  iTy <- checkAnn ann
+  iTy <- checkAnn (getSourceName bFor) ann
   Abs b body' <- buildAbsInf (getNameHint bFor) Explicit iTy \i ->
     extendRenamer (bFor@>i) $ buildBlockInf $ inferRho noHint body
   return $ LamExpr (UnaryNest $ withoutExpl b) body'
@@ -1905,7 +1927,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     when (length idxs /= nestLength ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                              ++ " got " ++ show (nestLength ps)
-    (params, repTy') <- inferParams (Abs paramBs repTy)
+    (params, repTy') <- inferParams sourceName (Abs paramBs repTy)
     constrainEq scrutineeTy $ TypeCon sourceName dataDefName params
     buildAltInf repTy' \arg -> do
       args <- forM idxs \projs -> do
@@ -1915,8 +1937,8 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
-            => Abs RolePiBinders e o -> InfererM i o (TyConParams o, e o)
-inferParams (Abs paramBs bodyTop) = do
+            => SourceName -> Abs RolePiBinders e o -> InfererM i o (TyConParams o, e o)
+inferParams sourceName (Abs paramBs bodyTop) = do
   (params, e') <- go (Abs paramBs bodyTop)
   let expls = nestToList (\(RolePiBinder _ (WithExpl expl _)) -> expl) paramBs
   return (TyConParams expls params, e')
@@ -1926,8 +1948,8 @@ inferParams (Abs paramBs bodyTop) = do
   go (Abs Empty body) = return ([], body)
   go (Abs (Nest (RolePiBinder _ (WithExpl expl (b:>ty))) bs) body) = do
     x <- case expl of
-      Explicit -> Var <$> freshInferenceName ty
-      Inferred _ infMech -> getImplicitArg infMech ty
+      Explicit -> Var <$> freshInferenceName (TypeInstantiationInfVar sourceName) ty
+      Inferred argName infMech -> getImplicitArg (sourceName, fromMaybe "_" argName) infMech ty
     rest <- applySubst (b@>SubstVal x) $ Abs bs body
     (params, body') <- go rest
     return (x:params, body')
@@ -1966,7 +1988,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         when (length idxss /= nestLength ps) $ throw TypeErr $
           "Unexpected number of pattern binders. Expected " ++ show (length idxss)
                                                  ++ " got " ++ show (nestLength ps)
-        (params, UnitE) <- inferParams (Abs paramBs UnitE)
+        (params, UnitE) <- inferParams sourceName (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
         x <- cheapNormalize =<< zonk (Var v)
         xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emit . Atom
@@ -1987,7 +2009,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             bindLetPats ps itemsNestOrdered c
         URemFieldsPat b ->
           resolveDelay rv \rv' -> do
-            tailVar <- freshInferenceName LabeledRowKind
+            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
             bindLetPat (WithSrcB Nothing $ UPatBinder b) rv' c
         UStaticFieldPat l p rest -> do
@@ -1998,7 +2020,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
           resolveDelay rv \rv' -> do
             fv' <- emit . Atom =<< checkRho noHint
               (WithSrcE Nothing $ UVar fv) LabeledRowKind
-            tailVar <- freshInferenceName LabeledRowKind
+            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
             ans <- emitExpr (RecordOp $ RecordSplit (Var fv') (Var rv'))
             [subr, rv''] <- emitUnpacked ans
@@ -2008,7 +2030,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
             lv' <- emit. Atom  =<< checkRho noHint
               (WithSrcE Nothing $ UVar lv) (NewtypeTyCon LabelType)
             fieldTy <- freshType TyKind
-            tailVar <- freshInferenceName LabeledRowKind
+            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
             constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
             ans <- emitExpr (RecordOp $ RecordSplitDynamic (Var lv') (Var rv'))
             [val, rv''] <- emitUnpacked ans
@@ -2032,7 +2054,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         Empty -> f r
         _     -> do
           labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
-          tailVar <- freshInferenceName LabeledRowKind
+          tailVar <- freshInferenceName MiscInfVar LabeledRowKind
           constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
           [itemsRecord, restRecord] <- getUnpacked =<<
             (emitExpr $ RecordOp (RecordSplit
@@ -2053,10 +2075,12 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       emit $ TabApp (Var v) [NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i)]
     bindLetPats ps xs cont
 
-checkAnn :: EmitsInf o => UAnn req i -> InfererM i o (CType o)
-checkAnn ann = case ann of
+checkAnn :: EmitsInf o => SourceName -> UAnn req i -> InfererM i o (CType o)
+checkAnn binderSourceName ann = case ann of
   UAnn ty -> checkUType ty
-  UNoAnn  -> freshType TyKind
+  UNoAnn  -> do
+    let desc = AnnotationInfVar binderSourceName
+    Var <$> freshInferenceName desc TyKind
 
 checkUType :: EmitsInf o => UType i -> InfererM i o (CType o)
 checkUType = checkUParam TyKind
@@ -2161,7 +2185,7 @@ class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
   zonk :: (SubstE AtomSubstVal e, SinkableE e) => e n -> m n (e n)
   extendSolverSubst :: CAtomName n -> CType n -> m n ()
   emitSolver :: EmitsInf n => SolverBinding n -> m n (CAtomName n)
-  solveLocal :: (SinkableE e, HoistableE e)
+  solveLocal :: (SinkableE e, HoistableE e, RenameE e)
              => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
              -> m n (e n)
 
@@ -2263,15 +2287,16 @@ instance Solver SolverM where
       REmpty -> return result
       _      -> case hoist unsolvedInfNames result of
         HoistSuccess result' -> return result'
-        HoistFailure vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+        HoistFailure vs ->
+          throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
   {-# INLINE solveLocal #-}
 
 instance Unifier SolverM
 
-freshInferenceName :: (EmitsInf n, Solver m) => Kind CoreIR n -> m n (CAtomName n)
-freshInferenceName k = do
+freshInferenceName :: (EmitsInf n, Solver m) => InfVarDesc -> Kind CoreIR n -> m n (CAtomName n)
+freshInferenceName desc k = do
   ctx <- srcPosCtx <$> getErrCtx
-  emitSolver $ InfVarBound k ctx
+  emitSolver $ InfVarBound k (ctx, desc)
 {-# INLINE freshInferenceName #-}
 
 freshSkolemName :: (EmitsInf n, Solver m) => Kind CoreIR n -> m n (CAtomName n)
@@ -2494,7 +2519,7 @@ instance Unifiable (ExtLabeledItemsE CType CAtomName) where
          let extras1 = M.differenceWith diffDrop items1 items2
          let extras2 = M.differenceWith diffDrop items2 items1
          if t1 /= t2 then do
-           newTail <- freshInferenceName LabeledRowKind
+           newTail <- freshInferenceName MiscInfVar LabeledRowKind
            unify (ExtLabeledItemsE (Ext NoLabeledItems t1))
                  (ExtLabeledItemsE (Ext (LabeledItems extras2) (Just newTail)))
            unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
@@ -2571,11 +2596,11 @@ isSkolemName v = lookupEnv v >>= \case
 {-# INLINE isSkolemName #-}
 
 freshType :: (EmitsInf n, Solver m) => Kind CoreIR n -> m n (CType n)
-freshType k = Var <$> freshInferenceName k
+freshType k = Var <$> freshInferenceName MiscInfVar k
 {-# INLINE freshType #-}
 
 freshEff :: (EmitsInf n, Solver m) => m n (EffectRow CoreIR n)
-freshEff = EffectRow mempty . EffectRowTail <$> freshInferenceName EffKind
+freshEff = EffectRow mempty . EffectRowTail <$> freshInferenceName MiscInfVar EffKind
 {-# INLINE freshEff #-}
 
 renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, RenameE e)
@@ -2634,10 +2659,10 @@ generalizeDictRec dict = do
       InstanceDef _ bs _ _ <- lookupInstanceDef instanceName
       args' <- generalizeInstanceArgs bs args
       return $ InstanceDict instanceName args'
-    IxFin _ -> IxFin <$> Var <$> freshInferenceName NatTy
+    IxFin _ -> IxFin <$> Var <$> freshInferenceName MiscInfVar NatTy
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
-    DataData ty           -> DataData <$> Var <$> freshInferenceName ty
+    DataData ty           -> DataData <$> Var <$> freshInferenceName MiscInfVar ty
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
 
 generalizeInstanceArgs :: EmitsInf n => RolePiBinders n l -> [CAtom n] -> SolverM n [CAtom n]
@@ -2649,9 +2674,9 @@ generalizeInstanceArgs (Nest (RolePiBinder role (WithExpl _ (b:>ty))) bs) (arg:a
     -- that it's valid to implement `generalizeDict` by synthesizing an entirely
     -- fresh dictionary, and if we were to do that, we would infer this type
     -- parameter exactly as we do here, using inference.
-    TypeParam -> Var <$> freshInferenceName TyKind
+    TypeParam -> Var <$> freshInferenceName MiscInfVar TyKind
     DictParam -> generalizeDictAndUnify ty arg
-    DataParam -> Var <$> freshInferenceName ty
+    DataParam -> Var <$> freshInferenceName MiscInfVar ty
   Abs bs' UnitE <- applySubst (b@>SubstVal arg') (Abs bs UnitE)
   args' <- generalizeInstanceArgs bs' args
   return $ arg':args'
@@ -2931,7 +2956,7 @@ instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do
        argTy <- substM $ binderType b
        arg <- liftSubstReaderT case expl of
          Explicit -> error "instances shouldn't have explicit args"
-         Inferred _ Unify -> Var <$> freshInferenceName argTy
+         Inferred _ Unify -> Var <$> freshInferenceName MiscInfVar argTy
          Inferred _ (Synth req) -> return $ DictHole (AlwaysEqual Nothing) argTy req
        liftM (arg:) $ extendSubst (b@>SubstVal arg) $ go target (Abs rest proposed)
 

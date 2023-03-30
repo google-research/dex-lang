@@ -409,6 +409,20 @@ data UPat' (n::S) (l::S) =
 pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
+-- === source names for error messages ===
+
+class HasSourceName a where
+  getSourceName :: a -> SourceName
+
+instance HasSourceName (UAnnBinder req n l) where
+  getSourceName (UAnnBinder b _ _) = getSourceName b
+
+instance HasSourceName (UBinder c n l) where
+  getSourceName = \case
+    UBindSource sn -> sn
+    UIgnore        -> "_"
+    UBind sn _     -> sn
+
 -- === Source context helpers ===
 
 data WithSrc a = WithSrc SrcPosCtx a
@@ -678,12 +692,6 @@ instance Color c => BindsAtMostOneName (UBinder c) c where
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
     UBind _ b'    -> b' @> x
-
-uBinderSourceName :: UBinder c n l -> SourceName
-uBinderSourceName b = case b of
-  UBindSource v -> v
-  UIgnore       -> "_"
-  UBind v _     -> v
 
 instance ProvesExt  (UAnnBinder  req) where
 instance BindsNames  (UAnnBinder req) where

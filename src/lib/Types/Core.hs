@@ -726,11 +726,23 @@ atomBindingType b = case b of
   TopDataBound (RepVal ty _) -> ty
   FFIFunBound piTy _ -> Pi piTy
 
--- TODO: Move this to Inference!
+-- name of function, name of arg
+type InferenceArgDesc = (String, String)
+data InfVarDesc =
+   ImplicitArgInfVar InferenceArgDesc
+ | AnnotationInfVar String -- name of binder
+ | TypeInstantiationInfVar String -- name of type
+ | MiscInfVar
+   deriving (Show, Generic, Eq, Ord)
+
 data SolverBinding (n::S) =
-   InfVarBound (CType n) SrcPosCtx
+   InfVarBound (CType n) InfVarCtx
  | SkolemBound (CType n)
    deriving (Show, Generic)
+
+-- Context for why we created an inference variable.
+-- This helps us give better "ambiguous variable" errors.
+type InfVarCtx = (SrcPosCtx, InfVarDesc)
 
 newtype EnvFrag (n::S) (l::S) = EnvFrag (RecSubstFrag Binding n l)
         deriving (OutFrag)
@@ -2121,7 +2133,7 @@ instance AlphaHashableE LinearizationSpec
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE2
-                                  (PairE CType (LiftE SrcPosCtx))
+                                  (PairE CType (LiftE InfVarCtx))
                                   CType
   fromE = \case
     InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
@@ -2588,6 +2600,7 @@ instance AlphaEqE       FieldDef
 instance AlphaHashableE FieldDef
 instance RenameE        FieldDef
 
+instance Hashable InfVarDesc
 instance Hashable Projection
 instance Hashable IxMethod
 instance Hashable ParamRole
@@ -2639,6 +2652,7 @@ instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (ann n) => Store (NonDepNest r ann n l)
 instance Store Projection
+instance Store InfVarDesc
 instance Store IxMethod
 instance Store ParamRole
 instance Store (SpecializedDictDef n)
