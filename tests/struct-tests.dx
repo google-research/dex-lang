@@ -35,3 +35,23 @@ struct MyParametricStruct(a) =
   foo = MyParametricStruct.new(1.0, 1)
   foo.bar
 > 1
+
+x = (1, 2)
+
+x.0
+> 1
+
+x.1
+> 2
+
+x.2
+> Type error:Can't project component 2 of a length-2 tuple
+>
+> x.2
+>   ^
+
+x.foo
+> Type error:Tuples don't have named fields
+>
+> x.foo
+>   ^^^

@@ -411,12 +411,9 @@ instance Mul(n=>a) given (a|Mul, n|Ix)
 
 '## Basic polymorphic functions and types
 
-def fst(pair:(a, b)) -> a given (a, b) =
-  (x, _) = pair
-  x
-def snd(pair:(a, b)) -> b given (a, b) =
-  (_, y) = pair
-  y
+def fst(pair:(a, b)) -> a given (a, b) = pair.0
+def snd(pair:(a, b)) -> b given (a, b) = pair.1
+
 def swap(pair:(a, b)) -> (b, a) given (a, b) =
   (x, y) = pair
   (y, x)

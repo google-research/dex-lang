@@ -624,7 +624,10 @@ leafGroup = do
   postfixGroup = noGap >>
         ((JuxtaposeNoSpace,) <$> withSrc cParens)
     <|> ((JuxtaposeNoSpace,) <$> withSrc cBrackets)
-    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cIdentifier))
+    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cFieldName))
+
+cFieldName :: Parser Group'
+cFieldName = cIdentifier <|> (CNat <$> natLit)
 
 cIdentifier :: Parser Group'
 cIdentifier = CIdentifier <$> anyName

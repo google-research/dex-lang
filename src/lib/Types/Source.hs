@@ -257,7 +257,11 @@ data UFieldRowElem (n::S)
   | UDynFields   (UExpr n)
   deriving (Show)
 
-type FieldName = WithSrc String
+type FieldName = WithSrc FieldName'
+data FieldName' =
+   FieldName SourceName
+ | FieldNum  Int
+  deriving (Show)
 
 data ULamExpr (n::S) where
   ULamExpr

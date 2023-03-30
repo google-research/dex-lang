@@ -441,9 +441,11 @@ expr = propagateSrcE expr' where
       Dot -> do
         lhs' <- expr lhs
         WithSrc src rhs' <- return rhs
-        addSrcContext src $ case rhs' of
-          CIdentifier name -> return $ UFieldAccess lhs' (WithSrc src name)
-          _ -> throw SyntaxErr "Field must be a name"
+        name <- addSrcContext src $ case rhs' of
+          CIdentifier name -> return $ FieldName name
+          CNat i           -> return $ FieldNum $ fromIntegral i
+          _ -> throw SyntaxErr "Field must be a name or an integer"
+        return $ UFieldAccess lhs' (WithSrc src name)
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       EvalBinOp s -> evalOp s
       DepAmpersand  -> do

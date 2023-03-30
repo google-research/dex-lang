@@ -1032,11 +1032,16 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
       addDefault resultTyVar defaultTy
       emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
 
+data FieldNameSpace n =
+   TyConNames (TyConName n)
+ | TupleNames Int -- length of tuple
+   deriving (Show)
+
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
     SigmaAtom (Maybe SourceName) (CAtom n)
   | SigmaUVar SourceName (UVar n)
-  | SigmaFieldDef (TyConName n) (Maybe (CAtom n)) (FieldDef n)
+  | SigmaFieldDef (FieldNameSpace n) (Maybe (CAtom n)) (FieldDef n)
     deriving (Show)
 
 instance HasSourceName (SigmaAtom n) where
@@ -1051,12 +1056,15 @@ instance HasType CoreIR SigmaAtom where
   getTypeE = \case
     SigmaAtom _ x -> getTypeE x
     SigmaUVar _ v -> getTypeE v
-    SigmaFieldDef tyConName (Just arg) (FieldProj i) -> do
+    SigmaFieldDef (TyConNames tyConName) (Just arg) (FieldProj i) -> do
       NewtypeTyCon (UserADTType _ _ (TyConParams _ params)) <- getTypeE arg
       TyConDef _ bs [DataConDef _ _ repTy projs] <- lookupTyCon =<< substM tyConName
       applySubst (bs@@>(SubstVal<$>params)) (naryNonDepProj (projs!!i) repTy)
-    SigmaFieldDef tc Nothing FieldNew -> Pi <$> getDataConType tc 0
-    atom -> error $ "not implemented: " ++ show atom
+    SigmaFieldDef (TyConNames tc) Nothing FieldNew -> Pi <$> getDataConType tc 0
+    SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
+      ProdTy tys <- getTypeE arg
+      return $ tys !! i
+    SigmaFieldDef _ _ _ -> error "not implemented"
 
 naryNonDepProj :: [Projection] -> CType n -> CType n
 naryNonDepProj projs tyTop = go (tail $ reverse projs) tyTop
@@ -1081,6 +1089,13 @@ instance SubstE AtomSubstVal SigmaAtom where
   substE env (SigmaFieldDef tyCon maybeArg def) =
     SigmaFieldDef (substE env tyCon) (fmap (substE env) maybeArg) (substE env def)
 
+instance SinkableE FieldNameSpace where
+  sinkingProofE = undefined
+
+instance SubstE AtomSubstVal FieldNameSpace where
+  substE _ (TupleNames i) = TupleNames i
+  substE env (TyConNames v) = TyConNames $ substE env v
+
 -- XXX: this must handle the complement of the cases that `checkOrInferRho`
 -- handles directly or else we'll just keep bouncing between the two.
 inferWithoutInstantiation
@@ -1090,32 +1105,47 @@ inferWithoutInstantiation (WithSrcE pos expr) =
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
    UVar ~(InternalName sn v) ->  SigmaUVar sn <$> renameM v
    UFieldAccess x f -> do
-     (tyConName, maybeArg) <- inferFieldLHS x
-     def <- lookupFieldName tyConName f
-     return $ SigmaFieldDef tyConName maybeArg def
+     (fieldNameSpace, maybeArg) <- inferFieldLHS x
+     def <- lookupFieldName fieldNameSpace f
+     return $ SigmaFieldDef fieldNameSpace maybeArg def
    _ -> SigmaAtom Nothing <$> inferRho noHint (WithSrcE pos expr)
 
 inferFieldLHS
   :: EmitsBoth o
-  => UExpr i -> InfererM i o (TyConName o, Maybe (CAtom o))
+  => UExpr i -> InfererM i o (FieldNameSpace o, Maybe (CAtom o))
 inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
   case x of
-    UVar (InternalName _ (UTyConVar v)) -> (,Nothing) <$> renameM v
+    UVar (InternalName _ (UTyConVar v)) -> do
+      v' <- renameM v
+      return (TyConNames v', Nothing)
     _ -> do
       x' <- inferRho noHint (WithSrcE pos x)
       ty <- getType =<< zonk x'
       case ty of
-        NewtypeTyCon (UserADTType _ tyName _) -> return (tyName, Just x')
+        NewtypeTyCon (UserADTType _ tyName _) -> return (TyConNames tyName, Just x')
         TabPi ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
           ++ "\nArray indexing uses [] now."
+        ProdTy ts -> return (TupleNames (length ts), Just x')
         ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
 
-lookupFieldName :: TyConName o -> FieldName -> InfererM i o (FieldDef o)
-lookupFieldName dataDefName (WithSrc src name) = addSrcContext src do
+lookupFieldName :: FieldNameSpace o -> FieldName -> InfererM i o (FieldDef o)
+lookupFieldName (TyConNames dataDefName) (WithSrc src name) = addSrcContext src do
   TyConBinding (TyConDef sn _ _) (FieldDefs fields) <- lookupEnv dataDefName
-  case M.lookup name fields of
-    Nothing -> throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name
-    Just x -> return x
+  case name of
+    FieldName name' -> case M.lookup name' fields of
+      Nothing -> throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name'
+      Just x -> return x
+    FieldNum i -> do
+      -- TODO: check it's a valid index
+      return $ FieldProj i
+lookupFieldName (TupleNames tupleSize) (WithSrc src name) = addSrcContext src do
+  case name of
+    FieldNum i -> do
+      if i < tupleSize
+        then return $ FieldProj i
+        else throw TypeErr $ "Can't project component " ++ pprint i ++
+              " of a length-" ++ pprint tupleSize ++ " tuple"
+    FieldName _ -> throw TypeErr "Tuples don't have named fields"
 
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
@@ -1130,10 +1160,12 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
     SigmaUVar _ v -> case v of
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
-    SigmaFieldDef tyCon (Just arg) (FieldProj i) -> do
+    SigmaFieldDef (TyConNames tyCon) (Just arg) (FieldProj i) -> do
       TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
       normalizeNaryProj (projs!!i) arg
     SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
+    SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
+      normalizeNaryProj [ProjectProduct i] arg
     _ -> error "not implemented"
  where
    fDesc :: SourceName
@@ -1284,11 +1316,11 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
   UHandlerVar  _ -> error "not implemented"
-applySigmaAtom (SigmaFieldDef tyCon (Just arg) (FieldProj i)) args = do
+applySigmaAtom (SigmaFieldDef (TyConNames tyCon) (Just arg) (FieldProj i)) args = do
   TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
   result <- normalizeNaryProj (projs!!i) arg
   emitExprWithEffects $ App result args
-applySigmaAtom (SigmaFieldDef tyConName Nothing FieldNew) args =
+applySigmaAtom (SigmaFieldDef (TyConNames tyConName) Nothing FieldNew) args =
   applyDataCon tyConName 0 args
 applySigmaAtom _ _ = error "not implemented"
 

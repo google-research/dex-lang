@@ -694,6 +694,11 @@ instance PrettyPrec (UExpr' n) where
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
 
+instance Pretty FieldName' where
+  pretty = \case
+    FieldName s -> pretty s
+    FieldNum n  -> pretty n
+
 prettyUFieldRowElems :: Doc ann -> Doc ann -> UFieldRowElems n -> Doc ann
 prettyUFieldRowElems separator bindwith elems =
   braces $ concatWith (surround $ separator <> " ") $ elems <&> \case
