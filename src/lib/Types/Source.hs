@@ -72,10 +72,12 @@ data CTopDecl'
   | CData
       SourceName      -- Type constructor name
       ExplicitParams
+      (Maybe GivenClause)
       [(SourceName, ExplicitParams)]   -- Constructor names and argument sets
   | CStruct
       SourceName      -- Type constructor name
       ExplicitParams
+      (Maybe GivenClause)
       [(SourceName, Group)] -- Field names and types
   | CInterface
       SourceName  -- Interface name

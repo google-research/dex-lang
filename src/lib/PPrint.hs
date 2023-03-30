@@ -977,7 +977,7 @@ instance PrettyPrec (NewtypeTyCon n) where
         | Just sym <- fromInfix (fromString name) ->
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
-      _  -> atPrec LowestPrec $ pAppArg (p name) $ filterExplicitParams (TyConParams infs params)
+      _  -> atPrec LowestPrec $ pAppArg (p name) $ ignoreSynthParams (TyConParams infs params)
 
 instance (IRRep r, PrettyPrec e) => Pretty (PrimCon r e) where pretty = prettyFromPrettyPrec
 instance (IRRep r, PrettyPrec e) => PrettyPrec (PrimCon r e) where

@@ -106,20 +106,22 @@ type SyntaxM = FallibleM
 topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
   topDecl' (CSDecl ann d) = decl ann (WithSrc Nothing d)
-  topDecl' (CData name tyConParams constructors) = do
+  topDecl' (CData name tyConParams givens constructors) = do
     tyConParams' <- aExplicitParams tyConParams
+    givens' <- toNest <$> fromMaybeM givens [] aGivens
     constructors' <- forM constructors \(v, ps) -> do
       ps' <- toNest <$> mapM tyOptBinder ps
       return (v, ps')
     return $ UDataDefDecl
-      (UDataDef name tyConParams' $
+      (UDataDef name (givens' >>> tyConParams') $
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
-  topDecl' (CStruct name params fields) = do
+  topDecl' (CStruct name params givens fields) = do
     params' <- aExplicitParams params
+    givens' <- toNest <$> fromMaybeM givens [] aGivens
     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
-    return $ UStructDecl (UStructDef name params' fields') (fromString name)
+    return $ UStructDecl (UStructDef name (givens' >>> params') fields') (fromString name)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do

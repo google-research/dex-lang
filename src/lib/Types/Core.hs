@@ -1148,14 +1148,17 @@ instance GenericE TyConParams where
 -- We ignore the dictionary parameters because we assume coherence
 instance AlphaEqE TyConParams where
   alphaEqE params params' =
-    alphaEqE (ListE $ filterExplicitParams params) (ListE $ filterExplicitParams params')
+    alphaEqE (ListE $ ignoreSynthParams params) (ListE $ ignoreSynthParams params')
 
 instance AlphaHashableE TyConParams where
   hashWithSaltE env salt params =
-    hashWithSaltE env salt $ ListE $ filterExplicitParams params
+    hashWithSaltE env salt $ ListE $ ignoreSynthParams params
 
-filterExplicitParams :: TyConParams n -> [CAtom n]
-filterExplicitParams (TyConParams infs xs) = [x | (Explicit, x) <- zip infs xs]
+ignoreSynthParams :: TyConParams n -> [CAtom n]
+ignoreSynthParams (TyConParams infs xs) = [x | (inf, x) <- zip infs xs, notSynth inf]
+  where notSynth = \case
+          Inferred _ (Synth _) -> False
+          _ -> True
 
 instance SinkableE           TyConParams
 instance HoistableE          TyConParams

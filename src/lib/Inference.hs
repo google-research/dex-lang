@@ -2434,7 +2434,7 @@ instance Unifiable (IxType CoreIR) where
 
 instance Unifiable TyConParams where
   -- We ignore the dictionaries because we assume coherence
-  unifyZonked ps ps' = zipWithM_ unify (filterExplicitParams ps) (filterExplicitParams ps')
+  unifyZonked ps ps' = zipWithM_ unify (ignoreSynthParams ps) (ignoreSynthParams ps')
 
 instance Unifiable (EffectRow CoreIR) where
   unifyZonked x1 x2 =
