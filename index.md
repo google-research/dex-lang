@@ -38,8 +38,8 @@
 ## Libraries
 
 - [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)
+- [lib/linalg.dx](lib/linalg.html) Linear Algebra
 - [lib/netpbm.dx](lib/netpbm.html) Netpbm
-- [lib/sort.dx](lib/sort.html) Monoidal Merge Sort
 - [lib/parser.dx](lib/parser.html) Parser Combinators
 - [lib/fft.dx](lib/fft.html) Fast Fourier Transform
 - [lib/diagram.dx](lib/diagram.html) Vector Graphics
@@ -47,5 +47,5 @@
 - [lib/png.dx](lib/png.html) PNG Rendering
 - [lib/plot.dx](lib/plot.html) Plotting
 - [lib/complex.dx](lib/complex.html) Complex number support
-- [lib/linalg.dx](lib/linalg.html) Linear Algebra
+- [lib/sort.dx](lib/sort.html) Monoidal Merge Sort
 - [lib/set.dx](lib/set.html) Sets and Set-Indexed Arrays
