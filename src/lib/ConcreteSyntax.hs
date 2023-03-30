@@ -238,20 +238,20 @@ structDef :: Parser CTopDecl
 structDef = withSrc do
   keyWord StructKW
   tyName <- anyName
-  params <- typeParams
+  (params, givens) <- typeParams
   fields <- onePerLine nameAndType
-  return $ CStruct tyName params fields
+  return $ CStruct tyName params givens fields
 
 dataDef :: Parser CTopDecl
 dataDef = withSrc do
   keyWord DataKW
   tyName <- anyName
-  params <- typeParams
+  (params, givens) <- typeParams
   dataCons <- onePerLine do
     dataConName <- anyName
     dataConArgs <- optExplicitParams
     return (dataConName, dataConArgs)
-  return $ CData tyName params dataCons
+  return $ CData tyName params givens dataCons
 
 topInstanceDecl :: Parser CTopDecl
 topInstanceDecl = withSrc $ liftM (CSDecl PlainLet) $
@@ -402,10 +402,13 @@ immediateParens :: Parser a -> Parser a
 immediateParens p = bracketed immediateLParen rParen p
 
 -- Putting `sym =` inside the cases gives better errors.
-typeParams :: Parser ExplicitParams
+typeParams :: Parser (ExplicitParams, Maybe GivenClause)
 typeParams =
-      (explicitParams <* sym "=")
-  <|> (return []      <* sym "=")
+      (explicitParamsAndGivens <* sym "=")
+  <|> (return ([], Nothing)    <* sym "=")
+
+explicitParamsAndGivens :: Parser (ExplicitParams, Maybe GivenClause)
+explicitParamsAndGivens = (,) <$> explicitParams <*> optional givenClause
 
 optExplicitParams :: Parser ExplicitParams
 optExplicitParams = label "optional parameter list" $
