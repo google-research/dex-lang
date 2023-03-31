@@ -476,7 +476,7 @@ instance Pretty (Binding c n) where
     -- TODO: can we avoid printing needing IRRep? Presumably it's related to
     -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
     AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
-    TyConBinding dataDef _ -> "Type constructor: " <+> pretty dataDef
+    TyConBinding dataDef -> "Type constructor: " <+> pretty dataDef
     DataConBinding tyConName idx -> "Data constructor:" <+>
       pretty tyConName <+> "Constructor index:" <+> pretty idx
     ClassBinding    classDef -> pretty classDef

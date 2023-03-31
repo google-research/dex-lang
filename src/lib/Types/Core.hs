@@ -166,8 +166,11 @@ data DataConDef n =
   DataConDef SourceName (EmptyAbs (Nest CBinder) n) (CType n) [[Projection]]
   deriving (Show, Generic)
 
-data FieldDef (n::S) = FieldProj Int | FieldNew | FieldAny (CAtom n)
-     deriving (Show, Generic)
+data FieldDef (n::S) =
+   FieldProjStruct Int
+ | FieldProjTuple  Int
+ | FieldCustom (CAtom n)
+   deriving (Show, Generic)
 newtype FieldDefs (n::S) = FieldDefs (M.Map SourceName (FieldDef n))
         deriving (Show, Store, Semigroup, Monoid)
 
@@ -571,7 +574,7 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 -- TODO: consider making this an open union via a typeable-like class
 data Binding (c::C) (n::S) where
   AtomNameBinding   :: AtomBinding r n                -> Binding (AtomNameC r)   n
-  TyConBinding      :: TyConDef n -> FieldDefs n      -> Binding TyConNameC      n
+  TyConBinding      :: TyConDef n                     -> Binding TyConNameC      n
   DataConBinding    :: TyConName n -> Int             -> Binding DataConNameC    n
   ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
   InstanceBinding   :: InstanceDef n -> CorePiType n  -> Binding InstanceNameC   n
@@ -2182,7 +2185,7 @@ instance GenericE (Binding c) where
     EitherE3
       (EitherE6
           (WhenAtomName        c AtomBinding)
-          (WhenC TyConNameC    c (TyConDef `PairE` FieldDefs))
+          (WhenC TyConNameC    c (TyConDef))
           (WhenC DataConNameC  c (TyConName `PairE` LiftE Int))
           (WhenC ClassNameC    c (ClassDef))
           (WhenC InstanceNameC c (InstanceDef `PairE` CorePiType))
@@ -2201,7 +2204,7 @@ instance GenericE (Binding c) where
 
   fromE = \case
     AtomNameBinding   binding           -> Case0 $ Case0 $ WhenAtomName binding
-    TyConBinding      dataDef defs      -> Case0 $ Case1 $ WhenC $ dataDef `PairE` defs
+    TyConBinding      dataDef           -> Case0 $ Case1 $ WhenC $ dataDef
     DataConBinding    dataDefName idx   -> Case0 $ Case2 $ WhenC $ dataDefName `PairE` LiftE idx
     ClassBinding      classDef          -> Case0 $ Case3 $ WhenC $ classDef
     InstanceBinding   instanceDef ty    -> Case0 $ Case4 $ WhenC $ instanceDef `PairE` ty
@@ -2219,7 +2222,7 @@ instance GenericE (Binding c) where
 
   toE = \case
     Case0 (Case0 (WhenAtomName binding))           -> AtomNameBinding   binding
-    Case0 (Case1 (WhenC (dataDef `PairE` defs)))   -> TyConBinding    dataDef defs
+    Case0 (Case1 (WhenC (dataDef)))                -> TyConBinding      dataDef
     Case0 (Case2 (WhenC (n `PairE` LiftE idx)))    -> DataConBinding    n idx
     Case0 (Case3 (WhenC (classDef)))               -> ClassBinding      classDef
     Case0 (Case4 (WhenC (instanceDef `PairE` ty))) -> InstanceBinding   instanceDef ty
@@ -2462,10 +2465,7 @@ addMethods e (dName, methods) = do
     Just _ -> error "shouldn't be adding methods if we already have them"
 
 addFieldDefUpdate :: Env n -> (TyConName n, SourceName, FieldDef n) -> Env n
-addFieldDefUpdate e (dname, sname, val) =
-  case lookupEnvPure e dname of
-    TyConBinding def (FieldDefs fieldDefs) ->
-      updateEnv dname (TyConBinding def $ FieldDefs $ M.insert sname val fieldDefs) e
+addFieldDefUpdate _ _  = error "not implemented"
 
 addFunUpdate :: Env n -> (TopFunName n, TopFunEvalStatus n) -> Env n
 addFunUpdate e (f, s) = do
@@ -2606,17 +2606,17 @@ instance AlphaHashableE FieldDefs
 instance RenameE        FieldDefs
 
 instance GenericE FieldDef where
-  type RepE FieldDef = EitherE (LiftE (Either Int ())) CAtom
+  type RepE FieldDef = EitherE (LiftE (Either Int Int)) CAtom
   fromE = \case
-    FieldProj i -> LeftE (LiftE (Left i))
-    FieldNew    -> LeftE (LiftE (Right ()))
-    FieldAny x  -> RightE x
+    FieldProjStruct i -> LeftE (LiftE (Left  i))
+    FieldProjTuple  i -> LeftE (LiftE (Right i))
+    FieldCustom x     -> RightE x
   {-# INLINE fromE #-}
 
   toE = \case
-    LeftE (LiftE (Left i))   -> FieldProj i
-    LeftE (LiftE (Right ())) -> FieldNew
-    RightE x                 -> FieldAny x
+    LeftE (LiftE (Left  i)) -> FieldProjStruct i
+    LeftE (LiftE (Right i)) -> FieldProjTuple  i
+    RightE x                -> FieldCustom x
   {-# INLINE toE #-}
 
 instance SinkableE      FieldDef

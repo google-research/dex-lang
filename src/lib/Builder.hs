@@ -1101,6 +1101,9 @@ unwrapNewtype (NewtypeCon _ x) = x
 unwrapNewtype x = ProjectElt UnwrapNewtype x
 {-# INLINE unwrapNewtype #-}
 
+projectTuple :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+projectTuple i x = normalizeProj (ProjectProduct i) x
+
 projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
 projectStruct i x = do
   ~(NewtypeTyCon (UserADTType _ tyConName _)) <- getType x

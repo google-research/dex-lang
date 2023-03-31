@@ -364,7 +364,9 @@ runEnvQuery query = do
             UMethodVar   v' -> pprint <$> lookupEnv v'
             UEffectVar   v' -> pprint <$> lookupEnv v'
             UEffectOpVar v' -> pprint <$> lookupEnv v'
-            UHandlerVar  v' -> pprint <$> lookupEnv v'
+            UPunVar v' -> do
+              val <- lookupEnv v'
+              return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
           logTop $ TextOut $ "Binding:\n" ++ info
 
 filterLogs :: SourceBlock -> Result -> Result

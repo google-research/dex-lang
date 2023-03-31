@@ -139,11 +139,11 @@ instance HasType CoreIR UVar where
     UAtomVar    v -> getTypeE $ Var v
     UTyConVar   v -> getTypeE v
     UDataConVar v -> getTypeE v
+    UPunVar     v -> getStructDataConType =<< substM v
     UClassVar   v -> getTypeE v
     UMethodVar  v -> getTypeE v
     UEffectVar   _ -> error "not implemented"
     UEffectOpVar _ -> error "not implemented"
-    UHandlerVar  _ -> error "not implemented"
 
 instance HasType CoreIR ClassName where
   getTypeE v = do

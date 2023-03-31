@@ -146,7 +146,7 @@ $\mathbb{R}^2$, that is $x$ = `x / sqrt(x*x + y*y)`, $y$ = `y / sqrt(x*x + y*y)`
 -- which it represents.
 def s1Normalize(s: S1) -> S1 =
   magnitude = sqrt $ s.x * s.x + s.y * s.y
-  S1.new(s.x / magnitude, s.y / magnitude)
+  S1(s.x / magnitude, s.y / magnitude)
 
 
 ' Now we need to define the tangent space operations. First consider the
@@ -193,7 +193,7 @@ def acos(x:Float) -> Float =
 instance TangentSpace(S1, Float)
   def tangentExponentialMap(s, theta) =
     sn = s1Normalize s
-    S1.new( sn.x * cos theta - sn.y * sin theta
+    S1( sn.x * cos theta - sn.y * sin theta
           , sn.y * cos theta + sn.x * sin theta )
   def tangentLogarithmMap(s, s') =
     sn  = s1Normalize s
@@ -211,8 +211,8 @@ instance TangentSpace(S1, Float)
 def s1ToR2(s: S1) -> (Fin 2 => Float) = [s.x, s.y]
 
 -- Two arbitrary points on the circle, not normalized.
-circlePointOne = S1.new(3.4, 0.2)
-circlePointTwo = S1.new(-1.0,1.8)
+circlePointOne = S1(3.4, 0.2)
+circlePointTwo = S1(-1.0,1.8)
 
 -- Applying tangent mappings at circlePointTwo, to circlePointOne
 intermediateLog: Float = tangentLogarithmMap circlePointTwo circlePointOne
@@ -232,11 +232,11 @@ def getX(s: S1) -> Float = s.x
 -- Make types explicit
 s1ManifoldGrad : ((S1) -> Float, S1) -> Float = manifoldGrad
 
-s1ManifoldGrad getX S1.new(0.0,1.0) ~~ -1.
+s1ManifoldGrad getX S1(0.0,1.0) ~~ -1.
 > True
-s1ManifoldGrad getX S1.new(1.0,0.0) ~~ 0.
+s1ManifoldGrad getX S1(1.0,0.0) ~~ 0.
 > True
-s1ManifoldGrad getX S1.new(sqrt 0.5, sqrt 0.5) ~~ - (sqrt 0.5)
+s1ManifoldGrad getX S1(sqrt 0.5, sqrt 0.5) ~~ - (sqrt 0.5)
 > True
 
 
@@ -268,7 +268,7 @@ struct Quaternion =
 def quatAsVec(q:Quaternion) -> Fin 4 => Float = [q.x, q.y, q.z, q.w]
 def quatFromVec(vec:Fin 4 => Float) -> Quaternion =
   [x, y, z, w] = vec
-  Quaternion.new(x,y,z,w)
+  Quaternion(x,y,z,w)
 
 -- General normalization functions for arrays.
 def squareMagnitude(x:a=>Float) -> Float given (a|Ix) = sum $ for i. x[i] * x[i]
@@ -280,7 +280,7 @@ def quatNormalize(q: Quaternion) -> Quaternion =
   quatFromVec $ normalize $ quatAsVec q
 
 -- The identity quaternion, representing a no-op rotation.
-quatIdent = Quaternion.new(0.0, 0.0, 0.0, 1.0)
+quatIdent = Quaternion(0.0, 0.0, 0.0, 1.0)
 
 
 instance Add(Quaternion)
@@ -310,14 +310,14 @@ instance Mul(Quaternion)
   def (*)(q, q') =
     (x , y , z , w ) = (q.x , q.y , q.z , q.w )
     (x', y', z', w') = (q'.x, q'.y, q'.z, q'.w)
-    Quaternion.new( w*x' + x*w' + y*z' - z*y',
+    Quaternion( w*x' + x*w' + y*z' - z*y',
                     w*y' - x*z' + y*w' + z*x',
                     w*z' + x*y' - y*x' + z*w',
                     w*w' - x*x' - y*y' - z*z' )
   one = quatIdent
 
 def quatConj(q:Quaternion) -> Quaternion =
-  Quaternion.new(-q.x, -q.y, -q.z, q.w)
+  Quaternion(-q.x, -q.y, -q.z, q.w)
 
 def quatInv(q:Quaternion) -> Quaternion =
   m = magnitude $ quatAsVec q
@@ -383,7 +383,7 @@ def quatExpAtIdent(v : R3) -> Quaternion =
   m2 = squareMagnitude v
   -- This is equal to sinc (m / 2) = 2 * sin (m / 2) / m
   sincHalfM = sincSqrt $ m2 / 4.
-  Quaternion.new(
+  Quaternion(
      x' * sincHalfM / 2.,
      y' * sincHalfM / 2.,
      z' * sincHalfM / 2.,
@@ -412,8 +412,8 @@ quatLooseTolerance = quatFromVec $ for i. looseTolerance
 tangentLooseTolerance : R3 = for i. looseTolerance
 
 -- Just arbitrary quaternions.
-quatForTestOne = quatNormalize (Quaternion.new(0.5, -0.2,  0.4,  1.0))
-quatForTestTwo = quatNormalize (Quaternion.new(0.5,  0.8, -0.9, -0.4))
+quatForTestOne = quatNormalize (Quaternion(0.5, -0.2,  0.4,  1.0))
+quatForTestTwo = quatNormalize (Quaternion(0.5,  0.8, -0.9, -0.4))
 
 allclose quatLooseTolerance default_rtol (quatExpAtIdent $ quatExpAtIdentInv quatForTestOne) (quatForTestOne)
 > True
@@ -472,7 +472,7 @@ def quatRoll(q : Quaternion) -> Float =
   atan2 sinrCosp cosrCosp
 
 -- A fixed quaternion with roll = 0.5.
-quatSomeRoll = Quaternion.new(0.247, 0., 0., 0.969)
+quatSomeRoll = Quaternion(0.247, 0., 0., 0.969)
 quatRoll quatSomeRoll
 > 0.4991595
 

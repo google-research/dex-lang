@@ -21,7 +21,7 @@ def escapeTime(c:Complex) -> Float =
 xs = linspace (Fin 300) (-2.0) 1.0
 ys = linspace (Fin 200) (-1.0) 1.0
 
-escapeGrid = for j i. escapeTime (Complex.new xs[i] ys[j])
+escapeGrid = for j i. escapeTime (Complex xs[i] ys[j])
 
 :html matshow (-escapeGrid)
 > <html output>

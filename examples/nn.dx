@@ -22,26 +22,26 @@ struct DenseParams(a|Ix, b|Ix) =
 
 -- TODO: these instances are all exactly the same as those for pairs. We should derive them!
 instance Add(DenseParams(a, b)) given (a|Ix, b|Ix)
-  def (+)(p1, p2) = DenseParams.new( p1.weights + p2.weights
+  def (+)(p1, p2) = DenseParams( p1.weights + p2.weights
                                    , p1.biases  + p2.biases)
-  zero = DenseParams.new(zero, zero)
+  zero = DenseParams(zero, zero)
 
 instance Sub(DenseParams(a, b)) given (a|Ix, b|Ix)
-  def (-)(p1, p2) = DenseParams.new( p1.weights - p2.weights
+  def (-)(p1, p2) = DenseParams( p1.weights - p2.weights
                                    , p1.biases  - p2.biases)
 
 instance Arbitrary(DenseParams(a, b)) given (a|Ix, b|Ix)
   def arb(k) =
     [k1, k2] = split_key k
-    DenseParams.new(arb k1, arb k2)
+    DenseParams(arb k1, arb k2)
 
 instance VSpace(DenseParams(a, b)) given (a|Ix, b|Ix)
-  def (.*)(s, p) = DenseParams.new(s .* p.weights, s .* p.biases)
+  def (.*)(s, p) = DenseParams(s .* p.weights, s .* p.biases)
 
 def dense(a|Ix, b|Ix) -> Layer(a=>Float, b=>Float, DenseParams a b) =
   def forward(p:DenseParams a b, x:a=>Float) = p.biases + x .** p.weights
   def init(k:Key) = arb k
-  Layer.new(forward, init)
+  Layer(forward, init)
 
 'CNN layer
 
@@ -73,8 +73,8 @@ def cnn(inc|Ix, outc|Ix, kw:Nat, kh:Nat)
     for o i j . (conv2d x p.weights)[o,i,j] + p.biases[o]
   def init(k:Key) =
     [k1, k2] = split_key k
-    CNNParams.new(arb k, arb k)
-  Layer.new(forward, init)
+    CNNParams(arb k, arb k)
+  Layer(forward, init)
 
 'Pooling
 
@@ -118,7 +118,7 @@ def simple(h1|Ix) =
   def init(k) -> Params =
     [k1, k2] = split_key k
     (ndense1.init k1, ndense2.init k2)
-  Layer.new(forward, init)
+  Layer(forward, init)
 
 -- :t simple
 -- > ((h1:Type)
@@ -196,7 +196,7 @@ def lenet(h1|Ix, h2|Ix, h3|Ix) =
   def init(k:Key) =
     [k1, k2, k3, k4] = split_key k
     (ncnn1.init k1, ncnn2.init k2, ndense1.init k3, ndense2.init k4)
-  Layer.new(forward, init)
+  Layer(forward, init)
 
 -- :t lenet
 -- > ((h1:Type)

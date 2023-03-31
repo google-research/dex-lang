@@ -144,8 +144,8 @@ def odeint(
       ratio = error_ratio next_z_error rtol atol z next_z
       new_interp_coeff = interp_fit_dopri z next_z k state.dt
       new_dt = optimal_step_size state.dt ratio
-      move_state = ODEState.new(next_z, next_f ,  next_t, new_dt, state.t,       new_interp_coeff)
-      stay_state = ODEState.new(     z, state.f, state.t, new_dt, state.last_t , state.interp_coeffs)
+      move_state = ODEState(next_z, next_f ,  next_t, new_dt, state.t,       new_interp_coeff)
+      stay_state = ODEState(     z, state.f, state.t, new_dt, state.last_t , state.interp_coeffs)
       select (ratio <= 1.0) move_state stay_state
 
     -- Take steps until we pass target_t
@@ -166,7 +166,7 @@ def odeint(
   f0 = func z0 t0
   init_step = initial_step_size func t0 z0 4 rtol atol f0
   init_interp_coeff = zero  -- dummy vals
-  init_carry = ODEState.new(z0, f0, t0, init_step, t0, init_interp_coeff)
+  init_carry = ODEState(z0, f0, t0, init_step, t0, init_interp_coeff)
   snd $ scan init_carry integrate_to_next_time
 
 '## Example: Linear dynamics

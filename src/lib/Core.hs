@@ -322,7 +322,7 @@ lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding cFun -> retur
 {-# INLINE lookupFunObjCode #-}
 
 lookupTyCon :: EnvReader m => TyConName n -> m n (TyConDef n)
-lookupTyCon name = lookupEnv name >>= \case TyConBinding x _ -> return x
+lookupTyCon name = lookupEnv name >>= \case TyConBinding x -> return x
 {-# INLINE lookupTyCon #-}
 
 lookupDataCon :: EnvReader m => Name DataConNameC n -> m n (TyConName n, Int)

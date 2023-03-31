@@ -52,7 +52,7 @@ emptyset = to_set ([]::(Fin 0)=>String)
 
 names2 = to_set ["Bob", "Alice", "Charlie", "Alice"]
 
-Person = (Element names2)
+Person : Type = Element names2
 
 :p size Person
 > 3

@@ -107,7 +107,7 @@ def fire_descent_init(
   V = for i:n j:dim. 0.0
   F = force r
   n_pos: Int = 0
-  FireDescentState.new(r, V, F, dt, alpha, n_pos)
+  FireDescentState(r, V, F, dt, alpha, n_pos)
 
 def fire_descent_step(
   shift: Shift dim,
@@ -158,7 +158,7 @@ def fire_descent_step(
     else (0, dt * f_dec, alpha_start)
   V = if FdotV >= 0.0 then V else zero
 
-  FireDescentState.new(R, V, F, dt, alpha, n_pos)
+  FireDescentState(R, V, F, dt, alpha, n_pos)
 
 '## Drawing
 
@@ -191,7 +191,7 @@ R_init_small = rand_mat N_small d (\k. L_small * rand k) (new_key 0)
 'The initial state of our random system
 
 %time
-:html render_svg (draw_system 0.5 R_init_small) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
+:html render_svg (draw_system 0.5 R_init_small) (Point(0.0, 0.0), Point(L_small, L_small))
 > <html output>
 >
 > Compile time: 309.318 ms
@@ -244,7 +244,7 @@ minimization.
 'Here's what the system looks like after minimization.
 
 %time
-:html render_svg (draw_system 0.5 (state_small'.R)) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
+:html render_svg (draw_system 0.5 (state_small'.R)) (Point(0.0, 0.0), Point(L_small, L_small))
 > <html output>
 >
 > Compile time: 318.742 ms
@@ -609,7 +609,7 @@ def simulate(
 > Run time:     3.072 ms
 
 %time
-:html render_svg (draw_system 0.5 state_nl'.R) (Point.new(0.0, 0.0), Point.new(L_small, L_small))
+:html render_svg (draw_system 0.5 state_nl'.R) (Point(0.0, 0.0), Point(L_small, L_small))
 > <html output>
 >
 > Compile time: 327.153 ms
@@ -628,7 +628,7 @@ R_init_large = rand_mat N_large d (\k. L_large * rand k) (new_key 0)
 'Initial state (we render the atoms smaller now so they don't over-plot too badly).
 
 %time
-:html render_svg (draw_system 0.2 R_init_large) (Point.new(0.0, 0.0), Point.new(L_large, L_large))
+:html render_svg (draw_system 0.2 R_init_large) (Point(0.0, 0.0), Point(L_large, L_large))
 > <html output>
 >
 > Compile time: 302.700 ms
@@ -678,7 +678,7 @@ state_large =
 'System state after minimization.
 
 %time
-:html render_svg (draw_system 0.2 state_large_nl'.R) (Point.new(0.0, 0.0), Point.new(L_large, L_large))
+:html render_svg (draw_system 0.2 state_large_nl'.R) (Point(0.0, 0.0), Point(L_large, L_large))
 > <html output>
 >
 > Compile time: 301.748 ms

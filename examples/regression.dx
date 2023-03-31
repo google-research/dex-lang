@@ -13,7 +13,7 @@ def solve(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
   x0 = zero :: m=>Float
   r0 = b - (mat **. x0)
   n_iter = size m
-  result = apply_n(n_iter, SolverState.new(x0, r0, r0)) \s.
+  result = apply_n(n_iter, SolverState(x0, r0, r0)) \s.
     r = s.r
     p = s.p
     ap = mat **. p
@@ -22,7 +22,7 @@ def solve(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
     r' = r - alpha .* ap
     beta = vdot r' r' / (vdot r r + 0.000001)
     p' = r' + beta .* p
-    SolverState.new(x', r', p')
+    SolverState(x', r', p')
   result.x
 
 'Make some synthetic data

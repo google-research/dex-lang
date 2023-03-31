@@ -4,7 +4,7 @@ struct MyStruct =
   field2 : Float
   field3 : String
 
-my_struct = MyStruct.new 1 2 "abc"
+my_struct = MyStruct 1 2 "abc"
 
 :p my_struct.field3
 > "abc"
@@ -32,9 +32,18 @@ struct MyParametricStruct(a) =
   bar  : Nat
 
 :p
-  foo = MyParametricStruct.new(1.0, 1)
+  foo = MyParametricStruct(1.0, 1)
   foo.bar
 > 1
+
+:p
+  foo = MyParametricStruct(1.0, 1)
+  foo.baz
+> Type error:Can't get field baz . Expected one of: [foo, bar]
+>
+>   foo.baz
+>       ^^^
+
 
 x = (1, 2)
 
@@ -45,7 +54,7 @@ x.1
 > 2
 
 x.2
-> Type error:Can't project component 2 of a length-2 tuple
+> Type error:Can't project component 2 (of 2 components)
 >
 > x.2
 >   ^

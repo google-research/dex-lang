@@ -155,13 +155,6 @@ instance SourceRenamableE (SourceNameOr (Name EffectNameC)) where
       _ -> throw TypeErr $ "Not an effect name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-instance SourceRenamableE (SourceNameOr (Name HandlerNameC)) where
-  sourceRenameE (SourceName sourceName) = do
-    lookupSourceName sourceName >>= \case
-      UHandlerVar v -> return $ InternalName sourceName v
-      _ -> throw TypeErr $ "Not a handler name: " ++ pprint sourceName
-  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
-
 instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrInternalName c) where
   sourceRenameE (SourceOrInternalName x) = SourceOrInternalName <$> sourceRenameE x
 
@@ -267,8 +260,8 @@ instance SourceRenamableB UDecl where
            cont $ UDataDefDecl dataDef' tyConName' dataConNames'
     UStructDecl structDef tyConName -> do
       structDef' <- sourceRenameE structDef
-      sourceRenameUBinder UTyConVar tyConName \tyConName' ->
-         cont $ UStructDecl structDef' tyConName'
+      sourceRenameUBinder UPunVar tyConName \tyConName' ->
+        cont $ UStructDecl structDef' tyConName'
     UInterface paramBs methodTys className methodNames -> do
       Abs paramBs' (ListE methodTys') <-
         sourceRenameB paramBs \paramBs' -> do
@@ -288,12 +281,7 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UEffectVar effName \effName' ->
         sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
           cont $ UEffectDecl opTypes' effName' opNames'
-    UHandlerDecl effName bodyTyArg tyArgs retEff retTy ops handlerName -> do
-      effName' <- sourceRenameE effName
-      Abs bodyTyArg' (Abs tyArgs' (ListE ops' `PairE` retEff' `PairE` retTy')) <-
-        sourceRenameE (Abs bodyTyArg (Abs tyArgs (ListE ops `PairE` retEff `PairE` retTy)))
-      sourceRenameUBinder UHandlerVar handlerName \handlerName' -> do
-        cont $ UHandlerDecl effName' bodyTyArg' tyArgs' retEff' retTy' ops' handlerName'
+    UHandlerDecl _ _ _ _ _ _ _ -> error "not implemented"
     UPass -> cont UPass
 
 instance SourceRenamableE ULamExpr where

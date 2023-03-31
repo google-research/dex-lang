@@ -70,12 +70,11 @@ inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, R
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UStructDecl def tc) result = do
   def' <- liftInfererM $ solveLocal $ inferStructDef def
-  tc' <- emitBinding (getNameHint def') $ TyConBinding def' mempty
-  updateFieldDefs tc' "new" FieldNew
+  tc' <- emitBinding (getNameHint def') $ TyConBinding def'
   UDeclResultDone <$> applyRename (tc @> tc') result
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
   tcDef@(TyConDef _ _ (ADTCons dataCons)) <- liftInfererM $ solveLocal $ inferTyConDef def
-  tc' <- emitBinding (getNameHint tcDef) $ TyConBinding tcDef mempty
+  tc' <- emitBinding (getNameHint tcDef) $ TyConBinding tcDef
   dcs' <- forM (enumerate dataCons) \(i, dcDef) ->
     emitBinding (getNameHint dcDef) $ DataConBinding tc' i
   let subst = tc @> tc' <.> dcs @@> dcs'
@@ -1015,8 +1014,9 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     {-# INLINE matchRequirement #-}
 
     inferAndInstantiate :: InfererM i o (CAtom o)
-    inferAndInstantiate =
-      inferWithoutInstantiation uExprWithSrc >>= instantiateSigma >>= matchRequirement
+    inferAndInstantiate = do
+      sigmaAtom <- maybeInterpretPunsAsTyCons reqTy <$> inferWithoutInstantiation uExprWithSrc
+      instantiateSigma sigmaAtom >>= matchRequirement
     {-# INLINE inferAndInstantiate #-}
 
 applyFromLiteralMethod :: EmitsBoth n => SourceName -> CAtom n -> DefaultType -> CAtom n -> InfererM i n (CAtom n)
@@ -1030,17 +1030,20 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
       addDefault resultTyVar defaultTy
       emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
 
-data FieldNameSpace n =
-   TyConNames (TyConName n)
- | TupleNames Int -- length of tuple
-   deriving (Show)
-
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
     SigmaAtom (Maybe SourceName) (CAtom n)
   | SigmaUVar SourceName (UVar n)
-  | SigmaFieldDef (FieldNameSpace n) (Maybe (CAtom n)) (FieldDef n)
+  | SigmaFieldAccess (CAtom n) (FieldDef n) (CType n)
     deriving (Show)
+
+-- XXX: this gives the type of the atom in the absence of other type information.
+-- So it interprets struct names as data constructors rather than type constructors.
+instance HasType CoreIR SigmaAtom where
+  getTypeE = \case
+    SigmaAtom _ x -> getTypeE x
+    SigmaUVar _ v -> getTypeE v
+    SigmaFieldAccess _ _ ty -> substM ty
 
 instance HasSourceName (SigmaAtom n) where
   getSourceName = \case
@@ -1048,24 +1051,10 @@ instance HasSourceName (SigmaAtom n) where
       Just sn' -> sn'
       Nothing  -> "<expr>"
     SigmaUVar sn _ -> sn
-    SigmaFieldDef _ _ _ -> "<field>"
-
-instance HasType CoreIR SigmaAtom where
-  getTypeE = \case
-    SigmaAtom _ x -> getTypeE x
-    SigmaUVar _ v -> getTypeE v
-    SigmaFieldDef (TyConNames tyConName) (Just arg) (FieldProj i) -> do
-      NewtypeTyCon (UserADTType _ _ (TyConParams _ params)) <- getTypeE arg
-      TyConDef _ bs (StructFields fields) <- lookupTyCon =<< substM tyConName
-      applySubst (bs@@>(SubstVal<$>params)) (snd $ fields!!i)
-    SigmaFieldDef (TyConNames tc) Nothing FieldNew -> getStructDataConType =<< substM tc
-    SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
-      ProdTy tys <- getTypeE arg
-      return $ tys !! i
-    SigmaFieldDef _ _ _ -> error "not implemented"
+    SigmaFieldAccess _ _ _ -> "<field>"
 
 instance SinkableE SigmaAtom where
-  sinkingProofE = undefined
+  sinkingProofE = error "it's fine, trust me"
 
 instance SubstE AtomSubstVal SigmaAtom where
   substE env (SigmaAtom sn x) = SigmaAtom sn $ substE env x
@@ -1073,20 +1062,13 @@ instance SubstE AtomSubstVal SigmaAtom where
     UAtomVar v -> substE env $ SigmaAtom (Just sn) $ Var v
     UTyConVar   v -> SigmaUVar sn $ UTyConVar   $ substE env v
     UDataConVar v -> SigmaUVar sn $ UDataConVar $ substE env v
+    UPunVar     v -> SigmaUVar sn $ UPunVar     $ substE env v
     UClassVar   v -> SigmaUVar sn $ UClassVar   $ substE env v
     UMethodVar  v -> SigmaUVar sn $ UMethodVar  $ substE env v
     UEffectVar   _ -> error "not implemented"
     UEffectOpVar _ -> error "not implemented"
-    UHandlerVar  _ -> error "not implemented"
-  substE env (SigmaFieldDef tyCon maybeArg def) =
-    SigmaFieldDef (substE env tyCon) (fmap (substE env) maybeArg) (substE env def)
-
-instance SinkableE FieldNameSpace where
-  sinkingProofE = undefined
-
-instance SubstE AtomSubstVal FieldNameSpace where
-  substE _ (TupleNames i) = TupleNames i
-  substE env (TyConNames v) = TyConNames $ substE env v
+  substE env (SigmaFieldAccess arg def ty) =
+    SigmaFieldAccess (substE env arg) (substE env def) (substE env ty)
 
 -- XXX: this must handle the complement of the cases that `checkOrInferRho`
 -- handles directly or else we'll just keep bouncing between the two.
@@ -1097,53 +1079,39 @@ inferWithoutInstantiation (WithSrcE pos expr) =
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
    UVar ~(InternalName sn v) ->  SigmaUVar sn <$> renameM v
    UFieldAccess x f -> do
-     (fieldNameSpace, maybeArg) <- inferFieldLHS x
-     def <- lookupFieldName fieldNameSpace f
-     return $ SigmaFieldDef fieldNameSpace maybeArg def
+     x' <- inferRho noHint x >>= zonk
+     ty <- getType x'
+     (fieldDef, resultTy) <- resolveFieldAccess ty f
+     return $ SigmaFieldAccess x' fieldDef resultTy
    _ -> SigmaAtom Nothing <$> inferRho noHint (WithSrcE pos expr)
 
-inferFieldLHS
-  :: EmitsBoth o
-  => UExpr i -> InfererM i o (FieldNameSpace o, Maybe (CAtom o))
-inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
-  case x of
-    UVar (InternalName _ (UTyConVar v)) -> do
-      v' <- renameM v
-      return (TyConNames v', Nothing)
-    _ -> do
-      x' <- inferRho noHint (WithSrcE pos x)
-      ty <- getType =<< zonk x'
-      case ty of
-        NewtypeTyCon (UserADTType _ tyName _) -> return (TyConNames tyName, Just x')
-        TabPi ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
-          ++ "\nArray indexing uses [] now."
-        ProdTy ts -> return (TupleNames (length ts), Just x')
-        ty' -> throw TypeErr $ "Can't get fields for type " ++ pprint ty'
-
-lookupFieldName :: FieldNameSpace o -> FieldName -> InfererM i o (FieldDef o)
-lookupFieldName (TyConNames dataDefName) (WithSrc src name) = addSrcContext src do
-  TyConBinding (TyConDef sn _ dataDefs) (FieldDefs fields) <- lookupEnv dataDefName
-  case name of
-    FieldName name' -> case M.lookup name' fields of
-      Just x -> return x
-      Nothing -> case dataDefs of
-        StructFields structFields -> do
-          case elemIndex name' (map fst structFields) of
-            Just i -> return $ FieldProj i
-            Nothing -> lookupFailed
-        _ -> lookupFailed
-      where lookupFailed = throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name'
-    FieldNum i -> do
-      -- TODO: check it's a valid index
-      return $ FieldProj i
-lookupFieldName (TupleNames tupleSize) (WithSrc src name) = addSrcContext src do
-  case name of
-    FieldNum i -> do
-      if i < tupleSize
-        then return $ FieldProj i
-        else throw TypeErr $ "Can't project component " ++ pprint i ++
-              " of a length-" ++ pprint tupleSize ++ " tuple"
+resolveFieldAccess :: EmitsBoth o => CType o -> FieldName -> InfererM i o (FieldDef o, CType o)
+resolveFieldAccess ty (WithSrc pos field) = addSrcContext pos case ty of
+  NewtypeTyCon (UserADTType _ tyName params) -> do
+    TyConBinding tyDef <- lookupEnv tyName
+    instantiateTyConDef tyDef params >>= \case
+      StructFields fields -> do
+        let names = map fst fields
+        i <- case field of
+          FieldName name -> case elemIndex name names of
+            Just i  -> return i
+            Nothing -> notInKnownFields names
+          FieldNum i | i < length names -> return i
+                     | otherwise        -> outOfRange i (length names)
+        return (FieldProjStruct i, snd $ fields !! i)
+      ADTCons _ -> noFields ""
+  ProdTy ts -> case field of
+    FieldNum i | i < length ts -> return (FieldProjTuple i, ts!! i)
+               | otherwise -> outOfRange i (length ts)
     FieldName _ -> throw TypeErr "Tuples don't have named fields"
+  TabPi _ -> noFields "\nArray indexing uses [] now."
+  _ -> noFields ""
+  where
+    noFields s = throw TypeErr $ "Can't get fields for type " ++ pprint ty ++ s
+    notInKnownFields knowns = throw TypeErr $ "Can't get field " ++ pprint field
+       ++ " . Expected one of: " ++ pprint knowns
+    outOfRange i n = throw TypeErr $
+      "Can't project component " ++ pprint i ++ " (of " ++ pprint n ++ " components)"
 
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
@@ -1158,12 +1126,9 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
     SigmaUVar _ v -> case v of
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
-    SigmaFieldDef (TyConNames _) (Just arg) (FieldProj i) -> do
-      projectStruct i arg
-    SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
-    SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
-      normalizeNaryProj [ProjectProduct i] arg
-    _ -> error "not implemented"
+    SigmaFieldAccess _ (FieldCustom _) _ -> error "not implemented"
+    SigmaFieldAccess arg (FieldProjTuple  i) _ -> projectTuple i arg
+    SigmaFieldAccess arg (FieldProjStruct i) _ -> projectStruct i arg
  where
    fDesc :: SourceName
    fDesc = getSourceName sigmaAtom
@@ -1247,32 +1212,34 @@ checkOrInferApp
   => SigmaAtom o -> [arg i] -> [(SourceName, arg i)]
   -> RequiredTy CType o
   -> InfererM i o (CAtom o)
-checkOrInferApp f posArgs namedArgs reqTy = getType f >>= \case
-  Pi (CorePiType appExpl bs effs resultTy) -> case appExpl of
-    ExplicitApp -> do
-      checkArity bs posArgs
-      let bsAbs = Abs bs $ PairE effs resultTy
-      args' <- inferMixedArgs fDesc bsAbs posArgs namedArgs
-      applySigmaAtom f args' >>= matchRequirement
-    ImplicitApp -> do
-      -- TODO: should this already have been done by the time we get `f`?
-      let bsAbs = Abs bs $ PairE effs resultTy
-      implicitArgs <- inferMixedArgs @UExpr fDesc bsAbs [] []
-      f' <- SigmaAtom (Just fDesc) <$> applySigmaAtom f implicitArgs
-      checkOrInferApp f' posArgs namedArgs Infer >>= matchRequirement
-  -- TODO: special-case error for when `fTy` can't possibly be a function
-  fTy -> do
-    when (not $ null namedArgs) do
-      throw TypeErr "Can't infer function types with named arguments"
-    args' <- mapM inferExplicitArg posArgs
-    argTys <- mapM getType args'
-    resultTy <- getResultTy
-    expected <- nonDepPiType argTys Pure resultTy
-    constrainEq (Pi expected) fTy
-    applySigmaAtom f args'
+checkOrInferApp f' posArgs namedArgs reqTy = do
+  let f = maybeInterpretPunsAsTyCons reqTy f'
+  getType f >>= \case
+    Pi (CorePiType appExpl bs effs resultTy) -> case appExpl of
+      ExplicitApp -> do
+        checkArity bs posArgs
+        let bsAbs = Abs bs $ PairE effs resultTy
+        args' <- inferMixedArgs fDesc bsAbs posArgs namedArgs
+        applySigmaAtom f args' >>= matchRequirement
+      ImplicitApp -> do
+        -- TODO: should this already have been done by the time we get `f`?
+        let bsAbs = Abs bs $ PairE effs resultTy
+        implicitArgs <- inferMixedArgs @UExpr fDesc bsAbs [] []
+        f'' <- SigmaAtom (Just fDesc) <$> applySigmaAtom f implicitArgs
+        checkOrInferApp f'' posArgs namedArgs Infer >>= matchRequirement
+    -- TODO: special-case error for when `fTy` can't possibly be a function
+    fTy -> do
+      when (not $ null namedArgs) do
+        throw TypeErr "Can't infer function types with named arguments"
+      args' <- mapM inferExplicitArg posArgs
+      argTys <- mapM getType args'
+      resultTy <- getResultTy
+      expected <- nonDepPiType argTys Pure resultTy
+      constrainEq (Pi expected) fTy
+      applySigmaAtom f args'
  where
   fDesc :: SourceName
-  fDesc = getSourceName f
+  fDesc = getSourceName f'
 
   getResultTy :: InfererM i o (CType o)
   getResultTy = case reqTy of
@@ -1287,6 +1254,10 @@ checkOrInferApp f posArgs namedArgs reqTy = getType f >>= \case
         ty <- getType x
         constrainEq req ty
 
+maybeInterpretPunsAsTyCons :: RequiredTy CType n -> SigmaAtom n -> SigmaAtom n
+maybeInterpretPunsAsTyCons (Check TyKind) (SigmaUVar sn (UPunVar v)) = SigmaUVar sn (UTyConVar v)
+maybeInterpretPunsAsTyCons _ x = x
+
 type IsDependent = Bool
 
 applySigmaAtom :: EmitsBoth o => SigmaAtom o -> [CAtom o] -> InfererM i o (CAtom o)
@@ -1300,6 +1271,11 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
   UDataConVar v -> do
     (tyCon, i) <- lookupDataCon v
     applyDataCon tyCon i args
+  UPunVar tc -> do
+    -- interpret as a data constructor by default
+    (params, dataArgs) <- splitParamPrefix tc args
+    repVal <- makeStructRepVal tc dataArgs
+    return $ NewtypeCon (UserADTData tc params) repVal
   UClassVar   f' -> do
     ClassDef sourceName _ _ _ _ _ <- lookupClassDef f'
     return $ DictTy $ DictType sourceName f' args
@@ -1312,15 +1288,12 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
     emitExprWithEffects $ ApplyMethod dictArg methodIdx args'
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
-  UHandlerVar  _ -> error "not implemented"
-applySigmaAtom (SigmaFieldDef _ (Just arg) (FieldProj i)) args = do
-  result <- projectStruct i arg
+applySigmaAtom (SigmaFieldAccess arg field _) args = do
+  result <- case field of
+    FieldProjTuple  i -> projectTuple  i arg
+    FieldProjStruct i -> projectStruct i arg
+    FieldCustom _ -> error "not implemented"
   emitExprWithEffects $ App result args
-applySigmaAtom (SigmaFieldDef (TyConNames tc) Nothing FieldNew) args = do
-  (params, dataArgs) <- splitParamPrefix tc args
-  repVal <- makeStructRepVal tc dataArgs
-  return $ NewtypeCon (UserADTData tc params) repVal
-applySigmaAtom _ _ = error "not implemented"
 
 splitParamPrefix :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n, [CAtom n])
 splitParamPrefix tc args = do

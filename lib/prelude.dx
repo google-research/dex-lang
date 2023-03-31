@@ -334,7 +334,7 @@ def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   rep_to_nat %isub(x', y')
 
 -- `(i..)` parses as `RangeFrom _ i`
--- TODO: need to a way to indicate `.new` as private
+-- TODO: need to a way to indicate constructor as private
 struct RangeFrom(q:Type, i:q) = val : Nat
 
 -- `(i<..)` parses as `RangeFromExc _ i`
@@ -349,22 +349,22 @@ struct RangeToExc(q:Type, i:q) = val : Nat
 instance Ix(RangeFrom q i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i)
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeFrom.new(j)
+  def unsafe_from_ordinal(j) = RangeFrom(j)
 
 instance Ix(RangeFromExc q i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i + 1)
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeFromExc.new(j)
+  def unsafe_from_ordinal(j) = RangeFromExc(j)
 
 instance Ix(RangeTo q i) given (q|Ix, i:q)
   def size'() = ordinal i + 1
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeTo.new(j)
+  def unsafe_from_ordinal(j) = RangeTo(j)
 
 instance Ix(RangeToExc q i) given (q|Ix, i:q)
   def size'() = ordinal i
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeToExc.new(j)
+  def unsafe_from_ordinal(j) = RangeToExc(j)
 
 instance Ix(())
   def size'() = 1
@@ -593,7 +593,7 @@ struct Post(segment:Type) =
 instance Ix(Post segment) given (segment|Ix)
   def size'() = size segment + 1
   def ordinal(i) = i.val
-  def unsafe_from_ordinal(i) = Post.new(i)
+  def unsafe_from_ordinal(i) = Post(i)
 
 def left_post(i:n) -> Post n given (n|Ix) =
   unsafe_from_ordinal(n=Post n, ordinal i)
@@ -976,7 +976,7 @@ instance Subset(a, c) given (a, b, c) (Subset(a, b), Subset(b, c))
   def unsafe_project'(x) = unsafe_project $ unsafe_project(to=b, x)
 
 def unsafe_project_rangefrom(j:q) -> RangeFrom(q, i) given (q|Ix, i:q) =
-  RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
+  RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
   def inject'(j) =
@@ -986,8 +986,8 @@ instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' < i'
       then Nothing
-      else Just $ RangeFrom.new $ unsafe_nat_diff(j', i')
-  def unsafe_project'(j) = RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
+      else Just $ RangeFrom $ unsafe_nat_diff(j', i')
+  def unsafe_project'(j) = RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal $ j.val + ordinal i + 1
@@ -996,9 +996,9 @@ instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' <= i'
       then Nothing
-      else Just $ RangeFromExc.new unsafe_nat_diff(j', i' + 1)
+      else Just $ RangeFromExc unsafe_nat_diff(j', i' + 1)
   def unsafe_project'(j) =
-    RangeFromExc.new unsafe_nat_diff(ordinal j, ordinal i + 1)
+    RangeFromExc unsafe_nat_diff(ordinal j, ordinal i + 1)
 
 instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1007,8 +1007,8 @@ instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' > i'
       then Nothing
-      else Just $ RangeTo.new j'
-  def unsafe_project'(j) = RangeTo.new (ordinal j)
+      else Just $ RangeTo j'
+  def unsafe_project'(j) = RangeTo (ordinal j)
 
 instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1017,8 +1017,8 @@ instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' >= i'
       then Nothing
-      else Just $ RangeToExc.new j'
-  def unsafe_project'(j) = RangeToExc.new (ordinal j)
+      else Just $ RangeToExc j'
+  def unsafe_project'(j) = RangeToExc (ordinal j)
 
 instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1027,8 +1027,8 @@ instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
     i' = ordinal i
     if j' >= i'
       then Nothing
-      else Just $ RangeToExc.new j'
-  def unsafe_project'(j) = RangeToExc.new (ordinal j)
+      else Just $ RangeToExc j'
+  def unsafe_project'(j) = RangeToExc (ordinal j)
 
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).
@@ -1122,7 +1122,7 @@ instance Floating(Float32)
 struct Ptr(a:Type) =
   val : RawPtr
 
-def cast_ptr(ptr: Ptr a) -> Ptr b given (a, b) = Ptr.new(ptr.val)
+def cast_ptr(ptr: Ptr a) -> Ptr b given (a, b) = Ptr(ptr.val)
 
 interface Storable(a|Data)
   store : (Ptr a, a) -> {IO} ()
@@ -1150,26 +1150,26 @@ instance Storable(Float32)
   def storage_size() = 4
 
 instance Storable(Nat)
-  def store(ptr, x) = store(Ptr.new(ptr.val), nat_to_rep x)
-  def load(ptr) = rep_to_nat $ load(Ptr.new(ptr.val))
+  def store(ptr, x) = store(Ptr(ptr.val), nat_to_rep x)
+  def load(ptr) = rep_to_nat $ load(Ptr(ptr.val))
   def storage_size() = storage_size(a=NatRep)
 
 instance Storable(Ptr a) given (a)
   def store(ptr, x) = %ptrStore(internal_cast(to=%PtrPtr(), ptr.val), x.val)
-  def load(ptr) = Ptr.new(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
+  def load(ptr) = Ptr(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
   def storage_size() = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 
 def malloc(n:Nat) -> {IO} (Ptr a) given (a|Storable)  =
   numBytes = storage_size(a=a) * n
-  Ptr.new(%alloc(nat_to_rep numBytes))
+  Ptr(%alloc(nat_to_rep numBytes))
 
 def free(ptr:Ptr a) -> {IO} () given (a) = %free(ptr.val)
 
 def (+>>)(ptr:Ptr a, i:Nat) -> Ptr a given (a|Storable) =
   i' = nat_to_rep $ i * storage_size(a=a)
-  Ptr.new(%ptrOffset(ptr.val, i'))
+  Ptr(%ptrOffset(ptr.val, i'))
 
 -- TODO: consider making a Storable instance for tables instead
 def store_table(ptr: Ptr a, tab:n=>a) -> {IO} () given (a|Storable, n|Ix) =
@@ -1444,7 +1444,7 @@ def with_dynamic_buffer(action: (DynBuffer a) -> {IO} b) -> {IO} b given (a|Stor
   store(maxSizePtr, initMaxSize)
   bufferPtr <- with_alloc 1
   store(bufferPtr, malloc initMaxSize)
-  result = action $ DynBuffer.new(sizePtr, maxSizePtr, bufferPtr)
+  result = action $ DynBuffer(sizePtr, maxSizePtr, bufferPtr)
   free $ load bufferPtr
   result
 
@@ -1500,7 +1500,7 @@ def with_c_string(
     action: (CString) -> {IO} a
     ) -> {IO} a given (a) =
   AsList(n, s') = s <> "\NUL"
-  with_table_ptr s' \ptr. action $ CString.new(ptr.val)
+  with_table_ptr s' \ptr. action CString(ptr.val)
 
 '### Show interface
 For things that can be shown.
@@ -1520,14 +1520,14 @@ foreign "showInt32" showInt32 : (Int32) -> {IO} (Word32, RawPtr)
 instance Show(Int32)
   def show(x) = unsafe_io \.
     (n, ptr) = showInt32 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 foreign "showInt64" showInt64 : (Int64) -> {IO} (Word32, RawPtr)
 
 instance Show(Int64)
   def show(x) = unsafe_io \.
     (n, ptr) = showInt64 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 instance Show(Nat)
   def show(x) = show $ n_to_i64 x
@@ -1537,14 +1537,14 @@ foreign "showFloat32" showFloat32 : (Float32) -> {IO} (Word32, RawPtr)
 instance Show(Float32)
   def show(x) = unsafe_io \.
     (n, ptr) = showFloat32 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 foreign "showFloat64" showFloat64 : (Float64) -> {IO} (Word32, RawPtr)
 
 instance Show(Float64)
   def show(x) = unsafe_io \.
     (n, ptr) = showFloat64 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 instance Show(())
   def show(_) = "()"
@@ -1620,7 +1620,7 @@ def is_null_raw_ptr(ptr:RawPtr) -> Bool =
 def from_nullable_raw_ptr(ptr:RawPtr) -> Maybe (Ptr a) given (a) =
   if is_null_raw_ptr ptr
     then Nothing
-    else Just $ Ptr.new ptr
+    else Just $ Ptr ptr
 
 def c_string_ptr(s:CString) -> Maybe (Ptr Char) = from_nullable_raw_ptr s.ptr
 
@@ -1645,7 +1645,7 @@ def fopen(path:String, mode:StreamMode) -> {IO} (Stream mode) =
     WriteMode -> "w"
   with_c_string path \cPath.
     with_c_string modeStr \cMode.
-      Stream.new $ fopenFFI(cPath.ptr, cMode.ptr)
+      Stream $ fopenFFI(cPath.ptr, cMode.ptr)
 
 def fclose(stream:Stream mode) -> {IO} () given (mode) =
   fcloseFFI stream.ptr
@@ -1718,7 +1718,7 @@ foreign "getenv" getenvFFI : (RawPtr) -> {IO} RawPtr
 
 def get_env(name:String) -> {IO} Maybe String =
   cStr <- with_c_string name
-  getenvFFI cStr.ptr | CString.new | from_c_string
+  getenvFFI cStr.ptr | CString | from_c_string
 
 def check_env(name:String) -> {IO} Bool =
   is_just $ get_env name
@@ -1741,7 +1741,7 @@ def fread(stream:Stream ReadMode) -> {IO} String =
 '### Print
 
 def get_output_stream() -> {IO} Stream WriteMode =
-  Stream.new $ %outputStream()
+  Stream $ %outputStream()
 
 @noinline
 def print(s:String) -> {IO} () =
@@ -1760,7 +1760,7 @@ def shell_out(command:String) -> {IO} String =
   modeStr = "r"
   with_c_string command \command'.
     with_c_string modeStr \modeStr'.
-      pipe = Stream.new $ popenFFI(command'.ptr, modeStr'.ptr)
+      pipe = Stream $ popenFFI(command'.ptr, modeStr'.ptr)
       fread pipe
 
 '## Partial functions
@@ -1816,7 +1816,7 @@ def new_temp_file() -> {IO} FilePath =
   s <- with_c_string "/tmp/dex-XXXXXX"
   fd = mkstempFFI s.ptr
   closeFFI fd
-  string_from_char_ptr(15, (Ptr.new s.ptr))
+  string_from_char_ptr(15, (Ptr s.ptr))
 
 def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a) =
   tmpFile = new_temp_file()
@@ -2530,7 +2530,7 @@ struct FullTileIx(n|Ix, tile_size:Nat, tile_ix:Nat) =
 instance Ix(FullTileIx(n, tile_size, tile_ix)) given (n|Ix, tile_size:Nat, tile_ix:Nat)
   def size'() = tile_size
   def ordinal(i)  = ordinal i.unwrap
-  def unsafe_from_ordinal(i) =FullTileIx.new $ unsafe_from_ordinal i
+  def unsafe_from_ordinal(i) = FullTileIx $ unsafe_from_ordinal i
 
 instance Subset(FullTileIx(n, tile_size, tile_ix), n) given (n|Ix, tile_size:Nat, tile_ix:Nat)
   def inject'(i) = unsafe_from_ordinal $ tile_size * tile_ix + ordinal i.unwrap
@@ -2546,7 +2546,7 @@ struct CodaIx(n|Ix, coda_offset:Nat, coda_size:Nat) =
 instance Ix(CodaIx(n, coda_offset, coda_size)) given (n|Ix, coda_offset:Nat, coda_size:Nat)
   def size'() = coda_size
   def ordinal(i) = ordinal i.unwrap
-  def unsafe_from_ordinal(i) = CodaIx.new $ unsafe_from_ordinal i
+  def unsafe_from_ordinal(i) = CodaIx $ unsafe_from_ordinal i
 
 instance Subset(CodaIx(n, coda_offset, coda_size), n) given (n|Ix, coda_offset:Nat, coda_size:Nat)
   def inject'(i) = unsafe_from_ordinal $ coda_offset + ordinal i.unwrap

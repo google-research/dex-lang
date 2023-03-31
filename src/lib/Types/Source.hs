@@ -208,7 +208,7 @@ data UVar (n::S) =
  | UEffectVar   (Name EffectNameC   n)
  | UMethodVar   (Name MethodNameC   n)
  | UEffectOpVar (Name EffectOpNameC n)
- | UHandlerVar  (Name HandlerNameC  n)
+ | UPunVar      (Name TyConNameC n) -- for names also used as data constructors
    deriving (Eq, Ord, Show, Generic)
 
 type UAtomBinder = UBinder (AtomNameC CoreIR)
@@ -628,7 +628,7 @@ instance GenericE UVar where
   type RepE UVar = EitherE8 (Name (AtomNameC CoreIR)) (Name TyConNameC)
                             (Name DataConNameC)  (Name ClassNameC)
                             (Name MethodNameC)   (Name EffectNameC)
-                            (Name EffectOpNameC) (Name HandlerNameC)
+                            (Name EffectOpNameC) (Name TyConNameC)
   fromE name = case name of
     UAtomVar     v -> Case0 v
     UTyConVar    v -> Case1 v
@@ -637,7 +637,7 @@ instance GenericE UVar where
     UMethodVar   v -> Case4 v
     UEffectVar   v -> Case5 v
     UEffectOpVar v -> Case6 v
-    UHandlerVar  v -> Case7 v
+    UPunVar      v -> Case7 v
   {-# INLINE fromE #-}
 
   toE name = case name of
@@ -648,7 +648,7 @@ instance GenericE UVar where
     Case4 v -> UMethodVar   v
     Case5 v -> UEffectVar   v
     Case6 v -> UEffectOpVar v
-    Case7 v -> UHandlerVar  v
+    Case7 v -> UPunVar v
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
@@ -660,7 +660,7 @@ instance Pretty (UVar n) where
     UMethodVar   v -> "Method name: " <> pretty v
     UEffectVar   v -> "Effect name: " <> pretty v
     UEffectOpVar v -> "Effect operation name: " <> pretty v
-    UHandlerVar  v -> "Handler name: " <> pretty v
+    UPunVar      v -> "Shared type constructor / data constructor name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
 instance SinkableE      UVar

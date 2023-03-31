@@ -36,7 +36,7 @@ def run_parser_partial(s:String, parser:Parser a) -> Maybe a given (a)  =
   MkParser f = parser
   with_state 0 \pos.
     catch $ \.
-      f ParserHandle.new(s, pos)
+      f ParserHandle(s, pos)
 
 '## Primitive combinators
 

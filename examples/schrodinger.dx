@@ -38,10 +38,10 @@ gifFrames = 100
 '## Helpers
 
 -- Define i_=sqrt(-1) in a way that won't clash with indices named 'i'
-i_ = Complex.new(0., 1.)
+i_ = Complex(0., 1.)
 
 -- Shorthand conversion
-def fToC(x:Float) -> Complex = Complex.new(x, 0.)
+def fToC(x:Float) -> Complex = Complex(x, 0.)
 
 -- Translate from index to Float representation of real space
 -- Simulates the range [0.0, 1.0] in each dimension

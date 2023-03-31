@@ -20,7 +20,7 @@ struct Quaternion =
 'The four components are usually ordered \(w,x,y,z\) but I like to put \(w\) at the end.
  Initializing a quaternion:
 
-quaternion = Quaternion.new(1.0, 2.0, 3.0, 4.0)
+quaternion = Quaternion(1.0, 2.0, 3.0, 4.0)
 quaternion
 > Quaternion(1., 2., 3., 4.)
 
@@ -30,7 +30,7 @@ quaternion
 def as_vec(q:Quaternion) -> Fin 4 => Float = [q.x, q.y, q.z, q.w]
 def from_vec(vec:Fin 4 => Float) -> Quaternion =
   [x, y, z, w] = vec
-  Quaternion.new(x,y,z,w)
+  Quaternion(x,y,z,w)
 
 'It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$
@@ -62,7 +62,7 @@ instance VSpace(Quaternion)
 
 'There is a special quaternion called the *identity quaternion* which corresponds to no rotation:
 
-ident = Quaternion.new(0.0, 0.0, 0.0, 1.0)
+ident = Quaternion(0.0, 0.0, 0.0, 1.0)
 
 'Geometrically, we can also consider \((0, 0, 0, -1)\) to be an identity quaternion since it corresponds to no rotation.
 
@@ -86,7 +86,7 @@ instance Mul(Quaternion)
   def (*)(q, q') =
     (x , y , z , w ) = (q.x , q.y , q.z , q.w )
     (x', y', z', w') = (q'.x, q'.y, q'.z, q'.w)
-    Quaternion.new( w*x' + x*w' + y*z' - z*y',
+    Quaternion( w*x' + x*w' + y*z' - z*y',
                     w*y' - x*z' + y*w' + z*x',
                     w*z' + x*y' - y*x' + z*w',
                     w*w' - x*x' - y*y' - z*z' )
@@ -128,7 +128,7 @@ def euler_to_quat(e:Euler) -> Quaternion =
     (E v) = e
     [sx, sy, sz] = for i. sin v[i]
     [cx, cy, cz] = for i. cos v[i]
-    Quaternion.new(
+    Quaternion(
       sx*cy*cz - cx*sy*sz,
       cx*sy*cz + sx*cy*sz,
       cx*cy*sz - sx*sy*cz,
@@ -225,7 +225,7 @@ The *conjugate* of a quaternion \(q\) is:
 ' $$q^{*} = a-b\textrm{i}-c\textrm{j}-d\textrm{k}$$
 
 
-def conj(q:Quaternion) -> Quaternion = Quaternion.new(-q.x, -q.y, -q.z, q.w)
+def conj(q:Quaternion) -> Quaternion = Quaternion(-q.x, -q.y, -q.z, q.w)
 
 '## Quaternion Inverse
 
@@ -245,7 +245,7 @@ Multiplying a quaternion by its inverse results in the identity quaternion:
 
 'Let's try it out
 
-q' = from_vec $ normalize $ as_vec $ Quaternion.new(1.0, 2.0, 0.5, 10.0)
+q' = from_vec $ normalize $ as_vec $ Quaternion(1.0, 2.0, 0.5, 10.0)
 
 
 :html show3D $ one
@@ -307,7 +307,7 @@ def q_exp(q:Quaternion) -> Quaternion =
   [x', y', z'] = normalize v
   sin_v = sin m
   exp_w = exp w
-  Quaternion.new(
+  Quaternion(
     x' * sin_v * exp_w,
     y' * sin_v * exp_w,
     z' * sin_v * exp_w,
@@ -344,7 +344,7 @@ def q_log(q:Quaternion) -> Quaternion =
   m = magnitude $ as_vec q
   [x', y', z'] = normalize v
   a = acos (w / m)
-  Quaternion.new(
+  Quaternion(
     x' * a,
     y' * a,
     z' * a,

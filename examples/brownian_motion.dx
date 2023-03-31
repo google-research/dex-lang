@@ -34,7 +34,7 @@ def sample_unit_brownian_bridge(
   -- Can only handle t between 0 and 1.
   -- iteratively subdivide to desired tolerance.
   num_iters = 10 + f_to_n (-log tolerance)
-  init_state = SamplerState.new(key, zero, 1.0, t)
+  init_state = SamplerState(key, zero, 1.0, t)
   result = fold init_state \i:(Fin num_iters) prev.
       [key_draw, key_left, key_right] = split_key key
       -- add scaled noise
@@ -47,7 +47,7 @@ def sample_unit_brownian_bridge(
         else key_right
       new_sigma = prev.sigma / sqrt 2.0
       new_t = t' * 2.0
-      SamplerState.new(new_key, new_y, new_sigma, new_t)
+      SamplerState(new_key, new_y, new_sigma, new_t)
   result.y
 
 
