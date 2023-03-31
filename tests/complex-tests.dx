@@ -1,13 +1,13 @@
 import complex
 
 :p complex_floor $ Complex.new 0.3 0.6
-> (Complex.new 0. 0.)
+> Complex(0., 0.)
 :p complex_floor $ Complex.new 0.6 0.8
-> (Complex.new 0. 1.)
+> Complex(0., 1.)
 :p complex_floor $ Complex.new 0.8 0.6
-> (Complex.new 1. 0.)
+> Complex(1., 0.)
 :p complex_floor $ Complex.new 0.6 0.3
-> (Complex.new 0. 0.)
+> Complex(0., 0.)
 
 a = Complex.new 2.1 0.4
 b = Complex.new (-1.1) 1.3
@@ -50,10 +50,10 @@ b = Complex.new (-1.1) 1.3
 > True
 
 :p sinh (Complex.new 1.2 3.2)
-> (Complex.new -1.506887 -0.1056956)
+> Complex(-1.506887, -0.1056956)
 :p cosh (Complex.new 1.2 3.2)
-> (Complex.new -1.807568 0.08811359)
+> Complex(-1.807568, 0.08811359)
 :p tanh (Complex.new 1.1 0.1)
-> (Complex.new 0.8033752 0.03580933)
+> Complex(0.8033752, 0.03580933)
 :p tan (Complex.new 1.2 3.2)
-> (Complex.new 0.002250167 1.002451)
+> Complex(0.002250167, 1.002451)

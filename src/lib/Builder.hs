@@ -1101,6 +1101,17 @@ unwrapNewtype (NewtypeCon _ x) = x
 unwrapNewtype x = ProjectElt UnwrapNewtype x
 {-# INLINE unwrapNewtype #-}
 
+projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+projectStruct i x = do
+  ~(NewtypeTyCon (UserADTType _ tyConName _)) <- getType x
+  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  let projs = case fields of
+        [_] | i == 0    -> [UnwrapNewtype]
+            | otherwise -> error "bad index"
+        _ -> [ProjectProduct i, UnwrapNewtype]
+  normalizeNaryProj projs x
+{-# INLINE projectStruct #-}
+
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
 app x i = Var <$> emit (App x [i])
 

@@ -40,22 +40,22 @@ ls_to_f (divide (f_to_ls 0.4) (f_to_ls 0.5)) ~~ 0.8
 -- Log-sum-exp
 
 Exp (-infinity) + Exp (-infinity)
-> (LogSpace.new -inf)
+> LogSpace(-inf)
 
 Exp infinity + Exp infinity
-> (LogSpace.new inf)
+> LogSpace(inf)
 
 ls_sum [Exp (-infinity), Exp (-infinity)]
-> (LogSpace.new -inf)
+> LogSpace(-inf)
 
 ls_sum [Exp (infinity), Exp (infinity)]
-> (LogSpace.new inf)
+> LogSpace(inf)
 
 Exp infinity + Exp (nan)
-> (LogSpace.new nan)
+> LogSpace(nan)
 
 ls_sum [Exp (-infinity), Exp nan]
-> (LogSpace.new nan)
+> LogSpace(nan)
 
 ln $ Exp nan
 > nan

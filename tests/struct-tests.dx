@@ -22,7 +22,7 @@ my_struct = MyStruct.new 1 2 "abc"
 > unexpected ".("
 > expecting "->", "..", "<..", backquoted name, end of input, end of line, infix operator, name, or symbol name
 :p my_struct
-> (MyStruct.new 1 2. "abc")
+> MyStruct(1, 2., "abc")
 
 :t my_struct
 > MyStruct

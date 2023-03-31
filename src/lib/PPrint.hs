@@ -506,7 +506,10 @@ instance Pretty (TyConParams n) where
 
 instance Pretty (TyConDef n) where
   pretty (TyConDef name bs cons) =
-    "data" <+> p name <+> (p $ map (\(RolePiBinder _ b) -> b) $ fromNest bs) <> prettyLines cons
+    "data" <+> p name <+> (p $ map (\(RolePiBinder _ b) -> b) $ fromNest bs) <> pretty cons
+
+instance Pretty (DataConDefs n) where
+  pretty = undefined
 
 instance Pretty (RolePiBinder n l) where
   pretty (RolePiBinder _ b) = pretty b

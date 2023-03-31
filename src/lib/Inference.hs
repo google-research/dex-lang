@@ -22,7 +22,7 @@ import Control.Monad.Reader
 import Data.Coerce
 import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
-import Data.List (sortOn)
+import Data.List (sortOn, elemIndex)
 import Data.Maybe (fromJust, fromMaybe, catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
 import Data.Word
@@ -69,14 +69,12 @@ data UDeclInferenceResult e n =
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UStructDecl def tc) result = do
-  PairE def' (LiftE fieldNames) <- liftInfererM $ solveLocal $ inferStructDef def
+  def' <- liftInfererM $ solveLocal $ inferStructDef def
   tc' <- emitBinding (getNameHint def') $ TyConBinding def' mempty
   updateFieldDefs tc' "new" FieldNew
-  forM_ (enumerate fieldNames) \(i, fieldName) -> do
-    updateFieldDefs tc' fieldName (FieldProj i)
   UDeclResultDone <$> applyRename (tc @> tc') result
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  tcDef@(TyConDef _ _ dataCons) <- liftInfererM $ solveLocal $ inferTyConDef def
+  tcDef@(TyConDef _ _ (ADTCons dataCons)) <- liftInfererM $ solveLocal $ inferTyConDef def
   tc' <- emitBinding (getNameHint tcDef) $ TyConBinding tcDef mempty
   dcs' <- forM (enumerate dataCons) \(i, dcDef) ->
     emitBinding (getNameHint dcDef) $ DataConBinding tc' i
@@ -1058,19 +1056,13 @@ instance HasType CoreIR SigmaAtom where
     SigmaUVar _ v -> getTypeE v
     SigmaFieldDef (TyConNames tyConName) (Just arg) (FieldProj i) -> do
       NewtypeTyCon (UserADTType _ _ (TyConParams _ params)) <- getTypeE arg
-      TyConDef _ bs [DataConDef _ _ repTy projs] <- lookupTyCon =<< substM tyConName
-      applySubst (bs@@>(SubstVal<$>params)) (naryNonDepProj (projs!!i) repTy)
-    SigmaFieldDef (TyConNames tc) Nothing FieldNew -> Pi <$> getDataConType tc 0
+      TyConDef _ bs (StructFields fields) <- lookupTyCon =<< substM tyConName
+      applySubst (bs@@>(SubstVal<$>params)) (snd $ fields!!i)
+    SigmaFieldDef (TyConNames tc) Nothing FieldNew -> getStructDataConType =<< substM tc
     SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
       ProdTy tys <- getTypeE arg
       return $ tys !! i
     SigmaFieldDef _ _ _ -> error "not implemented"
-
-naryNonDepProj :: [Projection] -> CType n -> CType n
-naryNonDepProj projs tyTop = go (tail $ reverse projs) tyTop
-  where go [] ty = ty
-        go (ProjectProduct i:is) (ProdTy tys) = go is (tys!!i)
-        go _ _ = error $ "bad projection: " ++ pprint projs ++ " of " ++ pprint tyTop
 
 instance SinkableE SigmaAtom where
   sinkingProofE = undefined
@@ -1130,11 +1122,17 @@ inferFieldLHS (WithSrcE pos x)= addSrcContext pos do
 
 lookupFieldName :: FieldNameSpace o -> FieldName -> InfererM i o (FieldDef o)
 lookupFieldName (TyConNames dataDefName) (WithSrc src name) = addSrcContext src do
-  TyConBinding (TyConDef sn _ _) (FieldDefs fields) <- lookupEnv dataDefName
+  TyConBinding (TyConDef sn _ dataDefs) (FieldDefs fields) <- lookupEnv dataDefName
   case name of
     FieldName name' -> case M.lookup name' fields of
-      Nothing -> throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name'
       Just x -> return x
+      Nothing -> case dataDefs of
+        StructFields structFields -> do
+          case elemIndex name' (map fst structFields) of
+            Just i -> return $ FieldProj i
+            Nothing -> lookupFailed
+        _ -> lookupFailed
+      where lookupFailed = throw TypeErr $ "Type " ++ pprint sn ++ " doesn't have field " ++ pprint name'
     FieldNum i -> do
       -- TODO: check it's a valid index
       return $ FieldProj i
@@ -1160,9 +1158,8 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
     SigmaUVar _ v -> case v of
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
-    SigmaFieldDef (TyConNames tyCon) (Just arg) (FieldProj i) -> do
-      TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
-      normalizeNaryProj (projs!!i) arg
+    SigmaFieldDef (TyConNames _) (Just arg) (FieldProj i) -> do
+      projectStruct i arg
     SigmaFieldDef _ Nothing FieldNew -> error "not implemented"
     SigmaFieldDef (TupleNames _) (Just arg) (FieldProj i) -> do
       normalizeNaryProj [ProjectProduct i] arg
@@ -1316,20 +1313,27 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
   UHandlerVar  _ -> error "not implemented"
-applySigmaAtom (SigmaFieldDef (TyConNames tyCon) (Just arg) (FieldProj i)) args = do
-  TyConDef _ _ [DataConDef _ _ _ projs] <- lookupTyCon tyCon
-  result <- normalizeNaryProj (projs!!i) arg
+applySigmaAtom (SigmaFieldDef _ (Just arg) (FieldProj i)) args = do
+  result <- projectStruct i arg
   emitExprWithEffects $ App result args
-applySigmaAtom (SigmaFieldDef (TyConNames tyConName) Nothing FieldNew) args =
-  applyDataCon tyConName 0 args
+applySigmaAtom (SigmaFieldDef (TyConNames tc) Nothing FieldNew) args = do
+  (params, dataArgs) <- splitParamPrefix tc args
+  repVal <- makeStructRepVal tc dataArgs
+  return $ NewtypeCon (UserADTData tc params) repVal
 applySigmaAtom _ _ = error "not implemented"
+
+splitParamPrefix :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n, [CAtom n])
+splitParamPrefix tc args = do
+  TyConDef _ paramBs _ <- lookupTyCon tc
+  let (paramArgs, dataArgs) = splitAt (nestLength paramBs) args
+  params <- makeTyConParams tc paramArgs
+  return (params, dataArgs)
 
 applyDataCon :: Emits o => TyConName o -> Int -> [CAtom o] -> InfererM i o (CAtom o)
 applyDataCon tc conIx topArgs = do
-  tyDef@(TyConDef _ paramBs _) <- lookupTyCon tc
-  let (paramArgs, dataArgs) = splitAt (nestLength paramBs) topArgs
-  params <- makeTyConParams tc paramArgs
-  conDefs <- instantiateTyConDef tyDef params
+  tyDef <- lookupTyCon tc
+  (params, dataArgs) <- splitParamPrefix tc topArgs
+  ADTCons conDefs <- instantiateTyConDef tyDef params
   DataConDef _ _ repTy _ <- return $ conDefs !! conIx
   conProd <- wrap repTy dataArgs
   repVal <- return case conDefs of
@@ -1592,7 +1596,7 @@ buildSortedCase scrut alts resultTy = do
   scrutTy <- getType scrut
   case scrutTy of
     TypeCon _ defName _ -> do
-      TyConDef _ _ cons <- lookupTyCon defName
+      TyConDef _ _ (ADTCons cons) <- lookupTyCon defName
       case cons of
         [] -> error "case of void?"
         -- Single constructor ADTs are not sum types, so elide the case.
@@ -1636,22 +1640,20 @@ inferRole ty = \case
 
 inferTyConDef :: EmitsInf o => UDataDef i -> InfererM i o (TyConDef o)
 inferTyConDef (UDataDef tyConName paramBs dataCons) = do
-  Abs paramBs' (ListE dataCons') <-
+  Abs paramBs' dataCons' <-
     withRoleUBinders paramBs \_ -> do
-      ListE <$> mapM inferDataCon dataCons
+      ADTCons <$> mapM inferDataCon dataCons
   return (TyConDef tyConName paramBs' dataCons')
 
 inferStructDef
   :: EmitsInf o => UStructDef i
-  -> InfererM i o (PairE TyConDef (LiftE [SourceName]) o)
+  -> InfererM i o (TyConDef o)
 inferStructDef (UStructDef tyConName paramBs fields) = do
   let (fieldNames, fieldTys) = unzip fields
-  Abs paramBs' dataConBs <- withRoleUBinders paramBs \_ -> do
+  Abs paramBs' dataConDefs <- withRoleUBinders paramBs \_ -> do
     tys <- mapM checkUType fieldTys
-    typesAsBinderNest tys UnitE
-  let (repTy, projIdxs) = dataConRepTy dataConBs
-  let dataConDef = DataConDef (tyConName ++ ".new") dataConBs repTy projIdxs
-  return $ PairE (TyConDef tyConName paramBs' [dataConDef]) (LiftE fieldNames)
+    return $ StructFields $ zip fieldNames tys
+  return $ TyConDef tyConName paramBs' dataConDefs
 
 inferDataCon :: EmitsInf o => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
@@ -1954,7 +1956,7 @@ checkCasePat :: EmitsBoth o
 checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat of
   UPatCon ~(InternalName _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= lookupDataCon
-    TyConDef sourceName paramBs cons <- lookupTyCon dataDefName
+    TyConDef sourceName paramBs (ADTCons cons) <- lookupTyCon dataDefName
     DataConDef _ _ repTy idxs <- return $ cons !! con
     when (length idxs /= nestLength ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length idxs)
@@ -2016,7 +2018,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     (dataDefName, _) <- lookupDataCon =<< renameM conName
     TyConDef sourceName paramBs cons <- lookupTyCon dataDefName
     case cons of
-      [DataConDef _ _ _ idxss] -> do
+      ADTCons [DataConDef _ _ _ idxss] -> do
         when (length idxss /= nestLength ps) $ throw TypeErr $
           "Unexpected number of pattern binders. Expected " ++ show (length idxss)
                                                  ++ " got " ++ show (nestLength ps)

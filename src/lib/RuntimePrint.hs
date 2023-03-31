@@ -23,7 +23,7 @@ import Types.Core
 import Types.Source
 import Types.Primitives
 import QueryType
-import Util (restructure)
+import Util (restructure, enumerate)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
@@ -112,14 +112,19 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
-    UserADTType _ defName params -> do
+    UserADTType tySourceName defName params -> do
       def <- lookupTyCon defName
-      cons <- instantiateTyConDef def params
-      case cons of
-        [con] -> showDataCon con $ unwrapNewtype atom
-        _ -> void $ buildCase atom UnitTy \i arg -> do
+      conDefs <- instantiateTyConDef def params
+      case conDefs of
+        ADTCons [con] -> showDataCon con $ unwrapNewtype atom
+        ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
           showDataCon (sink $ cons !! i) arg
           return UnitVal
+        StructFields fields -> do
+          emitLit tySourceName
+          parens do
+            sepBy ", " $ (enumerate fields) <&> \(i, _) ->
+              rec =<< projectStruct i atom
       where
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
         showDataCon (DataConDef sn _ _ projss) arg = do

@@ -153,7 +153,12 @@ data FieldRowElem (n::S)
 data TyConDef n where
   -- The `SourceName` is just for pretty-printing. The actual alpha-renamable
   -- binder name is in UExpr and Env
-  TyConDef :: SourceName -> RolePiBinders n l -> [DataConDef l] -> TyConDef n
+  TyConDef :: SourceName -> RolePiBinders n l -> DataConDefs l -> TyConDef n
+
+data DataConDefs n =
+   ADTCons [DataConDef n]
+ | StructFields [(SourceName, CType n)]
+   deriving (Show, Generic)
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
@@ -1164,11 +1169,28 @@ instance SinkableE           TyConParams
 instance HoistableE          TyConParams
 instance RenameE             TyConParams
 
-instance GenericE TyConDef where
-  type RepE TyConDef = PairE (LiftE SourceName) (Abs RolePiBinders (ListE DataConDef))
-  fromE (TyConDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs (ListE cons))
+instance GenericE DataConDefs where
+  type RepE DataConDefs = EitherE (ListE DataConDef) (ListE (PairE (LiftE SourceName) CType))
+  fromE = \case
+    ADTCons cons -> LeftE $ ListE cons
+    StructFields fields -> RightE $ ListE [PairE (LiftE name) ty | (name, ty) <- fields]
   {-# INLINE fromE #-}
-  toE   (PairE (LiftE sourceName) (Abs bs (ListE cons))) = TyConDef sourceName bs cons
+  toE = \case
+    LeftE (ListE cons) -> ADTCons cons
+    RightE (ListE fields) -> StructFields [(name, ty) | PairE (LiftE name) ty <- fields]
+  {-# INLINE toE #-}
+
+instance SinkableE      DataConDefs
+instance HoistableE     DataConDefs
+instance RenameE        DataConDefs
+instance AlphaEqE       DataConDefs
+instance AlphaHashableE DataConDefs
+
+instance GenericE TyConDef where
+  type RepE TyConDef = PairE (LiftE SourceName) (Abs RolePiBinders DataConDefs)
+  fromE (TyConDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs cons)
+  {-# INLINE fromE #-}
+  toE   (PairE (LiftE sourceName) (Abs bs cons)) = TyConDef sourceName bs cons
   {-# INLINE toE #-}
 
 deriving instance Show (TyConDef n)
@@ -2622,6 +2644,7 @@ instance Store (FieldRowElem  n)
 instance Store (FieldRowElems n)
 instance IRRep r => Store (Decl r n l)
 instance Store (TyConParams n)
+instance Store (DataConDefs n)
 instance Store (TyConDef n)
 instance Store (DataConDef n)
 instance IRRep r => Store (Block r n)

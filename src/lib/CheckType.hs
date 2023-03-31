@@ -686,7 +686,7 @@ checkCaseAltsBinderTys ty = case ty of
   NewtypeTyCon t -> case t of
     UserADTType _ defName params -> do
       def <- lookupTyCon defName
-      cons <- checkedInstantiateTyConDef def params
+      ADTCons cons <- checkedInstantiateTyConDef def params
       return [repTy | DataConDef _ _ repTy _ <- cons]
     _ -> fail msg
   _ -> fail msg
@@ -914,9 +914,9 @@ typeCheckRecordOp = \case
 
 checkedInstantiateTyConDef
   :: (EnvReader m, Fallible1 m)
-  => TyConDef n -> TyConParams n -> m n [DataConDef n]
+  => TyConDef n -> TyConParams n -> m n (DataConDefs n)
 checkedInstantiateTyConDef (TyConDef _ bs cons) (TyConParams _ xs) = do
-  fromListE <$> checkedApplyNaryAbs (Abs bs (ListE cons)) xs
+  checkedApplyNaryAbs (Abs bs cons) xs
 
 checkedApplyNaryAbs
   :: forall b r e o m

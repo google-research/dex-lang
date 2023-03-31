@@ -91,7 +91,7 @@ caseAltsBinderTys ty = case ty of
   NewtypeTyCon t -> case t of
     UserADTType _ defName params -> do
       def <- lookupTyCon defName
-      cons <- instantiateTyConDef def params
+      ADTCons cons <- instantiateTyConDef def params
       return [repTy | DataConDef _ _ repTy _ <- cons]
     _ -> fail msg
   _ -> fail msg
@@ -190,24 +190,39 @@ instance HasType CoreIR TyConName where
 instance HasType CoreIR DataConName where
   getTypeE dataCon = do
     (tyCon, i) <- lookupDataCon =<< substM dataCon
-    dropSubst $ Pi <$> getDataConType tyCon i
+    tyConDef@(TyConDef tcSn paramBs (ADTCons dataCons)) <- lookupTyCon tyCon
+    buildDataConType tyConDef \paramBs' paramVs params -> do
+      DataConDef _ ab _ _ <- applyRename (paramBs @@> paramVs) (dataCons !! i)
+      refreshAbs ab \dataBs UnitE -> do
+        let appExpl = case dataBs of Empty -> ImplicitApp
+                                     _     -> ExplicitApp
+        let resultTy = NewtypeTyCon $ UserADTType tcSn (sink tyCon) (sink params)
+        let dataBs' = fmapNest (WithExpl Explicit) dataBs
+        return $ Pi $ CorePiType appExpl (paramBs' >>> dataBs') Pure resultTy
 
-getDataConType :: TyConName i -> Int -> TypeQueryM i o (CorePiType o)
-getDataConType tyCon i = do
-  tyCon' <- substM tyCon
-  TyConDef tcSn paramBs dataCons <- lookupTyCon tyCon'
-  DataConDef _ (Abs dataBs UnitE) _ _ <- return $ dataCons !! i
-  paramBs' <- return $ forNest paramBs \(RolePiBinder _ (WithExpl expl b)) -> case expl of
+getStructDataConType :: EnvReader m => TyConName n -> m n (CType n)
+getStructDataConType tyCon = liftEnvReaderM do
+  tyConDef@(TyConDef tcSn paramBs ~(StructFields fields)) <- lookupTyCon tyCon
+  buildDataConType tyConDef \paramBs' paramVs params -> do
+    fieldTys <- forM fields \(_, t) -> applyRename (paramBs @@> paramVs) t
+    let resultTy = NewtypeTyCon $ UserADTType tcSn (sink tyCon) params
+    Abs dataBs resultTy' <- typesAsBinderNest fieldTys resultTy
+    let dataBs' = fmapNest (WithExpl Explicit) dataBs
+    return $ Pi $ CorePiType ExplicitApp (paramBs' >>> dataBs') Pure resultTy'
+
+buildDataConType
+  :: (EnvReader m, EnvExtender m)
+  => TyConDef n
+  -> (forall l. DExt n l => Nest (WithExpl CBinder) n l -> [CAtomName l] -> TyConParams l -> m l a)
+  -> m n a
+buildDataConType (TyConDef _ bs _) cont = do
+  bs' <- return $ forNest bs \(RolePiBinder _ (WithExpl expl b)) -> case expl of
     Explicit -> WithExpl (Inferred Nothing Unify) b
     _        -> WithExpl expl b
-  let dataBs' = fmapNest (WithExpl Explicit) dataBs
-  refreshAbs (Abs paramBs' (Abs dataBs' UnitE)) \paramBs'' ab -> do
-    params <- makeTyConParams (sink tyCon') $ Var <$> nestToNames paramBs''
-    refreshAbs ab \dataBs'' UnitE -> do
-      let appExpl = case dataBs'' of Empty -> ImplicitApp
-                                     _     -> ExplicitApp
-      let resultTy = NewtypeTyCon $ UserADTType tcSn (sink tyCon') (sink params)
-      return $ CorePiType appExpl (paramBs'' >>> dataBs'') Pure resultTy
+  refreshAbs (Abs bs' UnitE) \bs'' UnitE -> do
+    let expls = nestToList (\(RolePiBinder _ b) -> getExpl b) bs
+    let vs = nestToNames bs''
+    cont bs'' vs $ TyConParams expls (Var <$> vs)
 
 makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
 makeTyConParams tc params = do
