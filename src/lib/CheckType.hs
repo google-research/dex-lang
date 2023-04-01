@@ -258,9 +258,13 @@ typeCheckExpr effs expr = case expr of
         i' <- checkTypeE iTy i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
         return $ TC $ RefType h eltTy'
-      ProjRef i -> do
-        ProdTy tys <- return s
-        return $ TC $ RefType h $ tys !! i
+      ProjRef p -> TC . RefType h <$> case p of
+        ProjectProduct i -> do
+          ProdTy tys <- return s
+          return $ tys !! i
+        UnwrapNewtype -> do
+          NewtypeTyCon tc <- return s
+          snd <$> unwrapNewtypeType tc
   ApplyMethod dict i args -> do
     DictTy (DictType _ className params) <- getTypeE dict
     def@(ClassDef _ _ _ paramBs classBs methodTys) <- lookupClassDef className

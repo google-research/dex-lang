@@ -496,9 +496,13 @@ instance IRRep r => HasType r (Expr r) where
           i' <- substM i
           eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
           return $ TC $ RefType h eltTy'
-        ProjRef i -> do
-          ProdTy tys <- return s
-          return $ TC $ RefType h $ tys !! i
+        ProjRef p -> TC . RefType h <$> case p of
+          ProjectProduct i -> do
+            ProdTy tys <- return s
+            return $ tys !! i
+          UnwrapNewtype -> do
+            NewtypeTyCon tc <- return s
+            snd <$> unwrapNewtypeType tc
 
 instance IRRep r => HasType r (DAMOp r) where
   getTypeE = \case

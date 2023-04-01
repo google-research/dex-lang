@@ -1069,11 +1069,11 @@ getSnd :: Builder r m => Atom r n -> m n (Atom r n)
 getSnd p = snd <$> fromPair p
 
 -- the rightmost index is applied first
-getNaryProjRef :: (Builder r m, Emits n) => [Int] -> Atom r n -> m n (Atom r n)
+getNaryProjRef :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
 getNaryProjRef [] ref = return ref
 getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
-getProjRef :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
+getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emitExpr $ RefOp r $ ProjRef i
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
@@ -1106,14 +1106,25 @@ projectTuple i x = normalizeProj (ProjectProduct i) x
 
 projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
 projectStruct i x = do
-  ~(NewtypeTyCon (UserADTType _ tyConName _)) <- getType x
-  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
-  let projs = case fields of
-        [_] | i == 0    -> [UnwrapNewtype]
-            | otherwise -> error "bad index"
-        _ -> [ProjectProduct i, UnwrapNewtype]
+  projs <- getStructProjections i =<< getType x
   normalizeNaryProj projs x
 {-# INLINE projectStruct #-}
+
+projectStructRef :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
+projectStructRef i x = do
+  RefTy _ valTy <- getType x
+  projs <- getStructProjections i valTy
+  getNaryProjRef projs x
+{-# INLINE projectStructRef #-}
+
+getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
+getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
+  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  return case fields of
+    [_] | i == 0    -> [UnwrapNewtype]
+        | otherwise -> error "bad index"
+    _ -> [ProjectProduct i, UnwrapNewtype]
+getStructProjections _ _ = error "not a struct"
 
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
 app x i = Var <$> emit (App x [i])

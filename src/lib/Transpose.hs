@@ -216,8 +216,7 @@ transposeExpr expr ct = case expr of
         lookupSubstM v >>= \case
           RenameNonlin _ -> error "an error, probably"
           LinRef ref -> do
-            let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
-            ref' <- getNaryProjRef idxs' ref
+            ref' <- getNaryProjRef (toList idxs) ref
             refProj <- naryIndexRef ref' (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
@@ -319,8 +318,7 @@ transposeAtom atom ct = case atom of
     lookupSubstM v >>= \case
       RenameNonlin _ -> error "an error, probably"
       LinRef ref -> do
-        let idxs' = toList idxs <&> \case ProjectProduct i -> i; _ -> error "Not a product projection"
-        ref' <- getNaryProjRef idxs' ref
+        ref' <- getNaryProjRef (toList idxs) ref
         emitCTToRef ref' ct
       LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"

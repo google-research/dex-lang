@@ -167,8 +167,7 @@ data DataConDef n =
   deriving (Show, Generic)
 
 data FieldDef (n::S) =
-   FieldProjStruct Int
- | FieldProjTuple  Int
+   FieldProj Int
  | FieldCustom (CAtom n)
    deriving (Show, Generic)
 newtype FieldDefs (n::S) = FieldDefs (M.Map SourceName (FieldDef n))
@@ -300,7 +299,7 @@ data RefOp r n =
  | MGet
  | MPut (Atom r n)
  | IndexRef (Atom r n)
- | ProjRef Int
+ | ProjRef Projection
   deriving (Show, Generic)
 
 data UserEffectOp n =
@@ -1423,7 +1422,7 @@ instance IRRep r => GenericE (RefOp r) where
       UnitE                         -- MGet
       (Atom r)                      -- MPut
       (Atom r)                      -- IndexRef
-      (LiftE Int)                   -- ProjRef
+      (LiftE Projection)            -- ProjRef
   fromE = \case
     MAsk         -> Case0 UnitE
     MExtend bm x -> Case1 (bm `PairE` x)
@@ -2606,17 +2605,15 @@ instance AlphaHashableE FieldDefs
 instance RenameE        FieldDefs
 
 instance GenericE FieldDef where
-  type RepE FieldDef = EitherE (LiftE (Either Int Int)) CAtom
+  type RepE FieldDef = EitherE (LiftE Int) CAtom
   fromE = \case
-    FieldProjStruct i -> LeftE (LiftE (Left  i))
-    FieldProjTuple  i -> LeftE (LiftE (Right i))
-    FieldCustom x     -> RightE x
+    FieldProj i   -> LeftE (LiftE i)
+    FieldCustom x -> RightE x
   {-# INLINE fromE #-}
 
   toE = \case
-    LeftE (LiftE (Left  i)) -> FieldProjStruct i
-    LeftE (LiftE (Right i)) -> FieldProjTuple  i
-    RightE x                -> FieldCustom x
+    LeftE (LiftE i) -> FieldProj i
+    RightE x        -> FieldCustom x
   {-# INLINE toE #-}
 
 instance SinkableE      FieldDef

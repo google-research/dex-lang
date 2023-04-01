@@ -565,7 +565,7 @@ data PrimName =
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
   | UProjNewtype | UExplicitApply | UMonoLiteral
-  | UIndexRef | UProjRef Int | UApplyMethod Int
+  | UIndexRef | UApplyMethod Int
   | UNat | UNatCon | UFin | ULabelType
   | UEffectRowKind | ULabeledRowKind
   | UTuple -- overloaded for type constructor and data constructor, resolved in inference

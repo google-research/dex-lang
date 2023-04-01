@@ -273,31 +273,30 @@ bound for the list's size.
 
 -- TODO Can we encapsulate this BoundedList type as a `data` and still
 -- define in-place mutation operations on it?
-def BoundedList(n|Ix, a|Data) -> Type = (n, (n => a))
+struct BoundedList(n|Ix, a|Data) =
+  lim : n
+  buf : n=>a
 
 def unsafe_next_index(ix:n) -> n given (n|Ix)  =
   unsafe_from_ordinal $ ordinal ix + 1
 
 def empty_bounded_list(dummy_val: a) -> BoundedList n a given (a|Data, n|Ix) =
-  (unsafe_from_ordinal 0, for _. dummy_val)
+  BoundedList(unsafe_from_ordinal 0, for _. dummy_val)
 
 -- The point of a `BoundedList` is O(1) push by in-place mutation
-def bd_push(lst_ref: Ref h (BoundedList n a), x: a) -> {State h} () given (h, a|Data, n|Ix) =
-  sz_ref = fst_ref lst_ref
-  sz = get sz_ref
-  buf_ref = snd_ref lst_ref
+def bd_push(ref: Ref h (BoundedList n a), x: a) -> {State h} () given (h, a|Data, n|Ix) =
+  sz = get ref.lim
   if ordinal sz < size n
     then
-      buf_ref!sz := x
-      sz_ref := unsafe_next_index sz
+      ref.buf!sz := x
+      ref.lim := unsafe_next_index sz
     else
       todo -- throw ()
 
 -- Once we're done pushing, we can compact a `BoundedList` into a standard `List`.
 def as_list(lst: BoundedList n a) -> List a given (a|Data, n|Ix) =
-  (lim, buf) = lst
-  n_result = ordinal lim
-  AsList _ $ for i:(Fin n_result). buf[unsafe_from_ordinal $ ordinal i]
+  n_result = ordinal lst.lim
+  AsList _ $ for i:(Fin n_result). lst.buf[unsafe_from_ordinal $ ordinal i]
 
 '### Cell list
 
@@ -374,7 +373,7 @@ tbl = cell_table grid_size bucket_size cell_size $ state_small'.R
 'We have a table of cells with atoms in them
 
 :t tbl
-> (((Fin 2) => Fin 20) => (Fin 10, ((Fin 10) => Fin 500)))
+> (((Fin 2) => Fin 20) => BoundedList (Fin 10) (Fin 500))
 
 'And here are the atoms in the 0th cell.
 

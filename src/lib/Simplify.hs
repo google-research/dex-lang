@@ -326,8 +326,7 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
   RefOp ref eff -> do
     resultTy <- getTypeSubst expr
     ref' <- toDataAtomIgnoreRecon =<< simplifyAtom ref
-    eff' <- simplifyRefOp eff
-    ans <- emitExpr $ RefOp ref' eff'
+    ans <- simplifyRefOp eff ref'
     liftSimpAtom resultTy ans
   Hof hof -> simplifyHof hint hof
   RecordOp op -> simplifyRecordOp  =<< mapM simplifyAtom op
@@ -344,18 +343,24 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
       Abs b body <- return $ alts !! i
       extendSubst (b@>SubstVal x) $ simplifyBlock body
 
-simplifyRefOp :: Emits o => RefOp CoreIR i -> SimplifyM i o (RefOp SimpIR o)
-simplifyRefOp = \case
+simplifyRefOp :: Emits o => RefOp CoreIR i -> SAtom o -> SimplifyM i o (SAtom o)
+simplifyRefOp op ref = case op of
   MExtend (BaseMonoid em cb) x -> do
     em'  <- toDataAtomIgnoreRecon =<< simplifyAtom em
     x'   <- toDataAtomIgnoreRecon =<< simplifyAtom x
     (cb', CoerceReconAbs) <- simplifyLam cb
-    return $ MExtend (BaseMonoid em' cb') x'
-  MGet   -> return MGet
-  MPut x -> MPut <$> (toDataAtomIgnoreRecon =<< simplifyAtom x)
-  MAsk   -> return MAsk
-  IndexRef x -> IndexRef <$> (toDataAtomIgnoreRecon =<< simplifyAtom x)
-  ProjRef i -> return $ ProjRef i
+    emitRefOp $ MExtend (BaseMonoid em' cb') x'
+  MGet   -> emitExpr $ RefOp ref MGet
+  MPut x -> do
+    x' <- toDataAtomIgnoreRecon =<< simplifyAtom x
+    emitRefOp $ MPut x'
+  MAsk   -> emitRefOp MAsk
+  IndexRef x -> do
+    x' <- toDataAtomIgnoreRecon =<< simplifyAtom x
+    emitRefOp $ IndexRef x'
+  ProjRef (ProjectProduct i) -> emitRefOp $ ProjRef (ProjectProduct i)
+  ProjRef UnwrapNewtype -> return ref
+  where emitRefOp op' = emitExpr $ RefOp ref op'
 
 caseComputingEffs
   :: forall m n r. (MonadFail1 m, EnvReader m, IRRep r)

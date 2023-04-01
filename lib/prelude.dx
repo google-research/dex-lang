@@ -671,8 +671,8 @@ def (+=)(ref:Ref h w, x:w) -> {Accum h} ()
   %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y), x)
 
 def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h) = %indexRef(ref, i)
-def fst_ref(ref: Ref h (a,b)) -> Ref h a given (a|Data, b, h) = %fstRef(ref)
-def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b|Data, h) = %sndRef(ref)
+def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b, a|Data, h) = ref.0
+def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b|Data, h) = ref.1
 
 def run_reader(
     init:r,
@@ -2269,9 +2269,9 @@ def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
   (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs[i] of
       Just(_) ->
-        ix = get $ fst_ref ref
-        (snd_ref ref) ! (unsafe_from_ordinal ix) := Just i
-        fst_ref ref := ix + 1
+        ix = get ref.0
+        ref.1 ! (unsafe_from_ordinal ix) := Just i
+        ref.0 := ix + 1
       Nothing -> ()
   to_list $ for i:(Fin num_res).
     case res_inds[unsafe_from_ordinal $ ordinal i] of
@@ -2428,13 +2428,13 @@ instance NonEmpty(a=>b) given (a|Ix, b|NonEmpty)
 
 def Stack(h:Heap, a|Data) = Ref(h, (Nat, List a))
 
-def stack_size(stack:Stack(h, a)) -> {State h} Nat given (h, a) = get $ fst_ref stack
+def stack_size(stack:Stack(h, a)) -> {State h} Nat given (h, a) = get stack.0
 
 def unsafe_get_stack_buffer(stack:Stack(h, a)) -> {State h} (Ref(h, Fin 0 => a)) given (h, a|Data) =
-  get $ snd_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), snd_ref stack)
+  get $ snd_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), stack.1)
 
 def stack_buf_size(stack:Stack(h, a)) -> {State h} Nat given (h, a|Data) =
-  get $ fst_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), snd_ref stack)
+  get $ fst_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), stack.1)
 
 def ensure_size_at_least(stack:Stack(h, a), req_size:Nat) -> {State h} () given (h, a|Data) =
   if req_size > stack_buf_size stack then
@@ -2443,7 +2443,7 @@ def ensure_size_at_least(stack:Stack(h, a), req_size:Nat) -> {State h} () given 
     buf = unsafe_get_stack_buffer stack
     logical_size = stack_size stack
     cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
-    snd_ref stack := to_list for i:(Fin new_buf_size).
+    stack.1 := to_list for i:(Fin new_buf_size).
       case to_ix(n=Fin logical_size, ordinal i) of
         Just(i') -> cur_data[i']
         Nothing  -> uninitialized_value()
@@ -2460,7 +2460,7 @@ def stack_push(stack:Stack(h, a), x:a) -> {State h} () given (a|Data, h) =
   ensure_size_at_least(stack, n_new)
   buf = unsafe_get_stack_buffer stack
   buf ! (unsafe_from_ordinal n_old) := x
-  fst_ref stack := n_new
+  stack.0 := n_new
 
 @noinline
 def stack_extend(stack:Stack(h, a), x:n=>a) -> {State h} () given (a|Data, n|Ix, h) =
@@ -2470,7 +2470,7 @@ def stack_extend(stack:Stack(h, a), x:n=>a) -> {State h} () given (a|Data, n|Ix,
   buf = unsafe_get_stack_buffer stack
   buf_slice = unsafe_coerce(to=Ref(h,n=>a), buf ! (unsafe_from_ordinal n_old))
   buf_slice := x
-  fst_ref stack := n_new
+  stack.0 := n_new
 
 def stack_pop(stack:Stack(h, a)) -> {State h} Maybe a given (a|Data, h) =
   n_old = stack_size stack
@@ -2479,7 +2479,7 @@ def stack_pop(stack:Stack(h, a)) -> {State h} Maybe a given (a|Data, h) =
     False ->
       n_new = unsafe_nat_diff(n_old, 1)
       buf = unsafe_get_stack_buffer stack
-      fst_ref stack := n_new
+      stack.0 := n_new
       Just $ get buf!(unsafe_from_ordinal n_new)
 
 stack_init_size = 16

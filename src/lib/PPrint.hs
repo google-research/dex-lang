@@ -636,7 +636,8 @@ instance Pretty (SourceOrInternalName c n) where
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
-  prettyPrec _ = undefined
+  prettyPrec (ULamExpr bs _ _ _ body) = atPrec LowestPrec $
+    "\\" <> p bs <+> "." <+> indented (p body)
 
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where

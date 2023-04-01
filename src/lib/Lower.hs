@@ -272,8 +272,8 @@ traverseExprWithDest dest expr = case expr of
       Nothing -> return Nothing
       Just d -> case d of
         FullDest fd -> do
-          bd <- getProjRef 0 fd
-          rd <- getProjRef 1 fd
+          bd <- getProjRef (ProjectProduct 0) fd
+          rd <- getProjRef (ProjectProduct 1) fd
           return $ Just (Just bd, Just rd)
         ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
         ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)

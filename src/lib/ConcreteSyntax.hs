@@ -835,8 +835,6 @@ primNames = M.fromList
   , ("NatCon"        , UNatCon)
   , ("Ref"       , UPrimTC $ RefType () ())
   , ("HeapType"  , UPrimTC $ HeapType)
-  , ("fstRef"     , UProjRef 0)
-  , ("sndRef"     , UProjRef 1)
   , ("indexRef"   , UIndexRef)
   , ("alloc"    , memOp $ IOAlloc (Scalar Word8Type) ())
   , ("free"     , memOp $ IOFree ())

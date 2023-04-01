@@ -1085,7 +1085,7 @@ inferWithoutInstantiation (WithSrcE pos expr) =
      return $ SigmaFieldAccess x' fieldDef resultTy
    _ -> SigmaAtom Nothing <$> inferRho noHint (WithSrcE pos expr)
 
-resolveFieldAccess :: EmitsBoth o => CType o -> FieldName -> InfererM i o (FieldDef o, CType o)
+resolveFieldAccess :: CType o -> FieldName -> InfererM i o (FieldDef o, CType o)
 resolveFieldAccess ty (WithSrc pos field) = addSrcContext pos case ty of
   NewtypeTyCon (UserADTType _ tyName params) -> do
     TyConBinding tyDef <- lookupEnv tyName
@@ -1098,10 +1098,17 @@ resolveFieldAccess ty (WithSrc pos field) = addSrcContext pos case ty of
             Nothing -> notInKnownFields names
           FieldNum i | i < length names -> return i
                      | otherwise        -> outOfRange i (length names)
-        return (FieldProjStruct i, snd $ fields !! i)
+        return (FieldProj i, snd $ fields !! i)
       ADTCons _ -> noFields ""
+  RefTy h valTy -> case valTy of
+    RefTy _ _ -> noFields ""
+    _ -> do
+      (fieldDef, valTy') <- resolveFieldAccess valTy (WithSrc pos field)
+      case fieldDef of
+        FieldProj _ -> return (fieldDef, RefTy h valTy')
+        _ -> throw TypeErr "Only projections can be accessed through references"
   ProdTy ts -> case field of
-    FieldNum i | i < length ts -> return (FieldProjTuple i, ts!! i)
+    FieldNum i | i < length ts -> return (FieldProj i, ts!! i)
                | otherwise -> outOfRange i (length ts)
     FieldName _ -> throw TypeErr "Tuples don't have named fields"
   TabPi _ -> noFields "\nArray indexing uses [] now."
@@ -1127,11 +1134,21 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
     SigmaFieldAccess _ (FieldCustom _) _ -> error "not implemented"
-    SigmaFieldAccess arg (FieldProjTuple  i) _ -> projectTuple i arg
-    SigmaFieldAccess arg (FieldProjStruct i) _ -> projectStruct i arg
+    SigmaFieldAccess arg (FieldProj  i) _ -> projectField i arg
  where
    fDesc :: SourceName
    fDesc = getSourceName sigmaAtom
+
+projectField :: Emits o => Int -> CAtom o -> InfererM i o (CAtom o)
+projectField i x = getType x >>= \case
+  ProdTy _ -> projectTuple i x
+  NewtypeTyCon _ -> projectStruct i x
+  RefTy _ valTy -> case valTy of
+    ProdTy _ -> getProjRef (ProjectProduct i) x
+    NewtypeTyCon _ -> projectStructRef i x
+    _ -> bad
+  _ -> bad
+  where bad = error $ "bad projection: " ++ pprint (i, x)
 
 -- creates a lambda term with just the explicit binders, but provides
 -- args corresponding to all the binders (explicit and implicit)
@@ -1290,8 +1307,7 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
   UEffectOpVar _ -> error "not implemented"
 applySigmaAtom (SigmaFieldAccess arg field _) args = do
   result <- case field of
-    FieldProjTuple  i -> projectTuple  i arg
-    FieldProjStruct i -> projectStruct i arg
+    FieldProj i -> projectField  i arg
     FieldCustom _ -> error "not implemented"
   emitExprWithEffects $ App result args
 
@@ -1440,7 +1456,6 @@ matchPrimApp = \case
  UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
  UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> ee $ RefOp r $ IndexRef i
- UProjRef i -> \case ~[r]    -> ee $ RefOp r $ ProjRef i
  UApplyMethod i -> \case ~(d:args) -> ee $ ApplyMethod d i args
  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Linearize f' x
  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Transpose f' x
