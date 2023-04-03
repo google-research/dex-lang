@@ -20,6 +20,7 @@ import Control.Monad.State.Class
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
+import qualified Data.Kind as K
 
 import CheapReduction
 import Core
@@ -63,7 +64,7 @@ class ( Monad2 m, Fallible2 m, SubstReader Name m
   affineUsed :: AtomName r o -> m i o ()
   parallelAffines_ :: [m i o ()] -> m i o ()
 
-newtype TyperT (m::MonadKind) (r::IR) (i::S) (o::S) (a :: *) =
+newtype TyperT (m::MonadKind) (r::IR) (i::S) (o::S) (a::K.Type) =
   TyperT { runTyperT' :: SubstReaderT Name (StateT1 (NameMap (AtomNameC r) Int) (EnvReaderT m)) i o a }
   deriving ( Functor, Applicative, Monad
            , SubstReader Name

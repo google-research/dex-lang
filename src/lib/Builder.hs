@@ -14,6 +14,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
+import qualified Data.Kind as K
 import qualified Data.Map.Strict as M
 import Data.Graph (graphFromEdges, topSort)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
@@ -135,7 +136,7 @@ liftTopBuilderAndEmit
 liftTopBuilderAndEmit cont = do
   liftTopBuilderHoisted cont >>= emitHoistedEnv
 
-newtype DoubleBuilderT (r::IR) (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
+newtype DoubleBuilderT (r::IR) (topEmissions::B) (m::MonadKind) (n::S) (a::K.Type) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , CtxReader, MonadIO, Catchable, MonadReader r')
@@ -342,7 +343,7 @@ lookupPtrName v = lookupEnv v >>= \case
 getCache :: EnvReader m => m n (Cache n)
 getCache = withEnv $ envCache . topEnv
 
-newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
+newtype TopBuilderT (m::MonadKind) (n::S) (a::K.Type) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , CtxReader, ScopeReader, MonadTrans1, MonadReader r
@@ -417,7 +418,7 @@ instance (SinkableE e, HoistableState e, TopBuilder m) => TopBuilder (StateT1 e 
 
 type BuilderEmissions r = RNest (Decl r)
 
-newtype BuilderT (r::IR) (m::MonadKind) (n::S) (a:: *) =
+newtype BuilderT (r::IR) (m::MonadKind) (n::S) (a::K.Type) =
   BuilderT { runBuilderT' :: InplaceT Env (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
            , Catchable, CtxReader, ScopeReader, Alternative, Searcher

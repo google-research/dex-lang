@@ -11,6 +11,7 @@ import Control.Monad
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.List (elemIndex)
+import qualified Data.Kind as K
 
 import Types.Primitives
 import Types.Core
@@ -274,7 +275,7 @@ declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
 
 -- === implementation of querying types ===
 
-newtype TypeQueryM (i::S) (o::S) (a :: *) = TypeQueryM {
+newtype TypeQueryM (i::S) (o::S) (a::K.Type) = TypeQueryM {
   runTypeQueryM :: SubstReaderT AtomSubstVal EnvReaderM i o a }
   deriving ( Functor, Applicative, Monad
            , EnvReader, EnvExtender, ScopeReader

@@ -118,7 +118,7 @@ ifneq (,$(DEX_CI))
 STACK_FLAGS := $(STACK_FLAGS) --flag dex:debug
 endif
 
-possible-clang-locations := clang++-9 clang++-10 clang++-11 clang++-12 clang++-15 clang++
+possible-clang-locations := clang++-15 clang++
 
 CLANG := clang++
 
@@ -133,11 +133,11 @@ CLANG := $(shell for clangversion in $(possible-clang-locations) ; do \
 if [[ $$(command -v "$$clangversion" 2>/dev/null) ]]; \
 then echo "$$clangversion" ; break ; fi ; done)
 ifeq (,$(CLANG))
-$(error "Please install clang++-12")
+$(error "Please install clang++-15")
 endif
-clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((9\.)|(10\.)|(11\.)|(12\.)|(15\.)).*$$/, "")) }')
+clang-version-compatible := $(shell $(CLANG) -dumpversion | awk '{ print(gsub(/^((15\.)).*$$/, "")) }')
 ifneq (1,$(clang-version-compatible))
-$(error "Please install clang++-12")
+$(error "Please install clang++-15")
 endif
 endif
 

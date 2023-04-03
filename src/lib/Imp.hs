@@ -23,6 +23,7 @@ import Data.Functor
 import Data.Foldable (toList)
 import Data.Maybe (fromJust, isJust)
 import Data.Text.Prettyprint.Doc
+import qualified Data.Kind as K
 import Control.Category
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -171,12 +172,12 @@ instance ExtOutFrag ImpBuilderEmissions ImpDeclEmission where
   extendOutFrag ems (ImpDeclEmission d) = RNest ems d
   {-# INLINE extendOutFrag #-}
 
-newtype ImpM (n::S) (a:: *) =
+newtype ImpM (n::S) (a::K.Type) =
   ImpM { runImpM' :: WriterT1 (ListE IExpr)
                        (InplaceT Env ImpBuilderEmissions HardFailM) n a }
   deriving ( Functor, Applicative, Monad, ScopeReader, Fallible, MonadFail)
 
-type SubstImpM = SubstReaderT AtomSubstVal ImpM :: S -> S -> * -> *
+type SubstImpM = SubstReaderT AtomSubstVal ImpM :: S -> S -> K.Type -> K.Type
 
 instance ExtOutMap Env ImpBuilderEmissions where
   extendOutMap bindings emissions =

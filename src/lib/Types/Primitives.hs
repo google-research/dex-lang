@@ -23,7 +23,8 @@ module Types.Primitives (
   CmpOp (..), Projection (..)) where
 
 import Name
-import qualified Data.ByteString       as BS
+import qualified Data.ByteString as BS
+import qualified Data.Kind as K
 import Control.Monad
 import Data.Int
 import Data.Word

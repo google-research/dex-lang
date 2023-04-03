@@ -94,23 +94,23 @@ infixl 1 <>>
 (<>>) = extendInMap
 {-# INLINE (<>>) #-}
 
-class InFrag (envFrag :: S -> S -> S -> *) where
+class InFrag (envFrag :: S -> S -> S -> Type) where
   emptyInFrag :: envFrag i i o
   catInFrags  :: envFrag i1 i2 o -> envFrag i2 i3 o -> envFrag i1 i3 o
 
-class InMap (env :: S -> S -> *) (envFrag :: S -> S -> S -> *) | env -> envFrag where
+class InMap (env :: S -> S -> Type) (envFrag :: S -> S -> S -> Type) | env -> envFrag where
   emptyInMap :: env VoidS o
   extendInMap :: env i o -> envFrag i i' o -> env i' o
 
 -- TODO: this is now basically just `Category`. Should we get rid of it?
-class (SinkableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> S -> *) where
+class (SinkableB scopeFrag, BindsNames scopeFrag) => OutFrag (scopeFrag :: S -> S -> Type) where
   emptyOutFrag :: scopeFrag n n
   catOutFrags  :: Distinct n3 => scopeFrag n1 n2 -> scopeFrag n2 n3 -> scopeFrag n1 n3
 
 class HasScope scope => OutMap scope where
   emptyOutMap :: scope VoidS
 
-class OutMap env => ExtOutMap (env :: S -> *) (frag :: S -> S -> *) where
+class OutMap env => ExtOutMap (env :: S -> Type) (frag :: S -> S -> Type) where
   extendOutMap :: Distinct l => env n -> frag n l -> env l
 
 class ExtOutFrag (frag :: B) (subfrag :: B) where
@@ -367,7 +367,7 @@ instance BindsNames ScopeFrag where
 instance HoistableB ScopeFrag where
   freeVarsB _ = mempty
 
-class HasScope (bindings :: S -> *) where
+class HasScope (bindings :: S -> Type) where
   -- XXX: this must be O(1)
   toScope :: bindings n -> Scope n
 
@@ -462,10 +462,10 @@ newtype HashMapE (k::E) (v::E) (n::S) =
 newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEmpty (e n)}
         deriving (Show, Eq, Generic)
 
-newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
+newtype LiftE (a::Type) (n::S) = LiftE { fromLiftE :: a }
         deriving (Show, Eq, Generic, Monoid, Semigroup)
 
-newtype ComposeE (f :: * -> *) (e::E) (n::S) =
+newtype ComposeE (f::Type->Type) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
 
@@ -812,9 +812,9 @@ checkNoBinders b =
 
 -- === versions of monad constraints with scope params ===
 
-type MonadKind  =           * -> *
-type MonadKind1 =      S -> * -> *
-type MonadKind2 = S -> S -> * -> *
+type MonadKind  =           Type -> Type
+type MonadKind1 =      S -> Type -> Type
+type MonadKind2 = S -> S -> Type -> Type
 
 type Monad1 (m :: MonadKind1) = forall (n::S)        . Monad (m n  )
 type Monad2 (m :: MonadKind2) = forall (n::S) (l::S) . Monad (m n l)
@@ -858,7 +858,7 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
       , forall i1 i2 o. Fallible (m i1 i2 o)
       , forall i1 i2 o. MonadFail (m i1 i2 o)
       , forall i1 i2.   ScopeExtender (m i1 i2))
-      => ZipSubstReader (m :: S -> S -> S -> * -> *) where
+      => ZipSubstReader (m :: S -> S -> S -> Type -> Type) where
   lookupZipSubstFst :: Color c => Name c i1 -> m i1 i2 o (Name c o)
   lookupZipSubstSnd :: Color c => Name c i2 -> m i1 i2 o (Name c o)
 
@@ -1206,7 +1206,7 @@ instance (HoistableE k, AlphaEqE k, AlphaHashableE k, Store (k n), Store (v n))
 
 -- === ScopeReaderT transformer ===
 
-newtype ScopeReaderT (m::MonadKind) (n::S) (a:: *) =
+newtype ScopeReaderT (m::MonadKind) (n::S) (a::Type) =
   ScopeReaderT {runScopeReaderT' :: ReaderT (DistinctEvidence n, Scope n) m a}
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
@@ -1247,7 +1247,7 @@ class OutReader (e::E) (m::MonadKind1) | m -> e where
   askOutReader :: m n (e n)
   localOutReader :: e n -> m n a -> m n a
 
-newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a :: *) =
+newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a::Type) =
   OutReaderT { runOutReaderT' :: ReaderT (e n) (m n) a }
   deriving (Functor, Applicative, Monad, MonadFail, Fallible)
 
@@ -1298,7 +1298,7 @@ instance MonadWriter w (m n) => MonadWriter w (OutReaderT e m n) where
 
 -- === ZipSubstReaderT transformer ===
 
-newtype ZipSubstReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =
+newtype ZipSubstReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a::Type) =
   ZipSubstReaderT { runZipSubstReaderT :: ReaderT (ZipSubst i1 i2 o) (m o) a }
   deriving (Functor, Applicative, Monad, Fallible, MonadFail)
 
@@ -1325,12 +1325,6 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
 
   lookupZipSubstFst v = ZipSubstReaderT $ (flip (!) v) <$> fst <$> ask
   lookupZipSubstSnd v = ZipSubstReaderT $ (flip (!) v) <$> snd <$> ask
-  -- lookupZipSubstFst v = ZipSubstReaderT $ do
-  --   (env1, _) <- ask
-  --   return $ (!) env1 v
-  -- lookupZipSubstSnd v = ZipSubstReaderT $ do
-  --   (_, env2) <- ask
-  --   return $ (!) env2 v
 
   extendZipSubstFst frag (ZipSubstReaderT cont) = ZipSubstReaderT $ withReaderT (onFst (<>>frag)) cont
   extendZipSubstSnd frag (ZipSubstReaderT cont) = ZipSubstReaderT $ withReaderT (onSnd (<>>frag)) cont
@@ -1341,7 +1335,7 @@ instance (Monad1 m, ScopeReader m, ScopeExtender m, Fallible1 m)
 -- === in-place scope updating monad -- immutable fragment ===
 
 -- The bindings returned by the action should be an extension of the input bindings by the emitted decls.
-newtype InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a :: *) = UnsafeMakeInplaceT
+newtype InplaceT (bindings::E) (decls::B) (m::MonadKind) (n::S) (a::Type) = UnsafeMakeInplaceT
   { unsafeRunInplaceT :: Distinct n => bindings n -> decls UnsafeS UnsafeS -> m (a, decls UnsafeS UnsafeS, bindings UnsafeS) }
 
 runInplaceT
@@ -1489,7 +1483,8 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => Applicative (InplaceT bindings decls m n) where
-  pure = return
+  pure x = UnsafeMakeInplaceT \env decls -> do
+    pure (x, decls, unsafeCoerceE env)
   {-# INLINE pure #-}
   liftA2 = liftM2
   {-# INLINE liftA2 #-}
@@ -1498,9 +1493,6 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m)
          => Monad (InplaceT bindings decls m n) where
-  return x = UnsafeMakeInplaceT \env decls -> do
-    return (x, decls, unsafeCoerceE env)
-  {-# INLINE return #-}
   m >>= f = UnsafeMakeInplaceT \outMap decls -> do
     (x, decls1, outMap1) <- unsafeRunInplaceT m outMap decls
     unsafeRunInplaceT (f x) (unsafeCoerceE outMap1) decls1
@@ -1598,7 +1590,7 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
 -- `ScopeFrag hidden_initial_scope n` to do the hoisting but then we couldn't
 -- safely implement `liftDoubleInplaceT` because it wouldn't be extended
 -- correctly.
-newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a :: *) =
+newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a::Type) =
   UnsafeMakeDoubleInplaceT
   { unsafeRunDoubleInplaceT
     :: StateT (Scope UnsafeS, d1 UnsafeS UnsafeS) (InplaceT bindings d2 m n) a }
@@ -2404,15 +2396,16 @@ data C =
   | ImpNameC
     deriving (Eq, Ord, Generic, Show)
 
-type E = S -> *       -- expression-y things, covariant in the S param
-type B = S -> S -> *  -- binder-y things, covariant in the first param and
-                      -- contravariant in the second. These are things like
-                      -- `Binder n l` or `Decl n l`, that bind the names in
-                      -- `ScopeFrag n l`, extending `n` to `l`. Their free
-                      -- name are in `Scope n`. We sometimes call `n` the
-                      -- "outside scope" and "l" the "inside scope".
-type V = C -> E       -- value-y things that we might look up in an environment
-                      -- with a `Name c n`, parameterized by the name's color.
+type E = S -> Type       -- expression-y things, covariant in the S param
+type B = S -> S -> Type  -- binder-y things, covariant in the first param and
+                         -- contravariant in the second. These are things like
+                         -- `Binder n l` or `Decl n l`, that bind the names in
+                         -- `ScopeFrag n l`, extending `n` to `l`. Their free
+                         -- name are in `Scope n`. We sometimes call `n` the
+                         -- "outside scope" and "l" the "inside scope".
+type V = C -> E          -- value-y things that we might look up in an
+                         -- environment with a `Name c n`, parameterized by the
+                         -- name's color.
 
 -- We use SubstItem for ColorRep to be able to unsafeCoerce scopes into name sets in O(1).
 type ColorRep = SubstItem GHC.Exts.Any UnsafeS
@@ -3064,7 +3057,7 @@ unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
 unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceVC #-}
 
-unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
+unsafeCoerceM1 :: forall (m::S -> Type -> Type) (n1::S) (n2::S) (a::Type). m n1 a -> m n2 a
 unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceM1 #-}
 
@@ -3177,8 +3170,6 @@ instance Applicative HoistExcept where
   {-# INLINE liftA2 #-}
 
 instance Monad HoistExcept where
-  return = pure
-  {-# INLINE return #-}
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
   {-# INLINE (>>=) #-}
@@ -3191,7 +3182,7 @@ instance Monad HoistExcept where
 
 -- Hoisting the map removes entries that are no longer in scope.
 
-newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
+newtype NameMap (c::C) (a::Type) (n::S) = UnsafeNameMap (RawNameMap a)
                                  deriving (Eq, Semigroup, Monoid, Store)
 
 hoistFilterNameMap :: BindsNames b => b n l -> NameMap c a l -> NameMap c a n
@@ -3318,7 +3309,7 @@ old scope. These are the `Distinct l` and `Ext n l` conditions in `sink`.
 Note that the expression may end up with internal binders shadowing the new vars
 in scope, shadows, like the inner `y` above, and that's fine.
 
-But not everything with an expression-like kind `E` (`S -> *`) is sinkable.
+But not everything with an expression-like kind `E` (`S -> Type`) is sinkable.
 For example, a type like `Name n -> Bool` can't be coerced to a `Name l -> Bool`
 when `l` is an extension of `n`. It's the usual covariance/contravariance issue
 with subtyping. So we have a further type class, `SinkableE`, which asserts
