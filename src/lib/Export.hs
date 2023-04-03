@@ -14,6 +14,7 @@ module Export (
 
 import Control.Category ((>>>))
 import Data.List (intercalate)
+import qualified Data.Kind as K
 import Foreign.Storable
 import Foreign.C.String
 import Foreign.Ptr
@@ -87,7 +88,7 @@ instance SinkableV (Rename r)
 instance FromName (Rename r) where
   fromName = JustRefer
 
-newtype ExportSigM (r::IR) (i::S) (o::S) (a:: *) = ExportSigM {
+newtype ExportSigM (r::IR) (i::S) (o::S) (a::K.Type) = ExportSigM {
   runExportSigM :: SubstReaderT (Rename r) (EnvReaderT FallibleM) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader (Rename r), MonadFail)

@@ -15,6 +15,7 @@ import Control.Category
 import Control.Monad.Except hiding (Except)
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
+import qualified Data.Kind       as K
 
 import Err
 import Name
@@ -59,7 +60,7 @@ sourceRenameTopUDecl udecl =
 data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
                                    , renamerMayShadow :: Bool }
 
-newtype RenamerM (n::S) (a:: *) =
+newtype RenamerM (n::S) (a::K.Type) =
   RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , ScopeReader, ScopeExtender)

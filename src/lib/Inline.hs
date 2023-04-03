@@ -6,6 +6,7 @@
 
 module Inline (inlineBindings) where
 
+import qualified Data.Kind as K
 import Data.Functor
 import Data.List.NonEmpty qualified as NE
 
@@ -54,7 +55,7 @@ instance SinkableE (InlineExpr r) where
 
 type InlineSubstVal = SubstVal InlineExpr
 
-newtype InlineM (i::S) (o::S) (a:: *) = InlineM
+newtype InlineM (i::S) (o::S) (a::K.Type) = InlineM
   { runInlineM :: SubstReaderT InlineSubstVal (BuilderM SimpIR) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible, ScopeReader
            , EnvExtender, EnvReader, SubstReader InlineSubstVal, (Builder SimpIR)

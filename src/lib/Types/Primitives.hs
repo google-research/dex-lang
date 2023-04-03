@@ -21,7 +21,8 @@
 module Types.Primitives where
 
 import Name
-import qualified Data.ByteString       as BS
+import qualified Data.ByteString as BS
+import qualified Data.Kind as K
 import Control.Monad
 import Data.Int
 import Data.Word
@@ -39,7 +40,7 @@ import Util (zipErr)
 
 type SourceName = String
 
-data PrimTC (r::IR) (e:: *) where
+data PrimTC (r::IR) (e::K.Type) where
   BaseType         :: BaseType       -> PrimTC r e
   ProdType         :: [e]            -> PrimTC r e
   SumType          :: [e]            -> PrimTC r e
@@ -53,7 +54,7 @@ traversePrimTC :: Applicative f => (e -> f e') -> PrimTC r e -> f (PrimTC r e')
 traversePrimTC = inline traverse
 {-# INLINABLE traversePrimTC #-}
 
-data PrimCon (r::IR) (e:: *) where
+data PrimCon (r::IR) (e::K.Type) where
   Lit          :: LitVal            -> PrimCon r e
   ProdCon      :: [e]               -> PrimCon r e
   SumCon       :: [e] -> Int -> e   -> PrimCon r e -- type, tag, payload

@@ -158,14 +158,12 @@ instance Functor Except where
   {-# INLINE fmap #-}
 
 instance Applicative Except where
-  pure = return
+  pure = Success
   {-# INLINE pure #-}
   liftA2 = liftM2
   {-# INLINE liftA2 #-}
 
 instance Monad Except where
-  return = Success
-  {-# INLINE return #-}
   Failure errs >>= _ = Failure errs
   Success x >>= f = f x
   {-# INLINE (>>=) #-}
@@ -211,8 +209,6 @@ instance Applicative HardFailM where
 instance Monad HardFailM where
   (HardFailM (Identity x)) >>= k = k x
   {-# INLINE (>>=) #-}
-  return = HardFailM . Identity
-  {-# INLINE return #-}
 
 runHardFail :: HardFailM a -> a
 runHardFail m = runIdentity $ runHardFail' m

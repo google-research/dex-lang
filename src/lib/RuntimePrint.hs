@@ -9,6 +9,7 @@ module RuntimePrint (showAny) where
 import Control.Monad.Reader
 import Data.Foldable (fold, toList)
 import Data.Functor
+import qualified Data.Kind as K
 import qualified Data.Map.Strict as M
 
 import Builder
@@ -25,7 +26,7 @@ import Types.Primitives
 import QueryType
 import Util (restructure)
 
-newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
+newtype Printer (n::S) (a::K.Type) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
                  , Fallible, ScopeReader, MonadFail, EnvExtender, CBuilder, ScopableBuilder CoreIR)
 type Print n = Printer n ()

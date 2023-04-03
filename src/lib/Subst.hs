@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import qualified Data.Kind as K
 
 import Name
 import IRVariants
@@ -253,7 +254,7 @@ instance FromName (SubstVal atom) where
 
 -- === SubstReaderT transformer ===
 
-newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
+newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a::K.Type) =
   SubstReaderT { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
 
 instance (forall n. Functor (m n)) => Functor (SubstReaderT v m i o) where
@@ -269,8 +270,6 @@ instance Monad1 m => Applicative (SubstReaderT v m i o) where
   {-# INLINE (<*>) #-}
 
 instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
-  return = SubstReaderT . return
-  {-# INLINE return #-}
   (SubstReaderT m) >>= f = SubstReaderT (m >>= (runSubstReaderT' . f))
   {-# INLINE (>>=) #-}
 

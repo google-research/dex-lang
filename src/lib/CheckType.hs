@@ -17,6 +17,7 @@ import Control.Monad.Reader
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
+import qualified Data.Kind as K
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
@@ -61,7 +62,7 @@ class ( Monad2 m, Fallible2 m, SubstReader Name m
       , EnvReader2 m, EnvExtender2 m)
      => Typer (m::MonadKind2)
 
-newtype TyperT (m::MonadKind) (i::S) (o::S) (a :: *) =
+newtype TyperT (m::MonadKind) (i::S) (o::S) (a::K.Type) =
   TyperT { runTyperT' :: SubstReaderT Name (EnvReaderT m) i o a }
   deriving ( Functor, Applicative, Monad
            , SubstReader Name

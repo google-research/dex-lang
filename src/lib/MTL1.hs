@@ -24,6 +24,7 @@ import Control.Monad.Trans.Maybe
 import qualified Control.Monad.Trans.Except as MTE
 import Control.Applicative
 import Data.Foldable (toList)
+import qualified Data.Kind as K
 
 import Name
 import Err
@@ -35,7 +36,7 @@ class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
 
 -------------------- WriterT1 --------------------
 
-newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+newtype WriterT1 (w :: E) (m :: MonadKind1) (n :: S) (a :: K.Type) =
   WrapWriterT1 { runWriterT1' :: (StateT (w n) (m n) a) }
   deriving ( Functor, Applicative, Monad, MonadFail
            , Fallible, MonadIO)
@@ -101,7 +102,7 @@ instance ( SinkableE w, HoistableE w, Monoid1 w
 
 -------------------- ReaderT1 --------------------
 
-newtype ReaderT1 (r :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+newtype ReaderT1 (r :: E) (m :: MonadKind1) (n :: S) (a :: K.Type) =
   ReaderT1 { runReaderT1' :: (ReaderT (r n) (m n) a) }
   deriving (Functor, Applicative, Monad, MonadFail, MonadReader (r n))
 
@@ -148,7 +149,7 @@ instance (Monad1 m, CtxReader (m n)) => CtxReader (ReaderT1 s m n) where
 
 -------------------- StateT1 --------------------
 
-newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+newtype StateT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: K.Type) =
   WrapStateT1 { runStateT1' :: (StateT (s n) (m n) a) }
   deriving ( Functor, Monad, MonadState (s n)
            , MonadFail, MonadIO)
@@ -223,7 +224,7 @@ instance HoistableState UnitE where
 
 -------------------- ScopedT1 --------------------
 
-newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
+newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: K.Type) =
   WrapScopedT1 { runScopedT1' :: StateT1 s m n a }
   deriving ( Functor, Monad, MonadState (s n), MonadFail
            , MonadTrans11, EnvReader, ScopeReader )
@@ -256,7 +257,7 @@ instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
 
 -------------------- MaybeT1 --------------------
 
-newtype MaybeT1 (m :: MonadKind1) (n :: S) (a :: *) =
+newtype MaybeT1 (m :: MonadKind1) (n :: S) (a :: K.Type) =
   MaybeT1 { runMaybeT1' :: (MaybeT (m n) a) }
   deriving (Functor, Applicative, Monad, Alternative)
 
@@ -329,7 +330,7 @@ instance EnvReader m => EnvReader (FallibleT1 m) where
 class Monad m => StreamWriter w m | m -> w where
   writeStream :: w -> m ()
 
-newtype StreamWriterT1 (w:: *) (m::MonadKind1) (n::S) (a:: *) =
+newtype StreamWriterT1 (w::K.Type) (m::MonadKind1) (n::S) (a::K.Type) =
   StreamWriterT1 { runStreamWriterT1' :: StateT1 (LiftE (SnocList w)) m n a }
   deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader)
 
@@ -348,7 +349,7 @@ runStreamWriterT1 m = do
 class Monad m => StreamReader r m | m -> r where
   readStream :: m (Maybe r)
 
-newtype StreamReaderT1 (r:: *) (m::MonadKind1) (n::S) (a:: *) =
+newtype StreamReaderT1 (r::K.Type) (m::MonadKind1) (n::S) (a::K.Type) =
   StreamReaderT1 { runStreamReaderT1' :: StateT1 (LiftE [r]) m n a }
   deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader, MonadTrans11)
 

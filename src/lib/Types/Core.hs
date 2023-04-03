@@ -1694,7 +1694,6 @@ instance (IRRep r, HoistableE ann) => HoistableB (NonDepNest r ann)
 instance (IRRep r, RenameE ann, SinkableE ann) => RenameB (NonDepNest r ann)
 instance (IRRep r, AlphaEqE       ann) => AlphaEqB       (NonDepNest r ann)
 instance (IRRep r, AlphaHashableE ann) => AlphaHashableB (NonDepNest r ann)
--- deriving instance (Show (ann n)) => IRRep r => Show (NonDepNest r ann n l)
 deriving instance (Show (ann n), IRRep r) => Show (NonDepNest r ann n l)
 
 instance GenericB RolePiBinder where

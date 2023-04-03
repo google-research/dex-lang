@@ -16,6 +16,7 @@ import Control.Monad.Reader
 import Data.Maybe
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
+import qualified Data.Kind as K
 import GHC.Exts (inline)
 
 import Builder
@@ -223,7 +224,7 @@ applyRecon (LamRecon ab) x = applyReconAbs ab x
 
 class (ScopableBuilder2 SimpIR m, SubstReader AtomSubstVal m) => Simplifier m
 
-newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
+newtype SimplifyM (i::S) (o::S) (a::K.Type) = SimplifyM
   { runSimplifyM'
     :: SubstReaderT AtomSubstVal (DoubleBuilderT SimpIR TopEnvFrag  HardFailM) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible

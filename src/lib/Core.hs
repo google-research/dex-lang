@@ -30,7 +30,8 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State
 import qualified Control.Monad.State.Strict as SS
-import qualified Data.Map.Strict       as M
+import qualified Data.Map.Strict as M
+import qualified Data.Kind as K
 
 import Name
 import Err
@@ -76,7 +77,7 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 
 -- === EnvReader monad ===
 
-newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
+newtype EnvReaderT (m::MonadKind) (n::S) (a::K.Type) =
   EnvReaderT {runEnvReaderT' :: ReaderT (DistinctEvidence n, Env n) m a }
   deriving ( Functor, Applicative, Monad, MonadFail
            , MonadWriter w, Fallible, Searcher, Alternative)
