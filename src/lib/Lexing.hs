@@ -80,7 +80,7 @@ checkNotKeyword p = try $ do
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | DataKW | StructKW | InterfaceKW
-             | InstanceKW | GivenKW | SatisfyingKW
+             | InstanceKW | GivenKW | WithKW | SatisfyingKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
@@ -105,6 +105,7 @@ keyWordToken = \case
   InstanceKW      -> "instance"
   NamedInstanceKW -> "named-instance"
   GivenKW         -> "given"
+  WithKW          -> "with"
   SatisfyingKW    -> "satisfying"
   DoKW            -> "do"
   ImportKW        -> "import"

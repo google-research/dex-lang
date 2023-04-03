@@ -710,7 +710,7 @@ typeToTree tyTop = return $ go REmpty tyTop
     BaseTy b -> Leaf $ LeafType (unRNest ctx) b
     TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy
     RefTy _ t -> go (RNest ctx RefCtx) t
-    DepPairTy (DepPairType (b:>t1) (t2)) -> do
+    DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
       let tree1 = rec t1
       let tree2 = go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2
       Branch [tree1, tree2]
@@ -746,7 +746,7 @@ valueToTree (RepVal tyTop valTop) = do
     BaseTy b -> return $ Leaf $ LeafType (unRNest ctx) b
     TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy val
     RefTy _ t -> go (RNest ctx RefCtx) t val
-    DepPairTy (DepPairType (b:>t1) (t2)) -> case val of
+    DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
       Branch [v1, v2] -> do
         case ctx of
           REmpty -> do

@@ -755,7 +755,7 @@ rawStrType :: IRRep r => EnvReader m => m n (Type r n)
 rawStrType = liftEnvReaderM do
   withFreshBinder "n" IdxRepTy \b -> do
     tabTy <- rawFinTabType (Var $ binderName b) CharRepTy
-    return $ DepPairTy $ DepPairType b tabTy
+    return $ DepPairTy $ DepPairType ExplicitDepPair b tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Atom r n -> m n (Type r n)

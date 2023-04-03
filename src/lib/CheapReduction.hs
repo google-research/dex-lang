@@ -386,7 +386,7 @@ liftSimpAtom ty simpAtom = case simpAtom of
       (BaseTy _  , Con (Lit v))      -> return $ Con $ Lit v
       (ProdTy tys, Con (ProdCon xs))   -> Con . ProdCon <$> zipWithM rec tys xs
       (SumTy  tys, Con (SumCon _ i x)) -> Con . SumCon tys i <$> rec (tys!!i) x
-      (DepPairTy dpt@(DepPairType (b:>t1) t2), DepPair x1 x2 _) -> do
+      (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
         x1' <- rec t1 x1
         t2' <- applySubst (b@>SubstVal x1') t2
         x2' <- rec t2' x2
@@ -414,7 +414,7 @@ confuseGHC = getDistinct
 -- CheapReduction and QueryType import?
 
 depPairLeftTy :: DepPairType r n -> Type r n
-depPairLeftTy (DepPairType (_:>ty) _) = ty
+depPairLeftTy (DepPairType _ (_:>ty) _) = ty
 {-# INLINE depPairLeftTy #-}
 
 unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
@@ -467,7 +467,7 @@ makeStructRepVal tyConName args = do
     _ -> return $ ProdVal args
 
 instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
-instantiateDepPairTy (DepPairType b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
+instantiateDepPairTy (DepPairType _ b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
 {-# INLINE instantiateDepPairTy #-}
 
 projType :: (IRRep r, EnvReader m) => Int -> Type r n -> Atom r n -> m n (Type r n)

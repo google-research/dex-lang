@@ -1397,14 +1397,14 @@ buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
       (x1, ~(xDep : rest')) <- go ty1 rest
       ty2' <- applySubst (b@>SubstVal xDep) ty2
       (x2, rest'') <- go ty2' rest'
-      let depPairTy = DepPairType b (telescopeTypeType ty2)
+      let depPairTy = DepPairType ExplicitDepPair b (telescopeTypeType ty2)
       return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
 
 telescopeTypeType :: TelescopeType (AtomNameC r) (Type r) n -> Type r n
 telescopeTypeType (ProdTelescope tys) = ProdTy tys
 telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
   let lhs' = telescopeTypeType lhs
-  let rhs' = DepPairTy (DepPairType b (telescopeTypeType rhs))
+  let rhs' = DepPairTy (DepPairType ExplicitDepPair b (telescopeTypeType rhs))
   PairTy lhs' rhs'
 
 unpackTelescope

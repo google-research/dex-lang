@@ -158,6 +158,7 @@ data Explicitness =
     Explicit
   | Inferred (Maybe SourceName) InferenceMechanism  deriving (Show, Eq, Ord, Generic)
 data AppExplicitness = ExplicitApp | ImplicitApp  deriving (Show, Generic, Eq)
+data DepPairExplicitness = ExplicitDepPair | ImplicitDepPair  deriving (Show, Generic, Eq)
 
 data WithExpl (b::B) (n::S) (l::S) =
   WithExpl { getExpl :: Explicitness , withoutExpl :: b n l }
@@ -312,6 +313,7 @@ instance Store ScalarBaseType
 instance Store Device
 instance Store Explicitness
 instance Store AppExplicitness
+instance Store DepPairExplicitness
 instance Store InferenceMechanism
 
 instance Store a => Store (PrimCon r a)
@@ -336,6 +338,7 @@ instance Hashable Device
 instance Hashable LetAnn
 instance Hashable Explicitness
 instance Hashable AppExplicitness
+instance Hashable DepPairExplicitness
 instance Hashable InferenceMechanism
 instance Hashable RequiredMethodAccess
 

@@ -5,12 +5,18 @@
 ;; https://developers.google.com/open-source/licenses/bsd
 
 (setq dex-highlights
-  '(("--\\([^o].*$\\|$\\)"   . font-lock-comment-face)
+  `(("--\\([^o].*$\\|$\\)"   . font-lock-comment-face)
     ("^> .*$"                . font-lock-comment-face)
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
     ("\\w+:"                 . font-lock-comment-face)
     ("^:\\w*"                . font-lock-preprocessor-face)
-    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|\\bstruct\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|\\binstance\\b\\|\\bgiven\\b\\|\\bdo\\b\\|\\bview\\b\\|\\bimport\\b\\|\\bforeign\\b\\|\\bsatisfying\\b\\|\\bself\\b" .
+    (,(concat
+       "\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|"
+       "\\bstruct\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|"
+       "\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|"
+       "\\binstance\\b\\|\\bgiven\\b\\|\\bdo\\b\\|\\bview\\b\\|"
+       "\\bwith\\b\\|\\bself\\b\\|"
+       "\\bimport\\b\\|\\bforeign\\b\\|\\bsatisfying\\b") .
            font-lock-keyword-face)
     ("--o"                               . font-lock-variable-name-face)
     ("[-.,!;$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)

@@ -439,6 +439,9 @@ givenClause = keyWord GivenKW >> do
   (,) <$> parens (commaSep cGroup)
       <*> optional (parens (commaSep cGroup))
 
+withClause :: Parser WithClause
+withClause = keyWord WithKW >> parens (commaSep cGroup)
+
 arrowOptEffs :: Parser (Maybe CEffs)
 arrowOptEffs = sym "->" >> optional cEffs
 
@@ -704,6 +707,7 @@ ops =
   , [symOpR   ":"]
   , [symOpR  ",>"]
   , [symOpR  "&>"]
+  , [withClausePostfix]
   , [symOpL   "="]
   ] where
   other = ("other", anySymOp)
@@ -759,6 +763,13 @@ unOp f s = do
 binApp :: Bin' -> SrcPos -> Group -> Group -> Group
 binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
   where f' = WithSrc (Just pos) f
+
+withClausePostfix :: (SourceName, Expr.Operator Parser Group)
+withClausePostfix = ("with", op)
+  where
+    op = Expr.Postfix do
+      rhs <- withClause
+      return \lhs -> WithSrc Nothing $ CWith lhs rhs  -- TODO: source info
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do

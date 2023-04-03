@@ -259,7 +259,7 @@ instance Pretty (DictType n) where
 
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
-  prettyPrec (DepPairType b rhs) =
+  prettyPrec (DepPairType _ b rhs) =
     atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
 
 instance Pretty (EffectOpType n) where
@@ -656,7 +656,8 @@ instance PrettyPrec (UTabPiExpr n) where
 
 instance Pretty (UDepPairType n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UDepPairType n) where
-  prettyPrec (UDepPairType pat ty) = atPrec LowestPrec $ align $
+  -- TODO: print explicitness info
+  prettyPrec (UDepPairType _ pat ty) = atPrec LowestPrec $ align $
     p pat <+> "&>" <+> pLowest ty
 
 instance Pretty (UBlock' n) where

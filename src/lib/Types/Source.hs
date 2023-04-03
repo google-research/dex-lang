@@ -64,7 +64,8 @@ pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
 
 -- optional arrow, effects, result type
 type ExplicitParams = [Group]
-type GivenClause = ([Group], Maybe [Group])
+type GivenClause = ([Group], Maybe [Group])  -- implicits, classes
+type WithClause  = [Group] -- no classes because we don't want to carry class dicts at runtime
 
 type CTopDecl = WithSrc CTopDecl'
 data CTopDecl'
@@ -149,6 +150,7 @@ data Group'
   | CDo CSBlock
   | CGivens GivenClause
   | CArrow Group (Maybe CEffs) Group
+  | CWith Group WithClause
     deriving (Show, Generic)
 
 type Bin = WithSrc Bin'
@@ -291,7 +293,7 @@ data UTabPiExpr (n::S) where
   UTabPiExpr :: UOptAnnBinder n l -> UType l -> UTabPiExpr n
 
 data UDepPairType (n::S) where
-  UDepPairType :: UOptAnnBinder n l -> UType l -> UDepPairType n
+  UDepPairType :: DepPairExplicitness -> UOptAnnBinder n l -> UType l -> UDepPairType n
 
 type UConDef (n::S) (l::S) = (SourceName, Nest UReqAnnBinder n l)
 

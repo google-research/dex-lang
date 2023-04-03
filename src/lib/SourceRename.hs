@@ -188,9 +188,9 @@ instance SourceRenamableE UExpr' where
     UTabPi (UTabPiExpr pat body) ->
       sourceRenameB pat \pat' ->
         UTabPi <$> (UTabPiExpr pat' <$> sourceRenameE body)
-    UDepPairTy (UDepPairType pat body) ->
+    UDepPairTy (UDepPairType expl pat body) ->
       sourceRenameB pat \pat' ->
-        UDepPairTy <$> (UDepPairType pat' <$> sourceRenameE body)
+        UDepPairTy <$> (UDepPairType expl pat' <$> sourceRenameE body)
     UDepPair lhs rhs ->
       UDepPair <$> sourceRenameE lhs <*> sourceRenameE rhs
     UTabApp f x -> UTabApp <$> sourceRenameE f <*> mapM sourceRenameE x
