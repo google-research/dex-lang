@@ -258,10 +258,10 @@ instance SourceRenamableB UDecl where
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
         sourceRenameUBinderNest UDataConVar dataConNames \dataConNames' ->
            cont $ UDataDefDecl dataDef' tyConName' dataConNames'
-    UStructDecl structDef tyConName -> do
-      structDef' <- sourceRenameE structDef
-      sourceRenameUBinder UPunVar tyConName \tyConName' ->
-        cont $ UStructDecl structDef' tyConName'
+    UStructDecl tyConName structDef -> do
+      sourceRenameUBinder UPunVar tyConName \tyConName' -> do
+        structDef' <- sourceRenameE structDef
+        cont $ UStructDecl tyConName' structDef'
     UInterface paramBs methodTys className methodNames -> do
       Abs paramBs' (ListE methodTys') <-
         sourceRenameB paramBs \paramBs' -> do
@@ -349,12 +349,15 @@ instance SourceRenamableE UDataDef where
       return $ UDataDef tyConName paramBs' dataCons'
 
 instance SourceRenamableE UStructDef where
-  sourceRenameE (UStructDef tyConName paramBs fields) = do
+  sourceRenameE (UStructDef tyConName paramBs fields methods) = do
     sourceRenameB paramBs \paramBs' -> do
       fields' <- forM fields \(fieldName, ty) -> do
         ty' <- sourceRenameE ty
         return (fieldName, ty')
-      return $ UStructDef tyConName paramBs' fields'
+      methods' <- forM methods \(ann, methodName, lam) -> do
+        lam' <- sourceRenameE lam
+        return (ann, methodName, lam')
+      return $ UStructDef tyConName paramBs' fields' methods'
 
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->
@@ -506,7 +509,7 @@ instance HasSourceNames UDecl where
     ULet _ pat _ _ -> sourceNames pat
     UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
-    UStructDecl _ ~(UBindSource tyConName) -> do
+    UStructDecl ~(UBindSource tyConName) _ -> do
       S.singleton tyConName
     UInterface _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames

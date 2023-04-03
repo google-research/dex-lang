@@ -79,6 +79,7 @@ data CTopDecl'
       ExplicitParams
       (Maybe GivenClause)
       [(SourceName, Group)] -- Field names and types
+      [(LetAnn, CDef)]
   | CInterface
       SourceName  -- Interface name
       ExplicitParams
@@ -261,7 +262,7 @@ type FieldName = WithSrc FieldName'
 data FieldName' =
    FieldName SourceName
  | FieldNum  Int
-  deriving (Show)
+  deriving (Show, Eq, Ord)
 
 data ULamExpr (n::S) where
   ULamExpr
@@ -297,7 +298,8 @@ data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
     -> Nest (WithExpl UOptAnnBinder) n l
-    -> [(SourceName, UType l)]  -- named payloads
+    -> [(SourceName, UType l)]                    -- named payloads
+    -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
 
 data UDataDefTrail (l::S) where
@@ -311,8 +313,8 @@ data UDecl (n::S) (l::S) where
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
     -> UDecl n l
   UStructDecl
-    :: UStructDef n                        -- actual definition
-    -> UBinder TyConNameC n l              -- type constructor name
+    :: UBinder TyConNameC n l              -- type constructor name
+    -> UStructDef l                        -- actual definition
     -> UDecl n l
   UInterface
     :: Nest (WithExpl UOptAnnBinder) n p   -- parameter binders

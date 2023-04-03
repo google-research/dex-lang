@@ -22,7 +22,7 @@ import Control.Monad.Reader
 import Data.Coerce
 import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
-import Data.List (sortOn, elemIndex)
+import Data.List (sortOn)
 import Data.Maybe (fromJust, fromMaybe, catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
 import Data.Word
@@ -68,13 +68,24 @@ data UDeclInferenceResult e n =
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
-inferTopUDecl (UStructDecl def tc) result = do
-  def' <- liftInfererM $ solveLocal $ inferStructDef def
-  tc' <- emitBinding (getNameHint def') $ TyConBinding def'
+inferTopUDecl (UStructDecl tc def) result = do
+  tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
+  def' <- liftInfererM $ solveLocal do
+    extendRenamer (tc@>sink tc') $ inferStructDef def
+  emitPartialTopEnvFrag $ mempty {fragTyConDefUpdates = toSnocList [(tc', def')]}
+  UStructDef _ paramBs _ methods <- return def
+  forM_ methods \(letAnn, methodName, methodDef) -> do
+    method <- liftInfererM $ solveLocal $
+      extendRenamer (tc@>sink tc') $
+        inferDotMethod (sink tc') (Abs paramBs methodDef)
+    methodSynth <- synthTopE (Lam method)
+    method' <- emitTopLet (getNameHint methodName) letAnn (Atom methodSynth)
+    emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(tc', methodName, method')]}
   UDeclResultDone <$> applyRename (tc @> tc') result
+
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
   tcDef@(TyConDef _ _ (ADTCons dataCons)) <- liftInfererM $ solveLocal $ inferTyConDef def
-  tc' <- emitBinding (getNameHint tcDef) $ TyConBinding tcDef
+  tc' <- emitBinding (getNameHint tcDef) $ TyConBinding (Just tcDef) (DotMethods mempty)
   dcs' <- forM (enumerate dataCons) \(i, dcDef) ->
     emitBinding (getNameHint dcDef) $ DataConBinding tc' i
   let subst = tc @> tc' <.> dcs @@> dcs'
@@ -158,6 +169,18 @@ class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m 
     => NameHint -> Explicitness -> CType n
     -> (forall l. (EmitsInf l, DExt n l) => CAtomName l -> m l (e l))
     -> m n (Abs (WithExpl CBinder) e n)
+
+buildNaryAbsInf
+  :: (SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e, Inferer m)
+  => EmitsInf n
+  => EmptyAbs (Nest (WithExpl CBinder)) n
+  -> (forall l. (EmitsInf l, DExt n l) => [CAtomName l] -> m i l (e l))
+  -> m i n (Abs (Nest (WithExpl CBinder)) e n)
+buildNaryAbsInf (Abs Empty UnitE) cont = getDistinct >>= \Distinct -> Abs Empty <$> cont []
+buildNaryAbsInf (Abs (Nest (WithExpl expl (b:>ty)) bs) UnitE) cont =
+  prependAbs <$> buildAbsInf (getNameHint b) expl ty \v -> do
+    bs' <- applyRename (b@>v) (Abs bs UnitE)
+    buildNaryAbsInf bs' \vs -> cont (sink v:vs)
 
 buildDeclsInf
   :: (SubstE AtomSubstVal e, RenameE e, Solver m, InfBuilder m)
@@ -829,7 +852,7 @@ checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
 
 inferSigma :: EmitsBoth o => NameHint -> UExpr i -> InfererM i o (CAtom o)
 inferSigma hint (WithSrcE pos expr) = case expr of
-  ULam lam -> addSrcContext pos $ inferULam lam
+  ULam lam -> addSrcContext pos $ Lam <$> inferULam lam
   _ -> inferRho hint (WithSrcE pos expr)
 
 checkRho :: EmitsBoth o =>
@@ -859,8 +882,8 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
   ULam lamExpr -> do
     case reqTy of
       Check (Pi piTy) -> Lam <$> checkULam lamExpr piTy
-      Check _ -> inferULam lamExpr >>= matchRequirement
-      Infer   -> inferULam lamExpr
+      Check _ -> Lam <$> inferULam lamExpr >>= matchRequirement
+      Infer   -> Lam <$> inferULam lamExpr
   UFor dir uFor -> do
     lam@(UnaryLamExpr b' _) <- case reqTy of
       Check (TabPi tabPiTy) -> do checkUForExpr uFor tabPiTy
@@ -1034,7 +1057,7 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
 data SigmaAtom n =
     SigmaAtom (Maybe SourceName) (CAtom n)
   | SigmaUVar SourceName (UVar n)
-  | SigmaFieldAccess (CAtom n) (FieldDef n) (CType n)
+  | SigmaPartialApp (CAtom n) [CAtom n]
     deriving (Show)
 
 -- XXX: this gives the type of the atom in the absence of other type information.
@@ -1043,7 +1066,9 @@ instance HasType CoreIR SigmaAtom where
   getTypeE = \case
     SigmaAtom _ x -> getTypeE x
     SigmaUVar _ v -> getTypeE v
-    SigmaFieldAccess _ _ ty -> substM ty
+    SigmaPartialApp f xs -> do
+      fTy <- getTypeE f
+      partialAppType fTy xs
 
 instance HasSourceName (SigmaAtom n) where
   getSourceName = \case
@@ -1051,7 +1076,7 @@ instance HasSourceName (SigmaAtom n) where
       Just sn' -> sn'
       Nothing  -> "<expr>"
     SigmaUVar sn _ -> sn
-    SigmaFieldAccess _ _ _ -> "<field>"
+    SigmaPartialApp _ _ -> "<dot method>"
 
 instance SinkableE SigmaAtom where
   sinkingProofE = error "it's fine, trust me"
@@ -1067,8 +1092,8 @@ instance SubstE AtomSubstVal SigmaAtom where
     UMethodVar  v -> SigmaUVar sn $ UMethodVar  $ substE env v
     UEffectVar   _ -> error "not implemented"
     UEffectOpVar _ -> error "not implemented"
-  substE env (SigmaFieldAccess arg def ty) =
-    SigmaFieldAccess (substE env arg) (substE env def) (substE env ty)
+  substE env (SigmaPartialApp f xs) =
+    SigmaPartialApp (substE env f) (map (substE env) xs)
 
 -- XXX: this must handle the complement of the cases that `checkOrInferRho`
 -- handles directly or else we'll just keep bouncing between the two.
@@ -1078,47 +1103,50 @@ inferWithoutInstantiation
 inferWithoutInstantiation (WithSrcE pos expr) =
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
    UVar ~(InternalName sn v) ->  SigmaUVar sn <$> renameM v
-   UFieldAccess x f -> do
+   UFieldAccess x (WithSrc pos' field) -> addSrcContext pos' do
      x' <- inferRho noHint x >>= zonk
      ty <- getType x'
-     (fieldDef, resultTy) <- resolveFieldAccess ty f
-     return $ SigmaFieldAccess x' fieldDef resultTy
+     fields <- getFieldDefs ty
+     case M.lookup field fields of
+       Just def -> case def of
+         FieldProj i -> SigmaAtom Nothing <$> projectField i x'
+         FieldDotMethod method (TyConParams _ params) ->
+           return $ SigmaPartialApp (Var method) (params ++ [x'])
+       Nothing -> throw TypeErr $
+         "Can't resolve field " ++ pprint field ++ " of type " ++ pprint ty ++
+         "\nKnown fields are: " ++ pprint (M.keys fields)
    _ -> SigmaAtom Nothing <$> inferRho noHint (WithSrcE pos expr)
 
-resolveFieldAccess :: CType o -> FieldName -> InfererM i o (FieldDef o, CType o)
-resolveFieldAccess ty (WithSrc pos field) = addSrcContext pos case ty of
+data FieldDef (n::S) =
+   FieldProj Int
+ | FieldDotMethod (CAtomName n) (TyConParams n)
+   deriving (Show, Generic)
+
+getFieldDefs :: CType n -> InfererM i n (M.Map FieldName' (FieldDef n))
+getFieldDefs ty = case ty of
   NewtypeTyCon (UserADTType _ tyName params) -> do
-    TyConBinding tyDef <- lookupEnv tyName
+    TyConBinding ~(Just tyDef) (DotMethods dotMethods) <- lookupEnv tyName
     instantiateTyConDef tyDef params >>= \case
       StructFields fields -> do
-        let names = map fst fields
-        i <- case field of
-          FieldName name -> case elemIndex name names of
-            Just i  -> return i
-            Nothing -> notInKnownFields names
-          FieldNum i | i < length names -> return i
-                     | otherwise        -> outOfRange i (length names)
-        return (FieldProj i, snd $ fields !! i)
+        let projFields = enumerate fields <&> \(i, (field, _)) ->
+              [(FieldName field, FieldProj i), (FieldNum i, FieldProj i)]
+        let methodFields = M.toList dotMethods <&> \(field, f) ->
+              (FieldName field, FieldDotMethod f params)
+        return $ M.fromList $ concat projFields ++ methodFields
       ADTCons _ -> noFields ""
-  RefTy h valTy -> case valTy of
+  RefTy _ valTy -> case valTy of
     RefTy _ _ -> noFields ""
     _ -> do
-      (fieldDef, valTy') <- resolveFieldAccess valTy (WithSrc pos field)
-      case fieldDef of
-        FieldProj _ -> return (fieldDef, RefTy h valTy')
-        _ -> throw TypeErr "Only projections can be accessed through references"
-  ProdTy ts -> case field of
-    FieldNum i | i < length ts -> return (FieldProj i, ts!! i)
-               | otherwise -> outOfRange i (length ts)
-    FieldName _ -> throw TypeErr "Tuples don't have named fields"
+      valFields <- getFieldDefs valTy
+      return $ M.filter isProj valFields
+      where isProj = \case
+              FieldProj _ -> True
+              _ -> False
+  ProdTy ts -> return $ M.fromList $ enumerate ts <&> \(i, _) -> (FieldNum i, FieldProj i)
   TabPi _ -> noFields "\nArray indexing uses [] now."
   _ -> noFields ""
   where
     noFields s = throw TypeErr $ "Can't get fields for type " ++ pprint ty ++ s
-    notInKnownFields knowns = throw TypeErr $ "Can't get field " ++ pprint field
-       ++ " . Expected one of: " ++ pprint knowns
-    outOfRange i n = throw TypeErr $
-      "Can't project component " ++ pprint i ++ " (of " ++ pprint n ++ " components)"
 
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
@@ -1133,8 +1161,7 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
     SigmaUVar _ v -> case v of
       UAtomVar v' -> return $ Var v'
       _ -> applySigmaAtom sigmaAtom []
-    SigmaFieldAccess _ (FieldCustom _) _ -> error "not implemented"
-    SigmaFieldAccess arg (FieldProj  i) _ -> projectField i arg
+    SigmaPartialApp _ _ -> error "shouldn't hit this case because we should have a pi type here"
  where
    fDesc :: SourceName
    fDesc = getSourceName sigmaAtom
@@ -1305,11 +1332,8 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
     emitExprWithEffects $ ApplyMethod dictArg methodIdx args'
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
-applySigmaAtom (SigmaFieldAccess arg field _) args = do
-  result <- case field of
-    FieldProj i -> projectField  i arg
-    FieldCustom _ -> error "not implemented"
-  emitExprWithEffects $ App result args
+applySigmaAtom (SigmaPartialApp f prevArgs) args =
+  emitExprWithEffects $ App f (prevArgs ++ args)
 
 splitParamPrefix :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n, [CAtom n])
 splitParamPrefix tc args = do
@@ -1633,15 +1657,39 @@ inferTyConDef (UDataDef tyConName paramBs dataCons) = do
       ADTCons <$> mapM inferDataCon dataCons
   return (TyConDef tyConName paramBs' dataCons')
 
-inferStructDef
-  :: EmitsInf o => UStructDef i
-  -> InfererM i o (TyConDef o)
-inferStructDef (UStructDef tyConName paramBs fields) = do
+inferStructDef :: EmitsInf o => UStructDef i -> InfererM i o (TyConDef o)
+inferStructDef (UStructDef tyConName paramBs fields _) = do
   let (fieldNames, fieldTys) = unzip fields
   Abs paramBs' dataConDefs <- withRoleUBinders paramBs \_ -> do
     tys <- mapM checkUType fieldTys
     return $ StructFields $ zip fieldNames tys
   return $ TyConDef tyConName paramBs' dataConDefs
+
+inferDotMethod
+  :: EmitsInf o => TyConName o
+  -> Abs (Nest (WithExpl UOptAnnBinder)) (Abs UAtomBinder ULamExpr) i
+  -> InfererM i o (CoreLamExpr o)
+inferDotMethod tc (Abs uparamBs (Abs selfB lam)) = do
+  TyConDef sn paramBs _ <- lookupTyCon tc
+  let paramBs' = fmapNest (\(RolePiBinder _ b) -> b) paramBs
+  ab <- buildNaryAbsInf (Abs paramBs' UnitE) \paramVs -> do
+    let expls = nestToList (\(WithExpl expl _) -> expl) paramBs'
+    let paramVs' = catMaybes $ zip expls paramVs <&> \(expl, v) -> case expl of
+                     Inferred _ (Synth _) -> Nothing
+                     _ -> Just v
+    extendRenamer (uparamBs @@> paramVs') do
+      let selfTy = NewtypeTyCon $ UserADTType sn (sink tc) (TyConParams expls (Var <$> paramVs))
+      buildAbsInf "self" Explicit selfTy \vSelf ->
+        extendRenamer (selfB @> vSelf) $ inferULam lam
+  Abs paramBs'' (Abs selfB' lam') <- return ab
+  return $ prependCoreLamExpr (paramBs'' >>> UnaryNest selfB') lam'
+
+prependCoreLamExpr :: Nest (WithExpl CBinder) n l -> CoreLamExpr l -> CoreLamExpr n
+prependCoreLamExpr bs e = case e of
+  CoreLamExpr (CorePiType appExpl piBs effs resultTy) (LamExpr lamBs body) -> do
+    let piType  = CorePiType appExpl (bs >>> piBs) effs resultTy
+    let lamExpr = LamExpr (fmapNest withoutExpl bs >>> lamBs) body
+    CoreLamExpr piType lamExpr
 
 inferDataCon :: EmitsInf o => (SourceName, UDataDefTrail i) -> InfererM i o (DataConDef o)
 inferDataCon (sourceName, UDataDefTrail argBs) = do
@@ -1751,7 +1799,7 @@ withRoleUBinders bs cont = case bs of
     role <- inferRole (binderType b') expl
     return $ Abs (Nest (RolePiBinder role b') bs') e
 
-inferULam :: EmitsInf o => ULamExpr i -> InfererM i o (CAtom o)
+inferULam :: EmitsInf o => ULamExpr i -> InfererM i o (CoreLamExpr o)
 inferULam (ULamExpr bs appExpl effs resultTy body) = do
   ab <- withUBinders bs \_ -> do
     effs' <- fromMaybe Pure <$> mapM checkUEffRow effs
@@ -1765,7 +1813,7 @@ inferULam (ULamExpr bs appExpl effs resultTy body) = do
   case appExpl of
     ImplicitApp -> checkImplicitLamRestrictions bs' effs'
     ExplicitApp -> return ()
-  liftM Lam $ coreLamExpr appExpl $ Abs bs' $ PairE effs' body'
+  coreLamExpr appExpl $ Abs bs' $ PairE effs' body'
 
 checkImplicitLamRestrictions :: Nest (WithExpl CBinder) o o' -> EffectRow CoreIR o' -> InfererM i o ()
 checkImplicitLamRestrictions _ _ = return () -- TODO

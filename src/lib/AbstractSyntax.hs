@@ -117,11 +117,14 @@ topDecl = dropSrc topDecl' where
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
-  topDecl' (CStruct name params givens fields) = do
+  topDecl' (CStruct name params givens fields defs) = do
     params' <- aExplicitParams params
     givens' <- toNest <$> fromMaybeM givens [] aGivens
     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
-    return $ UStructDecl (UStructDef name (givens' >>> params') fields') (fromString name)
+    methods <- forM defs \(ann, d) -> do
+      (methodName, lam) <- aDef d
+      return (ann, methodName, Abs (UBindSource "self") lam)
+    return $ UStructDecl (fromString name) (UStructDef name (givens' >>> params') fields' methods)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do

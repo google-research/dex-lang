@@ -457,9 +457,9 @@ dataDefRep (StructFields fields) = case map snd fields of
   [ty] -> ty
   tys  -> ProdTy tys
 
-makeStructRepVal :: EnvReader m => TyConName n -> [CAtom n] -> m n (CAtom n)
+makeStructRepVal :: (Fallible1 m, EnvReader m) => TyConName n -> [CAtom n] -> m n (CAtom n)
 makeStructRepVal tyConName args = do
-  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  TyConDef _ _ (StructFields fields) <- lookupTyCon tyConName
   case fields of
     [_] -> case args of
       [arg] -> return arg
@@ -595,5 +595,4 @@ instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
-instance SubstE AtomSubstVal FieldDef
 instance SubstE AtomSubstVal DataConDefs

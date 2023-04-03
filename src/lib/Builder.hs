@@ -977,12 +977,6 @@ symbolicTangentNonZero val = do
   ty <- getType val
   return $ SumVal [UnitTy, ty] 1 val
 
--- === builder versions of common top-level emissions ===
-
-updateFieldDefs :: (Mut n, TopBuilder m) => TyConName n -> SourceName -> FieldDef n -> m n ()
-updateFieldDefs defName sourceName val =
-  emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(defName, sourceName, val)]}
-
 -- === builder versions of common local ops ===
 
 fLitLike :: (Builder r m, Emits n) => Double -> Atom r n -> m n (Atom r n)

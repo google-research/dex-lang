@@ -15,6 +15,7 @@ module ConcreteSyntax (
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
 import Data.Char
+import Data.Either
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map qualified as M
@@ -234,13 +235,30 @@ explicitCommand = do
     (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> Misc $ GetNameType v
     _ -> Command cmd e
 
+type CDefBody = ([(SourceName, Group)], [(LetAnn, CDef)])
 structDef :: Parser CTopDecl
 structDef = withSrc do
   keyWord StructKW
   tyName <- anyName
   (params, givens) <- typeParams
-  fields <- onePerLine nameAndType
-  return $ CStruct tyName params givens fields
+  (fields, defs) <- oneLiner <|> multiLiner
+  return $ CStruct tyName params givens fields defs
+  where
+    oneLiner :: Parser CDefBody
+    oneLiner = do
+      field <- nameAndType
+      return ([field], [])
+
+    multiLiner :: Parser CDefBody
+    multiLiner = partitionEithers <$> onePerLine do
+      (    (Left  <$> nameAndType)
+       <|> (Right <$> funDefLetWithAnn))
+
+funDefLetWithAnn :: Parser (LetAnn, CDef)
+funDefLetWithAnn = do
+  ann <- noInline <|> return PlainLet
+  def <- funDefLet
+  return (ann, def)
 
 dataDef :: Parser CTopDecl
 dataDef = withSrc do
@@ -307,12 +325,12 @@ topLetOrExpr = withSrc topLet >>= \case
 
 topLet :: Parser CTopDecl'
 topLet = do
-  lAnn <- (char '@' >> letAnnStr <* (eol <|> sc)) <|> return PlainLet
+  lAnn <- noInline <|> return PlainLet
   decl <- cDecl
   return $ CSDecl lAnn decl
-  where
-    letAnnStr :: Parser LetAnn
-    letAnnStr = (string "noinline"   $> NoInlineLet)
+
+noInline :: Parser LetAnn
+noInline = (char '@' >> string "noinline"   $> NoInlineLet) <* nextLine
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p

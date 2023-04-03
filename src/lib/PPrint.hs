@@ -476,7 +476,7 @@ instance Pretty (Binding c n) where
     -- TODO: can we avoid printing needing IRRep? Presumably it's related to
     -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
     AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
-    TyConBinding dataDef -> "Type constructor: " <+> pretty dataDef
+    TyConBinding dataDef _ -> "Type constructor: " <+> pretty dataDef
     DataConBinding tyConName idx -> "Data constructor:" <+>
       pretty tyConName <+> "Constructor index:" <+> pretty idx
     ClassBinding    classDef -> pretty classDef
@@ -722,9 +722,9 @@ instance Pretty (UDecl n l) where
   pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UStructDecl (UStructDef nm bs fields) bTyCon) =
+  pretty (UStructDecl bTyCon (UStructDef nm bs fields defs)) =
     "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
-       (prettyLines fields)
+       (prettyLines fields <> prettyLines defs)
   pretty (UInterface params methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods

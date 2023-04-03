@@ -100,6 +100,10 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
+getPartialAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
+getPartialAppType f xs = liftTypeQueryM idSubst $ partialAppType f xs
+{-# INLINE getPartialAppType #-}
+
 getAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 getAppType f xs = liftTypeQueryM idSubst $ appType f xs
 {-# INLINE getAppType #-}
@@ -416,6 +420,14 @@ appType fTy xs = do
   xs' <- mapM substM xs
   let subst = bs @@> fmap SubstVal xs'
   applySubst subst resultTy
+
+partialAppType  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
+partialAppType fTy xs = do
+  Pi (CorePiType expl bs effs resultTy) <- return fTy
+  xs' <- mapM substM xs
+  PairB bs1 bs2 <- return $ splitNestAt (length xs) bs
+  let subst = bs1 @@> fmap SubstVal xs'
+  applySubst subst $ Pi $ CorePiType expl bs2 effs resultTy
 
 appEffects  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (EffectRow r o)
 appEffects fTy xs = do

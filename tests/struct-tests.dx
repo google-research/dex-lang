@@ -39,7 +39,8 @@ struct MyParametricStruct(a) =
 :p
   foo = MyParametricStruct(1.0, 1)
   foo.baz
-> Type error:Can't get field baz . Expected one of: [foo, bar]
+> Type error:Can't resolve field baz of type (MyParametricStruct Float32)
+> Known fields are: [bar, foo, 0, 1]
 >
 >   foo.baz
 >       ^^^
@@ -54,13 +55,25 @@ x.1
 > 2
 
 x.2
-> Type error:Can't project component 2 (of 2 components)
+> Type error:Can't resolve field 2 of type (Nat, Nat)
+> Known fields are: [0, 1]
 >
 > x.2
 >   ^
 
 x.foo
-> Type error:Tuples don't have named fields
+> Type error:Can't resolve field foo of type (Nat, Nat)
+> Known fields are: [0, 1]
 >
 > x.foo
 >   ^^^
+
+struct Thing(a|Add) =
+  x : a
+  y : a
+
+  def incby(n:a) -> Thing(a) =
+    Thing(self.x + n, self.y + n)
+
+Thing(1,2).incby(10)
+> Thing(11, 12)
