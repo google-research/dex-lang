@@ -72,7 +72,8 @@ inferTopUDecl (UStructDecl tc def) result = do
   tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
   def' <- liftInfererM $ solveLocal do
     extendRenamer (tc@>sink tc') $ inferStructDef def
-  updateTopEnv $ UpdateTyConDef tc' def'
+  def'' <- synthTyConDef def'
+  updateTopEnv $ UpdateTyConDef tc' def''
   UStructDef _ paramBs _ methods <- return def
   forM_ methods \(letAnn, methodName, methodDef) -> do
     method <- liftInfererM $ solveLocal $
@@ -82,10 +83,10 @@ inferTopUDecl (UStructDecl tc def) result = do
     method' <- emitTopLet (getNameHint methodName) letAnn (Atom methodSynth)
     updateTopEnv $ UpdateFieldDef tc' methodName method'
   UDeclResultDone <$> applyRename (tc @> tc') result
-
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
-  tcDef@(TyConDef _ _ (ADTCons dataCons)) <- liftInfererM $ solveLocal $ inferTyConDef def
-  tc' <- emitBinding (getNameHint tcDef) $ TyConBinding (Just tcDef) (DotMethods mempty)
+  tcDef <- liftInfererM $ solveLocal $ inferTyConDef def
+  tcDef'@(TyConDef _ _ (ADTCons dataCons)) <- synthTyConDef tcDef
+  tc' <- emitBinding (getNameHint tcDef') $ TyConBinding (Just tcDef') (DotMethods mempty)
   dcs' <- forM (enumerate dataCons) \(i, dcDef) ->
     emitBinding (getNameHint dcDef) $ DataConBinding tc' i
   let subst = tc @> tc' <.> dcs @@> dcs'
@@ -2695,6 +2696,16 @@ synthTopE :: (EnvReader m, Fallible1 m, GenericallyTraversableE CoreIR e)
 synthTopE block = do
   (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
 {-# SCC synthTopE #-}
+
+synthTyConDef :: (EnvReader m, Fallible1 m) => TyConDef n -> m n (TyConDef n)
+synthTyConDef (TyConDef sn rbs body) = (liftExcept =<<) $ liftDictSynthTraverserM do
+  let bs = fmapNest (\(RolePiBinder _ b) -> b) rbs
+  let roles = nestToList (\(RolePiBinder role _) -> role) rbs
+  dsTraverseBinders bs \bs' -> do
+    body' <- traverseGenericE body
+    let rbs' = zipWithNest bs' roles \b role -> RolePiBinder role b
+    return $ TyConDef sn rbs' body'
+{-# SCC synthTyConDef #-}
 
 -- Given a simplified dict (an Atom of type `DictTy _` in the
 -- post-simplification IR), and a requested, more general, dict type, generalize

@@ -77,3 +77,17 @@ struct Thing(a|Add) =
 
 Thing(1,2).incby(10)
 > Thing(11, 12)
+
+struct MissingConstraint(n) =
+  thing : n=>Float
+> Type error:Couldn't synthesize a class dictionary for: (Ix n)
+>
+>   thing : n=>Float
+>           ^^^^^^^^
+
+data AnotherMissingConstraint(n) =
+  MkAnotherMissingConstraint(n=>Float)
+> Type error:Couldn't synthesize a class dictionary for: (Ix n)
+>
+>   MkAnotherMissingConstraint(n=>Float)
+>                              ^^^^^^^^
