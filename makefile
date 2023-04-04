@@ -216,12 +216,12 @@ example-names := \
   mandelbrot pi sierpinski rejection-sampler \
   regression brownian_motion particle-swarm-optimizer \
   ode-integrator mcmc ctc raytrace particle-filter \
-  fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
   latex linear-maps dither mcts md
 # TODO: re-enable
 # fft vega-plotting
+# fluidsim mcts # FIXME(llvm-15): segfault
 
 # Only test levenshtein-distance on Linux, because MacOS ships with a
 # different (apparently _very_ different) word list.

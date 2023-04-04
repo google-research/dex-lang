@@ -16,15 +16,12 @@ extra-deps:
     subdirs:
       - llvm-hs
       - llvm-hs-pure
-  - megaparsec-8.0.0
+  - megaparsec-9.2.2
   - prettyprinter-1.6.2
-  - store-0.7.8@sha256:0b604101fd5053b6d7d56a4ef4c2addf97f4e08fe8cd06b87ef86f958afef3ae,8001
-  - store-core-0.4.4.4@sha256:a19098ca8419ea4f6f387790e942a7a5d0acf62fe1beff7662f098cfb611334c,1430
-  - th-utilities-0.2.4.1@sha256:b37d23c8bdabd678aee5a36dd4373049d4179e9a85f34eb437e9cd3f04f435ca,1869
 
 nix:
   enable: false
-  packages: [ libpng llvm_12 pkg-config zlib ]
+  packages: [ libpng llvm_15 pkg-config zlib ]
 
 ghc-options:
   containers: -fno-prof-auto -O2
