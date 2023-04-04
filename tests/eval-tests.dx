@@ -1041,18 +1041,18 @@ unsafe_project(to=(), inject(to=(Fin 2 `Either` ()), ()))
 
 :p
   with_stack Float \stack.
-    stack_push stack 1.0
-    stack_push stack 2.0
-    stack_extend stack [3.0, 4.0]
-    stack_extend stack (for i:(Fin 10). n_to_f $ ordinal i)
-    read_stack stack
+    stack.push(1.0)
+    stack.push(2.0)
+    stack.extend([3.0, 4.0])
+    stack.extend(for i:(Fin 10). n_to_f $ ordinal i)
+    stack.read()
 > (AsList 14 [1., 2., 3., 4., 0., 1., 2., 3., 4., 5., 6., 7., 8., 9.])
 
 :p
   with_stack (Float, (Fin 2=>Float)) \stack.
-    stack_push stack (1.0, [1.0, 2.0])
-    stack_extend stack [(10.0, [10.0, 20.0]), (100.0, [100.0, 200.0])]
-    read_stack stack
+    stack.push((1.0, [1.0, 2.0]))
+    stack.extend([(10.0, [10.0, 20.0]), (100.0, [100.0, 200.0])])
+    stack.read()
 > (AsList 3 [(1., [1., 2.]), (10., [10., 20.]), (100., [100., 200.])])
 
 -- Checks for O(N^2) behavior
@@ -1060,9 +1060,9 @@ unsafe_project(to=(), inject(to=(Fin 2 `Either` ()), ()))
   n = 1000000
   with_stack Float \stack.
     for i:(Fin n).
-      stack_push stack 2.0
-      stack_extend stack [3.0, 4.0]
-    AsList(_, xs) = read_stack stack
+      stack.push(2.0)
+      stack.extend([3.0, 4.0])
+    AsList(_, xs) = stack.read()
     sum xs
 > 9000000.
 

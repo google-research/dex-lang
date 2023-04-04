@@ -138,7 +138,7 @@ declareForeign :: Parser SourceBlock'
 declareForeign = do
   keyWord ForeignKW
   foreignName <- strLit
-  b <- lowerName
+  b <- anyName
   void $ label "type annotation" $ sym ":"
   ty <- cGroup
   eol
