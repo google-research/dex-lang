@@ -391,7 +391,7 @@ toImpRefOp maybeDest refDest' m = do
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
     IndexRef i -> returnVal =<< (destToAtom <$> indexDest refDest i)
-    ProjRef  i -> returnVal $ destToAtom $ projectDest i refDest
+    ProjRef  ~(ProjectProduct i) -> returnVal $ destToAtom $ projectDest i refDest
   where
     liftMonoidCombine
       :: Emits n => SType n -> LamExpr SimpIR n

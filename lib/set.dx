@@ -101,7 +101,7 @@ struct Element(set:(Set a)) given (a|Ord) =
 def member(x:a, set:(Set a)) -> Maybe (Element set) given (a|Ord) =
   UnsafeAsSet(_, elts) = set
   case search_sorted elts x of
-    Just n -> Just $ Element.new(ordinal n)
+    Just n -> Just $ Element(ordinal n)
     Nothing -> Nothing
 
 def value(x:Element set) -> a given (a|Ord, set:Set a) =
@@ -111,7 +111,7 @@ def value(x:Element set) -> a given (a|Ord, set:Set a) =
 instance Ix(Element set) given (a|Ord, set:Set a)
   def size'() = set_size set
   def ordinal(n) = n.val
-  def unsafe_from_ordinal(n) = Element.new(n)
+  def unsafe_from_ordinal(n) = Element(n)
 
 instance Eq(Element set) given (a|Ord, set:Set a)
   def (==)(ix1, ix2) = ordinal ix1 == ordinal ix2

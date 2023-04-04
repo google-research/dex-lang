@@ -135,6 +135,12 @@ tge = traverseGenericE
 class GenericallyTraversableE (r::IR) (e::E) | e -> r where
   traverseGenericE :: GenericTraverser r f s => e i -> GenericTraverserM r f s i o (e o)
 
+class GenericallyTraversableB (r::IR) (b::B) | b -> r where
+  traverseGenericB :: GenericTraverser r f s
+    => b i i'
+    -> (forall o'. DExt o o' => b o o' -> GenericTraverserM r f s i' o' a)
+    -> GenericTraverserM r f s i o a
+
 instance GenericallyTraversableE CoreIR CoreLamExpr where
   traverseGenericE (CoreLamExpr piTy lam) = CoreLamExpr <$> tge piTy <*> tge lam
 
@@ -236,6 +242,43 @@ instance GenericallyTraversableE CoreIR NewtypeCon where
     UserADTData d params -> UserADTData <$> substM d <*> tge params
     NatCon               -> return NatCon
     FinCon n             -> FinCon <$> tge n
+
+instance GenericallyTraversableE CoreIR TyConDef where
+  traverseGenericE (TyConDef sn paramBs cons) = do
+    traverseGenericB paramBs \paramBs' ->
+      TyConDef sn paramBs' <$> tge cons
+
+instance GenericallyTraversableE CoreIR DataConDefs where
+  traverseGenericE = \case
+    ADTCons cons -> ADTCons <$> mapM tge cons
+    StructFields fields -> do
+      let (names, tys) = unzip fields
+      StructFields . zip names <$> mapM tge tys
+
+instance GenericallyTraversableE CoreIR DataConDef where
+  traverseGenericE (DataConDef sn (Abs bs UnitE) repTy projs) = do
+    repTy' <- tge repTy
+    traverseGenericB bs \bs' ->
+      return $ DataConDef sn (Abs bs' UnitE) repTy' projs
+
+instance GenericallyTraversableB r (Binder r) where
+  traverseGenericB (b:>ty) cont = do
+    ty' <- tge ty
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      extendRenamer (b@>binderName b') do cont b'
+
+instance GenericallyTraversableB r b => GenericallyTraversableB r (Nest b) where
+  traverseGenericB Empty cont = getDistinct >>= \Distinct -> cont Empty
+  traverseGenericB (Nest b bs) cont =
+    traverseGenericB b \b' -> traverseGenericB bs \bs' -> cont (Nest b' bs')
+
+instance GenericallyTraversableB CoreIR (WithExpl CBinder) where
+  traverseGenericB (WithExpl expl b) cont =
+    traverseGenericB b \b' -> cont (WithExpl expl b')
+
+instance GenericallyTraversableB CoreIR RolePiBinder where
+  traverseGenericB (RolePiBinder role b) cont =
+    traverseGenericB b \b' -> cont (RolePiBinder role b')
 
 traverseBinderNest
   :: GenericTraverser r f s

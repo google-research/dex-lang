@@ -41,7 +41,7 @@ snd(linearize (\x. snd $ sign_and_log_determinant [[x]]) 1.0)(2.0)
 
 -- Check that we can differentiate through LU decomposition
 -- This is a regression test for Issue #848.
-grad (\x. snd $ pivotize [[x]]) 1.0
+grad (\x. (pivotize [[x]]).sign) 1.0
 > 0.
 
 grad (\x. snd $ sign_and_log_determinant [[x]]) 2.0

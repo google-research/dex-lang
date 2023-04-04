@@ -19,7 +19,7 @@ foreign "showHex" showHexFFI : (Word8) -> {IO} (Word32, RawPtr)
 
 def showHex(x:Word8) -> String = unsafe_io \.
   (n, ptr) = showHexFFI x
-  string_from_char_ptr n (Ptr.new ptr)
+  string_from_char_ptr n (Ptr ptr)
 
 black : HtmlColor = [i_to_w8   0, i_to_w8   0, i_to_w8   0]
 white : HtmlColor = [i_to_w8 255, i_to_w8 255, i_to_w8 255]
@@ -32,18 +32,18 @@ struct GeomStyle =
  strokeColor : Maybe HtmlColor
  strokeWidth : Int
 
-default_geom_style = GeomStyle.new Nothing (Just black) 1
+default_geom_style = GeomStyle Nothing (Just black) 1
 
 -- TODO: consider sharing attributes among a set of objects for efficiency
 struct Diagram =
   val : (List (GeomStyle, Point, Geom))
 
 instance Monoid(Diagram)
-  mempty = Diagram.new mempty
-  def (<>)(d1, d2) = Diagram.new $ d1.val <> d2.val
+  mempty = Diagram mempty
+  def (<>)(d1, d2) = Diagram $ d1.val <> d2.val
 
 def concat_diagrams(diagrams:n=>Diagram) -> Diagram given (n|Ix) =
-  Diagram.new $ concat for i. diagrams[i].val
+  Diagram $ concat for i. diagrams[i].val
 
 -- TODO: arbitrary affine transformations. Our current representation of
 -- rectangles and circles means we can only do scale/flip/rotate90.
@@ -54,7 +54,7 @@ def apply_transformation(
     d:Diagram
     ) -> Diagram =
   AsList(_, objs) = d.val
-  Diagram.new $ to_list for i.
+  Diagram $ to_list for i.
     (attr, p, geom) = objs[i]
     (attr, transformPoint p, transformGeom geom)
 
@@ -64,9 +64,9 @@ def flip_y(d:Diagram) -> Diagram =
       PointGeom       -> PointGeom
       Circle r        -> Circle r
       Rectangle(w, h) -> Rectangle(w, h)
-      Line p          -> Line Point.new(p.x, -p.y)
+      Line p          -> Line Point(p.x, -p.y)
       Text x          -> Text x
-  apply_transformation (\p. Point.new(p.x, -p.y)) flip_y_geom d
+  apply_transformation (\p. Point(p.x, -p.y)) flip_y_geom d
 
 def scale(d:Diagram, s:Float) -> Diagram =
   def scale_geom(geom:Geom) -> Geom =
@@ -74,15 +74,15 @@ def scale(d:Diagram, s:Float) -> Diagram =
       PointGeom       -> PointGeom
       Circle r        -> Circle (s * r)
       Rectangle(w, h) -> Rectangle (s * w) (s * h)
-      Line p          -> Line Point.new(s * p.x, s * p.y)
+      Line p          -> Line Point(s * p.x, s * p.y)
       Text x          -> Text x
-  apply_transformation (\p. Point.new(s * p.x, s * p.y)) scale_geom d
+  apply_transformation (\p. Point(s * p.x, s * p.y)) scale_geom d
 
 def move_xy(d: Diagram, offx: Float, offy: Float) -> Diagram =
-  apply_transformation (\p. Point.new(p.x + offx, p.y + offy) ) id d
+  apply_transformation (\p. Point(p.x + offx, p.y + offy) ) id d
 
 def singleton_default(geom:Geom) -> Diagram =
-  Diagram.new $ to_list [(default_geom_style, Point.new(0.0, 0.0), geom)]
+  Diagram $ to_list [(default_geom_style, Point(0.0, 0.0), geom)]
 
 point_diagram               : Diagram = singleton_default PointGeom
 def circle(r:Float)        -> Diagram = singleton_default $ Circle r
@@ -92,26 +92,26 @@ def text(x:String)         -> Diagram = singleton_default $ Text x
 
 def update_geom(update: (GeomStyle) -> GeomStyle, d:Diagram) -> Diagram =
   AsList(_, objs) = d.val
-  Diagram.new $ to_list for i.
+  Diagram $ to_list for i.
     (       attr, point, geoms) = objs[i]
     (update attr, point, geoms)
 
 -- TODO: these would be better if we had field-access-based ref projections, so we could
 -- write `geom~fillColor := c` instead of unpack and packing explicitly.
 def set_fill_color(d:Diagram, c:HtmlColor) -> Diagram =
-  update_geom (\s. GeomStyle.new (Just c) s.strokeColor s.strokeWidth) d
+  update_geom (\s. GeomStyle (Just c) s.strokeColor s.strokeWidth) d
 
 def set_stroke_color(d:Diagram, c:HtmlColor) -> Diagram =
-  update_geom (\s. GeomStyle.new s.fillColor (Just c) s.strokeWidth) d
+  update_geom (\s. GeomStyle s.fillColor (Just c) s.strokeWidth) d
 
 def set_stroke_width(d:Diagram, w:Int) -> Diagram =
-  update_geom (\s. GeomStyle.new s.fillColor s.strokeColor w) d
+  update_geom (\s. GeomStyle s.fillColor s.strokeColor w) d
 
 def remove_stroke(d:Diagram) -> Diagram =
-  update_geom (\s. GeomStyle.new s.fillColor Nothing s.strokeWidth) d
+  update_geom (\s. GeomStyle s.fillColor Nothing s.strokeWidth) d
 
 def remove_fill(d:Diagram) -> Diagram =
-  update_geom (\s. GeomStyle.new Nothing s.strokeColor s.strokeWidth) d
+  update_geom (\s. GeomStyle Nothing s.strokeColor s.strokeWidth) d
 
 '## Serialization to SVG string
 
@@ -165,7 +165,7 @@ def attr_string(attr:GeomStyle) -> String =
 @noinline
 def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
   -- For things that are solid. SVG says they have fill=stroke.
-  solidAttr = GeomStyle.new attr.strokeColor attr.strokeColor attr.strokeWidth
+  solidAttr = GeomStyle attr.strokeColor attr.strokeColor attr.strokeWidth
   groupEle = \attr s. tag_brackets_attr "g" (attr_string attr) s
   case geom of
     PointGeom ->
@@ -206,17 +206,17 @@ def compute_bounds(d:Diagram) -> BoundingBox =
       sel p + case geom of
         PointGeom       -> 0.0
         Circle r        -> op r
-        Rectangle(w, h) -> op $ (sel Point.new(w,h))/2.0
+        Rectangle(w, h) -> op $ (sel Point(w,h))/2.0
         Line q          -> op $ max 0.0 $ op $ sel q  -- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
         Text _          -> 0.0  -- no size info possible as it is scale invariant
 
   AsList(_, objs) = d.val
   (
-    Point.new(
+    Point(
       minimum $ map (computeSubBound (\p. p.x) neg) objs,
       minimum $ map (computeSubBound (\p. p.y) neg) objs
     ),
-    Point.new(
+    Point(
       maximum $ map (computeSubBound (\p. p.x) id)  objs,
       maximum $ map (computeSubBound (\p. p.y) id)  objs
     )

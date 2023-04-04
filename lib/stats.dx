@@ -23,7 +23,7 @@ rather than relying on monoid reduction using `add`.
 struct LogSpace(a) =
   log : a
 
-def Exp(x:a) -> LogSpace a given (a) = LogSpace.new x
+def Exp(x:a) -> LogSpace a given (a) = LogSpace x
 
 instance Mul(LogSpace f) given (f|Add)
   def (*)(x, y) = Exp $ x.log + y.log
@@ -131,7 +131,7 @@ struct Binomial =
 
 instance Random(Binomial, Nat)
   def draw(d, k) =
-    sum $ map b_to_n (rand_vec d.trials (\k_. draw(Bernoulli.new(d.prob), k_)) k)
+    sum $ map b_to_n (rand_vec d.trials (\k_. draw(Bernoulli(d.prob), k_)) k)
 
 instance Dist(Binomial, Nat, Float)
   def density(d, x) =

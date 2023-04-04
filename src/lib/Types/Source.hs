@@ -79,6 +79,7 @@ data CTopDecl'
       ExplicitParams
       (Maybe GivenClause)
       [(SourceName, Group)] -- Field names and types
+      [(LetAnn, CDef)]
   | CInterface
       SourceName  -- Interface name
       ExplicitParams
@@ -208,7 +209,7 @@ data UVar (n::S) =
  | UEffectVar   (Name EffectNameC   n)
  | UMethodVar   (Name MethodNameC   n)
  | UEffectOpVar (Name EffectOpNameC n)
- | UHandlerVar  (Name HandlerNameC  n)
+ | UPunVar      (Name TyConNameC n) -- for names also used as data constructors
    deriving (Eq, Ord, Show, Generic)
 
 type UAtomBinder = UBinder (AtomNameC CoreIR)
@@ -257,7 +258,11 @@ data UFieldRowElem (n::S)
   | UDynFields   (UExpr n)
   deriving (Show)
 
-type FieldName = WithSrc String
+type FieldName = WithSrc FieldName'
+data FieldName' =
+   FieldName SourceName
+ | FieldNum  Int
+  deriving (Show, Eq, Ord)
 
 data ULamExpr (n::S) where
   ULamExpr
@@ -293,7 +298,8 @@ data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
     -> Nest (WithExpl UOptAnnBinder) n l
-    -> [(SourceName, UType l)]  -- named payloads
+    -> [(SourceName, UType l)]                    -- named payloads
+    -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
 
 data UDataDefTrail (l::S) where
@@ -307,8 +313,8 @@ data UDecl (n::S) (l::S) where
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
     -> UDecl n l
   UStructDecl
-    :: UStructDef n                        -- actual definition
-    -> UBinder TyConNameC n l              -- type constructor name
+    :: UBinder TyConNameC n l              -- type constructor name
+    -> UStructDef l                        -- actual definition
     -> UDecl n l
   UInterface
     :: Nest (WithExpl UOptAnnBinder) n p   -- parameter binders
@@ -561,7 +567,7 @@ data PrimName =
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
   | UProjNewtype | UExplicitApply | UMonoLiteral
-  | UIndexRef | UProjRef Int | UApplyMethod Int
+  | UIndexRef | UApplyMethod Int
   | UNat | UNatCon | UFin | ULabelType
   | UEffectRowKind | ULabeledRowKind
   | UTuple -- overloaded for type constructor and data constructor, resolved in inference
@@ -624,7 +630,7 @@ instance GenericE UVar where
   type RepE UVar = EitherE8 (Name (AtomNameC CoreIR)) (Name TyConNameC)
                             (Name DataConNameC)  (Name ClassNameC)
                             (Name MethodNameC)   (Name EffectNameC)
-                            (Name EffectOpNameC) (Name HandlerNameC)
+                            (Name EffectOpNameC) (Name TyConNameC)
   fromE name = case name of
     UAtomVar     v -> Case0 v
     UTyConVar    v -> Case1 v
@@ -633,7 +639,7 @@ instance GenericE UVar where
     UMethodVar   v -> Case4 v
     UEffectVar   v -> Case5 v
     UEffectOpVar v -> Case6 v
-    UHandlerVar  v -> Case7 v
+    UPunVar      v -> Case7 v
   {-# INLINE fromE #-}
 
   toE name = case name of
@@ -644,7 +650,7 @@ instance GenericE UVar where
     Case4 v -> UMethodVar   v
     Case5 v -> UEffectVar   v
     Case6 v -> UEffectOpVar v
-    Case7 v -> UHandlerVar  v
+    Case7 v -> UPunVar v
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
@@ -656,7 +662,7 @@ instance Pretty (UVar n) where
     UMethodVar   v -> "Method name: " <> pretty v
     UEffectVar   v -> "Effect name: " <> pretty v
     UEffectOpVar v -> "Effect operation name: " <> pretty v
-    UHandlerVar  v -> "Handler name: " <> pretty v
+    UPunVar      v -> "Shared type constructor / data constructor name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
 instance SinkableE      UVar

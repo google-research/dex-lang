@@ -63,10 +63,6 @@ nextChar = do
   return $ T.head i
 {-# INLINE nextChar #-}
 
-lowerName  :: Lexer SourceName
-lowerName = label "lower-case name" $ lexeme $
-  checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
-
 anyCaseName  :: Lexer SourceName
 anyCaseName = label "name" $ lexeme $
   checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>

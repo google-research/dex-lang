@@ -131,7 +131,7 @@ def sampleReflection(surf:OrientedSurface, ray:Ray, k:Key) -> Ray =
     -- TODO: surely there's some change-of-solid-angle correction we need to
     -- consider when reflecting off a curved surface.
     Mirror  -> ray.dir - (2.0 * dot ray.dir nor) .* nor
-  Ray.new(ray.origin, newDir)
+  Ray(ray.origin, newDir)
 
 def probReflection(surf:OrientedSurface, _:Ray, out_ray:Ray) -> Float =
   case surf.surface of
@@ -198,8 +198,8 @@ def raymarch(scene:Scene n, ray:Ray) -> RayMarchResult given (n|Ix) =
               -- We made it!
               Done $ case obj of
                 PassiveObject(_, surf) ->
-                  newRay = Ray.new(rayPos, ray.dir)
-                  HitObj(newRay, OrientedSurface.new(surfNorm, surf))
+                  newRay = Ray(rayPos, ray.dir)
+                  HitObj(newRay, OrientedSurface(surfNorm, surf))
                 Light(_, _, radiance)  -> HitLight radiance
 
 def rayDirectRadiance(scene:Scene n, ray:Ray) -> Radiance given (n|Ix) =
@@ -228,7 +228,7 @@ def sampleLightRadiance(
         if positiveProjection dirToLight osurf.normal then
           -- light on this far side of current surface
           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
-          outRay = Ray.new(inRay.origin, dirToLight)
+          outRay = Ray(inRay.origin, dirToLight)
           coeff = fracSolidAngle * probReflection osurf inRay outRay
           radiance += coeff .* rayDirectRadiance scene outRay
 
@@ -269,7 +269,7 @@ def cameraRays(n:Nat, camera:Camera) -> Fin n => Fin n => ((Key) -> Ray) =
     [kx, ky] = split_key key
     x = xs[j] + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys[i] + randuniform (-pixHalfWidth) pixHalfWidth ky
-    Ray.new(camera.pos, normalize [x, y, neg camera.sensorDist])
+    Ray(camera.pos, normalize [x, y, neg camera.sensorDist])
 
 def takePicture(params:Params, scene:Scene m, camera:Camera) -> Image given (m|Ix) =
   n = camera.numPix
@@ -295,7 +295,7 @@ rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
 whiteWallColor = [255.0, 239.0, 196.0] / 255.0
 blockColor     = [200.0, 200.0, 255.0] / 255.0
 
-theScene = Scene.new $
+theScene = Scene $
   [ Light (1.9 .* yHat) 0.5 lightColor
   , PassiveObject (Wall      xHat  2.0) (Matte leftWallColor)
   , PassiveObject (Wall (neg xHat) 2.0) (Matte rightWallColor)
@@ -307,11 +307,11 @@ theScene = Scene.new $
   , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
   ]
 
-defaultParams = Params.new 50 10 True
+defaultParams = Params 50 10 True
 
-defaultCamera = Camera.new 250 (10.0 .* zHat) 0.3 1.0
+defaultCamera = Camera 250 (10.0 .* zHat) 0.3 1.0
 
-testCamera = Camera.new 10 (10.0 .* zHat) 0.3 1.0
+testCamera = Camera 10 (10.0 .* zHat) 0.3 1.0
 
 -- We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
@@ -327,7 +327,7 @@ MkImage(_, _, image) = takePicture params theScene camera
 'Just for fun, here's what we get with a single sample (sharing the PRNG
 key among pixels)
 
-params2 = Params.new 1 10 True
+params2 = Params 1 10 True
 MkImage(_, _, image2) = takePicture params2 theScene camera
 
 :html imshow image2

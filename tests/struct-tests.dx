@@ -4,7 +4,7 @@ struct MyStruct =
   field2 : Float
   field3 : String
 
-my_struct = MyStruct.new 1 2 "abc"
+my_struct = MyStruct 1 2 "abc"
 
 :p my_struct.field3
 > "abc"
@@ -22,7 +22,7 @@ my_struct = MyStruct.new 1 2 "abc"
 > unexpected ".("
 > expecting "->", "..", "<..", backquoted name, end of input, end of line, infix operator, name, or symbol name
 :p my_struct
-> (MyStruct.new 1 2. "abc")
+> MyStruct(1, 2., "abc")
 
 :t my_struct
 > MyStruct
@@ -32,6 +32,62 @@ struct MyParametricStruct(a) =
   bar  : Nat
 
 :p
-  foo = MyParametricStruct.new(1.0, 1)
+  foo = MyParametricStruct(1.0, 1)
   foo.bar
 > 1
+
+:p
+  foo = MyParametricStruct(1.0, 1)
+  foo.baz
+> Type error:Can't resolve field baz of type (MyParametricStruct Float32)
+> Known fields are: [bar, foo, 0, 1]
+>
+>   foo.baz
+>       ^^^
+
+
+x = (1, 2)
+
+x.0
+> 1
+
+x.1
+> 2
+
+x.2
+> Type error:Can't resolve field 2 of type (Nat, Nat)
+> Known fields are: [0, 1]
+>
+> x.2
+>   ^
+
+x.foo
+> Type error:Can't resolve field foo of type (Nat, Nat)
+> Known fields are: [0, 1]
+>
+> x.foo
+>   ^^^
+
+struct Thing(a|Add) =
+  x : a
+  y : a
+
+  def incby(n:a) -> Thing(a) =
+    Thing(self.x + n, self.y + n)
+
+Thing(1,2).incby(10)
+> Thing(11, 12)
+
+struct MissingConstraint(n) =
+  thing : n=>Float
+> Type error:Couldn't synthesize a class dictionary for: (Ix n)
+>
+>   thing : n=>Float
+>           ^^^^^^^^
+
+data AnotherMissingConstraint(n) =
+  MkAnotherMissingConstraint(n=>Float)
+> Type error:Couldn't synthesize a class dictionary for: (Ix n)
+>
+>   MkAnotherMissingConstraint(n=>Float)
+>                              ^^^^^^^^

@@ -219,7 +219,7 @@ ensureModuleLoaded moduleSourceName = do
   depsRequired <- findDepsTransitively moduleSourceName
   forM_ depsRequired \md -> do
     evaluated <- evalPartiallyParsedUModuleCached md
-    bindModule (umppName md) evaluated
+    updateTopEnv $ UpdateLoadedModules (umppName md) evaluated
 {-# SCC ensureModuleLoaded #-}
 
 evalSourceBlock
@@ -321,7 +321,7 @@ evalSourceBlock' mname block = case sbContents block of
               [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
               , "but it has type:" , "" , pprint implTy]
           Success () -> return ()
-        emitAtomRules fname' $ CustomLinearize nimplicit nexplicit zeros impl
+        updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
@@ -364,7 +364,9 @@ runEnvQuery query = do
             UMethodVar   v' -> pprint <$> lookupEnv v'
             UEffectVar   v' -> pprint <$> lookupEnv v'
             UEffectOpVar v' -> pprint <$> lookupEnv v'
-            UHandlerVar  v' -> pprint <$> lookupEnv v'
+            UPunVar v' -> do
+              val <- lookupEnv v'
+              return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
           logTop $ TextOut $ "Binding:\n" ++ info
 
 filterLogs :: SourceBlock -> Result -> Result
@@ -410,7 +412,7 @@ parseUModuleDepsCached name file = do
     Just (cachedReq, result) | cachedReq == req -> return result
     _ -> do
       let result = parseUModuleDeps name file
-      extendCache $ mempty { parsedDeps = M.singleton name (req, result) }
+      updateTopEnv $ ExtendCache $ mempty { parsedDeps = M.singleton name (req, result) }
       return result
 
 evalPartiallyParsedUModuleCached
@@ -435,7 +437,7 @@ evalPartiallyParsedUModuleCached md@(UModulePartialParse name deps source) = do
         _ -> do
           liftIO $ hPutStrLn stderr $ "Compiling " ++ pprint name
           result <- evalPartiallyParsedUModule md
-          extendCache $ mempty {
+          updateTopEnv $ ExtendCache $ mempty {
             moduleEvaluations = M.singleton name (req, result) }
           return result
 
@@ -452,13 +454,10 @@ evalPartiallyParsedUModule partiallyParsed = do
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
-  Abs topFrag UnitE <-
-    localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag moduleEnvFrag <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs <-
-    return $ fragLocalModuleEnv moduleEnvFrag
-  let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag {
-        fragLocalModuleEnv = mempty }
+  Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
+  TopEnvFrag envFrag moduleEnvFrag otherUpdates <- return topFrag
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs <- return moduleEnvFrag
+  let fragToReEmit = TopEnvFrag envFrag mempty otherUpdates
   let evaluatedModule = Module name directDeps transDeps sm scs
   emitEnv $ Abs fragToReEmit evaluatedModule
 
@@ -591,11 +590,11 @@ evalSpecializations fs = do
     -- Prevents infinite loop in case compiling `v` ends up requiring `v`
     -- (even without recursion in Dex itself this is possible via the
     -- specialization cache)
-    updateTopFunStatus f Running
+    updateTopEnv $ UpdateTopFunEvalStatus f Running
     imp <- compileTopLevelFun StandardCC simp
     objName <- toCFunction (getNameHint f) imp >>= emitObjFile
     void $ loadObject objName
-    updateTopFunStatus f (Finished $ TopFunLowerings objName)
+    updateTopEnv $ UpdateTopFunEvalStatus f (Finished $ TopFunLowerings objName)
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
@@ -644,7 +643,7 @@ loadObject fname =
     Just p -> return p
     Nothing -> do
       f <- lookupFunObjCode fname >>= loadObjectContent
-      extendLoadedObjects fname f
+      updateTopEnv $ UpdateLoadedObjects fname f
       return f
 
 loadObjectContent :: (Topper m, Mut n) => CFunction n -> m n NativeFunction

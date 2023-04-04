@@ -1,22 +1,22 @@
 
 with_stack Nat \stack.
-  stack_push stack 10
-  stack_push stack 11
-  stack_pop  stack
-  stack_pop  stack
+  stack.push 10
+  stack.push 11
+  stack.pop()
+  stack.pop()
 > (Just 10)
 
 with_stack Nat \stack.
-  stack_push stack 10
-  stack_push stack 11
-  stack_pop  stack
-  stack_pop  stack
-  stack_pop  stack     -- Check that popping an empty stack is OK.
-  stack_push stack 20
-  stack_push stack 21
-  stack_pop  stack
+  stack.push 10
+  stack.push 11
+  stack.pop()
+  stack.pop()
+  stack.pop()     -- Check that popping an empty stack is OK.
+  stack.push 20
+  stack.push 21
+  stack.pop()
 > (Just 21)
 
 with_stack Nat \stack.
-  stack_pop stack
+  stack.pop()
 > Nothing

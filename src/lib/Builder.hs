@@ -255,29 +255,15 @@ class (EnvReader m, MonadFail1 m) => TopBuilder (m::MonadKind1) where
 emitBindingDefault :: (TopBuilder m, Mut n, Color c) => NameHint -> Binding c n -> m n (Name c n)
 emitBindingDefault hint binding = do
   ab <- liftEnvReaderM $ withFreshBinder hint binding \b'-> do
-    let topFrag = TopEnvFrag (toEnvFrag b') mempty
+    let topFrag = TopEnvFrag (toEnvFrag b') mempty mempty
     return $ Abs topFrag $ binderName b'
   emitEnv ab
 
-emitPartialTopEnvFrag :: TopBuilder m => PartialTopEnvFrag n -> m n ()
-emitPartialTopEnvFrag frag = emitNamelessEnv $ TopEnvFrag emptyOutFrag frag
+updateTopEnv :: TopBuilder m => TopEnvUpdate n -> m n ()
+updateTopEnv update = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty (toSnocList [update])
 
 emitLocalModuleEnv :: TopBuilder m => ModuleEnv n -> m n ()
-emitLocalModuleEnv env = emitPartialTopEnvFrag $ mempty { fragLocalModuleEnv = env }
-
-emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
-emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
-
-emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
-
-addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
-addInstanceSynthCandidate className instanceName =
-  emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
-
-emitAtomRules :: TopBuilder m => AtomName CoreIR n -> AtomRules n -> m n ()
-emitAtomRules v rules = emitNamelessEnv $
-  TopEnvFrag emptyOutFrag $ mempty { fragCustomRules = CustomRules $ M.singleton v rules }
+emitLocalModuleEnv env = emitNamelessEnv $ TopEnvFrag emptyOutFrag env mempty
 
 emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr CoreIR n -> m n (AtomName CoreIR n)
 emitTopLet hint letAnn expr = do
@@ -289,22 +275,19 @@ emitTopFunBinding hint def f = do
   ty <- getLamExprType f
   emitBinding hint $ TopFunBinding $ DexTopFun def ty f Waiting
 
-updateTopFunStatus :: (Mut n, TopBuilder m) => TopFunName n -> EvalStatus (TopFunLowerings n) -> m n ()
-updateTopFunStatus f status =
-  emitPartialTopEnvFrag $ mempty {fragTopFunUpdates = toSnocList [(f, status)]}
+emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
+emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
+
+emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
+emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
+
+addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
+addInstanceSynthCandidate className instanceName =
+  emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
 
 updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n -> m n ()
 updateTransposeRelation f1 f2 =
-  extendCache $ mempty { transpositionCache = eMapSingleton f1 f2 <> eMapSingleton f2 f1}
-
-updateInstanceDef :: (Mut n, TopBuilder m) => InstanceName n -> InstanceDef n -> m n ()
-updateInstanceDef name def =
-  emitPartialTopEnvFrag $ mempty {fragInstanceDefUpdates = toSnocList [(name, def)]}
-
-bindModule :: (Mut n, TopBuilder m) => ModuleSourceName -> ModuleName n -> m n ()
-bindModule sourceName internalName = do
-  let loaded = LoadedModules $ M.singleton sourceName internalName
-  emitPartialTopEnvFrag $ mempty {fragLoadedModules = loaded}
+  updateTopEnv $ ExtendCache $ mempty { transpositionCache = eMapSingleton f1 f2 <> eMapSingleton f2 f1}
 
 lookupLoadedModule:: EnvReader m => ModuleSourceName -> m n (Maybe (ModuleName n))
 lookupLoadedModule name = do
@@ -316,17 +299,9 @@ lookupLoadedObject name = do
   loadedObjects <- withEnv $ envLoadedObjects . topEnv
   return $ M.lookup name $ fromLoadedObjects loadedObjects
 
-extendLoadedObjects :: (Mut n, TopBuilder m) => FunObjCodeName n -> NativeFunction -> m n ()
-extendLoadedObjects name ptr = do
-  let loaded = LoadedObjects $ M.singleton name ptr
-  emitPartialTopEnvFrag $ mempty {fragLoadedObjects = loaded}
-
-extendCache :: TopBuilder m => Cache n -> m n ()
-extendCache cache = emitPartialTopEnvFrag $ mempty {fragCache = cache}
-
 extendSpecializationCache :: TopBuilder m => SpecializationSpec n -> TopFunName n -> m n ()
 extendSpecializationCache specialization f =
-  extendCache $ mempty { specializationCache = eMapSingleton specialization f }
+  updateTopEnv $ ExtendCache $ mempty { specializationCache = eMapSingleton specialization f }
 
 querySpecializationCache :: EnvReader m => SpecializationSpec n -> m n (Maybe (TopFunName n))
 querySpecializationCache specialization = do
@@ -347,7 +322,7 @@ extendLinearizationCache
   :: (TopBuilder m, Fallible1 m, Mut n)
   => LinearizationSpec n -> (TopFunName n, TopFunName n) -> m n ()
 extendLinearizationCache s fs =
-  extendCache $ mempty { linearizationCache = eMapSingleton s (toPairE fs) }
+  updateTopEnv $ ExtendCache $ mempty { linearizationCache = eMapSingleton s (toPairE fs) }
 
 queryObjCache :: EnvReader m => TopFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = lookupEnv v >>= \case
@@ -393,7 +368,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
     Abs b v <- freshNameM hint
     let ab = Abs (b:>binding) v
     ab' <- liftEnvReaderM $ refreshAbs ab \b' v' -> do
-      return $ Abs (TopEnvFrag (toEnvFrag b') mempty) v'
+      return $ Abs (TopEnvFrag (toEnvFrag b') mempty mempty) v'
     TopBuilderT $ extendInplaceT ab'
 
   emitEnv ab = TopBuilderT $ extendInplaceT ab
@@ -977,12 +952,6 @@ symbolicTangentNonZero val = do
   ty <- getType val
   return $ SumVal [UnitTy, ty] 1 val
 
--- === builder versions of common top-level emissions ===
-
-updateFieldDefs :: (Mut n, TopBuilder m) => TyConName n -> SourceName -> FieldDef n -> m n ()
-updateFieldDefs defName sourceName val =
-  emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(defName, sourceName, val)]}
-
 -- === builder versions of common local ops ===
 
 fLitLike :: (Builder r m, Emits n) => Double -> Atom r n -> m n (Atom r n)
@@ -1069,11 +1038,11 @@ getSnd :: Builder r m => Atom r n -> m n (Atom r n)
 getSnd p = snd <$> fromPair p
 
 -- the rightmost index is applied first
-getNaryProjRef :: (Builder r m, Emits n) => [Int] -> Atom r n -> m n (Atom r n)
+getNaryProjRef :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
 getNaryProjRef [] ref = return ref
 getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
-getProjRef :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
+getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emitExpr $ RefOp r $ ProjRef i
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
@@ -1100,6 +1069,31 @@ unwrapNewtype :: CAtom n -> CAtom n
 unwrapNewtype (NewtypeCon _ x) = x
 unwrapNewtype x = ProjectElt UnwrapNewtype x
 {-# INLINE unwrapNewtype #-}
+
+projectTuple :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+projectTuple i x = normalizeProj (ProjectProduct i) x
+
+projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+projectStruct i x = do
+  projs <- getStructProjections i =<< getType x
+  normalizeNaryProj projs x
+{-# INLINE projectStruct #-}
+
+projectStructRef :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
+projectStructRef i x = do
+  RefTy _ valTy <- getType x
+  projs <- getStructProjections i valTy
+  getNaryProjRef projs x
+{-# INLINE projectStructRef #-}
+
+getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
+getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
+  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  return case fields of
+    [_] | i == 0    -> [UnwrapNewtype]
+        | otherwise -> error "bad index"
+    _ -> [ProjectProduct i, UnwrapNewtype]
+getStructProjections _ _ = error "not a struct"
 
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
 app x i = Var <$> emit (App x [i])

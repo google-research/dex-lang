@@ -65,12 +65,12 @@ def leapfrogIntegrate(
     init:    HMCState a
     ) -> HMCState a given (a|VSpace) =
   x = init.x + (0.5 * params.dt) .* init.p
-  final = apply_n params.nsteps HMCState.new(x, init.p) \old.
+  final = apply_n params.nsteps HMCState(x, init.p) \old.
     pNew = old.p + params.dt .* grad logProb old.x
     xNew = old.x + params.dt .* pNew
-    HMCState.new(xNew, pNew)
+    HMCState(xNew, pNew)
   p = final.p + (0.5 * params.dt) .* grad logProb final.x
-  HMCState.new(final.x, p)
+  HMCState(final.x, p)
 
 def hmcStep(
     params:  HMCParams,
@@ -82,8 +82,8 @@ def hmcStep(
     logProb s.x - 0.5 * vdot s.p s.p
   [k1, k2] = split_key k
   p = randn_vec k1
-  proposal = leapfrogIntegrate params logProb HMCState.new(x, p)
-  final = propose hamiltonian HMCState.new(x, p) proposal k2
+  proposal = leapfrogIntegrate params logProb HMCState(x, p)
+  final = propose hamiltonian HMCState(x, p) proposal k2
   final.x
 
 '## Test it out
@@ -110,7 +110,7 @@ mhSamples  = runChain randn_vec (\k x. mhStep  mhParams myLogProb k x) numSample
   slice (map head mhSamples) 0 (Fin 1000)
 > <html output>
 
-hmcParams = HMCParams.new(10, 0.1)
+hmcParams = HMCParams(10, 0.1)
 hmcSamples = runChain randn_vec (\k x. hmcStep hmcParams myLogProb k x) numSamples k0
 
 :p meanAndCovariance hmcSamples

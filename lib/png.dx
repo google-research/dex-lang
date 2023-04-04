@@ -114,7 +114,7 @@ def make_png(img:n=>m=>(Fin 3)=>Word8) -> Png given (n|Ix, m|Ix) = unsafe_io \.
   with_table_ptr imgFlat \ptr.
     rawPtr = ptr.val
     (sz, ptr') = encodePNG rawPtr (nat_to_rep $ size m) (nat_to_rep $ size n)
-    AsList((rep_to_nat sz), table_from_ptr(Ptr.new(ptr')))
+    AsList((rep_to_nat sz), table_from_ptr(Ptr(ptr')))
 
 def pngs_to_gif(delay:Int, pngs:t=>Png) -> Gif given (t|Ix) = unsafe_io \.
   with_temp_files \pngFiles.

@@ -506,7 +506,10 @@ instance Pretty (TyConParams n) where
 
 instance Pretty (TyConDef n) where
   pretty (TyConDef name bs cons) =
-    "data" <+> p name <+> (p $ map (\(RolePiBinder _ b) -> b) $ fromNest bs) <> prettyLines cons
+    "data" <+> p name <+> (p $ map (\(RolePiBinder _ b) -> b) $ fromNest bs) <> pretty cons
+
+instance Pretty (DataConDefs n) where
+  pretty = undefined
 
 instance Pretty (RolePiBinder n l) where
   pretty (RolePiBinder _ b) = pretty b
@@ -633,7 +636,8 @@ instance Pretty (SourceOrInternalName c n) where
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
-  prettyPrec _ = undefined
+  prettyPrec (ULamExpr bs _ _ _ body) = atPrec LowestPrec $
+    "\\" <> p bs <+> "." <+> indented (p body)
 
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
@@ -694,6 +698,11 @@ instance PrettyPrec (UExpr' n) where
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
 
+instance Pretty FieldName' where
+  pretty = \case
+    FieldName s -> pretty s
+    FieldNum n  -> pretty n
+
 prettyUFieldRowElems :: Doc ann -> Doc ann -> UFieldRowElems n -> Doc ann
 prettyUFieldRowElems separator bindwith elems =
   braces $ concatWith (surround $ separator <> " ") $ elems <&> \case
@@ -713,9 +722,9 @@ instance Pretty (UDecl n l) where
   pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UStructDecl (UStructDef nm bs fields) bTyCon) =
+  pretty (UStructDecl bTyCon (UStructDef nm bs fields defs)) =
     "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
-       (prettyLines fields)
+       (prettyLines fields <> prettyLines defs)
   pretty (UInterface params methodTys interfaceName methodNames) =
      "interface" <+> p params <+> p interfaceName
          <> hardline <> foldMap (<>hardline) methods

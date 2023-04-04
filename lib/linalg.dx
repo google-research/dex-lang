@@ -234,24 +234,21 @@ def chol(x:n=>n=>Float) -> LowerTriMat n Float given (n|Ix) =
 PermutationSign = Float
 
 -- TODO: use a struct once we can handle reference projections of struct fields
-def Permutation(n|Ix) -> Type = (n=>n, PermutationSign)
+struct Permutation(n|Ix) =
+  p    : n=>n
+  sign : PermutationSign
 
 def apply_permutation(perm:Permutation n, xs: n=>t) -> n=>t given (n|Ix, t) =
-  for i. xs[(fst perm)[i]]
+  for i. xs[perm.p[i]]
 
 def identity_permutation() ->> Permutation n given (n|Ix) =
-  (for i. i, 1.0)
+  Permutation(for i. i, 1.0)
 
-def swap_in_place(pRef: Ref h (Permutation n), i:n, j:n) -> {State h} () given (n|Ix, h) =
-  (permRef, signRef) = (fst_ref pRef, snd_ref pRef)
-  tempj = get permRef!j
-  permRef!j := get permRef!i
-  permRef!i := tempj
-  signRef := -(get signRef)
-
-def perm_to_table(p:Permutation n) -> n=>n given (n|Ix)  = fst p
-def perm_sign(p:Permutation n) -> PermutationSign  given (n|Ix) = snd p
-
+def swap_in_place(perm: Ref h (Permutation n), i:n, j:n) -> {State h} () given (n|Ix, h) =
+  tempj = get perm.p!j
+  perm.p!j := get perm.p!i
+  perm.p!i := tempj
+  perm.sign := -(get perm.sign)
 
 '## LU decomposition functions
 
@@ -337,12 +334,12 @@ def invert(a:n=>n=>Float) -> n=>n=>Float given (n|Ix) =
 
 def determinant(a:n=>n=>Float) -> Float given (n|Ix) =
   (l, u, perm) = lu a
-  prod (for i. (upper_tri_diag u)[i] * (lower_tri_diag l)[i]) * perm_sign perm
+  prod (for i. (upper_tri_diag u)[i] * (lower_tri_diag l)[i]) * perm.sign
 
 def sign_and_log_determinant(a:n=>n=>Float) -> (Float, Float) given (n|Ix) =
   (l, u, perm) = lu a
   diags = for i. (upper_tri_diag u)[i] * (lower_tri_diag l)[i]
-  sign = (perm_sign perm) * prod for i. sign diags[i]
+  sign = perm.sign * prod for i. sign diags[i]
   sum_of_log_abs = sum for i. log (abs diags[i])
   (sign, sum_of_log_abs)
 

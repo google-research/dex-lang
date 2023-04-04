@@ -13,7 +13,7 @@ def solve'(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
   x0 = zero
   ax = mat **. x0
   r0 = b - ax
-  init = ConjGradState.new(zero, r0, r0)
+  init = ConjGradState(zero, r0, r0)
   final = fold init \_:m state.
     x = state.x
     r = state.r
@@ -24,7 +24,7 @@ def solve'(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
     r' = r - alpha .* ap
     beta = vdot r' r' / (vdot r r + 0.000001)
     p' = r' + beta .* p
-    ConjGradState.new(x', r', p')
+    ConjGradState(x', r', p')
   final.x
 
 def chol_solve(l:LowerTriMat m Float, b:m=>Float) -> m=>Float given (m|Ix) =

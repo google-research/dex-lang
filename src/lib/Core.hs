@@ -297,7 +297,7 @@ instance ExtOutMap Env UnitB where
 -- === Monadic helpers ===
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
-lookupEnv v = withEnv $ flip lookupEnvPure v
+lookupEnv v = withEnv $ flip lookupEnvPure v . topEnv
 {-# INLINE lookupEnv #-}
 
 lookupAtomName :: (IRRep r, EnvReader m) => AtomName r n -> m n (AtomBinding r n)
@@ -322,7 +322,9 @@ lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding cFun -> retur
 {-# INLINE lookupFunObjCode #-}
 
 lookupTyCon :: EnvReader m => TyConName n -> m n (TyConDef n)
-lookupTyCon name = lookupEnv name >>= \case TyConBinding x _ -> return x
+lookupTyCon name = lookupEnv name >>= \case
+  TyConBinding (Just x) _ -> return x
+  TyConBinding Nothing  _ -> error "TyCon not yet defined"
 {-# INLINE lookupTyCon #-}
 
 lookupDataCon :: EnvReader m => Name DataConNameC n -> m n (TyConName n, Int)
