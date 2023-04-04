@@ -43,7 +43,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
                , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
-import Util ( zipErr, onFst, onSnd, transitiveClosure )
+import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..) )
 import Err
 import IRVariants
 
@@ -2591,6 +2591,10 @@ sinkR = unsafeCoerceE
 sinkList :: (SinkableE e, DExt n l) => [e n] -> [e l]
 sinkList = fromListE . sink . ListE
 {-# INLINE sinkList #-}
+
+sinkSnocList :: (SinkableE e, DExt n l) => SnocList (e n) -> SnocList (e l)
+sinkSnocList = ReversedList . sinkList . fromReversedList
+{-# INLINE sinkSnocList #-}
 
 class SinkableE (e::E) where
   sinkingProofE :: SinkingCoercion n l -> e n -> e l

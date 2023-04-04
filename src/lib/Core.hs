@@ -297,7 +297,7 @@ instance ExtOutMap Env UnitB where
 -- === Monadic helpers ===
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
-lookupEnv v = withEnv $ flip lookupEnvPure v
+lookupEnv v = withEnv $ flip lookupEnvPure v . topEnv
 {-# INLINE lookupEnv #-}
 
 lookupAtomName :: (IRRep r, EnvReader m) => AtomName r n -> m n (AtomBinding r n)

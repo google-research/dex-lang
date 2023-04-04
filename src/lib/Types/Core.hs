@@ -26,7 +26,6 @@ module Types.Core (module Types.Core, SymbolicZeros (..)) where
 import Control.Applicative
 import Data.Word
 import Data.Functor
-import Data.Foldable (toList)
 import Data.Hashable
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Map.Strict       as M
@@ -39,7 +38,7 @@ import Foreign.Ptr
 import Name
 import Err
 import LabeledItems
-import Util (FileHash, SnocList (..), toSnocList, Tree (..))
+import Util (FileHash, SnocList (..), Tree (..))
 import IRVariants
 
 import Types.Primitives
@@ -496,24 +495,18 @@ data ImportStatus (n::S) = ImportStatus
   , transImports           :: S.Set (ModuleName n) }
   deriving (Show, Generic)
 
-data TopEnvFrag n l = TopEnvFrag (EnvFrag n l) (PartialTopEnvFrag l)
+data TopEnvFrag n l = TopEnvFrag (EnvFrag n l) (ModuleEnv l) (SnocList (TopEnvUpdate l))
 
--- This is really the type of updates to `Env`. We should probably change the
--- names to reflect that.
-data PartialTopEnvFrag n = PartialTopEnvFrag
-  { fragCache           :: Cache n
-  , fragCustomRules     :: CustomRules n
-  , fragLoadedModules   :: LoadedModules n
-  , fragLoadedObjects   :: LoadedObjects n
-  , fragLocalModuleEnv  :: ModuleEnv n
-  -- TODO: This is getting ridiculous. We should bundle all of these into a
-  -- single sum type (probably including CustomRules, LoadedModules, and
-  -- LoadedObjects)
-  , fragFinishSpecializedDict :: SnocList (SpecDictName n, [LamExpr SimpIR n])
-  , fragTopFunUpdates         :: SnocList (TopFunName n, TopFunEvalStatus n)
-  , fragInstanceDefUpdates    :: SnocList (InstanceName n, InstanceDef n)
-  , fragTyConDefUpdates       :: SnocList (TyConName n, TyConDef n)
-  , fragFieldDefUpdates       :: SnocList (TyConName n, SourceName, CAtomName n) }
+data TopEnvUpdate n =
+   ExtendCache              (Cache n)
+ | AddCustomRule            (CAtomName n) (AtomRules n)
+ | UpdateLoadedModules      ModuleSourceName (ModuleName n)
+ | UpdateLoadedObjects      (FunObjCodeName n) NativeFunction
+ | FinishDictSpecialization (SpecDictName n) [LamExpr SimpIR n]
+ | UpdateTopFunEvalStatus   (TopFunName n) (TopFunEvalStatus n)
+ | UpdateInstanceDef        (InstanceName n) (InstanceDef n)
+ | UpdateTyConDef           (TyConName n) (TyConDef n)
+ | UpdateFieldDef           (TyConName n) SourceName (CAtomName n)
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 -- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
@@ -540,11 +533,6 @@ data Cache (n::S) = Cache
   , parsedDeps :: M.Map ModuleSourceName (FileHash, [ModuleSourceName])
   , moduleEvaluations :: M.Map ModuleSourceName ((FileHash, [ModuleName n]), ModuleName n)
   } deriving (Show, Generic)
-
-updateEnv :: Color c => Name c n -> Binding c n -> Env n -> Env n
-updateEnv v rhs env =
-  env { topEnv = (topEnv env) { envDefs = RecSubst $ updateSubstFrag v rhs bs } }
-  where (RecSubst bs) = envDefs $ topEnv env
 
 -- === runtime function and variable representations ===
 
@@ -2375,50 +2363,55 @@ instance ProvesExt   EnvFrag
 instance BindsNames  EnvFrag
 instance RenameB     EnvFrag
 
-instance GenericE PartialTopEnvFrag where
-  type RepE PartialTopEnvFrag = Cache
-                              `PairE` CustomRules
-                              `PairE` LoadedModules
-                              `PairE` LoadedObjects
-                              `PairE` ModuleEnv
-                              `PairE` ListE (PairE SpecDictName (ListE (LamExpr SimpIR)))
-                              `PairE` ListE (PairE TopFunName (ComposeE EvalStatus TopFunLowerings))
-                              `PairE` ListE (PairE InstanceName InstanceDef)
-                              `PairE` ListE (TyConName `PairE` TyConDef)
-                              `PairE` ListE (TyConName `PairE` LiftE SourceName `PairE` CAtomName)
-  fromE (PartialTopEnvFrag cache rules loadedM loadedO env d fs ds ts fields) =
-    cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d' `PairE` fs' `PairE` ds' `PairE` ts' `PairE` fields'
-    where d'  = ListE $ [name `PairE` ListE methods | (name, methods) <- toList d]
-          fs' = ListE $ [name `PairE` ComposeE impl | (name, impl)    <- toList fs]
-          ds' = ListE $ [name `PairE` def           | (name, def)     <- toList ds]
-          ts' = ListE $ [name `PairE` def           | (name, def)     <- toList ts]
-          fields' = ListE $ [dname `PairE` LiftE sname `PairE` x | (dname, sname, x) <- toList fields]
-  {-# INLINE fromE #-}
-  toE (cache `PairE` rules `PairE` loadedM `PairE` loadedO `PairE` env `PairE` d `PairE` fs `PairE` ds `PairE` ts `PairE` fields) =
-    PartialTopEnvFrag cache rules loadedM loadedO env d' fs' ds' ts' fields'
-    where d'  = toSnocList [(name, methods) | name `PairE` ListE methods <- fromListE d]
-          fs' = toSnocList [(name, impl)    | name `PairE` ComposeE impl <- fromListE fs]
-          ds' = toSnocList [(name, def)     | name `PairE` def           <- fromListE ds]
-          ts' = toSnocList [(name, def)     | name `PairE` def           <- fromListE ts]
-          fields' = toSnocList [(dname, sname, x)    | dname `PairE` LiftE sname `PairE` x <- fromListE fields]
-  {-# INLINE toE #-}
+instance GenericE TopEnvUpdate where
+  type RepE TopEnvUpdate = EitherE2 (
+      EitherE4
+    {- ExtendCache -}              Cache
+    {- AddCustomRule -}            (CAtomName `PairE` AtomRules)
+    {- UpdateLoadedModules -}      (LiftE ModuleSourceName `PairE` ModuleName)
+    {- UpdateLoadedObjects -}      (FunObjCodeName `PairE` LiftE NativeFunction)
+      ) ( EitherE5
+    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE (LamExpr SimpIR))
+    {- UpdateTopFunEvalStatus -}   (TopFunName `PairE` ComposeE EvalStatus TopFunLowerings)
+    {- UpdateInstanceDef -}        (InstanceName `PairE` InstanceDef)
+    {- UpdateTyConDef -}           (TyConName `PairE` TyConDef)
+    {- UpdateFieldDef -}           (TyConName `PairE` LiftE SourceName `PairE` CAtomName)
+        )
+  fromE = \case
+    ExtendCache x                -> Case0 $ Case0 x
+    AddCustomRule x y            -> Case0 $ Case1 (x `PairE` y)
+    UpdateLoadedModules x y      -> Case0 $ Case2 (LiftE x `PairE` y)
+    UpdateLoadedObjects x y      -> Case0 $ Case3 (x `PairE` LiftE y)
+    FinishDictSpecialization x y -> Case1 $ Case0 (x `PairE` ListE y)
+    UpdateTopFunEvalStatus x y   -> Case1 $ Case1 (x `PairE` ComposeE y)
+    UpdateInstanceDef x y        -> Case1 $ Case2 (x `PairE` y)
+    UpdateTyConDef x y           -> Case1 $ Case3 (x `PairE` y)
+    UpdateFieldDef x y z         -> Case1 $ Case4 (x `PairE` LiftE y `PairE` z)
 
-instance SinkableE      PartialTopEnvFrag
-instance HoistableE     PartialTopEnvFrag
-instance RenameE        PartialTopEnvFrag
+  toE = \case
+    Case0 e -> case e of
+      Case0 x                   -> ExtendCache x
+      Case1 (x `PairE` y)       -> AddCustomRule x y
+      Case2 (LiftE x `PairE` y) -> UpdateLoadedModules x y
+      Case3 (x `PairE` LiftE y) -> UpdateLoadedObjects x y
+      _ -> error "impossible"
+    Case1 e -> case e of
+      Case0 (x `PairE` ListE y)           -> FinishDictSpecialization x y
+      Case1 (x `PairE` ComposeE y)        -> UpdateTopFunEvalStatus x y
+      Case2 (x `PairE` y)                 -> UpdateInstanceDef x y
+      Case3 (x `PairE` y)                 -> UpdateTyConDef x y
+      Case4 (x `PairE` LiftE y `PairE` z) -> UpdateFieldDef x y z
+      _ -> error "impossible"
+    _ -> error "impossible"
 
-instance Semigroup (PartialTopEnvFrag n) where
-  PartialTopEnvFrag x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 <> PartialTopEnvFrag y1 y2 y3 y4 y5 y6 y7 y8 y9 y10 =
-    PartialTopEnvFrag (x1<>y1) (x2<>y2) (x3<>y3) (x4<>y4) (x5<>y5) (x6<>y6) (x7<>y7) (x8<>y8) (x9<>y9) (x10<>y10)
-
-instance Monoid (PartialTopEnvFrag n) where
-  mempty = PartialTopEnvFrag mempty mempty mempty mempty mempty mempty mempty mempty mempty mempty
-  mappend = (<>)
+instance SinkableE   TopEnvUpdate
+instance HoistableE  TopEnvUpdate
+instance RenameE     TopEnvUpdate
 
 instance GenericB TopEnvFrag where
-  type RepB TopEnvFrag = PairB EnvFrag (LiftB PartialTopEnvFrag)
-  fromB (TopEnvFrag frag1 frag2) = PairB frag1 (LiftB frag2)
-  toB   (PairB frag1 (LiftB frag2)) = TopEnvFrag frag1 frag2
+  type RepB TopEnvFrag = PairB EnvFrag (LiftB (ModuleEnv `PairE` ListE TopEnvUpdate))
+  fromB (TopEnvFrag x y (ReversedList z)) = PairB x (LiftB (y `PairE` ListE z))
+  toB   (PairB x (LiftB (y `PairE` ListE z))) = TopEnvFrag x y (ReversedList z)
 
 instance RenameB     TopEnvFrag
 instance HoistableB  TopEnvFrag
@@ -2427,38 +2420,30 @@ instance ProvesExt   TopEnvFrag
 instance BindsNames  TopEnvFrag
 
 instance OutFrag TopEnvFrag where
-  emptyOutFrag = TopEnvFrag emptyOutFrag mempty
+  emptyOutFrag = TopEnvFrag emptyOutFrag mempty mempty
   {-# INLINE emptyOutFrag #-}
-  catOutFrags (TopEnvFrag frag1 partial1)
-              (TopEnvFrag frag2 partial2) =
+  catOutFrags (TopEnvFrag frag1 env1 partial1)
+              (TopEnvFrag frag2 env2 partial2) =
     withExtEvidence frag2 $
       TopEnvFrag
         (catOutFrags frag1 frag2)
-        (sink partial1 <> partial2)
+        (sink env1 <> env2)
+        (sinkSnocList partial1 <> partial2)
   {-# INLINE catOutFrags #-}
 
 -- XXX: unlike `ExtOutMap Env EnvFrag` instance, this once doesn't
 -- extend the synthesis candidates based on the annotated let-bound names. It
 -- only extends synth candidates when they're supplied explicitly.
 instance ExtOutMap Env TopEnvFrag where
-  extendOutMap env
-    (TopEnvFrag (EnvFrag frag)
-    (PartialTopEnvFrag cache' rules' loadedM' loadedO' mEnv' d' fs' ds' tyDefs' fields')) = result5
+  extendOutMap env (TopEnvFrag (EnvFrag frag) mEnv' otherUpdates) = do
+    let newerTopEnv = foldl applyUpdate newTopEnv otherUpdates
+    Env newerTopEnv newModuleEnv
     where
       Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
-      result0 = Env newTopEnv newModuleEnv
-      result1 = foldl addMethods   result0 (toList d' )
-      result2 = foldl addFunUpdate result1 (toList fs')
-      result3 = foldl addInstanceDefUpdate result2 (toList ds')
-      result4 = foldl addTyDefUpdate result3 (toList tyDefs')
-      result5 = foldl addFieldDefUpdate result4 (toList fields')
 
       newTopEnv = withExtEvidence frag $ TopEnv
         (defs `extendRecSubst` frag)
-        (sink rules <> rules')
-        (sink cache <> cache')
-        (sink loadedM <> loadedM')
-        (sink loadedO <> loadedO')
+        (sink rules) (sink cache) (sink loadedM) (sink loadedO)
 
       newModuleEnv =
         ModuleEnv
@@ -2473,41 +2458,43 @@ instance ExtOutMap Env TopEnvFrag where
           newImportedSM  = flip foldMap newDirectImports $ moduleExports         . lookupModulePure
           newImportedSC  = flip foldMap newTransImports  $ moduleSynthCandidates . lookupModulePure
 
-      lookupModulePure v = case lookupEnvPure (Env newTopEnv mempty) v of ModuleBinding m -> m
+      lookupModulePure v = case lookupEnvPure newTopEnv v of ModuleBinding m -> m
 
-addMethods :: Env n -> (SpecDictName n, [LamExpr SimpIR n]) -> Env n
-addMethods e (dName, methods) = do
-  let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
-  case oldMethods of
-    Nothing -> do
-      let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
-      updateEnv dName newBinding e
-    Just _ -> error "shouldn't be adding methods if we already have them"
+applyUpdate :: TopEnv n -> TopEnvUpdate n -> TopEnv n
+applyUpdate e = \case
+  ExtendCache cache -> e { envCache = envCache e <> cache}
+  AddCustomRule x y       -> e { envCustomRules   = envCustomRules   e <> CustomRules   (M.singleton x y)}
+  UpdateLoadedModules x y -> e { envLoadedModules = envLoadedModules e <> LoadedModules (M.singleton x y)}
+  UpdateLoadedObjects x y -> e { envLoadedObjects = envLoadedObjects e <> LoadedObjects (M.singleton x y)}
+  FinishDictSpecialization dName methods -> do
+    let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
+    case oldMethods of
+      Nothing -> do
+        let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
+        updateEnv dName newBinding e
+      Just _ -> error "shouldn't be adding methods if we already have them"
+  UpdateTopFunEvalStatus f s -> do
+    case lookupEnvPure e f of
+      TopFunBinding (DexTopFun def ty simp _) ->
+        updateEnv f (TopFunBinding $ DexTopFun def ty simp s) e
+      _ -> error "can't update ffi function impl"
+  UpdateInstanceDef name def -> do
+    case lookupEnvPure e name of
+      InstanceBinding _ ty -> updateEnv name (InstanceBinding def ty) e
+  UpdateTyConDef name def -> do
+    let TyConBinding _ methods = lookupEnvPure e name
+    updateEnv name (TyConBinding (Just def) methods) e
+  UpdateFieldDef name sn x -> do
+    let TyConBinding def methods = lookupEnvPure e name
+    updateEnv name (TyConBinding def (methods <> DotMethods (M.singleton sn x))) e
 
-addTyDefUpdate :: Env n -> (TyConName n, TyConDef n) -> Env n
-addTyDefUpdate e (name, def) = do
-  let TyConBinding _ methods = lookupEnvPure e name
-  updateEnv name (TyConBinding (Just def) methods) e
+updateEnv :: Color c => Name c n -> Binding c n -> TopEnv n -> TopEnv n
+updateEnv v rhs env =
+  env { envDefs = RecSubst $ updateSubstFrag v rhs bs }
+  where (RecSubst bs) = envDefs env
 
-addFieldDefUpdate :: Env n -> (TyConName n, SourceName, CAtomName n) -> Env n
-addFieldDefUpdate e (name, sn, x) = do
-  let TyConBinding def methods = lookupEnvPure e name
-  updateEnv name (TyConBinding def (methods <> DotMethods (M.singleton sn x))) e
-
-addFunUpdate :: Env n -> (TopFunName n, TopFunEvalStatus n) -> Env n
-addFunUpdate e (f, s) = do
-  case lookupEnvPure e f of
-    TopFunBinding (DexTopFun def ty simp _) ->
-      updateEnv f (TopFunBinding $ DexTopFun def ty simp s) e
-    _ -> error "can't update ffi function impl"
-
-addInstanceDefUpdate :: Env n -> (InstanceName n, InstanceDef n) -> Env n
-addInstanceDefUpdate e (name, def) =
-  case lookupEnvPure e name of
-    InstanceBinding _ ty -> updateEnv name (InstanceBinding def ty) e
-
-lookupEnvPure :: Color c => Env n -> Name c n -> Binding c n
-lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ topEnv env) v
+lookupEnvPure :: Color c => TopEnv n -> Name c n -> Binding c n
+lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ env) v
 
 instance GenericE Module where
   type RepE Module =       LiftE ModuleSourceName

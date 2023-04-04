@@ -72,7 +72,7 @@ inferTopUDecl (UStructDecl tc def) result = do
   tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
   def' <- liftInfererM $ solveLocal do
     extendRenamer (tc@>sink tc') $ inferStructDef def
-  emitPartialTopEnvFrag $ mempty {fragTyConDefUpdates = toSnocList [(tc', def')]}
+  updateTopEnv $ UpdateTyConDef tc' def'
   UStructDef _ paramBs _ methods <- return def
   forM_ methods \(letAnn, methodName, methodDef) -> do
     method <- liftInfererM $ solveLocal $
@@ -80,7 +80,7 @@ inferTopUDecl (UStructDecl tc def) result = do
         inferDotMethod (sink tc') (Abs paramBs methodDef)
     methodSynth <- synthTopE (Lam method)
     method' <- emitTopLet (getNameHint methodName) letAnn (Atom methodSynth)
-    emitPartialTopEnvFrag $ mempty {fragFieldDefUpdates = toSnocList [(tc', methodName, method')]}
+    updateTopEnv $ UpdateFieldDef tc' methodName method'
   UDeclResultDone <$> applyRename (tc @> tc') result
 
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
@@ -336,10 +336,10 @@ zonkUnsolvedEnv :: Distinct n => SolverSubst n -> UnsolvedEnv n -> Env n
 zonkUnsolvedEnv ss unsolved env =
   flip runState env $ execWriterT do
     forM_ (S.toList $ fromUnsolvedEnv unsolved) \v -> do
-      flip lookupEnvPure v <$> get >>= \case
+      flip lookupEnvPure v . topEnv <$> get >>= \case
         AtomNameBinding rhs -> do
           let rhs' = zonkAtomBindingWithOutMap (InfOutMap env ss mempty mempty Pure) rhs
-          modify $ updateEnv v $ AtomNameBinding rhs'
+          modify \e -> e {topEnv = updateEnv v (AtomNameBinding rhs') (topEnv e)}
           let rhsHasInfVars = runEnvReaderM env $ hasInferenceVars rhs'
           when rhsHasInfVars $ tell $ UnsolvedEnv $ S.singleton v
 
@@ -2801,7 +2801,7 @@ synthInstanceDefRec instanceName (InstanceDef className bs params (InstanceBody 
               let ab' = InstanceDefAbs bs' ps scs doneMethods' ms
               let def = InstanceDef cname bs' ps $ InstanceBody scs doneMethods'
               return (def, ab')
-      updateInstanceDef iname def
+      updateTopEnv $ UpdateInstanceDef iname def
       recur ab' cname iname
 
 synthInstanceDef

@@ -36,7 +36,7 @@ import Transpose
 import Types.Core
 import Types.Source
 import Types.Primitives
-import Util (enumerate, foldMapM, restructure, toSnocList)
+import Util (enumerate, foldMapM, restructure)
 
 -- === Simplification ===
 
@@ -611,10 +611,9 @@ requireIxDictCache dictAbs = do
     Nothing -> do
       ab <- liftTopBuilderHoisted do
         dName <- emitBinding "d" $ sink $ SpecializedDictBinding $ SpecializedDict dictAbs Nothing
-        extendCache $ mempty { ixDictCache = eMapSingleton (sink dictAbs) dName }
+        updateTopEnv $ ExtendCache $ mempty { ixDictCache = eMapSingleton (sink dictAbs) dName }
         methods <- forM [minBound..maxBound] \method -> simplifyDictMethod (sink dictAbs) method
-        emitPartialTopEnvFrag $
-          mempty {fragFinishSpecializedDict = toSnocList [(dName, methods)]}
+        updateTopEnv $ FinishDictSpecialization dName methods
         return dName
       maybeD <- emitHoistedEnv ab
       case maybeD of
