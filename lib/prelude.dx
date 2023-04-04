@@ -1223,6 +1223,8 @@ def fanout(x:a) -> n=>a given (n|Ix, a) = for i. x
 def sq(x:a) -> a given (a|Mul) = x * x
 def abs(x:a) -> a given (a|Sub|Ord) = select(x > zero, x, zero - x)
 def mod(x:a, y:a) -> a given (a|Add|Integral) = rem(y + rem(x, y), y)
+def (>>>)(f:(a) -> b, g:(b) -> c) -> (a) -> c given (a, b, c) = \x. g(f(x))
+def (<<<)(f:(b) -> c, g:(a) -> b) -> (a) -> c given (a, b, c) = \x. f(g(x))
 
 '## Table Operations
 
