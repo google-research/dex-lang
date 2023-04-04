@@ -27,6 +27,7 @@ import Data.Word
 import Data.Maybe (fromJust)
 import Data.Functor
 import Data.Hashable
+import qualified Data.Kind as K
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -258,11 +259,11 @@ instance IsPrimOp PrimOp where
   toPrimOp x = x
 
 class GenericOp (e::IR->E) where
-  type OpConst e (r::IR) :: *
+  type OpConst e (r::IR) :: K.Type
   fromOp :: e r n -> GenericOpRep (OpConst e r) r n
   toOp   :: GenericOpRep (OpConst e r) r n -> Maybe (e r n)
 
-data GenericOpRep (const :: *) (r::IR) (n::S) =
+data GenericOpRep (const::K.Type) (r::IR) (n::S) =
   GenericOpRep const [Type r n] [Atom r n] [LamExpr r n]
   deriving (Show, Generic)
 

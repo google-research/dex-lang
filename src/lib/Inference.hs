@@ -20,7 +20,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Either (partitionEithers)
-import Data.Foldable (toList, asum)
+import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust, fromMaybe, catMaybes)

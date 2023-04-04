@@ -99,7 +99,6 @@ syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
       SymbolStr   -> "symbol"
       TypeNameStr -> "type-name"
       IsoSugarStr -> "iso-sugar"
-      NormalStr -> error "Should have been matched already"
 
 data StrClass = NormalStr
               | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr

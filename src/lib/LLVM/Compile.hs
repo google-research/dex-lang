@@ -28,8 +28,6 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import System.IO.Unsafe
 
-import Control.Monad
-
 import Logging
 import PPrint ()
 import Paths_dex  (getDataFileName)

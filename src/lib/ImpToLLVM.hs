@@ -481,6 +481,7 @@ compileInstr instr = case instr of
                  Scalar Word64Type -> False
                  Scalar Float64Type -> True
                  Scalar Float32Type -> True
+                 Scalar _ -> error "Unknown scalar type"
                  Vector _ ty' -> signed (Scalar ty')
                  PtrType _ -> False
                int_to_float = if signed (getIType ix) then L.SIToFP else L.UIToFP
