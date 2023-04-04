@@ -449,8 +449,8 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
       ratio <span class="symbol">=</span> error_ratio next_z_error rtol atol z next_z
       new_interp_coeff <span class="symbol">=</span> interp_fit_dopri z next_z k state<span class="symbol">.</span>dt
       new_dt <span class="symbol">=</span> optimal_step_size state<span class="symbol">.</span>dt ratio
-      move_state <span class="symbol">=</span> <span class="type-name">ODEState</span><span class="symbol">.</span>new(next_z<span class="symbol">,</span> next_f <span class="symbol">,</span>  next_t<span class="symbol">,</span> new_dt<span class="symbol">,</span> state<span class="symbol">.</span>t<span class="symbol">,</span>       new_interp_coeff)
-      stay_state <span class="symbol">=</span> <span class="type-name">ODEState</span><span class="symbol">.</span>new(     z<span class="symbol">,</span> state<span class="symbol">.</span>f<span class="symbol">,</span> state<span class="symbol">.</span>t<span class="symbol">,</span> new_dt<span class="symbol">,</span> state<span class="symbol">.</span>last_t <span class="symbol">,</span> state<span class="symbol">.</span>interp_coeffs)
+      move_state <span class="symbol">=</span> <span class="type-name">ODEState</span>(next_z<span class="symbol">,</span> next_f <span class="symbol">,</span>  next_t<span class="symbol">,</span> new_dt<span class="symbol">,</span> state<span class="symbol">.</span>t<span class="symbol">,</span>       new_interp_coeff)
+      stay_state <span class="symbol">=</span> <span class="type-name">ODEState</span>(     z<span class="symbol">,</span> state<span class="symbol">.</span>f<span class="symbol">,</span> state<span class="symbol">.</span>t<span class="symbol">,</span> new_dt<span class="symbol">,</span> state<span class="symbol">.</span>last_t <span class="symbol">,</span> state<span class="symbol">.</span>interp_coeffs)
       select (ratio <span class="symbol">&lt;=</span> 1<span class="symbol">.</span>0) move_state stay_state
 
     <span class="comment">-- Take steps until we pass target_t
@@ -471,7 +471,7 @@ matrix type for the Butcher tableau, and so avoids zero-padding everywhere.</p>
   f0 <span class="symbol">=</span> func z0 t0
   init_step <span class="symbol">=</span> initial_step_size func t0 z0 4 rtol atol f0
   init_interp_coeff <span class="symbol">=</span> zero  <span class="comment">-- dummy vals
-</span>  init_carry <span class="symbol">=</span> <span class="type-name">ODEState</span><span class="symbol">.</span>new(z0<span class="symbol">,</span> f0<span class="symbol">,</span> t0<span class="symbol">,</span> init_step<span class="symbol">,</span> t0<span class="symbol">,</span> init_interp_coeff)
+</span>  init_carry <span class="symbol">=</span> <span class="type-name">ODEState</span>(z0<span class="symbol">,</span> f0<span class="symbol">,</span> t0<span class="symbol">,</span> init_step<span class="symbol">,</span> t0<span class="symbol">,</span> init_interp_coeff)
   snd <span class="symbol">$</span> scan init_carry integrate_to_next_time
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Example: Linear dynamics</h2>

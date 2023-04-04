@@ -417,7 +417,7 @@ purpose is to be able to render images in Dex notebooks.</p>
   with_table_ptr imgFlat <span class="symbol">\</span>ptr<span class="symbol">.</span>
     rawPtr <span class="symbol">=</span> ptr<span class="symbol">.</span>val
     (sz<span class="symbol">,</span> ptr&#39;) <span class="symbol">=</span> encodePNG rawPtr (nat_to_rep <span class="symbol">$</span> size m) (nat_to_rep <span class="symbol">$</span> size n)
-    <span class="type-name">AsList</span>((rep_to_nat sz)<span class="symbol">,</span> table_from_ptr(<span class="type-name">Ptr</span><span class="symbol">.</span>new(ptr&#39;)))
+    <span class="type-name">AsList</span>((rep_to_nat sz)<span class="symbol">,</span> table_from_ptr(<span class="type-name">Ptr</span>(ptr&#39;)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pngs_to_gif(delay<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span> pngs<span class="command">:t</span><span class="symbol">=&gt;</span><span class="type-name">Png</span>) <span class="symbol">-&gt;</span> <span class="type-name">Gif</span> <span class="keyword">given</span> (t<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
   with_temp_files <span class="symbol">\</span>pngFiles<span class="symbol">.</span>

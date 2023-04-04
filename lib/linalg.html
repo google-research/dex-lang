@@ -534,25 +534,22 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </span></div></div><div class="cell"><div class="code-block"><span class="type-name">PermutationSign</span> <span class="symbol">=</span> <span class="type-name">Float</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: use a struct once we can handle reference projections of struct fields
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Permutation</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> (n<span class="symbol">=&gt;</span>n<span class="symbol">,</span> <span class="type-name">PermutationSign</span>)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Permutation</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  p    <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n
+  sign <span class="symbol">:</span> <span class="type-name">PermutationSign</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> apply_permutation(perm<span class="symbol">:</span><span class="type-name">Permutation</span> n<span class="symbol">,</span> xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>t) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>t <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> t) <span class="symbol">=</span>
-  <span class="keyword">for</span> i<span class="symbol">.</span> xs[(fst perm)[i]]
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs[perm<span class="symbol">.</span>p[i]]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> identity_permutation() <span class="symbol">-&gt;&gt;</span> <span class="type-name">Permutation</span> n <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
-  (<span class="keyword">for</span> i<span class="symbol">.</span> i<span class="symbol">,</span> 1<span class="symbol">.</span>0)
+  <span class="type-name">Permutation</span>(<span class="keyword">for</span> i<span class="symbol">.</span> i<span class="symbol">,</span> 1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_in_place(pRef<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)<span class="symbol">,</span> i<span class="command">:n</span><span class="symbol">,</span> j<span class="command">:n</span>) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h) <span class="symbol">=</span>
-  (permRef<span class="symbol">,</span> signRef) <span class="symbol">=</span> (fst_ref pRef<span class="symbol">,</span> snd_ref pRef)
-  tempj <span class="symbol">=</span> get permRef<span class="symbol">!</span>j
-  permRef<span class="symbol">!</span>j <span class="symbol">:=</span> get permRef<span class="symbol">!</span>i
-  permRef<span class="symbol">!</span>i <span class="symbol">:=</span> tempj
-  signRef <span class="symbol">:=</span> <span class="symbol">-</span>(get signRef)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap_in_place(perm<span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">Permutation</span> n)<span class="symbol">,</span> i<span class="command">:n</span><span class="symbol">,</span> j<span class="command">:n</span>) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h) <span class="symbol">=</span>
+  tempj <span class="symbol">=</span> get perm<span class="symbol">.</span>p<span class="symbol">!</span>j
+  perm<span class="symbol">.</span>p<span class="symbol">!</span>j <span class="symbol">:=</span> get perm<span class="symbol">.</span>p<span class="symbol">!</span>i
+  perm<span class="symbol">.</span>p<span class="symbol">!</span>i <span class="symbol">:=</span> tempj
+  perm<span class="symbol">.</span>sign <span class="symbol">:=</span> <span class="symbol">-</span>(get perm<span class="symbol">.</span>sign)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_to_table(p<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>n <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)  <span class="symbol">=</span> fst p
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> perm_sign(p<span class="symbol">:</span><span class="type-name">Permutation</span> n) <span class="symbol">-&gt;</span> <span class="type-name">PermutationSign</span>  <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> snd p
-</div></div><div class="cell"><div class="code-block">
-
 </div></div><div class="cell"><div class="prose-block"><h2>LU decomposition functions</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pivotize(a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Permutation</span> n <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="comment">-- Gives a row permutation that makes Gaussian elimination more stable.
@@ -635,12 +632,12 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> determinant(a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
-  prod (<span class="keyword">for</span> i<span class="symbol">.</span> (upper_tri_diag u)[i] <span class="symbol">*</span> (lower_tri_diag l)[i]) <span class="symbol">*</span> perm_sign perm
+  prod (<span class="keyword">for</span> i<span class="symbol">.</span> (upper_tri_diag u)[i] <span class="symbol">*</span> (lower_tri_diag l)[i]) <span class="symbol">*</span> perm<span class="symbol">.</span>sign
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sign_and_log_determinant(a<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> (<span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Float</span>) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   (l<span class="symbol">,</span> u<span class="symbol">,</span> perm) <span class="symbol">=</span> lu a
   diags <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (upper_tri_diag u)[i] <span class="symbol">*</span> (lower_tri_diag l)[i]
-  sign <span class="symbol">=</span> (perm_sign perm) <span class="symbol">*</span> prod <span class="keyword">for</span> i<span class="symbol">.</span> sign diags[i]
+  sign <span class="symbol">=</span> perm<span class="symbol">.</span>sign <span class="symbol">*</span> prod <span class="keyword">for</span> i<span class="symbol">.</span> sign diags[i]
   sum_<span class="keyword">of</span>_log_abs <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> log (abs diags[i])
   (sign<span class="symbol">,</span> sum_<span class="keyword">of</span>_log_abs)
 </div></div><div class="cell"><div class="code-block">

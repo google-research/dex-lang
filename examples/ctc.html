@@ -365,7 +365,7 @@ that doesn't contain the first element.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span>(<span class="type-name">AllButFirst</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">|</span><span class="type-name">NonEmpty</span>)
   <span class="keyword">def</span> size&#39;() <span class="symbol">=</span> unsafe_nat_diff (size n) 1
   <span class="keyword">def</span> ordinal(i) <span class="symbol">=</span> ordinal i<span class="symbol">.</span>val
-  <span class="keyword">def</span> unsafe_from_ordinal(o) <span class="symbol">=</span> <span class="type-name">AllButFirst</span><span class="symbol">.</span>new <span class="symbol">$</span> unsafe_from_ordinal o
+  <span class="keyword">def</span> unsafe_from_ordinal(o) <span class="symbol">=</span> <span class="type-name">AllButFirst</span> <span class="symbol">$</span> unsafe_from_ordinal o
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Subset</span>(<span class="type-name">AllButFirst</span> a<span class="symbol">,</span> a) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">NonEmpty</span>)
   <span class="keyword">def</span> inject&#39;(x) <span class="symbol">=</span> unsafe_from_ordinal ((ordinal x) <span class="symbol">+</span> 1)

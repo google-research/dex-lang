@@ -348,7 +348,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> determinant&#39;(a) <span class="symbol">=</span> a<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">Float</span>
   <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> x
-  identity&#39; <span class="symbol">=</span> <span class="type-name">ScalarMap</span><span class="symbol">.</span>new(1<span class="symbol">.</span>0)
+  identity&#39; <span class="symbol">=</span> <span class="type-name">ScalarMap</span>(1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">ScalarMap</span><span class="symbol">,</span> v) <span class="keyword">given</span> (v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> apply(a<span class="symbol">,</span> b)  <span class="symbol">=</span> a<span class="symbol">.</span>val <span class="symbol">.*</span> b
@@ -356,7 +356,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> solve&#39;(a<span class="symbol">,</span> b) <span class="symbol">=</span> b <span class="symbol">/</span> a<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">ScalarMap</span>)
-  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">ScalarMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">ScalarMap</span> <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Diagonal maps</h3>
@@ -366,7 +366,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span>
   <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> x
-  identity&#39; <span class="symbol">=</span> <span class="type-name">DiagMap</span><span class="symbol">.</span>new one
+  identity&#39; <span class="symbol">=</span> <span class="type-name">DiagMap</span> one
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">DiagMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>val[i] <span class="symbol">.*</span> y[i]
@@ -374,7 +374,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> solve&#39;(a<span class="symbol">,</span> b) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> b[i] <span class="symbol">/</span> a<span class="symbol">.</span>val[i]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">DiagMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">DiagMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">DiagMap</span> <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Full-rank matrices.</h3>
@@ -398,7 +398,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod <span class="symbol">$</span> lower_tri_diag x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span>
   <span class="keyword">def</span> transpose&#39;(_) <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
-  identity&#39; <span class="symbol">=</span> <span class="type-name">LowerTriMap</span><span class="symbol">.</span>new <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
+  identity&#39; <span class="symbol">=</span> <span class="type-name">LowerTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (ordinal i <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">LowerTriMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> j] <span class="symbol">.*</span> y[inject j]
@@ -406,7 +406,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> solve&#39;(x<span class="symbol">,</span> y) <span class="symbol">=</span> forward_substitute x<span class="symbol">.</span>val y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">LowerTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">LowerTriMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">LowerTriMap</span> <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Upper-triangular maps</h3>
@@ -416,7 +416,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> determinant&#39;(x) <span class="symbol">=</span> prod <span class="symbol">$</span> upper_tri_diag x<span class="symbol">.</span>val
   transposeType <span class="symbol">=</span> <span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span>
   <span class="keyword">def</span> transpose&#39;(_) <span class="symbol">=</span> error &quot;<span class="type-name">Can</span>&#39;t transpose to different types yet<span class="symbol">.</span>&quot;
-  identity&#39; <span class="symbol">=</span> <span class="type-name">UpperTriMap</span><span class="symbol">.</span>new <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
+  identity&#39; <span class="symbol">=</span> <span class="type-name">UpperTriMap</span> <span class="keyword">for</span> i j<span class="symbol">.</span> select (0 <span class="symbol">==</span> ordinal j) one zero
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">UpperTriMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> apply(x<span class="symbol">,</span> y)  <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> x<span class="symbol">.</span>val[i<span class="symbol">,</span> j] <span class="symbol">.*</span> y[inject j]
@@ -424,7 +424,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   <span class="keyword">def</span> solve&#39;(x<span class="symbol">,</span> y) <span class="symbol">=</span> backward_substitute x<span class="symbol">.</span>val y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">UpperTriMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">UpperTriMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">UpperTriMap</span> <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="prose-block"><h3>Skew-symmetric maps</h3>
@@ -437,7 +437,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
       dense_rep <span class="symbol">=</span> skew_symmetric_prod a<span class="symbol">.</span>val eye
       determinant dense_rep  <span class="comment">-- Naive algorithm, could be done with Pfaffian
 </span>  transposeType <span class="symbol">=</span> (i<span class="command">:n</span>)<span class="symbol">=&gt;</span>(<span class="symbol">..&lt;</span>i)<span class="symbol">=&gt;</span><span class="type-name">Float</span>  <span class="comment">-- 
-</span>  <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span><span class="symbol">.</span>new (<span class="symbol">-</span>x<span class="symbol">.</span>val)
+</span>  <span class="keyword">def</span> transpose&#39;(x) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span> (<span class="symbol">-</span>x<span class="symbol">.</span>val)
   identity&#39; <span class="symbol">=</span> error &quot;<span class="type-name">Skew</span> symmetric matrices can&#39;t represent the identity map<span class="symbol">.</span>&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">LinearEndo</span>(<span class="type-name">SkewSymmetricMap</span> n<span class="symbol">,</span> n<span class="symbol">=&gt;</span>v) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">Mul</span><span class="symbol">|</span><span class="type-name">VSpace</span>)
@@ -448,7 +448,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
 </span>    solve dense_rep y
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">SkewSymmetricMap</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span><span class="symbol">.</span>new <span class="symbol">$</span> arb k
+  <span class="keyword">def</span> arb(k) <span class="symbol">=</span> <span class="type-name">SkewSymmetricMap</span> <span class="symbol">$</span> arb k
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Todo: Sparse matrices. Need hashmaps for these to be practical.
@@ -472,7 +472,7 @@ of this typeclass yet, because <code>v</code> is always ambiguous at its usage s
   noise <span class="symbol">=</span> randNormal key
   mean <span class="symbol">+</span> apply covroot noise
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> multivariate_gaussian_sample 1<span class="symbol">.</span>0 (<span class="type-name">ScalarMap</span><span class="symbol">.</span>new 2<span class="symbol">.</span>0) (new_key 0)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> multivariate_gaussian_sample 1<span class="symbol">.</span>0 (<span class="type-name">ScalarMap</span> 2<span class="symbol">.</span>0) (new_key 0)
 </div><div class="result-block">Float32</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Generic log pdf of a multivariate Gaussian</h3>
 <p>This single definition of a Gaussian log pdf should work
@@ -550,7 +550,7 @@ an efficient solve and determinant is known.</p>
 </div></div><div class="cell"><div class="code-block">span <span class="symbol">=</span> 10<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">xs <span class="symbol">=</span> linspace sizen (<span class="symbol">-</span>span) span
 </div></div><div class="cell"><div class="code-block">integral <span class="symbol">=</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> span <span class="symbol">*</span> mean <span class="keyword">for</span> i<span class="symbol">.</span>
-  exp <span class="symbol">$</span> gaussian_log_pdf (<span class="symbol">-</span>0<span class="symbol">.</span>1) (<span class="type-name">ScalarMap</span><span class="symbol">.</span>new 0<span class="symbol">.</span>07) xs[i]
+  exp <span class="symbol">$</span> gaussian_log_pdf (<span class="symbol">-</span>0<span class="symbol">.</span>1) (<span class="type-name">ScalarMap</span> 0<span class="symbol">.</span>07) xs[i]
 </div></div><div class="cell"><div class="code-block">integral <span class="symbol">~~</span> 1<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> check_2<span class="type-name">D</span>_<span class="type-name">Gaussian</span>_normalizes(m<span class="symbol">|</span><span class="type-name">Arbitrary</span><span class="symbol">,</span> <span class="keyword">given</span> () (<span class="type-name">LinearEndo</span> m ((<span class="type-name">Fin</span> 2) <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>)))

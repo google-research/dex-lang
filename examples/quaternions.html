@@ -321,15 +321,15 @@ $$ \textrm{i}^{2}=\textrm{j}^{2}=\textrm{k}^{2}=\textrm{i}\textrm{j}\textrm{k}=-
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The four components are usually ordered (w,x,y,z) but I like to put (w) at the end.
 Initializing a quaternion:</p>
-</div></div><div class="cell"><div class="code-block">quaternion <span class="symbol">=</span> <span class="type-name">Quaternion</span><span class="symbol">.</span>new(1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3<span class="symbol">.</span>0<span class="symbol">,</span> 4<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">quaternion <span class="symbol">=</span> <span class="type-name">Quaternion</span>(1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3<span class="symbol">.</span>0<span class="symbol">,</span> 4<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">quaternion
-</div><div class="result-block">(Quaternion.new 1. 2. 3. 4.)</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">Quaternion(1., 2., 3., 4.)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Quaternion magnitude</h2>
 <p>A quaternion is basically a 4 dimensional vector.</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> as_vec(q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span> [q<span class="symbol">.</span>x<span class="symbol">,</span> q<span class="symbol">.</span>y<span class="symbol">,</span> q<span class="symbol">.</span>z<span class="symbol">,</span> q<span class="symbol">.</span>w]
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> from_vec(vec<span class="symbol">:</span><span class="type-name">Fin</span> 4 <span class="symbol">=&gt;</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span>
   [x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w] <span class="symbol">=</span> vec
-  <span class="type-name">Quaternion</span><span class="symbol">.</span>new(x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w)
+  <span class="type-name">Quaternion</span>(x<span class="symbol">,</span>y<span class="symbol">,</span>z<span class="symbol">,</span>w)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>It has a vector magnitude (or norm, or length):
 $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$</p>
@@ -355,7 +355,7 @@ $$||q|| = \sqrt{x^{2}+y^{2}+z^{2}+w^{2}}$$</p>
 
 </div></div><div class="cell"><div class="prose-block"><h2>Identity quaternion</h2>
 </div></div><div class="cell"><div class="prose-block"><p>There is a special quaternion called the <em>identity quaternion</em> which corresponds to no rotation:</p>
-</div></div><div class="cell"><div class="code-block">ident <span class="symbol">=</span> <span class="type-name">Quaternion</span><span class="symbol">.</span>new(0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">ident <span class="symbol">=</span> <span class="type-name">Quaternion</span>(0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0<span class="symbol">,</span> 1<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Geometrically, we can also consider ((0, 0, 0, -1)) to be an identity quaternion since it corresponds to no rotation.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Quaternion multiplication</h2>
@@ -373,7 +373,7 @@ $$</p>
   <span class="keyword">def</span> (<span class="symbol">*</span>)(q<span class="symbol">,</span> q&#39;) <span class="symbol">=</span>
     (x <span class="symbol">,</span> y <span class="symbol">,</span> z <span class="symbol">,</span> w ) <span class="symbol">=</span> (q<span class="symbol">.</span>x <span class="symbol">,</span> q<span class="symbol">.</span>y <span class="symbol">,</span> q<span class="symbol">.</span>z <span class="symbol">,</span> q<span class="symbol">.</span>w )
     (x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;<span class="symbol">,</span> w&#39;) <span class="symbol">=</span> (q&#39;<span class="symbol">.</span>x<span class="symbol">,</span> q&#39;<span class="symbol">.</span>y<span class="symbol">,</span> q&#39;<span class="symbol">.</span>z<span class="symbol">,</span> q&#39;<span class="symbol">.</span>w)
-    <span class="type-name">Quaternion</span><span class="symbol">.</span>new( w<span class="symbol">*</span>x&#39; <span class="symbol">+</span> x<span class="symbol">*</span>w&#39; <span class="symbol">+</span> y<span class="symbol">*</span>z&#39; <span class="symbol">-</span> z<span class="symbol">*</span>y&#39;<span class="symbol">,</span>
+    <span class="type-name">Quaternion</span>( w<span class="symbol">*</span>x&#39; <span class="symbol">+</span> x<span class="symbol">*</span>w&#39; <span class="symbol">+</span> y<span class="symbol">*</span>z&#39; <span class="symbol">-</span> z<span class="symbol">*</span>y&#39;<span class="symbol">,</span>
                     w<span class="symbol">*</span>y&#39; <span class="symbol">-</span> x<span class="symbol">*</span>z&#39; <span class="symbol">+</span> y<span class="symbol">*</span>w&#39; <span class="symbol">+</span> z<span class="symbol">*</span>x&#39;<span class="symbol">,</span>
                     w<span class="symbol">*</span>z&#39; <span class="symbol">+</span> x<span class="symbol">*</span>y&#39; <span class="symbol">-</span> y<span class="symbol">*</span>x&#39; <span class="symbol">+</span> z<span class="symbol">*</span>w&#39;<span class="symbol">,</span>
                     w<span class="symbol">*</span>w&#39; <span class="symbol">-</span> x<span class="symbol">*</span>x&#39; <span class="symbol">-</span> y<span class="symbol">*</span>y&#39; <span class="symbol">-</span> z<span class="symbol">*</span>z&#39; )
@@ -410,7 +410,7 @@ $$</p>
     (<span class="type-name">E</span> v) <span class="symbol">=</span> e
     [sx<span class="symbol">,</span> sy<span class="symbol">,</span> sz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> sin v[i]
     [cx<span class="symbol">,</span> cy<span class="symbol">,</span> cz] <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> cos v[i]
-    <span class="type-name">Quaternion</span><span class="symbol">.</span>new(
+    <span class="type-name">Quaternion</span>(
       sx<span class="symbol">*</span>cy<span class="symbol">*</span>cz <span class="symbol">-</span> cx<span class="symbol">*</span>sy<span class="symbol">*</span>sz<span class="symbol">,</span>
       cx<span class="symbol">*</span>sy<span class="symbol">*</span>cz <span class="symbol">+</span> sx<span class="symbol">*</span>cy<span class="symbol">*</span>sz<span class="symbol">,</span>
       cx<span class="symbol">*</span>cy<span class="symbol">*</span>sz <span class="symbol">-</span> sx<span class="symbol">*</span>sy<span class="symbol">*</span>cz<span class="symbol">,</span>
@@ -741,7 +741,7 @@ srcdoc='<html>
 <p>The <em>conjugate</em> of a quaternion (q) is:</p>
 </div></div><div class="cell"><div class="prose-block"><p>$$q^{*} = a-b\textrm{i}-c\textrm{j}-d\textrm{k}$$</p>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conj(q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">-&gt;</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> <span class="type-name">Quaternion</span><span class="symbol">.</span>new(<span class="symbol">-</span>q<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>q<span class="symbol">.</span>y<span class="symbol">,</span> <span class="symbol">-</span>q<span class="symbol">.</span>z<span class="symbol">,</span> q<span class="symbol">.</span>w)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> conj(q<span class="symbol">:</span><span class="type-name">Quaternion</span>) <span class="symbol">-&gt;</span> <span class="type-name">Quaternion</span> <span class="symbol">=</span> <span class="type-name">Quaternion</span>(<span class="symbol">-</span>q<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>q<span class="symbol">.</span>y<span class="symbol">,</span> <span class="symbol">-</span>q<span class="symbol">.</span>z<span class="symbol">,</span> q<span class="symbol">.</span>w)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Quaternion Inverse</h2>
 </div></div><div class="cell"><div class="prose-block"><p>The <em>inverse</em> of a quaternion (q), is the conjugate divided by the magnitude squared:
@@ -756,7 +756,7 @@ Multiplying a quaternion by its inverse results in the identity quaternion:</p>
 </div></div><div class="cell"><div class="prose-block"><p>$$q.q^{-1} = (0, 0, 0, 1)$$</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Let's try it out</p>
-</div></div><div class="cell"><div class="code-block">q&#39; <span class="symbol">=</span> from_vec <span class="symbol">$</span> normalize <span class="symbol">$</span> as_vec <span class="symbol">$</span> <span class="type-name">Quaternion</span><span class="symbol">.</span>new(1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 10<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block">q&#39; <span class="symbol">=</span> from_vec <span class="symbol">$</span> normalize <span class="symbol">$</span> as_vec <span class="symbol">$</span> <span class="type-name">Quaternion</span>(1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>5<span class="symbol">,</span> 10<span class="symbol">.</span>0)
 </div></div><div class="cell"><div class="code-block">
 
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> show3D <span class="symbol">$</span> one
@@ -1091,7 +1091,7 @@ srcdoc='<html>
   [x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;] <span class="symbol">=</span> normalize v
   sin_v <span class="symbol">=</span> sin m
   exp_w <span class="symbol">=</span> exp w
-  <span class="type-name">Quaternion</span><span class="symbol">.</span>new(
+  <span class="type-name">Quaternion</span>(
     x&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
     y&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
     z&#39; <span class="symbol">*</span> sin_v <span class="symbol">*</span> exp_w<span class="symbol">,</span>
@@ -1124,7 +1124,7 @@ so this is an approximation (https://developer.download.nvidia.com/cg/acos.html)
   m <span class="symbol">=</span> magnitude <span class="symbol">$</span> as_vec q
   [x&#39;<span class="symbol">,</span> y&#39;<span class="symbol">,</span> z&#39;] <span class="symbol">=</span> normalize v
   a <span class="symbol">=</span> acos (w <span class="symbol">/</span> m)
-  <span class="type-name">Quaternion</span><span class="symbol">.</span>new(
+  <span class="type-name">Quaternion</span>(
     x&#39; <span class="symbol">*</span> a<span class="symbol">,</span>
     y&#39; <span class="symbol">*</span> a<span class="symbol">,</span>
     z&#39; <span class="symbol">*</span> a<span class="symbol">,</span>

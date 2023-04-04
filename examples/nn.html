@@ -325,26 +325,26 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these instances are all exactly the same as those for pairs. We should derive them!
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Add</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> (<span class="symbol">+</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new( p1<span class="symbol">.</span>weights <span class="symbol">+</span> p2<span class="symbol">.</span>weights
+  <span class="keyword">def</span> (<span class="symbol">+</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span>( p1<span class="symbol">.</span>weights <span class="symbol">+</span> p2<span class="symbol">.</span>weights
                                    <span class="symbol">,</span> p1<span class="symbol">.</span>biases  <span class="symbol">+</span> p2<span class="symbol">.</span>biases)
-  zero <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new(zero<span class="symbol">,</span> zero)
+  zero <span class="symbol">=</span> <span class="type-name">DenseParams</span>(zero<span class="symbol">,</span> zero)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Sub</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> (<span class="symbol">-</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new( p1<span class="symbol">.</span>weights <span class="symbol">-</span> p2<span class="symbol">.</span>weights
+  <span class="keyword">def</span> (<span class="symbol">-</span>)(p1<span class="symbol">,</span> p2) <span class="symbol">=</span> <span class="type-name">DenseParams</span>( p1<span class="symbol">.</span>weights <span class="symbol">-</span> p2<span class="symbol">.</span>weights
                                    <span class="symbol">,</span> p1<span class="symbol">.</span>biases  <span class="symbol">-</span> p2<span class="symbol">.</span>biases)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Arbitrary</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
   <span class="keyword">def</span> arb(k) <span class="symbol">=</span>
     [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
-    <span class="type-name">DenseParams</span><span class="symbol">.</span>new(arb k1<span class="symbol">,</span> arb k2)
+    <span class="type-name">DenseParams</span>(arb k1<span class="symbol">,</span> arb k2)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span>(<span class="type-name">DenseParams</span>(a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>)
-  <span class="keyword">def</span> (<span class="symbol">.*</span>)(s<span class="symbol">,</span> p) <span class="symbol">=</span> <span class="type-name">DenseParams</span><span class="symbol">.</span>new(s <span class="symbol">.*</span> p<span class="symbol">.</span>weights<span class="symbol">,</span> s <span class="symbol">.*</span> p<span class="symbol">.</span>biases)
+  <span class="keyword">def</span> (<span class="symbol">.*</span>)(s<span class="symbol">,</span> p) <span class="symbol">=</span> <span class="type-name">DenseParams</span>(s <span class="symbol">.*</span> p<span class="symbol">.</span>weights<span class="symbol">,</span> s <span class="symbol">.*</span> p<span class="symbol">.</span>biases)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dense(a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">-&gt;</span> <span class="type-name">Layer</span>(a<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> b<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">DenseParams</span> a b) <span class="symbol">=</span>
   <span class="keyword">def</span> forward(p<span class="symbol">:</span><span class="type-name">DenseParams</span> a b<span class="symbol">,</span> x<span class="command">:a</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">=</span> p<span class="symbol">.</span>biases <span class="symbol">+</span> x <span class="symbol">.**</span> p<span class="symbol">.</span>weights
   <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span> arb k
-  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
+  <span class="type-name">Layer</span>(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>CNN layer</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">CNNParams</span>(inc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> outc<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> kw<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span> kh<span class="symbol">:</span><span class="type-name">Nat</span>) <span class="symbol">=</span>
@@ -375,8 +375,8 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     <span class="keyword">for</span> o i j <span class="symbol">.</span> (conv2d x p<span class="symbol">.</span>weights)[o<span class="symbol">,</span>i<span class="symbol">,</span>j] <span class="symbol">+</span> p<span class="symbol">.</span>biases[o]
   <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span>
     [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
-    <span class="type-name">CNNParams</span><span class="symbol">.</span>new(arb k<span class="symbol">,</span> arb k)
-  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
+    <span class="type-name">CNNParams</span>(arb k<span class="symbol">,</span> arb k)
+  <span class="type-name">Layer</span>(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Pooling</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> split(x<span class="symbol">:</span> m<span class="symbol">=&gt;</span>v) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>o<span class="symbol">=&gt;</span>v <span class="keyword">given</span> (m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> o<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v) <span class="symbol">=</span>
@@ -417,7 +417,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="keyword">def</span> init(k) <span class="symbol">-&gt;</span> <span class="type-name">Params</span> <span class="symbol">=</span>
     [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
     (ndense1<span class="symbol">.</span>init k1<span class="symbol">,</span> ndense2<span class="symbol">.</span>init k2)
-  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
+  <span class="type-name">Layer</span>(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- :t simple
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; ((h1:Type)
@@ -492,7 +492,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="keyword">def</span> init(k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">=</span>
     [k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3<span class="symbol">,</span> k4] <span class="symbol">=</span> split_key k
     (ncnn1<span class="symbol">.</span>init k1<span class="symbol">,</span> ncnn2<span class="symbol">.</span>init k2<span class="symbol">,</span> ndense1<span class="symbol">.</span>init k3<span class="symbol">,</span> ndense2<span class="symbol">.</span>init k4)
-  <span class="type-name">Layer</span><span class="symbol">.</span>new(forward<span class="symbol">,</span> init)
+  <span class="type-name">Layer</span>(forward<span class="symbol">,</span> init)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- :t lenet
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; ((h1:Type)

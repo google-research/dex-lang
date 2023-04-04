@@ -325,7 +325,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> showHex(x<span class="symbol">:</span><span class="type-name">Word8</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
   (n<span class="symbol">,</span> ptr) <span class="symbol">=</span> showHexFFI x
-  string_from_char_ptr n (<span class="type-name">Ptr</span><span class="symbol">.</span>new ptr)
+  string_from_char_ptr n (<span class="type-name">Ptr</span> ptr)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">black <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8   0<span class="symbol">,</span> i_to_w8   0<span class="symbol">,</span> i_to_w8   0]
 </div></div><div class="cell"><div class="code-block">white <span class="symbol">:</span> <span class="type-name">HtmlColor</span> <span class="symbol">=</span> [i_to_w8 255<span class="symbol">,</span> i_to_w8 255<span class="symbol">,</span> i_to_w8 255]
@@ -338,18 +338,18 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
  strokeColor <span class="symbol">:</span> <span class="type-name">Maybe</span> <span class="type-name">HtmlColor</span>
  strokeWidth <span class="symbol">:</span> <span class="type-name">Int</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new <span class="type-name">Nothing</span> (<span class="type-name">Just</span> black) 1
+</div></div><div class="cell"><div class="code-block">default_geom_style <span class="symbol">=</span> <span class="type-name">GeomStyle</span> <span class="type-name">Nothing</span> (<span class="type-name">Just</span> black) 1
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: consider sharing attributes among a set of objects for efficiency
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   val <span class="symbol">:</span> (<span class="type-name">List</span> (<span class="type-name">GeomStyle</span><span class="symbol">,</span> <span class="type-name">Point</span><span class="symbol">,</span> <span class="type-name">Geom</span>))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Monoid</span>(<span class="type-name">Diagram</span>)
-  mempty <span class="symbol">=</span> <span class="type-name">Diagram</span><span class="symbol">.</span>new mempty
-  <span class="keyword">def</span> (<span class="symbol">&lt;&gt;</span>)(d1<span class="symbol">,</span> d2) <span class="symbol">=</span> <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> d1<span class="symbol">.</span>val <span class="symbol">&lt;&gt;</span> d2<span class="symbol">.</span>val
+  mempty <span class="symbol">=</span> <span class="type-name">Diagram</span> mempty
+  <span class="keyword">def</span> (<span class="symbol">&lt;&gt;</span>)(d1<span class="symbol">,</span> d2) <span class="symbol">=</span> <span class="type-name">Diagram</span> <span class="symbol">$</span> d1<span class="symbol">.</span>val <span class="symbol">&lt;&gt;</span> d2<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> concat_diagrams(diagrams<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
-  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> concat <span class="keyword">for</span> i<span class="symbol">.</span> diagrams[i]<span class="symbol">.</span>val
+  <span class="type-name">Diagram</span> <span class="symbol">$</span> concat <span class="keyword">for</span> i<span class="symbol">.</span> diagrams[i]<span class="symbol">.</span>val
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: arbitrary affine transformations. Our current representation of
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- rectangles and circles means we can only do scale/flip/rotate90.
@@ -360,7 +360,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     d<span class="symbol">:</span><span class="type-name">Diagram</span>
     ) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
-  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
+  <span class="type-name">Diagram</span> <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
     (attr<span class="symbol">,</span> p<span class="symbol">,</span> geom) <span class="symbol">=</span> objs[i]
     (attr<span class="symbol">,</span> transformPoint p<span class="symbol">,</span> transformGeom geom)
 </div></div><div class="cell"><div class="code-block">
@@ -370,9 +370,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
       <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> r
       <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h)
-      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)
+      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span>(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)
       <span class="type-name">Text</span> x          <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
-  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)) flip_y_geom d
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span>(p<span class="symbol">.</span>x<span class="symbol">,</span> <span class="symbol">-</span>p<span class="symbol">.</span>y)) flip_y_geom d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scale(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> s<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   <span class="keyword">def</span> scale_geom(geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Geom</span> <span class="symbol">=</span>
@@ -380,15 +380,15 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> <span class="type-name">PointGeom</span>
       <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> <span class="type-name">Circle</span> (s <span class="symbol">*</span> r)
       <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> <span class="type-name">Rectangle</span> (s <span class="symbol">*</span> w) (s <span class="symbol">*</span> h)
-      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span><span class="symbol">.</span>new(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)
+      <span class="type-name">Line</span> p          <span class="symbol">-&gt;</span> <span class="type-name">Line</span> <span class="type-name">Point</span>(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)
       <span class="type-name">Text</span> x          <span class="symbol">-&gt;</span> <span class="type-name">Text</span> x
-  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)) scale_geom d
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span>(s <span class="symbol">*</span> p<span class="symbol">.</span>x<span class="symbol">,</span> s <span class="symbol">*</span> p<span class="symbol">.</span>y)) scale_geom d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> move_xy(d<span class="symbol">:</span> <span class="type-name">Diagram</span><span class="symbol">,</span> offx<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span> offy<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span><span class="symbol">.</span>new(p<span class="symbol">.</span>x <span class="symbol">+</span> offx<span class="symbol">,</span> p<span class="symbol">.</span>y <span class="symbol">+</span> offy) ) id d
+  apply_transformation (<span class="symbol">\</span>p<span class="symbol">.</span> <span class="type-name">Point</span>(p<span class="symbol">.</span>x <span class="symbol">+</span> offx<span class="symbol">,</span> p<span class="symbol">.</span>y <span class="symbol">+</span> offy) ) id d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> singleton_default(geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list [(default_geom_style<span class="symbol">,</span> <span class="type-name">Point</span><span class="symbol">.</span>new(0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> geom)]
+  <span class="type-name">Diagram</span> <span class="symbol">$</span> to_list [(default_geom_style<span class="symbol">,</span> <span class="type-name">Point</span>(0<span class="symbol">.</span>0<span class="symbol">,</span> 0<span class="symbol">.</span>0)<span class="symbol">,</span> geom)]
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">point_diagram               <span class="symbol">:</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="type-name">PointGeom</span>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> circle(r<span class="symbol">:</span><span class="type-name">Float</span>)        <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span> singleton_default <span class="symbol">$</span> <span class="type-name">Circle</span> r
@@ -398,26 +398,26 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> update_geom(update<span class="symbol">:</span> (<span class="type-name">GeomStyle</span>) <span class="symbol">-&gt;</span> <span class="type-name">GeomStyle</span><span class="symbol">,</span> d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
   <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
-  <span class="type-name">Diagram</span><span class="symbol">.</span>new <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
+  <span class="type-name">Diagram</span> <span class="symbol">$</span> to_list <span class="keyword">for</span> i<span class="symbol">.</span>
     (       attr<span class="symbol">,</span> point<span class="symbol">,</span> geoms) <span class="symbol">=</span> objs[i]
     (update attr<span class="symbol">,</span> point<span class="symbol">,</span> geoms)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these would be better if we had field-access-based ref projections, so we could
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- write `geom~fillColor := c` instead of unpack and packing explicitly.
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_fill_color(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span> (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_color(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> c<span class="symbol">:</span><span class="type-name">HtmlColor</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeWidth) d
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span> s<span class="symbol">.</span>fillColor (<span class="type-name">Just</span> c) s<span class="symbol">.</span>strokeWidth) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> set_stroke_width(d<span class="symbol">:</span><span class="type-name">Diagram</span><span class="symbol">,</span> w<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor s<span class="symbol">.</span>strokeColor w) d
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span> s<span class="symbol">.</span>fillColor s<span class="symbol">.</span>strokeColor w) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_stroke(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new s<span class="symbol">.</span>fillColor <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeWidth) d
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span> s<span class="symbol">.</span>fillColor <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeWidth) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> remove_fill(d<span class="symbol">:</span><span class="type-name">Diagram</span>) <span class="symbol">-&gt;</span> <span class="type-name">Diagram</span> <span class="symbol">=</span>
-  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
+  update_geom (<span class="symbol">\</span>s<span class="symbol">.</span> <span class="type-name">GeomStyle</span> <span class="type-name">Nothing</span> s<span class="symbol">.</span>strokeColor s<span class="symbol">.</span>strokeWidth) d
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Serialization to SVG string</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Non-inlinable versions to improve compile times. (Non-inlined functions have to be monomorphic right now).</p>
@@ -469,7 +469,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>noinline
 <span class="keyword">def</span> render_geom(attr<span class="symbol">:</span><span class="type-name">GeomStyle</span><span class="symbol">,</span> p<span class="symbol">:</span><span class="type-name">Point</span><span class="symbol">,</span> geom<span class="symbol">:</span><span class="type-name">Geom</span>) <span class="symbol">-&gt;</span> <span class="type-name">String</span> <span class="symbol">=</span>
   <span class="comment">-- For things that are solid. SVG says they have fill=stroke.
-</span>  solidAttr <span class="symbol">=</span> <span class="type-name">GeomStyle</span><span class="symbol">.</span>new attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeWidth
+</span>  solidAttr <span class="symbol">=</span> <span class="type-name">GeomStyle</span> attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeColor attr<span class="symbol">.</span>strokeWidth
   groupEle <span class="symbol">=</span> <span class="symbol">\</span>attr s<span class="symbol">.</span> tag_brackets_attr &quot;g&quot; (attr_string attr) s
   <span class="keyword">case</span> geom <span class="keyword">of</span>
     <span class="type-name">PointGeom</span> <span class="symbol">-&gt;</span>
@@ -510,17 +510,17 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       sel p <span class="symbol">+</span> <span class="keyword">case</span> geom <span class="keyword">of</span>
         <span class="type-name">PointGeom</span>       <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0
         <span class="type-name">Circle</span> r        <span class="symbol">-&gt;</span> op r
-        <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> op <span class="symbol">$</span> (sel <span class="type-name">Point</span><span class="symbol">.</span>new(w<span class="symbol">,</span>h))<span class="symbol">/</span>2<span class="symbol">.</span>0
+        <span class="type-name">Rectangle</span>(w<span class="symbol">,</span> h) <span class="symbol">-&gt;</span> op <span class="symbol">$</span> (sel <span class="type-name">Point</span>(w<span class="symbol">,</span>h))<span class="symbol">/</span>2<span class="symbol">.</span>0
         <span class="type-name">Line</span> q          <span class="symbol">-&gt;</span> op <span class="symbol">$</span> max 0<span class="symbol">.</span>0 <span class="symbol">$</span> op <span class="symbol">$</span> sel q  <span class="comment">-- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
 </span>        <span class="type-name">Text</span> _          <span class="symbol">-&gt;</span> 0<span class="symbol">.</span>0  <span class="comment">-- no size info possible as it is scale invariant
 </span>
   <span class="type-name">AsList</span>(_<span class="symbol">,</span> objs) <span class="symbol">=</span> d<span class="symbol">.</span>val
   (
-    <span class="type-name">Point</span><span class="symbol">.</span>new(
+    <span class="type-name">Point</span>(
       minimum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>x) neg) objs<span class="symbol">,</span>
       minimum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>y) neg) objs
     )<span class="symbol">,</span>
-    <span class="type-name">Point</span><span class="symbol">.</span>new(
+    <span class="type-name">Point</span>(
       maximum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>x) id)  objs<span class="symbol">,</span>
       maximum <span class="symbol">$</span> map (computeSubBound (<span class="symbol">\</span>p<span class="symbol">.</span> p<span class="symbol">.</span>y) id)  objs
     )

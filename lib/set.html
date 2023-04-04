@@ -404,7 +404,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> member(x<span class="command">:a</span><span class="symbol">,</span> set<span class="symbol">:</span>(<span class="type-name">Set</span> a)) <span class="symbol">-&gt;</span> <span class="type-name">Maybe</span> (<span class="type-name">Element</span> set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span>) <span class="symbol">=</span>
   <span class="type-name">UnsafeAsSet</span>(_<span class="symbol">,</span> elts) <span class="symbol">=</span> set
   <span class="keyword">case</span> search_sorted elts x <span class="keyword">of</span>
-    <span class="type-name">Just</span> n <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">Element</span><span class="symbol">.</span>new(ordinal n)
+    <span class="type-name">Just</span> n <span class="symbol">-&gt;</span> <span class="type-name">Just</span> <span class="symbol">$</span> <span class="type-name">Element</span>(ordinal n)
     <span class="type-name">Nothing</span> <span class="symbol">-&gt;</span> <span class="type-name">Nothing</span>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> value(x<span class="symbol">:</span><span class="type-name">Element</span> set) <span class="symbol">-&gt;</span> a <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a) <span class="symbol">=</span>
@@ -414,7 +414,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Ix</span>(<span class="type-name">Element</span> set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a)
   <span class="keyword">def</span> size&#39;() <span class="symbol">=</span> set_size set
   <span class="keyword">def</span> ordinal(n) <span class="symbol">=</span> n<span class="symbol">.</span>val
-  <span class="keyword">def</span> unsafe_from_ordinal(n) <span class="symbol">=</span> <span class="type-name">Element</span><span class="symbol">.</span>new(n)
+  <span class="keyword">def</span> unsafe_from_ordinal(n) <span class="symbol">=</span> <span class="type-name">Element</span>(n)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Eq</span>(<span class="type-name">Element</span> set) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ord</span><span class="symbol">,</span> set<span class="symbol">:</span><span class="type-name">Set</span> a)
   <span class="keyword">def</span> (<span class="symbol">==</span>)(ix1<span class="symbol">,</span> ix2) <span class="symbol">=</span> ordinal ix1 <span class="symbol">==</span> ordinal ix2

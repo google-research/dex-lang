@@ -339,7 +339,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="type-name">MkParser</span> f <span class="symbol">=</span> parser
   with_state 0 <span class="symbol">\</span>pos<span class="symbol">.</span>
     catch <span class="symbol">$</span> <span class="symbol">\.</span>
-      f <span class="type-name">ParserHandle</span><span class="symbol">.</span>new(s<span class="symbol">,</span> pos)
+      f <span class="type-name">ParserHandle</span>(s<span class="symbol">,</span> pos)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>Primitive combinators</h2>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> p_char(c<span class="symbol">:</span><span class="type-name">Char</span>) <span class="symbol">-&gt;</span> <span class="type-name">Parser</span> () <span class="symbol">=</span> <span class="type-name">MkParser</span> <span class="symbol">\</span>h<span class="symbol">.</span>

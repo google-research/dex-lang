@@ -337,7 +337,7 @@ scale calls to this function.</p>
   <span class="comment">-- Can only handle t between 0 and 1.
 </span>  <span class="comment">-- iteratively subdivide to desired tolerance.
 </span>  num_iters <span class="symbol">=</span> 10 <span class="symbol">+</span> f_to_n (<span class="symbol">-</span>log tolerance)
-  init_state <span class="symbol">=</span> <span class="type-name">SamplerState</span><span class="symbol">.</span>new(key<span class="symbol">,</span> zero<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> t)
+  init_state <span class="symbol">=</span> <span class="type-name">SamplerState</span>(key<span class="symbol">,</span> zero<span class="symbol">,</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> t)
   result <span class="symbol">=</span> fold init_state <span class="symbol">\</span>i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_iters) prev<span class="symbol">.</span>
       [key_draw<span class="symbol">,</span> key_left<span class="symbol">,</span> key_right] <span class="symbol">=</span> split_key key
       <span class="comment">-- add scaled noise
@@ -350,7 +350,7 @@ scale calls to this function.</p>
         <span class="keyword">else</span> key_right
       new_sigma <span class="symbol">=</span> prev<span class="symbol">.</span>sigma <span class="symbol">/</span> sqrt 2<span class="symbol">.</span>0
       new_t <span class="symbol">=</span> t&#39; <span class="symbol">*</span> 2<span class="symbol">.</span>0
-      <span class="type-name">SamplerState</span><span class="symbol">.</span>new(new_key<span class="symbol">,</span> new_y<span class="symbol">,</span> new_sigma<span class="symbol">,</span> new_t)
+      <span class="type-name">SamplerState</span>(new_key<span class="symbol">,</span> new_y<span class="symbol">,</span> new_sigma<span class="symbol">,</span> new_t)
   result<span class="symbol">.</span>y
 </div></div><div class="cell"><div class="code-block">
 

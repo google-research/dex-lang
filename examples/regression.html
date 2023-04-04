@@ -319,7 +319,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   x0 <span class="symbol">=</span> zero <span class="symbol">::</span> m<span class="symbol">=&gt;</span><span class="type-name">Float</span>
   r0 <span class="symbol">=</span> b <span class="symbol">-</span> (mat <span class="symbol">**.</span> x0)
   n_iter <span class="symbol">=</span> size m
-  result <span class="symbol">=</span> apply_n(n_iter<span class="symbol">,</span> <span class="type-name">SolverState</span><span class="symbol">.</span>new(x0<span class="symbol">,</span> r0<span class="symbol">,</span> r0)) <span class="symbol">\</span>s<span class="symbol">.</span>
+  result <span class="symbol">=</span> apply_n(n_iter<span class="symbol">,</span> <span class="type-name">SolverState</span>(x0<span class="symbol">,</span> r0<span class="symbol">,</span> r0)) <span class="symbol">\</span>s<span class="symbol">.</span>
     r <span class="symbol">=</span> s<span class="symbol">.</span>r
     p <span class="symbol">=</span> s<span class="symbol">.</span>p
     ap <span class="symbol">=</span> mat <span class="symbol">**.</span> p
@@ -328,7 +328,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     r&#39; <span class="symbol">=</span> r <span class="symbol">-</span> alpha <span class="symbol">.*</span> ap
     beta <span class="symbol">=</span> vdot r&#39; r&#39; <span class="symbol">/</span> (vdot r r <span class="symbol">+</span> 0<span class="symbol">.</span>000001)
     p&#39; <span class="symbol">=</span> r&#39; <span class="symbol">+</span> beta <span class="symbol">.*</span> p
-    <span class="type-name">SolverState</span><span class="symbol">.</span>new(x&#39;<span class="symbol">,</span> r&#39;<span class="symbol">,</span> p&#39;)
+    <span class="type-name">SolverState</span>(x&#39;<span class="symbol">,</span> r&#39;<span class="symbol">,</span> p&#39;)
   result<span class="symbol">.</span>x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Make some synthetic data</p>

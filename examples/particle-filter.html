@@ -349,10 +349,10 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       summarize p_resampled
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> normalDistn(mean<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span> var<span class="symbol">:</span> <span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Distribution</span> <span class="type-name">Float</span> <span class="symbol">=</span>
-  <span class="type-name">Distribution</span><span class="symbol">.</span>new( <span class="symbol">\</span>k<span class="symbol">.</span> (randn k) <span class="symbol">*</span> (sqrt var) <span class="symbol">+</span> mean
+  <span class="type-name">Distribution</span>( <span class="symbol">\</span>k<span class="symbol">.</span> (randn k) <span class="symbol">*</span> (sqrt var) <span class="symbol">+</span> mean
                   <span class="symbol">,</span> <span class="symbol">\</span>v<span class="symbol">.</span> <span class="symbol">-</span>0<span class="symbol">.</span>5 <span class="symbol">*</span> (sq (v <span class="symbol">-</span> mean)) <span class="symbol">/</span> var <span class="symbol">-</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> log (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> var))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">gaussModel <span class="symbol">:</span> <span class="type-name">Model</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">Model</span><span class="symbol">.</span>new(
+</div></div><div class="cell"><div class="code-block">gaussModel <span class="symbol">:</span> <span class="type-name">Model</span> <span class="type-name">Float</span> <span class="type-name">Float</span> <span class="symbol">=</span> <span class="type-name">Model</span>(
   normalDistn 0<span class="symbol">.</span>1 0<span class="symbol">.</span>1<span class="symbol">,</span>
   <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0<span class="symbol">,</span>
   <span class="symbol">\</span>s<span class="symbol">.</span> normalDistn s 1<span class="symbol">.</span>0)
