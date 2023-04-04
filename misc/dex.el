@@ -16,6 +16,7 @@
     ("[-.,!;$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"     . font-lock-type-face)
     ("^@[[:alnum:]]*\\b"     . font-lock-keyword-face)
+    ("\\bdef *\\([_[:alnum:]]*\\)\\b" . (1 font-lock-function-name-face))
     ))
 
 (defun dex-font-lock-extend-region ()
