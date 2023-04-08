@@ -466,8 +466,8 @@ instance VSpace(n=>a) given (a|VSpace, n|Ix)
 
 instance VSpace((a, b)) given (a|VSpace, b|VSpace)
   def (.*)(s, pair) =
-    (a, b) = pair
-    (s .* a, s .* b)
+    (x, y) = pair
+    (s .* x, s .* y)
 
 instance VSpace((i:n) => (..i) => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
@@ -1552,19 +1552,19 @@ instance Show(())
   def show(_) = "()"
 
 instance Show((a, b)) given (a|Show, b|Show)
-  def show(x) =
-    (a, b) = x
-    "(" <> show a <> ", " <> show b <> ")"
+  def show(tup) =
+    (x, y) = tup
+    "(" <> show x <> ", " <> show y <> ")"
 
 instance Show((a, b, c)) given (a|Show, b|Show, c|Show)
-  def show(x) =
-    (a, b, c) = x
-    "(" <> show a <> ", " <> show b <> ", " <> show c <> ")"
+  def show(tup) =
+    (x, y, z) = tup
+    "(" <> show x <> ", " <> show y <> ", " <> show z <> ")"
 
 instance Show((a, b, c, d)) given (a|Show, b|Show, c|Show, d|Show)
-  def show(x) =
-    (a, b, c, d) = x
-    "(" <> show a <> ", " <> show b <> ", " <> show c <> ", " <> show d <> ")"
+  def show(tup) =
+    (x, y, z, w) = tup
+    "(" <> show x <> ", " <> show y <> ", " <> show z <> ", " <> show w <> ")"
 
 '### Parse interface
 For types that can be parsed from a `String`.

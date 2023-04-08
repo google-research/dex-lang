@@ -9,7 +9,6 @@ module ConcreteSyntax (
   keyWordStrs, showPrimName,
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
-  pattern ExprBlock,
   pattern Binary, pattern Prefix, pattern Postfix, pattern Identifier) where
 
 import Control.Monad.Combinators.Expr qualified as Expr
@@ -85,10 +84,6 @@ interp_operator = \case
   "=>"  -> FatArrow
   "="   -> CSEqual
   name  -> EvalBinOp $ "(" <> name <> ")"
-
-pattern ExprBlock :: Group -> CSBlock
-pattern ExprBlock g <- (CSBlock [WithSrc _ (CExpr g)]) where
-  ExprBlock g = CSBlock [WithSrc Nothing (CExpr g)]
 
 pattern Binary :: Bin' -> Group -> Group -> Group
 pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
@@ -188,14 +183,22 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM TopDecl (dataDef <* eolf)
-  <|> liftM TopDecl (structDef <* eolf)
-  <|> liftM TopDecl (topInstanceDecl <* eolf)
-  <|> liftM TopDecl (interfaceDef <* eolf)
-  <|> liftM TopDecl (effectDef <* eolf)
+  <|> liftM TopDecl topDecl
   <|> topLetOrExpr <* eolf
   <|> hidden (some eol >> return (Misc EmptyLines))
   <|> hidden (sc >> eol >> return (Misc CommentLine))
+
+topDecl :: Parser CTopDecl
+topDecl = withSrc $ topDecl' <* eolf
+
+topDecl' :: Parser CTopDecl'
+topDecl' =
+      dataDef
+  <|> structDef
+  <|> interfaceDef
+  <|> (CInstanceDecl <$> instanceDef True)
+  <|> (CInstanceDecl <$> instanceDef False)
+  <|> effectDef
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
@@ -230,14 +233,17 @@ explicitCommand = do
     "html"    -> return $ EvalExpr RenderHtml
     "export"  -> ExportFun <$> nameString
     _ -> fail $ "unrecognized command: " ++ show cmdName
-  e <- cBlock <* eolf
+  b <- cBlock <* eolf
+  e <- case b of
+    ExprBlock e -> return e
+    IndentedBlock decls -> return $ WithSrc Nothing $ CDo $ IndentedBlock decls
   return $ case (e, cmd) of
-    (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> Misc $ GetNameType v
+    (WithSrc _ (CIdentifier v), GetType) -> Misc $ GetNameType v
     _ -> Command cmd e
 
 type CDefBody = ([(SourceName, Group)], [(LetAnn, CDef)])
-structDef :: Parser CTopDecl
-structDef = withSrc do
+structDef :: Parser CTopDecl'
+structDef = do
   keyWord StructKW
   tyName <- anyName
   (params, givens) <- typeParams
@@ -260,8 +266,8 @@ funDefLetWithAnn = do
   def <- funDefLet
   return (ann, def)
 
-dataDef :: Parser CTopDecl
-dataDef = withSrc do
+dataDef :: Parser CTopDecl'
+dataDef = do
   keyWord DataKW
   tyName <- anyName
   (params, givens) <- typeParams
@@ -271,13 +277,8 @@ dataDef = withSrc do
     return (dataConName, dataConArgs)
   return $ CData tyName params givens dataCons
 
-topInstanceDecl :: Parser CTopDecl
-topInstanceDecl = withSrc $ liftM (CSDecl PlainLet) $
-      (CInstanceDecl <$> instanceDef True)
-  <|> (CInstanceDecl <$> instanceDef False)
-
-interfaceDef :: Parser CTopDecl
-interfaceDef = withSrc do
+interfaceDef :: Parser CTopDecl'
+interfaceDef = do
   keyWord InterfaceKW
   className <- anyName
   params <- explicitParams
@@ -289,8 +290,8 @@ interfaceDef = withSrc do
       return (methodName, ty)
   return $ CInterface className params methodDecls
 
-effectDef :: Parser CTopDecl
-effectDef = withSrc do
+effectDef :: Parser CTopDecl'
+effectDef = do
   keyWord EffectKW
   effName <- anyName
   sigs <- opSigList
@@ -320,7 +321,7 @@ topLetOrExpr :: Parser SourceBlock'
 topLetOrExpr = withSrc topLet >>= \case
   WithSrc _ (CSDecl ann (CExpr e)) -> do
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-    return $ Command (EvalExpr (Printed Nothing)) (ExprBlock e)
+    return $ Command (EvalExpr (Printed Nothing)) e
   d -> return $ TopDecl d
 
 topLet :: Parser CTopDecl'
@@ -334,28 +335,20 @@ noInline = (char '@' >> string "noinline"   $> NoInlineLet) <* nextLine
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
-             <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
+             <|> (withIndent $ p `sepBy1` try nextLine)
 {-# INLINE onePerLine #-}
 
 -- === Groups ===
 
--- Parse a block, which could also just be a group
 cBlock :: Parser CSBlock
-cBlock = cBlock' >>= \case
-  Left blk -> return blk
-  Right ex -> return $ ExprBlock ex
+cBlock = indentedBlock <|> ExprBlock <$> cGroup
 
--- Parse a block or a group but tell me which (i.e., whether it was indented or not)
-cBlock' :: Parser (Either CSBlock Group)
-cBlock' = Left <$> realBlock <|> Right <$> cGroup where
-
-realBlock :: Parser CSBlock
-realBlock = withIndent $
-  CSBlock <$> (mayNotBreak $ withSrc cDecl `sepBy1` (semicolon <|> try nextLine))
+indentedBlock :: Parser CSBlock
+indentedBlock = withIndent $
+  IndentedBlock <$> (withSrc cDecl `sepBy1` (semicolon <|> try nextLine))
 
 cDecl :: Parser CSDecl'
-cDecl =   (CInstanceDecl <$> instanceDef True)
-      <|> (CDefDecl <$> funDefLet)
+cDecl =   (CDefDecl <$> funDefLet)
       <|> simpleLet
       <|> (keyWord PassKW >> return CPass)
 
@@ -380,7 +373,7 @@ instanceDef isNamed = do
   className <- anyName
   args <- argList
   givens <- optional givenClause
-  methods <- realBlock
+  methods <- withIndent $ withSrc cDecl `sepBy1` try nextLine
   return $ CInstanceDef className args givens methods optNameAndArgs
 
 funDefLet :: Parser CDef
@@ -567,25 +560,25 @@ cIf = mayNotBreak do
 thenSameLine :: Parser (CSBlock, Maybe CSBlock)
 thenSameLine = do
   keyWord ThenKW
-  cBlock' >>= \case
-    (Left blk) -> do
+  cBlock >>= \case
+    IndentedBlock blk -> do
       let msg = ("No `else` may follow same-line `then` and indented consequent"
                   ++ "; indent and align both `then` and `else`, or write the "
                   ++ "whole `if` on one line.")
       mayBreak $ noElse msg
-      return (blk, Nothing)
-    (Right ex) -> do
+      return (IndentedBlock blk, Nothing)
+    ExprBlock ex -> do
       alt <- optional
         $ (keyWord ElseKW >> cBlock)
-          <|> (lookAhead (try $ withIndent (mayNotBreak $ keyWord ElseKW))
-               >> withIndent (mayNotBreak $ keyWord ElseKW >> cBlock))
+          <|> (lookAhead (try $ withIndent (keyWord ElseKW))
+               >> withIndent (keyWord ElseKW >> cBlock))
       return (ExprBlock ex, alt)
 
 thenNewLine :: Parser (CSBlock, Maybe CSBlock)
-thenNewLine = withIndent $ mayNotBreak $ do
+thenNewLine = withIndent $ do
   keyWord ThenKW
-  cBlock' >>= \case
-    (Left blk) -> do
+  cBlock >>= \case
+    IndentedBlock blk -> do
       alt <- do
         -- With `mayNotBreak`, this just forbids inline else
         noElse ("Same-line `else` may not follow indented consequent;"
@@ -593,8 +586,8 @@ thenNewLine = withIndent $ mayNotBreak $ do
         optional $ do
           try $ nextLine >> keyWord ElseKW
           cBlock
-      return (blk, alt)
-    (Right ex) -> do
+      return (IndentedBlock blk, alt)
+    ExprBlock ex -> do
       void $ optional $ try nextLine
       alt <- optional $ keyWord ElseKW >> cBlock
       return (ExprBlock ex, alt)

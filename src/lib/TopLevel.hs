@@ -247,7 +247,7 @@ evalSourceBlock'
 evalSourceBlock' mname block = case sbContents block of
   TopDecl decl -> parseDecl decl >>= execUDecl mname
   Command cmd expr' -> do
-   expr <- parseBlock expr'
+   expr <- parseExpr expr'
    case cmd of
     -- TODO: we should filter the top-level emissions we produce in this path
     -- we want cache entries but we don't want dead names.
@@ -597,7 +597,7 @@ evalSpecializations fs = do
     updateTopEnv $ UpdateTopFunEvalStatus f (Finished $ TopFunLowerings objName)
 
 execUDecl
-  :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
+  :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
   logTop $ PassInfo Parse $ pprint decl
   Abs renamedDecl sourceMap <-

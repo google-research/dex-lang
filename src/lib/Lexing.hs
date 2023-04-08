@@ -294,7 +294,7 @@ withIndent p = do
   nextLine
   indent <- T.length <$> takeWhileP (Just "space") (==' ')
   when (indent <= 0) empty
-  pLocal (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ p
+  pLocal (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ mayNotBreak p
 {-# INLINE withIndent #-}
 
 pLocal :: (ParseCtx -> ParseCtx) -> Parser a -> Parser a
