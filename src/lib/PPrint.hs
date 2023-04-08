@@ -659,10 +659,9 @@ instance PrettyPrec (UDepPairType n) where
   prettyPrec (UDepPairType pat ty) = atPrec LowestPrec $ align $
     p pat <+> "&>" <+> pLowest ty
 
-instance Pretty (UDeclExpr n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UDeclExpr n) where
-  prettyPrec (UDeclExpr decl body) = atPrec LowestPrec $ align $
-    p decl <> hardline <> pLowest body
+instance Pretty (UBlock' n) where
+  pretty (UBlock decls result) =
+    prettyLines (fromNest decls) <> hardline <> pLowest result
 
 instance Pretty (UExpr' n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UExpr' n) where
@@ -673,7 +672,7 @@ instance PrettyPrec (UExpr' n) where
     UTabApp f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UFor dir (UForExpr binder body) ->
       atPrec LowestPrec $ kw <+> p binder <> "."
-                             <+> nest 2 (pLowest body)
+                             <+> nest 2 (p body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi piType -> prettyPrec piType
@@ -681,7 +680,6 @@ instance PrettyPrec (UExpr' n) where
     UDepPairTy depPairType -> prettyPrec depPairType
     UDepPair lhs rhs -> atPrec ArgPrec $ parens $
       p lhs <+> ",>" <+> p rhs
-    UDecl declExpr -> prettyPrec declExpr
     UHole -> atPrec ArgPrec "_"
     UTypeAnn v ty -> atPrec LowestPrec $
       group $ pApp v <> line <> ":" <+> pApp ty
@@ -697,6 +695,7 @@ instance PrettyPrec (UExpr' n) where
     UNatLit   v -> atPrec ArgPrec $ p v
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
+    UDo block -> atPrec LowestPrec $ p block
 
 instance Pretty FieldName' where
   pretty = \case
@@ -716,9 +715,7 @@ instance Pretty (UAlt n) where
 instance PrettyB b => Pretty (WithExpl b n l) where
   pretty (WithExpl _ b) = pretty b
 
-instance Pretty (UDecl n l) where
-  pretty (ULet ann b _ rhs) =
-    align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+instance Pretty (UTopDecl n l) where
   pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
@@ -745,6 +742,12 @@ instance Pretty (UDecl n l) where
     "handler" <+> p name <+> "of" <+> p effName <+> p bodyTyArg <+> p tyArgs
     <+> ":" <+> p retEff <+> p retTy <> hardline
     <> foldMap ((<>hardline) . p) opDefs
+  pretty (ULocalDecl decl) = p decl
+
+instance Pretty (UDecl' n l) where
+  pretty (ULet ann b _ rhs) =
+    align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (UExprDecl expr) = p expr
   pretty UPass = "pass"
 
 instance Pretty (UEffectOpDef n) where
@@ -1208,8 +1211,8 @@ instance Pretty AppExplicitness where
   pretty ImplicitApp = "->>"
 
 instance Pretty CSBlock where
+  pretty (IndentedBlock decls) = nest 2 $ prettyLines decls
   pretty (ExprBlock g) = pArg g
-  pretty (CSBlock decls) = nest 2 $ prettyLines decls
 
 instance PrettyPrec Group where
   prettyPrec (WithSrc _ g) = prettyPrec g
@@ -1232,7 +1235,6 @@ instance PrettyPrec Group' where
   prettyPrec (CCase scrut alts) =
     atPrec LowestPrec $ "case " <> p scrut <> " of " <> prettyLines alts
   prettyPrec g = atPrec ArgPrec $ fromString $ show g
-
 
 instance Pretty Bin where
   pretty (WithSrc _ b) = p b

@@ -31,7 +31,3 @@ instance Inhabited(Word32)
   witness = 0
    pass
 -- CHECK: Parse error
--- CHECK: unexpected
--- CHECK: pass
--- CHECK: expecting
--- CHECK: name, or symbol name

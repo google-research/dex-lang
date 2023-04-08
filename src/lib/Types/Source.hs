@@ -91,18 +91,17 @@ data CTopDecl'
       Group -- Handler arguments
       Group -- Handler type annotation
       [(SourceName, Maybe UResumePolicy, CSBlock)] -- Handler methods
+  -- header, givens (may be empty), methods, optional name.  The header should contain
+  -- the prerequisites, class name, and class arguments.
+  | CInstanceDecl CInstanceDef
   deriving (Show, Generic)
 
 type CSDecl = WithSrc CSDecl'
 data CSDecl'
   = CLet Group CSBlock
-  -- Arrow binder <-
-  | CBind Group CSBlock
   | CDefDecl CDef
-  -- header, givens (may be empty), methods, optional name.  The header should contain
-  -- the prerequisites, class name, and class arguments.
-  | CInstanceDecl CInstanceDef
   | CExpr Group
+  | CBind Group CSBlock -- Arrow binder <-
   | CPass
     deriving (Show, Generic)
 
@@ -121,7 +120,7 @@ data CInstanceDef = CInstanceDef
   SourceName         -- interface name
   [Group]            -- args at which we're instantiating the interface
   (Maybe GivenClause)
-  CSBlock            -- Method definitions
+  [CSDecl]           -- Method definitions
   (Maybe (SourceName, Maybe [Group])) -- Optional name of instance, with explicit parameters
   deriving (Show, Generic)
 
@@ -180,8 +179,10 @@ data ForKind
   deriving (Show, Generic)
 
 -- `CSBlock` instead of `CBlock` because the latter is an alias for `Block CoreIR`.
-data CSBlock = CSBlock [CSDecl] -- last decl should be a CExpr
-  deriving (Show, Generic)
+data CSBlock =
+   IndentedBlock [CSDecl] -- last decl should be a CExpr
+ | ExprBlock Group
+   deriving (Show, Generic)
 
 -- === Untyped IR ===
 -- The AST of Dex surface language.
@@ -223,6 +224,16 @@ data UBinder (c::C) (n::S) (l::S) where
   -- and named arguments.
   UBind :: SourceName -> NameBinder c n l -> UBinder c n l
 
+type UBlock = WithSrcE UBlock'
+data UBlock' (n::S) where
+  UBlock :: Nest UDecl n l -> UExpr l -> UBlock' n
+
+type UDecl = WithSrcB UDecl'
+data UDecl' (n::S) (l::S) where
+  ULet      :: LetAnn -> UPat n l -> Maybe (UType n) -> UExpr n -> UDecl' n l
+  UExprDecl :: UExpr n -> UDecl' n n
+  UPass     :: UDecl' n n
+
 type UExpr = WithSrcE UExpr'
 data UExpr' (n::S) =
    UVar (SourceNameOr UVar n)
@@ -233,9 +244,9 @@ data UExpr' (n::S) =
  | UDepPairTy (UDepPairType n)
  | UDepPair (UExpr n) (UExpr n)
  | UTabApp (UExpr n) [UExpr n]
- | UDecl (UDeclExpr n)
  | UFor Direction (UForExpr n)
  | UCase (UExpr n) [UAlt n]
+ | UDo (UBlock n)
  | UHole
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
@@ -270,7 +281,7 @@ data ULamExpr (n::S) where
     -> AppExplicitness
     -> Maybe (UEffectRow l)               -- optional effect
     -> Maybe (UType l)                    -- optional result type
-    -> UExpr l                            -- body
+    -> UBlock l                           -- body
     -> ULamExpr n
 
 data UPiExpr (n::S) where
@@ -281,9 +292,6 @@ data UTabPiExpr (n::S) where
 
 data UDepPairType (n::S) where
   UDepPairType :: UOptAnnBinder n l -> UType l -> UDepPairType n
-
-data UDeclExpr (n::S) where
-  UDeclExpr :: UDecl n l -> UExpr l -> UDeclExpr n
 
 type UConDef (n::S) (l::S) = (SourceName, Nest UReqAnnBinder n l)
 
@@ -305,23 +313,23 @@ data UStructDef (n::S) where
 data UDataDefTrail (l::S) where
   UDataDefTrail :: Nest UReqAnnBinder l l' -> UDataDefTrail l
 
-data UDecl (n::S) (l::S) where
-  ULet :: LetAnn -> UPat n l -> Maybe (UType n) -> UExpr n -> UDecl n l
+data UTopDecl (n::S) (l::S) where
+  ULocalDecl :: UDecl n l -> UTopDecl n l
   UDataDefDecl
     :: UDataDef n                          -- actual definition
     -> UBinder TyConNameC n l'             -- type constructor name
     ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
-    -> UDecl n l
+    -> UTopDecl n l
   UStructDecl
     :: UBinder TyConNameC n l              -- type constructor name
     -> UStructDef l                        -- actual definition
-    -> UDecl n l
+    -> UTopDecl n l
   UInterface
     :: Nest (WithExpl UOptAnnBinder) n p   -- parameter binders
     ->   [UType p]                         -- method types
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
-    -> UDecl n l
+    -> UTopDecl n l
   UInstance
     :: SourceNameOr (Name ClassNameC) n  -- class name
     -> Nest (WithExpl UOptAnnBinder) n l'
@@ -330,12 +338,12 @@ data UDecl (n::S) (l::S) where
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB UAtomBinder n l    -- optional instance name
     -> AppExplicitness           -- explicitness (only relevant for named instances)
-    -> UDecl n l
+    -> UTopDecl n l
   UEffectDecl
     :: [UEffectOpType n]                  -- operation types
     -> UBinder EffectNameC n l'           -- effect name
     -> Nest (UBinder EffectOpNameC) l' l  -- operation names
-    -> UDecl n l
+    -> UTopDecl n l
   UHandlerDecl
     :: SourceNameOr (Name EffectNameC) n  -- effect name
     -> UAtomBinder n b                    -- body type argument
@@ -344,8 +352,7 @@ data UDecl (n::S) (l::S) where
     ->   UType l'                         -- returning type
     ->   [UEffectOpDef l']                -- operation definitions
     -> UBinder HandlerNameC n l           -- handler name
-    -> UDecl n l
-  UPass :: UDecl n n
+    -> UTopDecl n l
 
 type UType = UExpr
 type UConstraint = UExpr
@@ -364,7 +371,7 @@ instance Hashable UResumePolicy
 instance Store UResumePolicy
 
 data UForExpr (n::S) where
-  UForExpr :: UOptAnnBinder n l -> UExpr l -> UForExpr n
+  UForExpr :: UOptAnnBinder n l -> UBlock l -> UForExpr n
 
 type UMethodDef = WithSrcE UMethodDef'
 data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
@@ -391,7 +398,7 @@ type UReqAnnBinder = UAnnBinder AnnRequired :: B
 type UOptAnnBinder = UAnnBinder AnnOptional :: B
 
 data UAlt (n::S) where
-  UAlt :: UPat n l -> UExpr l -> UAlt n
+  UAlt :: UPat n l -> UBlock l -> UAlt n
 
 data UFieldRowPat (n::S) (l::S) where
   UEmptyRowPat    :: UFieldRowPat n n
@@ -498,7 +505,7 @@ data SymbolicZeros = SymbolicZeros | InstantiateZeros
 
 data SourceBlock'
   = TopDecl CTopDecl
-  | Command CmdName CSBlock
+  | Command CmdName Group
   | DeclareForeign SourceName SourceName Group
   | DeclareCustomLinearization SourceName SymbolicZeros Group
   | Misc SourceBlockMisc
@@ -718,7 +725,13 @@ instance SinkableE e => SinkableE (WithSrcE e)
 instance SinkableE UExpr' where
   sinkingProofE _ = todoSinkableProof
 
+instance SinkableE UBlock' where
+  sinkingProofE _ = todoSinkableProof
+
 instance SinkableB UDecl where
+  sinkingProofB _ _ _ = todoSinkableProof
+
+instance SinkableB UTopDecl where
   sinkingProofB _ _ _ = todoSinkableProof
 
 instance Eq SourceBlock where
@@ -767,10 +780,10 @@ deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
 deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
-deriving instance Show (UDeclExpr n)
 deriving instance Show (UDataDef n)
 deriving instance Show (UStructDef n)
-deriving instance Show (UDecl n l)
+deriving instance Show (UDecl' n l)
+deriving instance Show (UBlock' n)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 

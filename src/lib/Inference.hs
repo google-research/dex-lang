@@ -67,7 +67,7 @@ data UDeclInferenceResult e n =
  | UDeclResultBindPattern NameHint (CBlock n) (ReconAbs CoreIR e n)
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
-              => UDecl n l -> e l -> m n (UDeclInferenceResult e n)
+              => UTopDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UStructDecl tc def) result = do
   tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
   def' <- liftInfererM $ solveLocal do
@@ -123,20 +123,22 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> instanceAtomName) result
     _ -> error "impossible"
-inferTopUDecl (ULet letAnn p tyAnn rhs) result = case p of
-  WithSrcB _ (UPatBinder b) -> do
-    block <- liftInfererM $ solveLocal $ buildBlockInf do
-      checkMaybeAnnExpr (getNameHint b) tyAnn rhs <* applyDefaults
-    return $ UDeclResultBindName letAnn block (Abs b result)
-  _ -> do
-    PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
-      val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
-      v <- emitHinted (getNameHint p) $ Atom val
-      bindLetPat p v do
-        applyDefaults
-        renameM result
-    return $ UDeclResultBindPattern (getNameHint p) block recon
-inferTopUDecl UPass result = return $ UDeclResultDone result
+inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case decl of
+  UPass -> return $ UDeclResultDone result
+  UExprDecl _ -> error "Shouldn't have this at the top level (should have become a command instead)"
+  ULet letAnn p tyAnn rhs -> case p of
+    WithSrcB _ (UPatBinder b) -> do
+      block <- liftInfererM $ solveLocal $ buildBlockInf do
+        checkMaybeAnnExpr (getNameHint b) tyAnn rhs <* applyDefaults
+      return $ UDeclResultBindName letAnn block (Abs b result)
+    _ -> do
+      PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
+        val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
+        v <- emitHinted (getNameHint p) $ Atom val
+        bindLetPat p v do
+          applyDefaults
+          renameM result
+      return $ UDeclResultBindPattern (getNameHint p) block recon
 inferTopUDecl (UEffectDecl _ _ _) _ = error "not implemented"
 inferTopUDecl (UHandlerDecl _ _ _ _ _ _ _) _ = error "not implemented"
 {-# SCC inferTopUDecl #-}
@@ -873,6 +875,29 @@ getImplicitArg desc inf argTy = case inf of
     ctx <- srcPosCtx <$> getErrCtx
     return $ DictHole (AlwaysEqual ctx) argTy reqMethodAccess
 
+withBlockDecls
+  :: EmitsBoth o
+  => UBlock i -> (forall i'. UExpr i' -> InfererM i' o a) -> InfererM i o a
+withBlockDecls (WithSrcE src (UBlock declsTop result)) contTop =
+  addSrcContext src $ go declsTop $ contTop result where
+  go :: EmitsBoth o => Nest UDecl i i' -> InfererM i' o a -> InfererM i  o a
+  go decls cont = case decls of
+    Empty -> cont
+    Nest d ds -> withUDecl d $ go ds $ cont
+
+withUDecl
+  :: EmitsBoth o
+  => UDecl i i'
+  -> InfererM i' o a
+  -> InfererM i  o a
+withUDecl (WithSrcB src d) cont = addSrcContext src case d of
+  UPass -> cont
+  UExprDecl e -> inferSigma noHint e >> cont
+  ULet letAnn p ann rhs -> do
+    val <- checkMaybeAnnExpr (getNameHint p) ann rhs
+    var <- emitDecl (getNameHint p) letAnn $ Atom val
+    bindLetPat p var cont
+
 -- The name hint names the object being computed
 checkOrInferRho
   :: forall i o. EmitsBoth o
@@ -929,11 +954,6 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
         rhs' <- checkSigma noHint rhs rhsTy
         return $ DepPair lhs' rhs' ty
       _ -> throw TypeErr $ "Can't infer the type of a dependent pair; please annotate it"
-  UDecl (UDeclExpr (ULet letAnn p ann rhs) body) -> do
-    val <- checkMaybeAnnExpr (getNameHint p) ann rhs
-    var <- emitDecl (getNameHint p) letAnn $ Atom val
-    bindLetPat p var $ checkOrInferRho hint body reqTy
-  UDecl _ -> throw CompilerErr "not a local decl"
   UCase scrut alts -> do
     scrut' <- inferRho noHint scrut
     scrutTy <- getType scrut'
@@ -943,6 +963,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
     scrut'' <- zonk scrut'
     buildSortedCase scrut'' alts' reqTy'
+  UDo block -> withBlockDecls block \result -> checkOrInferRho hint result reqTy
   UTabCon xs -> inferTabCon hint xs reqTy >>= matchRequirement
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
@@ -1807,8 +1828,10 @@ inferULam (ULamExpr bs appExpl effs resultTy body) = do
     resultTy' <- mapM checkUType resultTy
     body' <- buildBlockInf $ withAllowedEffects (sink effs') do
       case resultTy' of
-        Nothing -> inferSigma noHint body
-        Just resultTy'' -> checkSigma noHint body (sink resultTy'')
+        Nothing -> withBlockDecls body \result -> inferSigma noHint result
+        Just resultTy'' ->
+          withBlockDecls body \result ->
+            checkSigma noHint result (sink resultTy'')
     return (PairE effs' body')
   Abs bs' (PairE effs' body') <- return ab
   case appExpl of
@@ -1831,7 +1854,8 @@ checkUForExpr (UForExpr (UAnnBinder bFor ann cs) body) tabPi@(TabPiType bPi _) =
       TabPiType bPi' resultTy <- sinkM tabPi
       resultTy' <- applyRename (bPi'@>i) resultTy
       buildBlockInf do
-        checkSigma noHint body $ sink resultTy'
+        withBlockDecls body \result ->
+          checkSigma noHint result $ sink resultTy'
   return $ LamExpr (UnaryNest $ withoutExpl b) body'
 
 inferUForExpr :: EmitsBoth o => UForExpr i -> InfererM i o (LamExpr CoreIR o)
@@ -1839,7 +1863,9 @@ inferUForExpr (UForExpr (UAnnBinder bFor ann cs) body) = do
   unless (null cs) $ throw TypeErr "`for` binders shouldn't have constraints"
   iTy <- checkAnn (getSourceName bFor) ann
   Abs b body' <- buildAbsInf (getNameHint bFor) Explicit iTy \i ->
-    extendRenamer (bFor@>i) $ buildBlockInf $ inferRho noHint body
+    extendRenamer (bFor@>i) $ buildBlockInf $
+      withBlockDecls body \result ->
+        checkOrInferRho noHint result Infer
   return $ LamExpr (UnaryNest $ withoutExpl b) body'
 
 checkULam :: EmitsInf o => ULamExpr i -> CorePiType o -> InfererM i o (CoreLamExpr o)
@@ -1859,7 +1885,8 @@ checkULam (ULamExpr lamBs lamAppExpl lamEffs lamResultTy body)
     withAllowedEffects piEffs' do
       body' <- buildBlockInf do
         piResultTy'' <- sinkM piResultTy'
-        checkSigma noHint body piResultTy''
+        withBlockDecls body \result ->
+          checkSigma noHint result piResultTy''
       return $ PairE piEffs' body'
   coreLamExpr piAppExpl ab
 
@@ -1974,7 +2001,8 @@ checkCaseAlt :: EmitsBoth o
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- checkCasePat pat scrutineeTy do
     reqTy' <- sinkM reqTy
-    checkRho noHint body reqTy'
+    withBlockDecls body \result ->
+      checkOrInferRho noHint result (Check reqTy')
   idx <- getCaseAltIndex pat
   return $ IndexedAlt idx alt
 

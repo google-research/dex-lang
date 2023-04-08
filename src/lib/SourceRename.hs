@@ -27,7 +27,7 @@ import Types.Core (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
   :: (Fallible1 m, EnvReader m)
-  => ModuleSourceName -> UDecl VoidS VoidS -> m n (Abs UDecl SourceMap n)
+  => ModuleSourceName -> UTopDecl VoidS VoidS -> m n (Abs UTopDecl SourceMap n)
 renameSourceNamesTopUDecl mname decl = do
   Distinct <- getDistinct
   Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
@@ -36,7 +36,7 @@ renameSourceNamesTopUDecl mname decl = do
   return $ Abs renamedDecl sourceMap
 {-# SCC renameSourceNamesTopUDecl #-}
 
-uDeclErrSourceMap:: ModuleSourceName -> UDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap:: ModuleSourceName -> UTopDecl VoidS VoidS -> SourceMap n
 uDeclErrSourceMap mname decl =
   SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
 {-# SCC uDeclErrSourceMap #-}
@@ -49,7 +49,7 @@ renameSourceNamesUExpr expr = do
 
 sourceRenameTopUDecl
   :: (Renamer m, Distinct o)
-  => UDecl i i' -> m o (Abs UDecl SourceMap o)
+  => UTopDecl i i' -> m o (Abs UTopDecl SourceMap o)
 sourceRenameTopUDecl udecl =
   sourceRenameB udecl \udecl' -> do
     SourceMap fullSourceMap <- askSourceMap
@@ -194,14 +194,12 @@ instance SourceRenamableE UExpr' where
     UDepPair lhs rhs ->
       UDepPair <$> sourceRenameE lhs <*> sourceRenameE rhs
     UTabApp f x -> UTabApp <$> sourceRenameE f <*> mapM sourceRenameE x
-    UDecl (UDeclExpr decl rest) ->
-      sourceRenameB decl \decl' ->
-        UDecl <$> UDeclExpr decl' <$> sourceRenameE rest
     UFor d (UForExpr pat body) ->
       sourceRenameB pat \pat' ->
         UFor d <$> UForExpr pat' <$> sourceRenameE body
     UCase scrut alts ->
       UCase <$> sourceRenameE scrut <*> mapM sourceRenameE alts
+    UDo block -> UDo <$> sourceRenameE block
     UHole -> return UHole
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
@@ -246,13 +244,9 @@ instance SourceRenamableB a => SourceRenamableB (WithSrcB a) where
   sourceRenameB (WithSrcB pos b) cont = addSrcContext pos $
     sourceRenameB b \b' -> cont $ WithSrcB pos b'
 
-instance SourceRenamableB UDecl where
+instance SourceRenamableB UTopDecl where
   sourceRenameB decl cont = case decl of
-    ULet ann pat ty expr -> do
-      expr' <- sourceRenameE expr
-      ty' <- mapM sourceRenameE ty
-      sourceRenameB pat \pat' ->
-        cont $ ULet ann pat' ty' expr'
+    ULocalDecl d -> sourceRenameB d \d' -> cont $ ULocalDecl d'
     UDataDefDecl dataDef tyConName dataConNames -> do
       dataDef' <- sourceRenameE dataDef
       sourceRenameUBinder UTyConVar tyConName \tyConName' ->
@@ -282,6 +276,15 @@ instance SourceRenamableB UDecl where
         sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
           cont $ UEffectDecl opTypes' effName' opNames'
     UHandlerDecl _ _ _ _ _ _ _ -> error "not implemented"
+
+instance SourceRenamableB UDecl' where
+  sourceRenameB decl cont = case decl of
+    ULet ann pat ty expr -> do
+      expr' <- sourceRenameE expr
+      ty' <- mapM sourceRenameE ty
+      sourceRenameB pat \pat' ->
+        cont $ ULet ann pat' ty' expr'
+    UExprDecl e -> cont =<< (UExprDecl <$> sourceRenameE e)
     UPass -> cont UPass
 
 instance SourceRenamableE ULamExpr where
@@ -291,6 +294,12 @@ instance SourceRenamableE ULamExpr where
       <*> mapM sourceRenameE effs
       <*> mapM sourceRenameE resultTy
       <*> sourceRenameE body
+
+instance SourceRenamableE UBlock' where
+  sourceRenameE (UBlock decls result) =
+    sourceRenameB decls \decls' -> do
+      result' <- sourceRenameE result
+      return $ UBlock decls' result'
 
 instance SourceRenamableB UnitB where
   sourceRenameB UnitB cont = cont UnitB
@@ -504,9 +513,9 @@ instance SourceRenamableB UPat' where
 class HasSourceNames (b::B) where
   sourceNames :: b n l -> S.Set SourceName
 
-instance HasSourceNames UDecl where
+instance HasSourceNames UTopDecl where
   sourceNames decl = case decl of
-    ULet _ pat _ _ -> sourceNames pat
+    ULocalDecl d -> sourceNames d
     UDataDefDecl _ ~(UBindSource tyConName) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
     UStructDecl ~(UBindSource tyConName) _ -> do
@@ -517,16 +526,24 @@ instance HasSourceNames UDecl where
     UEffectDecl _ ~(UBindSource effName) opNames -> do
       S.singleton effName <> sourceNames opNames
     UHandlerDecl _ _ _ _ _ _ handlerName -> sourceNames handlerName
+
+instance HasSourceNames UDecl' where
+  sourceNames = \case
+    ULet _ pat _ _ -> sourceNames pat
+    UExprDecl _ -> S.empty
     UPass -> S.empty
 
-instance HasSourceNames UPat where
-  sourceNames (WithSrcB _ pat) = case pat of
+instance HasSourceNames UPat' where
+  sourceNames = \case
     UPatBinder b -> sourceNames b
     UPatCon _ bs -> sourceNames bs
     UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatProd bs -> sourceNames bs
     UPatRecord p -> sourceNames p
     UPatTable ps -> sourceNames ps
+
+instance HasSourceNames b => HasSourceNames (WithSrcB b) where
+  sourceNames (WithSrcB _ pat) = sourceNames pat
 
 instance HasSourceNames UFieldRowPat where
   sourceNames = \case
