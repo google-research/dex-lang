@@ -760,8 +760,8 @@ Includes floating point and two field rational representations.</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span>((a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> (<span class="symbol">.*</span>)(s<span class="symbol">,</span> pair) <span class="symbol">=</span>
-    (a<span class="symbol">,</span> b) <span class="symbol">=</span> pair
-    (s <span class="symbol">.*</span> a<span class="symbol">,</span> s <span class="symbol">.*</span> b)
+    (x<span class="symbol">,</span> y) <span class="symbol">=</span> pair
+    (s <span class="symbol">.*</span> x<span class="symbol">,</span> s <span class="symbol">.*</span> y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">VSpace</span>((i<span class="command">:n</span>) <span class="symbol">=&gt;</span> (<span class="symbol">..</span>i) <span class="symbol">=&gt;</span> a) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span>)
   <span class="keyword">def</span> (<span class="symbol">.*</span>)(s<span class="symbol">,</span> xs) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> s <span class="symbol">.*</span> xs[i]
@@ -1819,19 +1819,19 @@ Nor does it promise a particular level of precision for numeric values.</p>
   <span class="keyword">def</span> show(_) <span class="symbol">=</span> &quot;()&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span>((a<span class="symbol">,</span> b)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Show</span>)
-  <span class="keyword">def</span> show(x) <span class="symbol">=</span>
-    (a<span class="symbol">,</span> b) <span class="symbol">=</span> x
-    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show a <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show b <span class="symbol">&lt;&gt;</span> &quot;)&quot;
+  <span class="keyword">def</span> show(tup) <span class="symbol">=</span>
+    (x<span class="symbol">,</span> y) <span class="symbol">=</span> tup
+    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show x <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show y <span class="symbol">&lt;&gt;</span> &quot;)&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span>((a<span class="symbol">,</span> b<span class="symbol">,</span> c)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> c<span class="symbol">|</span><span class="type-name">Show</span>)
-  <span class="keyword">def</span> show(x) <span class="symbol">=</span>
-    (a<span class="symbol">,</span> b<span class="symbol">,</span> c) <span class="symbol">=</span> x
-    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show a <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show b <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show c <span class="symbol">&lt;&gt;</span> &quot;)&quot;
+  <span class="keyword">def</span> show(tup) <span class="symbol">=</span>
+    (x<span class="symbol">,</span> y<span class="symbol">,</span> z) <span class="symbol">=</span> tup
+    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show x <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show y <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show z <span class="symbol">&lt;&gt;</span> &quot;)&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">instance</span> <span class="type-name">Show</span>((a<span class="symbol">,</span> b<span class="symbol">,</span> c<span class="symbol">,</span> d)) <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> c<span class="symbol">|</span><span class="type-name">Show</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Show</span>)
-  <span class="keyword">def</span> show(x) <span class="symbol">=</span>
-    (a<span class="symbol">,</span> b<span class="symbol">,</span> c<span class="symbol">,</span> d) <span class="symbol">=</span> x
-    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show a <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show b <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show c <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show d <span class="symbol">&lt;&gt;</span> &quot;)&quot;
+  <span class="keyword">def</span> show(tup) <span class="symbol">=</span>
+    (x<span class="symbol">,</span> y<span class="symbol">,</span> z<span class="symbol">,</span> w) <span class="symbol">=</span> tup
+    &quot;(&quot; <span class="symbol">&lt;&gt;</span> show x <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show y <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show z <span class="symbol">&lt;&gt;</span> &quot;<span class="symbol">,</span> &quot; <span class="symbol">&lt;&gt;</span> show w <span class="symbol">&lt;&gt;</span> &quot;)&quot;
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Parse interface</h3>
 <p>For types that can be parsed from a <code>String</code>.</p>
