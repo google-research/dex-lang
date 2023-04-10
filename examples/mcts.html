@@ -464,7 +464,7 @@ return the simulation result.</p>
     curr_state<span class="symbol">:</span> state
     ) <span class="symbol">-&gt;</span> <span class="type-name">Bool</span> <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span>)<span class="symbol">=</span>
     <span class="comment">-- output is w.r.t. current player
-</span>    with_state curr_state <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
+</span>    <span class="keyword">with</span>_state curr_state <span class="symbol">\</span>ref<span class="symbol">.</span> iter <span class="symbol">\</span>i<span class="symbol">.</span>
       curr_state&#39; <span class="symbol">=</span> get ref
       <span class="keyword">if</span> game<span class="symbol">.</span>game_over curr_state&#39;
         <span class="keyword">then</span>
@@ -488,7 +488,7 @@ based on the simulation result.</p>
     ) <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} () <span class="keyword">given</span> (move<span class="symbol">,</span> state<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> node_ix<span class="symbol">|</span><span class="type-name">Eq</span><span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> h) <span class="symbol">=</span>
     <span class="comment">-- new_rollout_wins: #wins w.r.t max player
 </span>
-    with_state node <span class="symbol">\</span>node_ref<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
+    <span class="keyword">with</span>_state node <span class="symbol">\</span>node_ref<span class="symbol">.</span> iter <span class="symbol">\</span>_<span class="symbol">.</span>
       <span class="comment">-- update win and loss counts
 </span>      <span class="comment">-- -unpack
 </span>      curr_node <span class="symbol">=</span> from_just <span class="symbol">$</span> get (fst_ref tree_ref)<span class="symbol">!</span>(get node_ref)

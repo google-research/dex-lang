@@ -318,7 +318,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     k<span class="symbol">:</span><span class="type-name">Key</span>
     ) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> numSamples <span class="symbol">=&gt;</span> a  <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Data</span>) <span class="symbol">=</span>
   [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key k
-  with_state (initialize k1) <span class="symbol">\</span>s<span class="symbol">.</span>
+  <span class="keyword">with</span>_state (initialize k1) <span class="symbol">\</span>s<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> numSamples)<span class="symbol">.</span>
       x <span class="symbol">=</span> step (ixkey k2 i) (get s)
       s <span class="symbol">:=</span> x

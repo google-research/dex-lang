@@ -449,9 +449,9 @@ Todo: add a <code>[Subset position time]</code> constraint.</p>
       transition_prob <span class="symbol">*</span> label_probs[inject t<span class="symbol">,</span> ilabels[s]]
 
   <span class="comment">-- Sum over last two entries in the table.  Eq 8 from paper.
-</span>  end_with_label <span class="symbol">=</span> prob_seq_final[<span class="type-name">Fence</span> last_ix]
-  end_with_space <span class="symbol">=</span> prob_seq_final[<span class="type-name">Posts</span> last_ix]
-  end_with_label <span class="symbol">+</span> end_with_space
+</span>  end_<span class="keyword">with</span>_label <span class="symbol">=</span> prob_seq_final[<span class="type-name">Fence</span> last_ix]
+  end_<span class="keyword">with</span>_space <span class="symbol">=</span> prob_seq_final[<span class="type-name">Posts</span> last_ix]
+  end_<span class="keyword">with</span>_label <span class="symbol">+</span> end_<span class="keyword">with</span>_space
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h3>Wrapper function to provide proof of <code>NonEmpty</code></h3>
 <p>This is a wrapper function to check if any of the inputs are empty,

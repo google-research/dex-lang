@@ -414,15 +414,15 @@ purpose is to be able to render images in Dex notebooks.</p>
   <span class="type-name">AsList</span>(_<span class="symbol">,</span> imgFlat) <span class="symbol">=</span> to_list <span class="keyword">for</span> triple<span class="symbol">.</span>
     (i<span class="symbol">,</span> (j<span class="symbol">,</span> k)) <span class="symbol">=</span> triple
     img[i<span class="symbol">,</span> j<span class="symbol">,</span> k]
-  with_table_ptr imgFlat <span class="symbol">\</span>ptr<span class="symbol">.</span>
+  <span class="keyword">with</span>_table_ptr imgFlat <span class="symbol">\</span>ptr<span class="symbol">.</span>
     rawPtr <span class="symbol">=</span> ptr<span class="symbol">.</span>val
     (sz<span class="symbol">,</span> ptr&#39;) <span class="symbol">=</span> encodePNG rawPtr (nat_to_rep <span class="symbol">$</span> size m) (nat_to_rep <span class="symbol">$</span> size n)
     <span class="type-name">AsList</span>((rep_to_nat sz)<span class="symbol">,</span> table_from_ptr(<span class="type-name">Ptr</span>(ptr&#39;)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pngs_to_gif(delay<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span> pngs<span class="command">:t</span><span class="symbol">=&gt;</span><span class="type-name">Png</span>) <span class="symbol">-&gt;</span> <span class="type-name">Gif</span> <span class="keyword">given</span> (t<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> unsafe_io <span class="symbol">\.</span>
-  with_temp_files <span class="symbol">\</span>pngFiles<span class="symbol">.</span>
+  <span class="keyword">with</span>_temp_files <span class="symbol">\</span>pngFiles<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span> write_file pngFiles[i] pngs[i]
-    with_temp_file <span class="symbol">\</span>gifFile<span class="symbol">.</span>
+    <span class="keyword">with</span>_temp_file <span class="symbol">\</span>gifFile<span class="symbol">.</span>
       shell_out <span class="symbol">$</span>
          &quot;convert&quot; <span class="symbol">&lt;&gt;</span> &quot; <span class="symbol">-</span>delay &quot; <span class="symbol">&lt;&gt;</span> show delay <span class="symbol">&lt;&gt;</span> &quot; &quot; <span class="symbol">&lt;&gt;</span>
           concat (<span class="keyword">for</span> i<span class="symbol">.</span> &quot;png<span class="symbol">:</span>&quot; <span class="symbol">&lt;&gt;</span> pngFiles[i] <span class="symbol">&lt;&gt;</span> &quot; &quot;) <span class="symbol">&lt;&gt;</span>

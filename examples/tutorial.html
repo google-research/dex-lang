@@ -632,7 +632,7 @@ the <code>State</code> effect, which provides getter and setter functionality (v
 and <code>:=</code> assignment). Here's what it looks like:</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> table_mean(x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> <span class="type-name">Float32</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float32</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="comment">-- acc = 0
-</span>  with_state(0<span class="symbol">.</span>0) <span class="symbol">\</span>acc<span class="symbol">.</span>
+</span>  <span class="keyword">with</span>_state(0<span class="symbol">.</span>0) <span class="symbol">\</span>acc<span class="symbol">.</span>
     <span class="comment">-- for i in range(len(x))
 </span>    <span class="keyword">for</span> i<span class="symbol">.</span>
       <span class="comment">-- acc = acc + x[i]
@@ -661,7 +661,7 @@ to introduce imperative variables into the computation.
 <code>with_state</code> takes an initial value <code>init</code> and a body function taking a
 &quot;mutable value&quot; reference (<code>acc</code> here), and returns the body function's result.
 Here's a simple example:</p>
-</div></div><div class="cell"><div class="code-block">with_state(10) <span class="symbol">\</span>state<span class="symbol">.</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">with</span>_state(10) <span class="symbol">\</span>state<span class="symbol">.</span>
   state <span class="symbol">:=</span> 30
   state <span class="symbol">:=</span> 10
   get(state)
@@ -752,7 +752,7 @@ instance Sub((a, b)) given (a|Sub, b|Sub)
 </div></div><div class="cell"><div class="prose-block"><p>Once we have these two instance definitions, we can revisit our table mean
 function using them:</p>
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> table_mean&#39;(x <span class="symbol">:</span> n <span class="symbol">=&gt;</span> v) <span class="symbol">-&gt;</span> v <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> v<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
-  with_state(zero) <span class="symbol">\</span>acc<span class="symbol">.</span>
+  <span class="keyword">with</span>_state(zero) <span class="symbol">\</span>acc<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       acc <span class="symbol">:=</span> get(acc) <span class="symbol">+</span> x[i]       <span class="comment">-- `Add` requirement
 </span>    get(acc) <span class="symbol">/</span> n_to_f(size(n))       <span class="comment">-- `VSpace` requirement
@@ -767,7 +767,7 @@ function using them:</p>
 </div></div><div class="cell"><div class="code-block"><span class="type-name">Pixels</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 256
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bincount(inp <span class="symbol">:</span> a <span class="symbol">=&gt;</span> b) <span class="symbol">-&gt;</span> b <span class="symbol">=&gt;</span> <span class="type-name">Nat</span> <span class="keyword">given</span> (a<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
-  with_state(zero) <span class="symbol">\</span>acc <span class="symbol">.</span>
+  <span class="keyword">with</span>_state(zero) <span class="symbol">\</span>acc <span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       v <span class="symbol">=</span> acc<span class="symbol">!</span>(inp[i])
       v <span class="symbol">:=</span> get(v) <span class="symbol">+</span> 1

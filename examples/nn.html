@@ -441,7 +441,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
       <span class="keyword">given</span> (a<span class="symbol">,</span> b<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> p<span class="symbol">|</span><span class="type-name">VSpace</span><span class="symbol">,</span> batch<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   xs <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> a <span class="symbol">=</span> split x
   ys <span class="symbol">:</span> minibatches <span class="symbol">=&gt;</span> minibatch <span class="symbol">=&gt;</span> b <span class="symbol">=</span> split y
-  unzip <span class="symbol">$</span> with_state (model<span class="symbol">.</span>init <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
+  unzip <span class="symbol">$</span> <span class="keyword">with</span>_state (model<span class="symbol">.</span>init <span class="symbol">$</span> new_key 0) <span class="symbol">$</span> <span class="symbol">\</span>params <span class="symbol">.</span>
      <span class="keyword">for</span> _ <span class="symbol">:</span> epochs<span class="symbol">.</span>
        loss <span class="symbol">=</span> sum <span class="symbol">$</span> <span class="keyword">for</span> b <span class="symbol">:</span> minibatches<span class="symbol">.</span>
               (loss<span class="symbol">,</span> gradfn) <span class="symbol">=</span>  vjp (<span class="symbol">\</span> params<span class="symbol">.</span>

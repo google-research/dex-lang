@@ -318,7 +318,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> simulate(model<span class="symbol">:</span> <span class="type-name">Model</span> s v<span class="symbol">,</span> t<span class="symbol">:</span> <span class="type-name">Nat</span><span class="symbol">,</span> key<span class="symbol">:</span> <span class="type-name">Key</span>) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> t<span class="symbol">=&gt;</span>(s<span class="symbol">,</span> v) <span class="keyword">given</span> (s<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> v) <span class="symbol">=</span>
   [key<span class="symbol">,</span> subkey] <span class="symbol">=</span> split_key key
   s0 <span class="symbol">=</span> model<span class="symbol">.</span>init<span class="symbol">.</span>sample(subkey)
-  with_state s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
+  <span class="keyword">with</span>_state s0 <span class="symbol">\</span>s_ref <span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       [k1<span class="symbol">,</span> k2] <span class="symbol">=</span> split_key (ixkey key i)
       s <span class="symbol">=</span> get s_ref
@@ -337,7 +337,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     ) <span class="symbol">-&gt;</span> <span class="type-name">Fin</span> num_timesteps <span class="symbol">=&gt;</span> a <span class="keyword">given</span> (s<span class="symbol">|</span><span class="type-name">Data</span><span class="symbol">,</span> a<span class="symbol">,</span> v) <span class="symbol">=</span>
   [key<span class="symbol">,</span> init_key] <span class="symbol">=</span> split_key key
   init_particles <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span> (<span class="type-name">Fin</span> num_particles)<span class="symbol">.</span> model<span class="symbol">.</span>init<span class="symbol">.</span>sample(ixkey init_key i)
-  with_state init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
+  <span class="keyword">with</span>_state init_particles <span class="symbol">\</span>p_ref <span class="symbol">.</span>
     <span class="keyword">for</span> t<span class="symbol">:</span> (<span class="type-name">Fin</span> num_timesteps)<span class="symbol">.</span>
       p_prev <span class="symbol">=</span> get p_ref
       logLikelihoods <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> model<span class="symbol">.</span>observe(p_prev[i])<span class="symbol">.</span>logprob(obs[t])

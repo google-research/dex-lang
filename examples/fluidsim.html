@@ -410,7 +410,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
     color_init<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a<span class="symbol">,</span>
     v<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>
     ) <span class="symbol">-&gt;</span> (<span class="type-name">Fin</span> num_steps)<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span>a <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> a<span class="symbol">|</span><span class="type-name">VSpace</span>) <span class="symbol">=</span>
-  with_state (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
+  <span class="keyword">with</span>_state (color_init<span class="symbol">,</span> v) <span class="symbol">\</span>state<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> num_steps)<span class="symbol">.</span>
       (color<span class="symbol">,</span> v) <span class="symbol">=</span> get state
       v <span class="symbol">=</span> advect v v          <span class="comment">-- Move velocities

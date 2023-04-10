@@ -481,7 +481,7 @@ described
   maxIters <span class="symbol">=</span> 100
   tol <span class="symbol">=</span> 0<span class="symbol">.</span>01
   startLength <span class="symbol">=</span> 10<span class="symbol">.</span>0 <span class="symbol">*</span> tol  <span class="comment">-- trying to escape the current surface
-</span>  with_state (10<span class="symbol">.</span>0 <span class="symbol">*</span> tol) <span class="symbol">\</span>rayLength<span class="symbol">.</span>
+</span>  <span class="keyword">with</span>_state (10<span class="symbol">.</span>0 <span class="symbol">*</span> tol) <span class="symbol">\</span>rayLength<span class="symbol">.</span>
     bounded_iter maxIters <span class="type-name">HitNothing</span> <span class="symbol">\</span>_<span class="symbol">.</span>
       rayPos <span class="symbol">=</span> ray<span class="symbol">.</span>origin <span class="symbol">+</span> get rayLength <span class="symbol">.*</span> ray<span class="symbol">.</span>dir
       (obj<span class="symbol">,</span> d) <span class="symbol">=</span> sdScene scene <span class="symbol">$</span> rayPos

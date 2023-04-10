@@ -555,9 +555,9 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="comment">-- Gives a row permutation that makes Gaussian elimination more stable.
 </span>  yield_state identity_permutation <span class="symbol">\</span>permRef<span class="symbol">.</span>
     <span class="keyword">for</span> j<span class="command">:n</span><span class="symbol">.</span>
-      row_with_largest <span class="symbol">=</span> argmax <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> abs a[inject(to<span class="symbol">=</span>n<span class="symbol">,</span> i)<span class="symbol">,</span>j]
-      <span class="keyword">if</span> (ordinal j) <span class="symbol">/=</span> (ordinal row_with_largest) <span class="keyword">then</span>
-        swap_in_place permRef j (inject(to<span class="symbol">=</span>n<span class="symbol">,</span> row_with_largest))
+      row_<span class="keyword">with</span>_largest <span class="symbol">=</span> argmax <span class="keyword">for</span> i<span class="symbol">:</span>(j<span class="symbol">..</span>)<span class="symbol">.</span> abs a[inject(to<span class="symbol">=</span>n<span class="symbol">,</span> i)<span class="symbol">,</span>j]
+      <span class="keyword">if</span> (ordinal j) <span class="symbol">/=</span> (ordinal row_<span class="keyword">with</span>_largest) <span class="keyword">then</span>
+        swap_in_place permRef j (inject(to<span class="symbol">=</span>n<span class="symbol">,</span> row_<span class="keyword">with</span>_largest))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> lu(a<span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> (<span class="type-name">LowerTriMat</span> n <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">UpperTriMat</span> n <span class="type-name">Float</span><span class="symbol">,</span> <span class="type-name">Permutation</span> n) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
   <span class="comment">-- Computes lower, upper, and permuntation matrices from a square matrix,

@@ -326,7 +326,7 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
   <span class="comment">-- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
 </span>  <span class="comment">-- Note: the incorrect usage of `with_state` below is intentional to verify
 </span>  <span class="comment">--       that `$ ... $` is not rendered as LaTeX in error output cells.
-</span>  snd <span class="symbol">$</span> with_state 0 <span class="symbol">\</span>acc<span class="symbol">.</span>
+</span>  snd <span class="symbol">$</span> <span class="keyword">with</span>_state 0 <span class="symbol">\</span>acc<span class="symbol">.</span>
     <span class="keyword">for</span> i<span class="symbol">.</span>
       acc <span class="symbol">:=</span> (get acc) <span class="symbol">+</span> x[i]
 </div><div class="err-block">Type error:

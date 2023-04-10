@@ -327,7 +327,7 @@ Currently the Dex compiler will do the quadratic-time version.</p>
 </span>  <span class="comment">--  2) Avoid needlessly initializing the return array.
 </span>  init <span class="symbol">=</span> concat_table xs ys  <span class="comment">-- Initialize array of correct size.
 </span>  yield_state init <span class="symbol">\</span>buf<span class="symbol">.</span>
-    with_state (0<span class="symbol">,</span> 0) <span class="symbol">\</span>countrefs<span class="symbol">.</span>
+    <span class="keyword">with</span>_state (0<span class="symbol">,</span> 0) <span class="symbol">\</span>countrefs<span class="symbol">.</span>
       <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Either</span> m n)<span class="symbol">.</span>
         (cur_x<span class="symbol">,</span> cur_y) <span class="symbol">=</span> get countrefs
         <span class="keyword">if</span> cur_y <span class="symbol">&gt;=</span> size n  <span class="comment">-- no ys left
