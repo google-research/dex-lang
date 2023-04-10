@@ -243,7 +243,7 @@ data CorePiType (n::S) where
   CorePiType :: AppExplicitness -> CoreBinders n l -> EffectRow CoreIR l -> Type CoreIR l -> CorePiType n
 
 data DepPairType (r::IR) (n::S) where
-  DepPairType :: Binder r n l -> Type r l -> DepPairType r n
+  DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
 
 data Projection =
    UnwrapNewtype -- TODO: add `HasCore r` constraint
@@ -2009,10 +2009,10 @@ deriving via WrapE (PiType r) n instance IRRep r => Generic (PiType r n)
 instance IRRep r => Store (PiType r n)
 
 instance GenericE (DepPairType r) where
-  type RepE (DepPairType r) = Abs (Binder r) (Type r)
-  fromE (DepPairType b resultTy) = Abs b resultTy
+  type RepE (DepPairType r) = PairE (LiftE DepPairExplicitness) (Abs (Binder r) (Type r))
+  fromE (DepPairType expl b resultTy) = LiftE expl `PairE` Abs b resultTy
   {-# INLINE fromE #-}
-  toE   (Abs b resultTy) = DepPairType b resultTy
+  toE   (LiftE expl `PairE` Abs b resultTy) = DepPairType expl b resultTy
   {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (DepPairType r)

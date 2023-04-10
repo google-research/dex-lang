@@ -692,3 +692,11 @@ def my_id2(x:a) -> a given (a, b:Type) = x
 >
 > :p my_id2 1.0
 >    ^^^^^^^^^^
+
+def returns_dep_pair(n:Nat) -> (Fin new => Nat with (new:Nat)) =
+  n2 = n + n
+  for i:(Fin n2). ordinal i
+
+xs = returns_dep_pair 4
+:p sum xs
+> 28

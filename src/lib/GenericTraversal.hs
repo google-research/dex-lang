@@ -170,10 +170,10 @@ instance GenericallyTraversableE CoreIR TyConParams where
     TyConParams infs <$> mapM tge params
 
 instance IRRep r => GenericallyTraversableE r (DepPairType r) where
-  traverseGenericE (DepPairType (b:>lty) rty) = do
+  traverseGenericE (DepPairType expl (b:>lty) rty) = do
     lty' <- tge lty
     withFreshBinder (getNameHint b) lty' \b' -> do
-      extendRenamer (b@>binderName b') $ DepPairType b' <$> tge rty
+      extendRenamer (b@>binderName b') $ DepPairType expl b' <$> tge rty
 
 instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
   traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> tge f

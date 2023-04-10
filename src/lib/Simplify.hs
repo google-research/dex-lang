@@ -143,12 +143,12 @@ getRepType ty = go ty where
       RefType h a -> RefType  <$> toDataAtomIgnoreReconAssumeNoDecls h <*> go a
       TypeKind    -> error $ notDataType
       HeapType    -> return $ HeapType
-    DepPairTy (DepPairType b@(_:>l) r) -> do
+    DepPairTy (DepPairType expl b@(_:>l) r) -> do
       l' <- go l
       withFreshBinder (getNameHint b) l' \b' -> do
         x <- liftSimpAtom (sink l) (Var $ binderName b')
         r' <- go =<< applySubst (b@>SubstVal x) r
-        return $ DepPairTy $ DepPairType b' r'
+        return $ DepPairTy $ DepPairType expl b' r'
     TabPi (TabPiType (b:>ixTy) bodyTy) -> do
       ixTy' <- simplifyIxType ixTy
       withFreshBinder (getNameHint b) ixTy' \b' -> do

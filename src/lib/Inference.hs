@@ -705,8 +705,8 @@ hoistInfStateRec env emissions !infVars defaults !subst decls e = case emissions
           -- If a variable is solved, we eliminate it.
           Just bSolutionUnhoisted -> do
             bSolution <-
-              liftHoistExcept' "Failed to eliminate solved variable in hoistInfStateRec"
-              $ hoist frag bSolutionUnhoisted
+              liftHoistExcept' "Failed to eliminate solved variable in hoistInfStateRec "
+                $ hoist frag bSolutionUnhoisted
             case exchangeBs $ PairB b infVars of
               -- This used to be accepted by the code at some point (and handled the same way
               -- as the Nothing) branch above, but I don't understand why. We don't even seem
@@ -850,6 +850,15 @@ checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
             _ -> Nothing
           expr' <- inferWithoutInstantiation expr >>= zonk
           dropSubst $ checkOrInferApp expr' explicits [] (Check resultTy)
+  DepPairTy depPairTy -> case depPairTy of
+    DepPairType ImplicitDepPair (_ :> lhsTy) _ -> do
+      -- TODO: check for the case that we're given some of the implicit dependent pair args explicitly
+      lhsVal <- Var <$> freshInferenceName MiscInfVar lhsTy
+      -- TODO: make an InfVarDesc case for dep pair instantiation
+      rhsTy <- instantiateDepPairTy depPairTy lhsVal
+      rhsVal <- checkSigma noHint expr rhsTy
+      return $ DepPair lhsVal rhsVal depPairTy
+    _ -> fallback
   _ -> fallback
   where fallback = checkOrInferRho hint expr (Check sTy)
 
@@ -898,6 +907,8 @@ withUDecl (WithSrcB src d) cont = addSrcContext src case d of
     var <- emitDecl (getNameHint p) letAnn $ Atom val
     bindLetPat p var cont
 
+-- "rho" means the required type here should not be (at the top level) an implicit pi type or
+-- an implicit dependent pair type. We don't want to unify those directly.
 -- The name hint names the object being computed
 checkOrInferRho
   :: forall i o. EmitsBoth o
@@ -939,16 +950,16 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
         let msg =  "Can't reduce type expression: " ++ docAsStr (pretty ty)
         withReducibleEmissions msg $ checkUType ty
     matchRequirement $ TabPi piTy
-  UDepPairTy (UDepPairType (UAnnBinder b ann cs) rhs) -> do
+  UDepPairTy (UDepPairType expl (UAnnBinder b ann cs) rhs) -> do
     unless (null cs) $ throw TypeErr "Dependent pair binders shouldn't have constraints"
     ann' <- checkAnn (getSourceName b) ann
     matchRequirement =<< liftM DepPairTy do
-      buildDepPairTyInf (getNameHint b) ann' \v -> extendRenamer (b@>v) do
+      buildDepPairTyInf (getNameHint b) expl ann' \v -> extendRenamer (b@>v) do
         let msg =  "Can't reduce type expression: " ++ docAsStr (pretty rhs)
         withReducibleEmissions msg $ checkUType rhs
   UDepPair lhs rhs -> do
     case reqTy of
-      Check (DepPairTy ty@(DepPairType (_ :> lhsTy) _)) -> do
+      Check (DepPairTy ty@(DepPairType _ (_ :> lhsTy) _)) -> do
         lhs' <- checkSigmaDependent noHint lhs lhsTy
         rhsTy <- instantiateDepPairTy ty lhs'
         rhs' <- checkSigma noHint rhs rhsTy
@@ -1178,13 +1189,19 @@ instantiateSigma sigmaAtom = getType sigmaAtom >>= \case
   Pi (CorePiType ImplicitApp bs _ resultTy) -> do
     args <- inferMixedArgs @UExpr fDesc (Abs bs resultTy) [] []
     applySigmaAtom sigmaAtom args
-  _ -> case sigmaAtom of
-    SigmaAtom _ x -> return x
-    SigmaUVar _ v -> case v of
-      UAtomVar v' -> return $ Var v'
-      _ -> applySigmaAtom sigmaAtom []
-    SigmaPartialApp _ _ -> error "shouldn't hit this case because we should have a pi type here"
- where
+  DepPairTy (DepPairType ImplicitDepPair _ _) ->
+    -- TODO: we should probably call instantiateSigma again here in case
+    -- we have nested dependent pairs. Also, it looks like this doesn't
+    -- get called after function application. We probably want to fix that.
+    fallback >>= getSnd
+  _ -> fallback
+  where
+   fallback = case sigmaAtom of
+     SigmaAtom _ x -> return x
+     SigmaUVar _ v -> case v of
+       UAtomVar v' -> return $ Var v'
+       _ -> applySigmaAtom sigmaAtom []
+     SigmaPartialApp _ _ -> error "shouldn't hit this case because we should have a pi type here"
    fDesc :: SourceName
    fDesc = getSourceName sigmaAtom
 
@@ -1388,7 +1405,7 @@ applyDataCon tc conIx topArgs = do
         where
           nargs = length args; ntys = length tys
           (curArgs, remArgs) = splitAt (ntys - 1) args
-      DepPairTy dpt@(DepPairType b rty') -> do
+      DepPairTy dpt@(DepPairType _ b rty') -> do
         rty'' <- applySubst (b@>SubstVal h) rty'
         ans <- wrap rty'' t
         return $ DepPair h ans dpt
@@ -1744,7 +1761,7 @@ dataConRepTy (Abs topBs UnitE) = case topBs of
             (tailTy, tailIdxs) = go [] (ProjectProduct 1 : (depTyIdxs ++ projIdxs)) bs
             idxs = (iota accSize <&> \i -> ProjectProduct i : projIdxs) ++
                    ((ProjectProduct 0 : (depTyIdxs ++ projIdxs)) : tailIdxs)
-            depTy = DepPairTy $ DepPairType b tailTy
+            depTy = DepPairTy $ DepPairType ExplicitDepPair b tailTy
 
 inferClassDef
   :: EmitsInf o
@@ -3075,7 +3092,7 @@ synthDictForData dictTy@(DictType "Data" dName [ty]) = case ty of
   -- The "Var" case is different
   Var _ -> synthDictFromGiven dictTy
   TabPi (TabPiType b eltTy) -> recurBinder (Abs b eltTy) >> success
-  DepPairTy (DepPairType b@(_:>l) r) -> do
+  DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l >> recurBinder (Abs b r) >> success
   NewtypeTyCon LabelType -> notData
   NewtypeTyCon nt -> do
@@ -3219,12 +3236,12 @@ buildTabPiInf hint ixTy body = do
 
 buildDepPairTyInf
   :: EmitsInf n
-  => NameHint -> CType n
+  => NameHint -> DepPairExplicitness -> CType n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomName l -> InfererM i l (CType l))
   -> InfererM i n (DepPairType CoreIR n)
-buildDepPairTyInf hint ty body = do
+buildDepPairTyInf hint expl ty body = do
   Abs b resultTy <- buildAbsInf hint Explicit ty body
-  return $ DepPairType (withoutExpl b) resultTy
+  return $ DepPairType expl (withoutExpl b) resultTy
 
 buildAltInf
   :: EmitsInf n

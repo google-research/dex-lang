@@ -339,7 +339,7 @@ instance HasType CoreIR DictExpr where
   getTypeE e = dictExprType e
 
 instance IRRep r => HasType r (DepPairType r) where
-  getTypeE (DepPairType b ty) = do
+  getTypeE (DepPairType _ b ty) = do
     checkB b \_ -> ty |: TyKind
     return TyKind
 
@@ -1074,7 +1074,7 @@ checkDataLike ty = case ty of
   TabPi (TabPiType b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
-  DepPairTy (DepPairType b@(_:>l) r) -> do
+  DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l
     renameBinders b \_ -> checkDataLike r
   NewtypeTyCon LabelType -> notData

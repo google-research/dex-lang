@@ -463,7 +463,7 @@ expr = propagateSrcE expr' where
       EvalBinOp s -> evalOp s
       DepAmpersand  -> do
         lhs' <- tyOptPat lhs
-        UDepPairTy . (UDepPairType lhs') <$> expr rhs
+        UDepPairTy . (UDepPairType ExplicitDepPair lhs') <$> expr rhs
       DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
@@ -534,6 +534,13 @@ expr = propagateSrcE expr' where
     return $ UCase p'
       [ UAlt (nsB $ UPatCon "True"  Empty) c'
       , UAlt (nsB $ UPatCon "False" Empty) a']
+  expr' (CWith lhs rhs) = do
+    ty <- expr lhs
+    case rhs of
+      [b] -> do
+        b' <- binderOptTy b
+        return $ UDepPairTy $ UDepPairType ImplicitDepPair b' ty
+      _ -> error "n-ary dependent pairs not implemented"
 
 charExpr :: Char -> (UExpr' VoidS)
 charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
