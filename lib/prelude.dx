@@ -2570,8 +2570,7 @@ def tile(
     body (FullTileIx(n, tile_size, tile_ix'))
   body (CodaIx(n, coda_offset, coda_size))
 
--- matmul. Better symbol to use? `@`?
-def (**)(
+def tiled_matmul(
     x: l=>m=>Float,
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
@@ -2590,6 +2589,14 @@ def (**)(
               for_ m_offset:m_set.
                 m_ix = inject m_offset
                 result!l_ix!n_ix += x[l_ix,m_ix] * y[m_ix,n_ix]
+
+-- matmul. Better symbol to use? `@`?
+def (**)(
+    x: l=>m=>Float,
+    y: m=>n=>Float
+    ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
+  -- TODO(https://github.com/google-research/dex-lang/issues/1212) Replace with tiled_matmul.
+  naive_matmul(x, y)
 
 def (**.)(mat: n=>m=>Float, v: m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
   for i. vdot(mat[i], v)
