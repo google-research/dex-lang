@@ -1601,21 +1601,22 @@ written into the destination supplied by the caller.
 Now back to the important exception, dependent pairs. When we have a dependent
 pair, like `(n:Nat &> Fin n => Float)`, we don't know the size of the `Fin n =>
 Float` table because the `n` is given by the *value* of the (first element of
-the) pair. We use these to encode dynamically-sized lists. We handle this case
-by pretending that we can have an array of arbitrary-sized boxes. The
-implementation is just an array of pointers. But these pointers behave quite
-differently from either the pointers that point to standard buffers or the
-pointers used as views of those buffers. We think of them as an implementation
-detail modeling the interface of an array with variable-sized elements, stored
-*as values* in the array. In particular, the buffer exclusively owns the memory
-backing its boxes. When we free the buffer, we free its boxes. When we write to
-a buffer at an index, allocate fresh memory for the new box and free the old box
-(unless it's null, as for an uninitialized buffer). We can still take read-only
-views of the data in the boxes, but only if we know the buffer itself is
-immutable/frozen, because otherwise the box memory might be freed when it's
-overwritten by another value, which could happen before exiting the scope (in
-that sense it's no different from taking a slice of a buffer to represent a
-subarray).
+the) pair. We use these to encode dynamically-sized lists.
+
+We handle having an array of these by pretending that we can have an array of
+arbitrary-sized boxes. The implementation is just an array of pointers. But
+these pointers behave quite differently from either the pointers that point to
+standard buffers or the pointers used as views of those buffers. We think of
+them as an implementation detail modeling the interface of an array with
+variable-sized elements, stored *as values* in the array. In particular, the
+outer buffer exclusively owns the memory backing its boxes. When we free the
+buffer, we free its boxes. When we write to a buffer at an index, allocate fresh
+memory for the new box and free the old box (unless it's null, as for an
+uninitialized buffer). We can still take read-only views of the data in the
+boxes, but only if we know the buffer itself is immutable/frozen, because
+otherwise the box memory might be freed when it's overwritten by another value,
+which could happen before exiting the scope (in that sense it's no different
+from taking a slice of a buffer to represent a subarray).
 
 Separate from this memory system, we have user-facing references, `Ref h a`,
 from the `State` effect. The memory for these is managed by a separate system,
