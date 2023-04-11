@@ -646,9 +646,9 @@ instance SinkableE Dest where
 
 -- `ScalarDesc` describes how to interpret an Imp value in terms of the nest of
 -- buffers that it points to
-data BufferElementType = UnboxedValue BaseType | BoxedBuffer BufferElementType
-data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType
-data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType
+data BufferElementType = UnboxedValue BaseType | BoxedBuffer BufferElementType deriving (Show)
+data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType deriving (Show)
+data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType deriving (Show)
 
 getRefBufferType :: LeafType n -> BufferType n
 getRefBufferType fullLeafTy = case splitLeadingIxs fullLeafTy of
