@@ -1,7 +1,6 @@
 #!/bin/bash
 
-declare -a possible_filecheck_locations=("FileCheck-12"
-                                         "FileCheck")
+declare -a possible_filecheck_locations=("FileCheck-15" "FileCheck")
 FILECHECK=$(\
   for fc in "${possible_filecheck_locations[@]}" ; do \
     if [[ $(command -v "$fc" 2>/dev/null) ]]; \

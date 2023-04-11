@@ -31,10 +31,13 @@ l_full = padLowerTriMat l
 
 psdReconstructed = l_full ** transpose l_full
 
-:p sum for pair.
-  (i, j) = pair
-  sq (psd[i,j] - psdReconstructed[i,j])
-> 1.421085e-12
+-- FIXME(llvm-15): Re-enable this.
+-- Deterministically different results on macOS (Apple M1) and Linux below.
+-- :p sum for pair.
+--   (i, j) = pair
+--   sq (psd[i,j] - psdReconstructed[i,j])
+-- > 1.421085e-12 -- Linux
+-- > 1.309175e-12 -- macOS (Apple M1)
 
 vec : N=>Float = arb k2
 

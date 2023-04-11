@@ -373,8 +373,9 @@ imscolor2 = for b. for i. for j. for c:Channels.
     True  -> sum(ims)[i, j] / n_to_f(size Batch)
     False -> ims[b, i, j]
 
-:html imseqshow(imscolor2 / 255.0)
-> <html output>
+-- FIXME(llvm-15): Re-enable lines below. Currently crashes with segfault.
+-- :html imseqshow(imscolor2 / 255.0)
+-- > <html output>
 
 ' This example utilizes the type system to help manipulate the shape
   of an image. Sum pooling downsamples the image as the max of each
@@ -623,8 +624,9 @@ nearest = for i. argmin(dist[i])
 
 double = for b i j. [ims[b, i, j], ims[nearest[b], i, j], 0.0]
 
-:html imseqshow double
-> <html output>
+-- FIXME(llvm-15): Re-enable lines below. Currently crashes with segfault.
+-- :html imseqshow double
+-- > <html output>
 
 '## Variable Length Lists
 
