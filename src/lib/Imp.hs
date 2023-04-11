@@ -778,7 +778,7 @@ storeLeaf leafTy dest src = case getRefBufferType leafTy of
   BufferType Singleton (UnboxedValue _) -> store dest src
   BufferType idxStructure (UnboxedValue _) -> do
     numel <- computeElemCountImp idxStructure
-    emitStatement $ MemCopy dest src numel
+    memcopy dest src numel
   BufferType Singleton (BoxedBuffer elemTy) -> do
     load dest >>= freeBox elemTy
     Just boxIxStructure <- return $ tryGetBoxIdxStructure leafTy
@@ -823,7 +823,7 @@ cloneBox dest elemTy maybeBufferNumElem srcPtr = do
       newPtr <- emitAllocWithContext Unmanaged (elemTypeToBaseType elemTy) numElem
       store (sink dest) newPtr
       case elemTy of
-        UnboxedValue _ -> emitStatement $ MemCopy newPtr (sink srcPtr) numElem
+        UnboxedValue _ -> memcopy newPtr (sink srcPtr) numElem
         BoxedBuffer elemTy' -> do
           mapOffsetPtrs numElem [newPtr, sink srcPtr] \[newPtrOffset, srcPtrOffset] -> do
             load srcPtrOffset >>= cloneBox newPtrOffset elemTy' Nothing
@@ -1271,6 +1271,10 @@ impOffset :: Emits n => IExpr n -> IExpr n -> SubstImpM i n (IExpr n)
 impOffset ref (IIdxRepVal 0) = return ref
 impOffset ref off = emitInstr $ IPtrOffset ref off
 {-# INLINE impOffset #-}
+
+memcopy :: (ImpBuilder m, Emits n) => IExpr n -> IExpr n -> IExpr n -> m n ()
+memcopy new src numElem = emitStatement $ MemCopy new src numElem
+{-# INLINE memcopy #-}
 
 cast :: Emits n => IExpr n -> BaseType -> SubstImpM i n (IExpr n)
 cast x bt = emitInstr $ ICastOp bt x
