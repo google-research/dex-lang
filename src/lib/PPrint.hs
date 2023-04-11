@@ -149,6 +149,12 @@ fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest
 prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
 prettyLines xs = foldMap (\d -> hardline <> p d) $ toList xs
 
+parensSep :: Doc ann -> [Doc ann] -> Doc ann
+parensSep separator items = encloseSep "(" ")" separator items
+
+spaceIfColinear :: Doc ann
+spaceIfColinear = flatAlt "" space
+
 instance PrettyPrec a => PrettyPrec [a] where
   prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest xs
 
@@ -260,7 +266,7 @@ instance Pretty (DictType n) where
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
   prettyPrec (DepPairType _ b rhs) =
-    atPrec ArgPrec $ align $ group $ parens $ p b <+> "&>" <+> p rhs
+    atPrec ArgPrec $ align $ group $ parensSep (spaceIfColinear <> "&> ") [p b, p rhs]
 
 instance Pretty (EffectOpType n) where
   pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
