@@ -1335,9 +1335,9 @@ emitLoop hint d n cont = do
       return $ Abs b body
   emitStatement $ IFor d n loopBody
 
-_emitDebugPrint :: Emits n => String -> IExpr n -> SubstImpM i n ()
+_emitDebugPrint :: (ImpBuilder m, Emits n) => String -> IExpr n -> m n ()
 _emitDebugPrint fmt x = do
- x' <- cast x (Scalar Word64Type)
+ x' <- emitInstr $ ICastOp (Scalar Int64Type) x
  emitStatement $ DebugPrint fmt x'
 
 restructureScalarOrPairType :: SType n -> [IExpr n] -> SubstImpM i n (SAtom n)
