@@ -8,11 +8,13 @@ This computation is interesting because it occurs in the inner
 loop of computing the Neural Tangent Kernel of a convolutional
 layer.
 
-def unsafe_from_integer {n} [Ix n] (i:Int) : n =
-  unsafe_from_ordinal _ $ unsafe_i_to_n i
+def unsafe_from_integer(i:Int) -> n given (n|Ix) =
+  unsafe_from_ordinal $ unsafe_i_to_n i
 
-def conv_1d {d1 d2} (kernel: (Fin d1)=>(Fin d2)=>Float)
-    (size: Nat) : (Fin d1)=>(Fin d2)=>Float =
+def conv_1d(
+    kernel: (Fin d1)=>(Fin d2)=>Float,
+    size: Nat)
+    -> (Fin d1)=>(Fin d2)=>Float given (d1, d2) =
   half_kernel_size = (f_to_i $ (n_to_f size) / 2.0)
   for i j. sum for k: (Fin size).
     i' = n_to_i $ ordinal i
@@ -22,14 +24,18 @@ def conv_1d {d1 d2} (kernel: (Fin d1)=>(Fin d2)=>Float)
     j'' = j' + k' - half_kernel_size
     if i'' < 0 || i'' >= (n_to_i d1) || j'' < 0 || j'' >= (n_to_i d2)
       then 0
-      else kernel.(unsafe_from_integer i'').(unsafe_from_integer j'')
+      else kernel[unsafe_from_integer i'', unsafe_from_integer j'']
 
-def conv {n c h w} (kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float)
-  (size: Int) : (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float =
-  for n' c'. conv_1d kernel.n'.c' (unsafe_i_to_n size)
+def conv(
+    kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float,
+    size: Int)
+    -> (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float given (n, c, h, w) =
+  for n' c'. conv_1d(kernel[n', c'], unsafe_i_to_n(size))
 
-def conv_spec {n c h w} (kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float)
-  (size: Int) : (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float =
+def conv_spec(
+    kernel: (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float,
+    size: Int)
+    -> (Fin n)=>(Fin c)=>(Fin h)=>(Fin w)=>Float given (n, c, h, w) =
   if size == 3
     then conv kernel 3
     else conv kernel size
