@@ -269,11 +269,6 @@ translateBlock :: forall i o. Emits o
   => SBlock i -> SubstImpM i o (SAtom o)
 translateBlock (Block _ decls result) = translateDeclNest decls $ substM result
 
-translateBlockWithDest :: forall i o. Emits o
-  => Dest o -> SBlock i -> SubstImpM i o (SAtom o)
-translateBlockWithDest dest (Block _ decls result) =
-  translateDeclNest decls $ translateAtom dest result
-
 translateDeclNestSubst
   :: Emits o => Subst AtomSubstVal l o
   -> Nest SDecl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
@@ -290,12 +285,6 @@ translateDeclNest decls cont = do
   s' <- translateDeclNestSubst s decls
   withSubst s' cont
 {-# INLINE translateDeclNest #-}
-
-translateAtom  :: forall i o. Emits o
-  => Dest o -> SAtom i -> SubstImpM i o (SAtom o)
-translateAtom dest x = do
-  x' <- substM x
-  storeAtom dest x' >> return x'
 
 translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
 translateExpr expr = confuseGHC >>= \_ -> case expr of
@@ -336,8 +325,8 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
             dest <- allocDest =<< substM ty
             emitSwitch tag' (zip xss alts) $
               \(xs, Abs b body) ->
-                 void $ extendSubst (b @> SubstVal (sink xs)) $
-                   translateBlockWithDest (sink dest) body
+                 extendSubst (b @> SubstVal (sink xs)) $
+                   translateBlock body >>= storeAtom (sink dest)
             loadAtom dest
   DAMOp damOp -> case damOp of
     Seq d ixDict carry f -> do
@@ -535,8 +524,8 @@ toImpFor resultTy d ixDict (UnaryLamExpr b body) = do
   emitLoop (getNameHint b) d n \i -> do
     idx <- unsafeFromOrdinalImp (sink ixTy) i
     ithDest <- indexDest (sink dest) idx
-    void $ extendSubst (b @> SubstVal idx) $
-      translateBlockWithDest ithDest body
+    extendSubst (b @> SubstVal idx) $
+      translateBlock body >>= storeAtom ithDest
   loadAtom dest
 toImpFor _ _ _ _ = error "expected a lambda as the atom argument"
 
@@ -572,8 +561,8 @@ toImpHof hof = do
         PairE accTy' e'' <- sinkM $ PairE accTy e'
         liftMonoidEmpty accTy' e''
       storeAtom wDest emptyVal
-      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
-        translateBlockWithDest aDest body
+      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
+        translateBlock body >>= storeAtom aDest
       PairVal <$> loadAtom aDest <*> loadAtom wDest
     RunState d s f -> do
       BinaryLamExpr h ref body <- return f
@@ -585,10 +574,10 @@ toImpHof hof = do
           sDest <- atomToDest =<< substM d'
           return (aDest, sDest)
       storeAtom sDest =<< substM s
-      void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
-        translateBlockWithDest aDest body
+      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
+        translateBlock body >>= storeAtom aDest
       PairVal <$> loadAtom aDest <*> loadAtom sDest
-    RunIO body-> translateBlock body
+    RunIO body -> translateBlock body
     RunInit body -> translateBlock body
     where
       liftMonoidEmpty :: Emits n => SType n -> SAtom n -> SBuilderM n (SAtom n)
