@@ -267,7 +267,8 @@ liftImpM cont = do
 
 translateBlock :: forall i o. Emits o
   => MaybeDest o -> SBlock i -> SubstImpM i o (SAtom o)
-translateBlock dest (Block _ decls result) = translateDeclNest decls $ translateExpr dest $ Atom result
+translateBlock dest (Block _ decls result) =
+  translateDeclNest decls $ translateAtom dest result
 
 translateDeclNestSubst
   :: Emits o => Subst AtomSubstVal l o
@@ -275,7 +276,7 @@ translateDeclNestSubst
 translateDeclNestSubst !s = \case
   Empty -> return s
   Nest (Let b (DeclBinding _ _ expr)) rest -> do
-    x <- withSubst s $ translateExpr Nothing expr
+    x <- withSubst s $ translateExpr expr
     translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
 translateDeclNest :: Emits o
@@ -286,15 +287,14 @@ translateDeclNest decls cont = do
   withSubst s' cont
 {-# INLINE translateDeclNest #-}
 
-translateExpr :: forall i o. Emits o
-  => MaybeDest o -> SExpr i -> SubstImpM i o (SAtom o)
-translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
-  Hof hof -> toImpHof maybeDest hof
+translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
+translateExpr expr = confuseGHC >>= \_ -> case expr of
+  Hof hof -> toImpHof hof
   TopApp f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
-      DexTopFun _ piTy _ _ -> emitCall maybeDest piTy f $ toList xs
+      DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
       FFITopFun _ _ -> do
         resultTy <- getType $ TopApp f xs
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
@@ -304,16 +304,16 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
     repValAtom =<< naryIndexRepVal f (toList xs)
-  Atom x -> substM x >>= returnVal
+  Atom x -> substM x
   -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
-  PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp maybeDest
-  RefOp refDest eff -> toImpRefOp maybeDest refDest eff
+  PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp
+  RefOp refDest eff -> toImpRefOp refDest eff
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
       Just (con, arg) -> do
         Abs b body <- return $ alts !! con
-        extendSubst (b @> SubstVal arg) $ translateBlock maybeDest body
+        extendSubst (b @> SubstVal arg) $ translateBlock Nothing body
       Nothing -> do
         RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
         ts <- caseAltsBinderTys sumTy
@@ -323,7 +323,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         where
           go tag xss = do
             tag' <- fromScalarAtom tag
-            dest <- maybeAllocDest maybeDest =<< substM ty
+            dest <- maybeAllocDest Nothing =<< substM ty
             emitSwitch tag' (zip xss alts) $
               \(xs, Abs b body) ->
                  void $ extendSubst (b @> SubstVal (sink xs)) $
@@ -339,9 +339,7 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
         idx <- unsafeFromOrdinalImp (sink ixTy) i
         void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
           translateBlock Nothing body
-      case maybeDest of
-        Nothing -> return carry'
-        Just _  -> error "Unexpected dest"
+      return carry'
     RememberDest d f -> do
       UnaryLamExpr b body <- return f
       d' <- substM d
@@ -350,48 +348,52 @@ translateExpr maybeDest expr = confuseGHC >>= \_ -> case expr of
     Place ref val -> do
       val' <- substM val
       refDest <- atomToDest =<< substM ref
-      storeAtom refDest val' >> returnVal UnitVal
+      storeAtom refDest val' >> return UnitVal
     Freeze ref -> loadAtom =<< atomToDest =<< substM ref
     AllocDest ty  -> do
       d <- liftM destToAtom $ allocDest =<< substM ty
-      returnVal d
+      return d
   TabCon _ ty rows -> do
     resultTy@(TabPi (TabPiType b _)) <- substM ty
     let ixTy = binderAnn b
-    dest <- maybeAllocDest maybeDest resultTy
+    dest <- maybeAllocDest Nothing resultTy
     forM_ (zip [0..] rows) \(i, row) -> do
       row' <- substM row
       ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
       storeAtom ithDest row'
     loadAtom dest
-  where
-    returnVal atom = case maybeDest of
-      Nothing   -> return atom
-      Just dest -> storeAtom dest atom >> return atom
+
+translateAtom  :: forall i o. Emits o
+  => MaybeDest o -> SAtom i -> SubstImpM i o (SAtom o)
+translateAtom maybeDest x = do
+  x' <- substM x
+  case maybeDest of
+    Nothing -> return x'
+    Just dest -> storeAtom dest x' >> return x'
 
 toImpRefOp :: Emits o
-  => MaybeDest o -> SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
-toImpRefOp maybeDest refDest' m = do
+  => SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
+toImpRefOp refDest' m = do
   refDest <- atomToDest =<< substM refDest'
   substM m >>= \case
-    MAsk -> returnVal =<< loadAtom refDest
+    MAsk -> loadAtom refDest
     MExtend (BaseMonoid _ combine) x -> do
       xTy <- getType x
       refVal <- loadAtom refDest
       result <- liftBuilderImp $
                   liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
       storeAtom refDest result
-      returnVal UnitVal
-    MPut x -> storeAtom refDest x >> returnVal UnitVal
+      return UnitVal
+    MPut x -> storeAtom refDest x >> return UnitVal
     MGet -> do
       Dest resultTy _ <- return refDest
-      dest <- maybeAllocDest maybeDest resultTy
+      dest <- maybeAllocDest Nothing resultTy
       -- It might be more efficient to implement a specialized copy for dests
       -- than to go through a general purpose atom.
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
-    IndexRef i -> returnVal =<< (destToAtom <$> indexDest refDest i)
-    ProjRef  ~(ProjectProduct i) -> returnVal $ destToAtom $ projectDest i refDest
+    IndexRef i -> destToAtom <$> indexDest refDest i
+    ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
   where
     liftMonoidCombine
       :: Emits n => SType n -> LamExpr SimpIR n
@@ -413,17 +415,14 @@ toImpRefOp maybeDest refDest' m = do
               liftMonoidCombine eltTy' (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
-    returnVal atom = case maybeDest of
-      Nothing   -> return atom
-      Just dest -> storeAtom dest atom >> return atom
 
 toImpOp :: forall i o .
-           Emits o => MaybeDest o -> PrimOp (SAtom o) -> SubstImpM i o (SAtom o)
-toImpOp maybeDest op = case op of
+           Emits o => PrimOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpOp op = case op of
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
-  MemOp memOp -> toImpMemOp maybeDest memOp
-  MiscOp miscOp -> toImpMiscOp maybeDest miscOp
+  MemOp memOp -> toImpMemOp memOp
+  MiscOp miscOp -> toImpMiscOp miscOp
   VectorOp (VectorBroadcast val vty) -> do
     val' <- fsa val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
@@ -433,20 +432,17 @@ toImpOp maybeDest op = case op of
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fsa refi
     let PtrType (addrSpace, _) = getIType refi'
-    returnVal =<< case vty of
+    case vty of
       BaseTy vty'@(Vector _ _) -> do
         resultVal <- cast refi' (PtrType (addrSpace, vty'))
         repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
       _ -> error "Expected a vector type"
   where
     fsa = fromScalarAtom
-    returnIExprVal x = returnVal $ toScalarAtom x
-    returnVal atom = case maybeDest of
-      Nothing   -> return atom
-      Just dest -> storeAtom dest atom >> return atom
+    returnIExprVal x = return $ toScalarAtom x
 
-toImpMiscOp :: Emits o => MaybeDest o -> MiscOp (SAtom o) -> SubstImpM i o (SAtom o)
-toImpMiscOp maybeDest op = case op of
+toImpMiscOp :: Emits o => MiscOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpMiscOp op = case op of
   ThrowError resultTy -> do
     emitStatement IThrowError
     buildGarbageVal resultTy
@@ -465,19 +461,19 @@ toImpMiscOp maybeDest op = case op of
     assertEq srcRep destRep $
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
     RepVal _ tree <- atomToRepVal x
-    returnVal =<< repValAtom (RepVal resultTy tree)
+    repValAtom (RepVal resultTy tree)
   GarbageVal resultTy -> buildGarbageVal resultTy
   Select p x y -> do
     BaseTy _ <- getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
   SumTag con -> case con of
-    Con (SumCon _ tag _) -> returnVal $ TagRepVal $ fromIntegral tag
+    Con (SumCon _ tag _) -> return $ TagRepVal $ fromIntegral tag
     RepValAtom dRepVal -> go dRepVal
     _ -> error $ "Not a data constructor: " ++ pprint con
     where go dRepVal = do
             RepVal _ (Branch (tag:_)) <- return dRepVal
             return $ RepValAtom $ RepVal TagRepTy tag
-  ToEnum ty i -> returnVal =<< case ty of
+  ToEnum ty i -> case ty of
     SumTy cases -> do
       i' <- fromScalarAtom i
       return $ RepValAtom $ RepVal ty $ Branch $ Leaf i' : map (const (Branch [])) cases
@@ -487,7 +483,7 @@ toImpMiscOp maybeDest op = case op of
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
     resultTy <- getType $ PrimOp $ MiscOp op
-    Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- maybeAllocDest maybeDest resultTy
+    Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- maybeAllocDest Nothing resultTy
     xScalar <- fromScalarAtom x
     size <- emitInstr $ IShowScalar tabPtr xScalar
     let size' = toScalarAtom size
@@ -496,13 +492,10 @@ toImpMiscOp maybeDest op = case op of
     return $ PairVal size' tab
   where
     fsa = fromScalarAtom
-    returnIExprVal x = returnVal $ toScalarAtom x
-    returnVal atom = case maybeDest of
-      Nothing   -> return atom
-      Just dest -> storeAtom dest atom >> return atom
+    returnIExprVal x = return $ toScalarAtom x
 
-toImpMemOp :: forall i o . Emits o => MaybeDest o -> MemOp (SAtom o) -> SubstImpM i o (SAtom o)
-toImpMemOp maybeDest op = case op of
+toImpMemOp :: forall i o . Emits o => MemOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpMemOp op = case op of
   IOAlloc ty n -> do
     n' <- fsa n
     ptr <- emitInstr $ Alloc CPU ty n'
@@ -511,7 +504,7 @@ toImpMemOp maybeDest op = case op of
     ptr' <- fsa ptr
     emitStatement $ Free ptr'
     return UnitVal
-  PtrOffset arr (IdxRepVal 0) -> returnVal arr
+  PtrOffset arr (IdxRepVal 0) -> return arr
   PtrOffset arr off -> do
     arr' <- fsa arr
     off' <- fsa off
@@ -527,32 +520,29 @@ toImpMemOp maybeDest op = case op of
     return UnitVal
   where
     fsa = fromScalarAtom
-    returnIExprVal x = returnVal $ toScalarAtom x
-    returnVal atom = case maybeDest of
-      Nothing   -> return atom
-      Just dest -> storeAtom dest atom >> return atom
+    returnIExprVal x = return $ toScalarAtom x
 
 toImpFor
-  :: Emits o => Maybe (Dest o) -> SType o -> Direction
+  :: Emits o => SType o -> Direction
   -> IxDict SimpIR i -> LamExpr SimpIR i
   -> SubstImpM i o (SAtom o)
-toImpFor maybeDest resultTy d ixDict (UnaryLamExpr b body) = do
+toImpFor resultTy d ixDict (UnaryLamExpr b body) = do
   ixTy <- ixTyFromDict =<< substM ixDict
   n <- indexSetSizeImp ixTy
-  dest <- maybeAllocDest maybeDest resultTy
+  dest <- maybeAllocDest Nothing resultTy
   emitLoop (getNameHint b) d n \i -> do
     idx <- unsafeFromOrdinalImp (sink ixTy) i
     ithDest <- indexDest (sink dest) idx
     void $ extendSubst (b @> SubstVal idx) $
       translateBlock (Just ithDest) body
   loadAtom dest
-toImpFor _ _ _ _ _ = error "expected a lambda as the atom argument"
+toImpFor _ _ _ _ = error "expected a lambda as the atom argument"
 
-toImpHof :: Emits o => Maybe (Dest o) -> Hof SimpIR i -> SubstImpM i o (SAtom o)
-toImpHof maybeDest hof = do
+toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
+toImpHof hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
-    For d ixDict lam -> toImpFor maybeDest resultTy d ixDict lam
+    For d ixDict lam -> toImpFor resultTy d ixDict lam
     While body -> do
       body' <- buildBlockImp do
         ans <- fromScalarAtom =<< translateBlock Nothing body
@@ -565,12 +555,12 @@ toImpHof maybeDest hof = do
       rDest <- allocDest =<< getType r'
       storeAtom rDest r'
       extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
-        translateBlock maybeDest body
+        translateBlock Nothing body
     RunWriter d (BaseMonoid e _) f -> do
       BinaryLamExpr h ref body <- return f
       let PairTy ansTy accTy = resultTy
       (aDest, wDest) <- case d of
-        Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
+        Nothing -> destPairUnpack <$> maybeAllocDest Nothing resultTy
         Just d' -> do
           aDest <- maybeAllocDest Nothing ansTy
           wDest <- atomToDest =<< substM d'
@@ -587,7 +577,7 @@ toImpHof maybeDest hof = do
       BinaryLamExpr h ref body <- return f
       let PairTy ansTy _ = resultTy
       (aDest, sDest) <- case d of
-        Nothing -> destPairUnpack <$> maybeAllocDest maybeDest resultTy
+        Nothing -> destPairUnpack <$> maybeAllocDest Nothing resultTy
         Just d' -> do
           aDest <- maybeAllocDest Nothing ansTy
           sDest <- atomToDest =<< substM d'
@@ -596,8 +586,8 @@ toImpHof maybeDest hof = do
       void $ extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
         translateBlock (Just aDest) body
       PairVal <$> loadAtom aDest <*> loadAtom sDest
-    RunIO body-> translateBlock maybeDest body
-    RunInit body -> translateBlock maybeDest body
+    RunIO body-> translateBlock Nothing body
+    RunInit body -> translateBlock Nothing body
     where
       liftMonoidEmpty :: Emits n => SType n -> SAtom n -> SBuilderM n (SAtom n)
       liftMonoidEmpty accTy x = do
@@ -1205,11 +1195,11 @@ withFreshIBinder hint ty cont = do
 {-# INLINE withFreshIBinder #-}
 
 emitCall
-  :: Emits n => MaybeDest n -> PiType SimpIR n
+  :: Emits n => PiType SimpIR n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall maybeDest (PiType bs _ resultTy) f xs = do
+emitCall (PiType bs _ resultTy) f xs = do
   resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
-  dest <- maybeAllocDest maybeDest resultTy'
+  dest <- maybeAllocDest Nothing resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x
   destImp <- repValToList <$> atomToRepVal (destToAtom dest)
   let impArgs = concat argsImp ++ destImp
