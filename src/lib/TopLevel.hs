@@ -581,6 +581,13 @@ loweredOptimizations lowered = do
     logFiltered l VectPass $ return [TextOut $ pprint errs]
     checkPass VectPass $ return vo
 
+loweredOptimizationsNoDest :: Topper m => SLam n -> m n (SLam n)
+loweredOptimizationsNoDest lowered = do
+  lopt <- whenOpt lowered $ checkPass LowerOptPass .
+    (dceTop >=> hoistLoopInvariant)
+  -- TODO Add a NoDest entry point for vectorization and add it here
+  return lopt
+
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
 evalSpecializations fs = do
   fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
@@ -595,6 +602,20 @@ evalSpecializations fs = do
     objName <- toCFunction (getNameHint f) imp >>= emitObjFile
     void $ loadObject objName
     updateTopEnv $ UpdateTopFunEvalStatus f (Finished $ TopFunLowerings objName)
+
+evalDictSpecializations :: (Topper m, Mut n) => [SpecDictName n] -> m n ()
+evalDictSpecializations ds = do
+  -- TODO Do we have to do these in order, like evalSpecializations, or are they
+  -- independent enough not to need it?
+  -- TODO Do we need to gate the status of these, too?
+  forM_ ds \dName -> do
+    SpecializedDict _ (Just fs) <- lookupSpecDict dName
+    fs' <- forM fs \lam -> do
+      opt <- simpOptimizations lam
+      lowered <- checkPass LowerPass $ lowerFullySequentialNoDest opt
+      loweredOptimizationsNoDest lowered
+    updateTopEnv $ LowerDictSpecialization dName fs'
+  return ()
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
@@ -900,9 +921,10 @@ instance Topper TopperM
 instance TopBuilder TopperM where
   emitBinding = emitBindingDefault
   emitEnv (Abs frag result) = do
-    result' `PairE` ListE names <- TopperM $ emitEnv $
-      Abs frag $ result `PairE` ListE (boundNamesList frag)
-    evalSpecializations names
+    result' `PairE` ListE fNames `PairE` ListE dictNames <- TopperM $ emitEnv $
+      Abs frag $ result `PairE` ListE (boundNamesList frag) `PairE` ListE (boundNamesList frag)
+    evalSpecializations fNames
+    evalDictSpecializations dictNames
     return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont

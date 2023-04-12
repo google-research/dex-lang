@@ -503,6 +503,7 @@ data TopEnvUpdate n =
  | UpdateLoadedModules      ModuleSourceName (ModuleName n)
  | UpdateLoadedObjects      (FunObjCodeName n) NativeFunction
  | FinishDictSpecialization (SpecDictName n) [LamExpr SimpIR n]
+ | LowerDictSpecialization  (SpecDictName n) [LamExpr SimpIR n]
  | UpdateTopFunEvalStatus   (TopFunName n) (TopFunEvalStatus n)
  | UpdateInstanceDef        (InstanceName n) (InstanceDef n)
  | UpdateTyConDef           (TyConName n) (TyConDef n)
@@ -2370,8 +2371,9 @@ instance GenericE TopEnvUpdate where
     {- AddCustomRule -}            (CAtomName `PairE` AtomRules)
     {- UpdateLoadedModules -}      (LiftE ModuleSourceName `PairE` ModuleName)
     {- UpdateLoadedObjects -}      (FunObjCodeName `PairE` LiftE NativeFunction)
-      ) ( EitherE5
+      ) ( EitherE6
     {- FinishDictSpecialization -} (SpecDictName `PairE` ListE (LamExpr SimpIR))
+    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE (LamExpr SimpIR))
     {- UpdateTopFunEvalStatus -}   (TopFunName `PairE` ComposeE EvalStatus TopFunLowerings)
     {- UpdateInstanceDef -}        (InstanceName `PairE` InstanceDef)
     {- UpdateTyConDef -}           (TyConName `PairE` TyConDef)
@@ -2383,10 +2385,11 @@ instance GenericE TopEnvUpdate where
     UpdateLoadedModules x y      -> Case0 $ Case2 (LiftE x `PairE` y)
     UpdateLoadedObjects x y      -> Case0 $ Case3 (x `PairE` LiftE y)
     FinishDictSpecialization x y -> Case1 $ Case0 (x `PairE` ListE y)
-    UpdateTopFunEvalStatus x y   -> Case1 $ Case1 (x `PairE` ComposeE y)
-    UpdateInstanceDef x y        -> Case1 $ Case2 (x `PairE` y)
-    UpdateTyConDef x y           -> Case1 $ Case3 (x `PairE` y)
-    UpdateFieldDef x y z         -> Case1 $ Case4 (x `PairE` LiftE y `PairE` z)
+    LowerDictSpecialization x y  -> Case1 $ Case1 (x `PairE` ListE y)
+    UpdateTopFunEvalStatus x y   -> Case1 $ Case2 (x `PairE` ComposeE y)
+    UpdateInstanceDef x y        -> Case1 $ Case3 (x `PairE` y)
+    UpdateTyConDef x y           -> Case1 $ Case4 (x `PairE` y)
+    UpdateFieldDef x y z         -> Case1 $ Case5 (x `PairE` LiftE y `PairE` z)
 
   toE = \case
     Case0 e -> case e of
@@ -2397,10 +2400,11 @@ instance GenericE TopEnvUpdate where
       _ -> error "impossible"
     Case1 e -> case e of
       Case0 (x `PairE` ListE y)           -> FinishDictSpecialization x y
-      Case1 (x `PairE` ComposeE y)        -> UpdateTopFunEvalStatus x y
-      Case2 (x `PairE` y)                 -> UpdateInstanceDef x y
-      Case3 (x `PairE` y)                 -> UpdateTyConDef x y
-      Case4 (x `PairE` LiftE y `PairE` z) -> UpdateFieldDef x y z
+      Case1 (x `PairE` ListE y)           -> LowerDictSpecialization x y
+      Case2 (x `PairE` ComposeE y)        -> UpdateTopFunEvalStatus x y
+      Case3 (x `PairE` y)                 -> UpdateInstanceDef x y
+      Case4 (x `PairE` y)                 -> UpdateTyConDef x y
+      Case5 (x `PairE` LiftE y `PairE` z) -> UpdateFieldDef x y z
       _ -> error "impossible"
     _ -> error "impossible"
 
@@ -2473,6 +2477,10 @@ applyUpdate e = \case
         let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
         updateEnv dName newBinding e
       Just _ -> error "shouldn't be adding methods if we already have them"
+  LowerDictSpecialization dName methods -> do
+    let SpecializedDictBinding (SpecializedDict dAbs _) = lookupEnvPure e dName
+    let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
+    updateEnv dName newBinding e
   UpdateTopFunEvalStatus f s -> do
     case lookupEnvPure e f of
       TopFunBinding (DexTopFun def ty simp _) ->
