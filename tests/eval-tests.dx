@@ -1118,6 +1118,20 @@ case frob of
 > 4.
 
 
+-- regression tests for #1212
+data Rectangle(a) = AsRectangle(n:Nat, m:Nat, elts:(Fin n => Fin m => a))
+data Brick(a) = AsBrick(n:Nat, m:Nat, l:Nat, elts:(Fin n => Fin m => Fin l => a))
 
+def mk_rect(n:Nat) -> Rectangle Nat =
+  AsRectangle _ _ $ for i:(Fin n) j:(Fin n). ordinal i
 
+def mk_brick(n:Nat) -> Brick Nat =
+  AsBrick _ _ _ $ for i:(Fin n) j:(Fin n) k:(Fin n). ordinal i
 
+rect = mk_rect(3)
+rect
+> (AsRectangle 3 3 [[0, 0, 0], [1, 1, 1], [2, 2, 2]])
+
+brick = mk_brick(3)
+brick
+> (AsBrick 3 3 3 [[[0, 0, 0], [0, 0, 0], [0, 0, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[2, 2, 2], [2, 2, 2], [2, 2, 2]]])
