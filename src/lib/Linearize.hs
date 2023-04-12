@@ -18,6 +18,7 @@ import GHC.Stack
 import Builder
 import Core
 import CheapReduction
+import Imp
 import IRVariants
 import MTL1
 import Name

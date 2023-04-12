@@ -25,6 +25,7 @@ import GHC.Exts (inline)
 import Builder
 import Core
 import Err
+import Imp
 import GenericTraversal
 import CheapReduction
 import IRVariants

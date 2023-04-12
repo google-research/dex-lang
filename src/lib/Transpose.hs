@@ -17,6 +17,7 @@ import Builder
 import Core
 import CheapReduction
 import Err
+import Imp
 import IRVariants
 import MTL1
 import Name
