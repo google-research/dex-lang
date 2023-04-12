@@ -1149,13 +1149,13 @@ unsafePtrLoad x = do
 
 applyIxMethod :: (SBuilder m, Emits n) => IxDict SimpIR n -> IxMethod -> [SAtom n] -> m n (SAtom n)
 applyIxMethod dict method args = case dict of
-  -- These cases are use in SimpIR and they work with IdxRepVal
+  -- These cases are used in SimpIR and they work with IdxRepVal
   IxDictRawFin n -> case method of
     Size              -> do []  <- return args; return n
     Ordinal           -> do [i] <- return args; return i
     UnsafeFromOrdinal -> do [i] <- return args; return i
   IxDictSpecialized _ d params -> do
-    SpecializedDictBinding (SpecializedDict _ maybeFs) <- lookupEnv d
+    SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
     LamExpr bs body <- return $ fs !! fromEnum method
     emitBlock =<< applySubst (bs @@> fmap SubstVal (params ++ args)) body
