@@ -317,6 +317,11 @@ lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m
 {-# INLINE lookupModule #-}
 
+lookupSpecDict :: EnvReader m => SpecDictName n -> m n (SpecializedDictDef n)
+lookupSpecDict name = lookupEnv name >>=
+  \case SpecializedDictBinding m -> return m
+{-# INLINE lookupSpecDict #-}
+
 lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (CFunction n)
 lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding cFun -> return cFun
 {-# INLINE lookupFunObjCode #-}

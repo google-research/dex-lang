@@ -1394,7 +1394,7 @@ ordinalImp :: Emits n => IxType SimpIR n -> SAtom n -> SubstImpM i n (IExpr n)
 ordinalImp (IxType _ dict) i = fromScalarAtom =<< case dict of
   IxDictRawFin _ -> return i
   IxDictSpecialized _ d params -> do
-    SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+    SpecializedDict _ (Just fs) <- lookupSpecDict d
     appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpIR n -> IExpr n -> SubstImpM i n (SAtom n)
@@ -1403,7 +1403,7 @@ unsafeFromOrdinalImp (IxType _ dict) i = do
   case dict of
     IxDictRawFin _ -> return i'
     IxDictSpecialized _ d params -> do
-      SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+      SpecializedDict _ (Just fs) <- lookupSpecDict d
       appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
 
 indexSetSizeImp :: Emits n => IxType SimpIR n -> SubstImpM i n (IExpr n)
@@ -1411,7 +1411,7 @@ indexSetSizeImp (IxType _ dict) = do
   ans <- case dict of
     IxDictRawFin n -> return n
     IxDictSpecialized _ d params -> do
-      SpecializedDictBinding (SpecializedDict _ (Just fs)) <- lookupEnv d
+      SpecializedDict _ (Just fs) <- lookupSpecDict d
       appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [])
   fromScalarAtom ans
 
