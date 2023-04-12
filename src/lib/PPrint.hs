@@ -242,6 +242,7 @@ instance IRRep r => Pretty (IxType r n) where
 instance Pretty (DictExpr n) where
   pretty d = case d of
     InstanceDict name args -> "Instance" <+> p name <+> p args
+    NewtypeDict dictTy dictExpr -> "NewtypeDict" <+> parens (p dictTy) <+> parens (p dictExpr)
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"
@@ -532,6 +533,8 @@ prettyRolePiBinders = undefined
 instance Pretty (InstanceDef n) where
   pretty (InstanceDef className bs params _) =
     "Instance" <+> p className <+> prettyRolePiBinders bs <+> p params
+  pretty (DerivingDef className instanceTy wrappedDict) =
+    "Deriving Instance" <+> p className <+> parens (p instanceTy) <+> parens (p wrappedDict)
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
@@ -725,6 +728,8 @@ instance Pretty (UDecl n l) where
   pretty (UInstance className bs params methods (RightB UnitB) _) =
     "instance" <+> p bs <+> p className <+> spaced params <+>
        prettyLines methods
+  pretty (UDerivingInstance className bs params) =
+    "deriving instance" <+> p bs <+> p className <+> spaced params
   pretty (UInstance className bs params methods (LeftB v) _) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> prettyLines methods

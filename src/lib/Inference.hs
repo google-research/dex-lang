@@ -118,6 +118,39 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> instanceAtomName) result
     _ -> error "impossible"
+inferTopUDecl (UDerivingInstance className instanceBs params) result = do
+  let (InternalName _ className') = className
+  ab :: Abs RolePiBinders (DictType `PairE` DictType) n <- liftInfererM $ solveLocal do
+    withRoleUBinders instanceBs \_ -> do
+      ClassDef classSourceName _ _ paramBinders _ _ <- lookupClassDef (sink className')
+      params' <- checkInstanceParams paramBinders params
+      case params' of
+        [param] -> do
+          case param of
+            newTy@(NewtypeTyCon (UserADTType _ tcName (TyConParams _ tcParams))) -> do
+              tcDef <- lookupTyCon tcName
+              case tcDef of
+                TyConDef _ conBs [DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _] -> do
+                  wrappedTy' <- applySubst (conBs @@> map SubstVal tcParams) wrappedTy
+                  let wrappedDictTy = DictType classSourceName (sink className') [wrappedTy']
+                  let dictTy = DictType classSourceName (sink className') [newTy]
+                  return $ wrappedDictTy `PairE` dictTy
+                TyConDef _ _ dataCons ->
+                  throw TypeErr $ "User-defined ADT " ++ pprint newTy ++
+                                  " does not have excatly one (data) constructor " ++
+                                  " that takes exactly one (data) argument" ++
+                                  "\n(data) constructors: " ++ pprint dataCons
+            _ -> throw TypeErr $ "Parameter " ++ pprint param ++ " not a user-defined ADT"
+        _ -> throw TypeErr $ "More than one parameter when deriving instance of class " ++ pprint className ++
+                             "\nparameters: " ++ pprint params'
+  Abs bs (wrappedDictTy `PairE` dictTy) <- return ab
+  let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs
+  let closedWrappedDictTy = Pi $ CorePiType ImplicitApp bs'' Pure (DictTy wrappedDictTy)
+  synthWrappedDict <- trySynthTerm closedWrappedDictTy Full
+  let closedDictTy = CorePiType ImplicitApp bs'' Pure (DictTy dictTy)
+  instanceName <- emitInstanceDef (DerivingDef className' closedDictTy synthWrappedDict)
+  addInstanceSynthCandidate className' instanceName
+  UDeclResultDone <$> return result
 inferTopUDecl (ULet letAnn p tyAnn rhs) result = case p of
   WithSrcB _ (UPatBinder b) -> do
     block <- liftInfererM $ solveLocal $ buildBlockInf do
@@ -144,6 +177,7 @@ getInstanceType (InstanceDef className bs params _) = liftEnvReaderM do
     let dTy = DictTy $ DictType classSourceName className' params'
     let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
     return $ CorePiType ImplicitApp bs'' Pure dTy
+getInstanceType (DerivingDef _ instanceTy _) = return instanceTy
 
 -- === Inferer interface ===
 
@@ -1551,13 +1585,16 @@ buildSortedCase scrut alts resultTy = do
 -- TODO: cache this with the instance def (requires a recursive binding)
 instanceFun :: EnvReader m => InstanceName n -> AppExplicitness -> m n (CAtom n)
 instanceFun instanceName expl = do
-  InstanceDef _ bs _ _ <- lookupInstanceDef instanceName
-  ab <- liftEnvReaderM $ refreshAbs (Abs bs UnitE) \bs' UnitE -> do
-    let args = map Var $ nestToNames bs'
-    let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
-    let result = DictCon $ InstanceDict (sink instanceName) args
-    return $ Abs bs'' (PairE Pure (AtomicBlock result))
-  Lam <$> coreLamExpr expl ab
+  instanceDef <- lookupInstanceDef instanceName
+  case instanceDef of
+    InstanceDef _ bs _ _ -> do
+      ab <- liftEnvReaderM $ refreshAbs (Abs bs UnitE) \bs' UnitE -> do
+        let args = map Var $ nestToNames bs'
+        let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
+        let result = DictCon $ InstanceDict (sink instanceName) args
+        return $ Abs bs'' (PairE Pure (AtomicBlock result))
+      Lam <$> coreLamExpr expl ab
+    _ -> error "should not occur"
 
 checkMaybeAnnExpr :: EmitsBoth o
   => NameHint -> Maybe (UType i) -> UExpr i -> InfererM i o (CAtom o)
@@ -2638,6 +2675,9 @@ generalizeDictRec dict = do
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
     DataData ty           -> DataData <$> Var <$> freshInferenceName ty
+    NewtypeDict ty wrappedDict -> do
+      DictCon wrappedDict' <- generalizeDictRec (DictCon wrappedDict )
+      return $ NewtypeDict ty wrappedDict'
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
 
 generalizeInstanceArgs :: EmitsInf n => RolePiBinders n l -> [CAtom n] -> SolverM n [CAtom n]
@@ -2665,11 +2705,14 @@ synthInstanceDefAndAddSynthCandidate def@(InstanceDef className bs params (Insta
   addInstanceSynthCandidate className instanceName
   synthInstanceDefRec instanceName def
   return instanceName
+synthInstanceDefAndAddSynthCandidate (DerivingDef _ _ _) = error "should not occur"
 
 emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
 emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
   ty <- getInstanceType instanceDef
   emitBinding (getNameHint className) $ InstanceBinding instanceDef ty
+emitInstanceDef instanceDef@(DerivingDef className instanceTy _) = do
+  emitBinding (getNameHint className) $ InstanceBinding instanceDef instanceTy
 
 type InstanceDefAbsBodyT =
       ((ListE CType) `PairE` (ListE CAtom) `PairE` (ListE CAtom) `PairE` (ListE CAtom))
@@ -2708,6 +2751,7 @@ synthInstanceDefRec instanceName (InstanceDef className bs params (InstanceBody 
               return (def, ab')
       updateInstanceDef iname def
       recur ab' cname iname
+synthInstanceDefRec _ (DerivingDef _ _ _ ) = error "should not occur"
 
 synthInstanceDef
   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
@@ -2719,6 +2763,7 @@ synthInstanceDef (InstanceDef className bs params body) = do
          flip runReaderT (Distinct, env') $ runEnvReaderT' do
            methods' <- mapM synthTopE methods
            return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
+synthInstanceDef (DerivingDef _ _ _) = error "should not occur"
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
@@ -2882,13 +2927,16 @@ withGivenBinders (Abs bsTop e) contTop =
 
 isMethodAccessAllowedBy :: EnvReader m =>  RequiredMethodAccess -> InstanceName n -> m n Bool
 isMethodAccessAllowedBy access instanceName = do
-  InstanceDef className _ _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
-  let numInstanceMethods = length methods
-  ClassDef _ _ _ _ _ methodTys <- lookupClassDef className
-  let numClassMethods = length methodTys
-  case access of
-    Full                  -> return $ numClassMethods == numInstanceMethods
-    Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
+  instanceDef <- lookupInstanceDef instanceName
+  case instanceDef of
+    InstanceDef className _ _ (InstanceBody _ methods) -> do
+      let numInstanceMethods = length methods
+      ClassDef _ _ _ _ _ methodTys <- lookupClassDef className
+      let numClassMethods = length methodTys
+      case access of
+        Full                  -> return $ numClassMethods == numInstanceMethods
+        Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
+    _ -> error "should not occur"
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven targetTy = do
@@ -2906,9 +2954,21 @@ synthDictFromInstance :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromInstance targetTy@(DictType _ targetClass _) = do
   instances <- getInstanceDicts targetClass
   asum $ instances <&> \candidate -> do
-    CorePiType _ bs _ (DictTy candidateTy) <- lookupInstanceTy candidate
-    args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
-    return $ DictCon $ InstanceDict candidate args
+    -- CorePiType _ bs _ (DictTy candidateTy) <- lookupInstanceTy candidate
+    instanceBinding <- lookupInstanceBinding candidate
+    case instanceBinding of
+      InstanceBinding (InstanceDef _ _ _ _) (CorePiType _ bs _ (DictTy candidateTy)) -> do
+        args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
+        return $ DictCon $ InstanceDict candidate args
+      InstanceBinding (DerivingDef _ _ synthDict) (CorePiType _ bs _ (DictTy candidateTy)) -> do
+        args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
+        dictTy <- applySubst (bs @@> map SubstVal args) candidateTy
+        case synthDict of
+          Lam (CoreLamExpr _ (LamExpr dictBs (AtomicBlock (DictCon dict)))) -> do
+            dict' <- applySubst (dictBs @@> map SubstVal args) dict
+            return $ DictCon $ NewtypeDict dictTy dict'
+          _ -> error "should not occur"
+      _ -> error "should not occur"
 
 instantiateSynthArgs :: DictType n -> SynthPiType n -> SyntherM n [CAtom n]
 instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do

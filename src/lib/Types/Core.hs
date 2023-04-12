@@ -382,6 +382,12 @@ data InstanceDef (n::S) where
     ->   [CType n2]          -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
+  DerivingDef
+    :: ClassName n1
+    -> CorePiType n1  -- (closed) instance type, with binders
+    -> CAtom n1       -- dictionary for the type we are deriving from
+    -> InstanceDef n1
+
 
 data InstanceBody (n::S) =
   InstanceBody
@@ -397,6 +403,7 @@ data DictExpr (n::S) =
  | SuperclassProj (CAtom n) Int  -- (could instantiate here too, but we don't need it for now)
    -- We use NonEmpty because givens without args can be represented using `Var`.
  | InstanceDict (InstanceName n) [CAtom n]
+ | NewtypeDict (DictType n) (DictExpr n)
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (CAtom n)
    -- Special case for `Data <something that is actually data>`
@@ -1724,12 +1731,17 @@ deriving instance Show (ClassDef n)
 deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
 instance GenericE InstanceDef where
-  type RepE InstanceDef =
-    ClassName `PairE` Abs RolePiBinders (ListE CType `PairE` InstanceBody)
+  type RepE InstanceDef = EitherE
+    (ClassName `PairE` Abs RolePiBinders (ListE CType `PairE` InstanceBody))
+    (ClassName `PairE` CorePiType `PairE` CAtom)
   fromE (InstanceDef name bs params body) =
-    name `PairE` Abs bs (ListE params `PairE` body)
-  toE (name `PairE` Abs bs (ListE params `PairE` body)) =
+    LeftE $ name `PairE` Abs bs (ListE params `PairE` body)
+  fromE (DerivingDef name instanceTy wrappedDict) =
+    RightE $ name `PairE` instanceTy `PairE` wrappedDict
+  toE (LeftE (name `PairE` Abs bs (ListE params `PairE` body))) =
     InstanceDef name bs params body
+  toE (RightE (name `PairE` instanceTy `PairE` wrappedDict)) =
+    DerivingDef name instanceTy wrappedDict
 
 instance SinkableE InstanceDef
 instance HoistableE  InstanceDef
@@ -1765,24 +1777,34 @@ instance RenameE        DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE5
+    EitherE6
  {- InstanceDict -}      (PairE InstanceName (ListE CAtom))
  {- InstantiatedGiven -} (PairE CAtom (ListE CAtom))
  {- SuperclassProj -}    (PairE CAtom (LiftE Int))
  {- IxFin -}             CAtom
  {- DataData -}          CType
+ {- NewtypeDict -}       (PairE DictType DictExpr)
+ -- Note that making the last type recursive, i.e. with `RepE DictExpr` instead
+ -- of just `DictExpr` leads to the following compiler error:
+ --
+ --   Reduction stack overflow; size = 201
+ --   When simplifying the following type: RepE DictExpr
+ --
+ -- This error occurs for `instance RenameE DictExpr` below.
   fromE d = case d of
     InstanceDict v args -> Case0 $ PairE v (ListE args)
     InstantiatedGiven given args -> Case1 $ PairE given (ListE args)
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
     DataData ty        -> Case4 ty
+    NewtypeDict dictTy dictExpr -> Case5 (PairE dictTy dictExpr)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE args)) -> InstantiatedGiven given args
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x  -> IxFin x
     Case4 ty -> DataData ty
+    Case5 (PairE dictTy dictExpr) -> NewtypeDict dictTy dictExpr
     _ -> error "impossible"
 
 instance SinkableE      DictExpr

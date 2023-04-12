@@ -339,6 +339,10 @@ lookupInstanceDef :: EnvReader m => InstanceName n -> m n (InstanceDef n)
 lookupInstanceDef name = lookupEnv name >>= \case InstanceBinding x _ -> return x
 {-# INLINE lookupInstanceDef #-}
 
+lookupInstanceBinding :: EnvReader m => InstanceName n -> m n (Binding InstanceNameC n)
+lookupInstanceBinding name = lookupEnv name >>= \case binding@(InstanceBinding _ _) -> return binding
+{-# INLINE lookupInstanceBinding #-}
+
 lookupInstanceTy :: EnvReader m => InstanceName n -> m n (CorePiType n)
 lookupInstanceTy name = lookupEnv name >>= \case InstanceBinding _ ty -> return ty
 {-# INLINE lookupInstanceTy #-}

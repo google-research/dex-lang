@@ -318,6 +318,9 @@ dictExprType e = case e of
     checkArgTys bs args'
     ListE params' <- applySubst (bs@@>(SubstVal<$>args')) (ListE params)
     return $ DictTy $ DictType sourceName className params'
+  NewtypeDict dictTy _ -> do
+      dictTy' <- renameM dictTy
+      return $ DictTy dictTy'
   InstantiatedGiven given args -> do
     givenTy <- getTypeE given
     checkApp Pure givenTy (toList args)

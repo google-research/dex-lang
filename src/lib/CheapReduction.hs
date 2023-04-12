@@ -227,16 +227,20 @@ instance CheaplyReducibleE CoreIR DictExpr CAtom where
   cheapReduceE d = case d of
     SuperclassProj child superclassIx -> do
       cheapReduceE child >>= \case
-        DictCon (InstanceDict instanceName args) -> dropSubst do
+        child'@(DictCon (InstanceDict instanceName args)) -> dropSubst do
           args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ body <- lookupInstanceDef instanceName
-          let InstanceBody superclasses _ = body
-          applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+          instanceDef <- lookupInstanceDef instanceName
+          case instanceDef of
+            InstanceDef _ bs _ body -> do
+              let InstanceBody superclasses _ = body
+              applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+            _ -> return $ DictCon $ SuperclassProj child' superclassIx
         child' -> return $ DictCon $ SuperclassProj child' superclassIx
     InstantiatedGiven f xs -> cheapReduceE (App f $ toList xs) <|> justSubst
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
     DataData ty      -> DictCon . DataData <$> cheapReduceE ty
+    NewtypeDict _ _  -> justSubst
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE CoreIR TyConParams TyConParams where
@@ -272,11 +276,15 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
       cheapReduceE dict >>= \case
         DictCon (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
-          let method = methods !! i
-          extendSubst (bs@@>(SubstVal <$> args')) do
-            method' <- cheapReduceE method
-            cheapReduceApp method' explicitArgs'
+          instanceDef <- lookupInstanceDef instanceName
+          case instanceDef of
+            InstanceDef _ bs _ (InstanceBody _ methods) -> do
+              let method = methods !! i
+              extendSubst (bs@@>(SubstVal <$> args')) do
+                method' <- cheapReduceE method
+                cheapReduceApp method' explicitArgs'
+            DerivingDef _ _ wrappedDict -> do
+              cheapReduceE $ ApplyMethod wrappedDict i explicitArgs'
         _ -> empty
     _ -> empty
 

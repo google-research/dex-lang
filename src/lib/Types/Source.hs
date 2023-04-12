@@ -99,6 +99,7 @@ data CSDecl'
   -- header, givens (may be empty), methods, optional name.  The header should contain
   -- the prerequisites, class name, and class arguments.
   | CInstanceDecl CInstanceDef
+  | CDerivingDecl CDerivingDef
   | CExpr Group
   | CPass
     deriving (Show, Generic)
@@ -120,6 +121,12 @@ data CInstanceDef = CInstanceDef
   (Maybe GivenClause)
   CSBlock            -- Method definitions
   (Maybe (SourceName, Maybe [Group])) -- Optional name of instance, with explicit parameters
+  deriving (Show, Generic)
+
+data CDerivingDef = CDerivingDef
+  SourceName         -- interface name
+  [Group]            -- args at which we're instantiating the interface
+  (Maybe GivenClause)
   deriving (Show, Generic)
 
 type Group = WithSrc Group'
@@ -323,6 +330,13 @@ data UDecl (n::S) (l::S) where
     -> MaybeB UAtomBinder n l    -- optional instance name
     -> AppExplicitness           -- explicitness (only relevant for named instances)
     -> UDecl n l
+  UDerivingInstance
+    :: SourceNameOr (Name ClassNameC) n    -- class name
+    -> Nest (WithExpl UOptAnnBinder) n l'  -- givens
+    ->   [UExpr l']                        -- class parameters
+    -- Note that no new symbols are brough into scope by a deriving instance
+    -- declaration. Hence the double occurrence of `n` in `UDecl n n`.
+    -> UDecl n n
   UEffectDecl
     :: [UEffectOpType n]                  -- operation types
     -> UBinder EffectNameC n l'           -- effect name

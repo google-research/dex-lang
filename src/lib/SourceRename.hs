@@ -283,6 +283,10 @@ instance SourceRenamableB UDecl where
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
         cont $ UInstance className' conditions' params' methodDefs' instanceName' expl
+    UDerivingInstance className conditions params -> do
+      className' <- sourceRenameE className
+      Abs conditions' (ListE params') <- sourceRenameE $ Abs conditions (ListE params)
+      cont $ UDerivingInstance className' conditions' params'
     UEffectDecl opTypes effName opNames -> do
       opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
       sourceRenameUBinder UEffectVar effName \effName' ->
@@ -523,6 +527,7 @@ instance HasSourceNames UDecl where
     UInterface _ _ ~(UBindSource className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName _ -> sourceNames instanceName
+    UDerivingInstance _ _ _ -> S.empty
     UEffectDecl _ ~(UBindSource effName) opNames -> do
       S.singleton effName <> sourceNames opNames
     UHandlerDecl _ _ _ _ _ _ handlerName -> sourceNames handlerName

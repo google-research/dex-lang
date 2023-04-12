@@ -828,6 +828,8 @@ applyDictMethod d i methodArgs = do
       let method = methods !! i
       extendSubst (bsInstance @@> (SubstVal <$> instanceArgs')) do
         simplifyApp noHint method methodArgs
+    DictCon (NewtypeDict _ wrappedDict) ->
+      applyDictMethod (DictCon wrappedDict) i methodArgs
     DictCon (IxFin n) -> applyIxFinMethod (toEnum i) n methodArgs
     d' -> error $ "Not a simplified dict: " ++ pprint d'
   where

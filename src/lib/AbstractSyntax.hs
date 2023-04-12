@@ -143,6 +143,7 @@ decl ann = dropSrc \case
     return $ ULet ann (fromString name) Nothing (ns $ ULam lam)
   CExpr g -> uExprAsDecl <$> expr g
   CInstanceDecl def -> aInstanceDef def
+  CDerivingDecl def -> aDerivingDef def
   CPass -> return UPass
 
 aInstanceDef :: CInstanceDef -> SyntaxM (UDecl VoidS VoidS)
@@ -160,6 +161,13 @@ aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParam
           params' <- aExplicitParams params
           return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
+
+aDerivingDef :: CDerivingDef -> SyntaxM (UDecl VoidS VoidS)
+aDerivingDef (CDerivingDef clName args givens) = do
+  let clName' = fromString clName
+  args' <- mapM expr args
+  givens' <- toNest <$> fromMaybeM givens [] aGivens
+  return $ UDerivingInstance clName' givens' args'
 
 aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
 aDef (CDef name params optRhs optGivens body) = do

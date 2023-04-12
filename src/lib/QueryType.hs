@@ -426,6 +426,9 @@ instance HasType CoreIR DictExpr where
       args' <- mapM substM args
       ListE params' <- applySubst (bs @@> map SubstVal args') $ ListE params
       return $ DictTy $ DictType sourceName className params'
+    NewtypeDict dictTy _ -> do
+      dictTy' <- substM dictTy
+      return $ DictTy dictTy'
     InstantiatedGiven given args -> do
       givenTy <- getTypeE given
       appType givenTy (toList args)

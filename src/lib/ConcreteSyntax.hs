@@ -257,6 +257,7 @@ topInstanceDecl :: Parser CTopDecl
 topInstanceDecl = withSrc $ liftM (CSDecl PlainLet) $
       (CInstanceDecl <$> instanceDef True)
   <|> (CInstanceDecl <$> instanceDef False)
+  <|> (CDerivingDecl <$> derivingDef)
 
 interfaceDef :: Parser CTopDecl
 interfaceDef = withSrc do
@@ -337,6 +338,7 @@ realBlock = withIndent $
 
 cDecl :: Parser CSDecl'
 cDecl =   (CInstanceDecl <$> instanceDef True)
+      <|> (CDerivingDecl <$> derivingDef)
       <|> (CDefDecl <$> funDefLet)
       <|> simpleLet
       <|> (keyWord PassKW >> return CPass)
@@ -364,6 +366,15 @@ instanceDef isNamed = do
   givens <- optional givenClause
   methods <- realBlock
   return $ CInstanceDef className args givens methods optNameAndArgs
+
+derivingDef :: Parser CDerivingDef
+derivingDef = do
+  keyWord DerivingKW
+  keyWord InstanceKW
+  className <- anyName
+  args <- argList
+  givens <- optional givenClause
+  return $ CDerivingDef className args givens
 
 funDefLet :: Parser CDef
 funDefLet = label "function definition" do
