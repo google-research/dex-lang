@@ -1,0 +1,28 @@
+
+data MyInt = MyIntCon(Int)
+
+deriving instance Show(MyInt)
+
+x: MyInt = MyIntCon 42
+
+%passes synth
+show x
+
+
+data MyEither(a: Type, b: Type) =
+  MyLeft(a)
+  MyRight(b)
+
+instance Show(MyEither(a, b)) given (a|Show, b|Show)
+  def show(y) = case y of
+    MyLeft(y') -> show y'
+    MyRight(z') -> show z'
+
+data MyMy(a:Type, b:Type) = MyMyCons(MyEither(a, b))
+
+deriving instance Show(MyMy(c, d)) given (c|Show, d|Show)
+
+y : MyMy Nat Float32 = MyMyCons(MyRight 23.14)
+
+%passes synth
+show y
