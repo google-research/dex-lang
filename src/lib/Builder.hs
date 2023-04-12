@@ -15,7 +15,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
-import Data.Maybe (isJust)
 import Data.Graph (graphFromEdges, topSort)
 import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
 import Foreign.Ptr
@@ -1485,47 +1484,3 @@ applyFloatBinOp f x y = case (x, y) of
 
 _applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
 _applyFloatUnOp f x = applyFloatBinOp (\_ -> f) (error "shouldn't be needed") x
-
--- === singleton types ===
-
--- The following implementation should be valid:
---   isSingletonType :: EnvReader m => Type n -> m n Bool
---   isSingletonType ty =
---     singletonTypeVal ty >>= \case
---       Nothing -> return False
---       Just _  -> return True
--- But a separate implementation doesn't have to go under binders,
--- because it doesn't have to reconstruct the singleton value (which
--- may be type annotated and whose type may refer to names).
-
-isSingletonType :: Type SimpIR n -> Bool
-isSingletonType topTy = isJust $ checkIsSingleton topTy
-  where
-    checkIsSingleton :: Type r n -> Maybe ()
-    checkIsSingleton ty = case ty of
-      TabPi (TabPiType _ body) -> checkIsSingleton body
-      TC (ProdType tys) -> mapM_ checkIsSingleton tys
-      _ -> Nothing
-
-singletonTypeVal :: (SBuilder m, Emits n) => Type SimpIR n -> m n (Maybe (Atom SimpIR n))
-singletonTypeVal ty = do
-  maybeBlock <- liftBuilderT $ buildBlock do
-    ty' <- sinkM ty
-    runSubstReaderT idSubst $ singletonTypeValRec ty'
-  mapM emitBlock maybeBlock
-{-# INLINE singletonTypeVal #-}
-
--- TODO: TypeCon with a single case?
-singletonTypeValRec
-  :: Emits o => Type SimpIR i
-  -> SubstReaderT Name (BuilderT SimpIR Maybe) i o (Atom SimpIR o)
-singletonTypeValRec ty = case ty of
-  TabPi (TabPiType (b:>ixTy) body) -> do
-    ixTy' <- renameM ixTy
-    buildFor (getNameHint b) Fwd ixTy' \i ->
-      extendSubst (b@>i) (singletonTypeValRec body)
-  TC con -> case con of
-    ProdType tys -> ProdVal <$> traverse singletonTypeValRec tys
-    _            -> notASingleton
-  _ -> notASingleton
-  where notASingleton = fail "not a singleton type"

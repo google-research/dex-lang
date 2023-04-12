@@ -15,12 +15,13 @@ module Imp
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
   , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
   , computeOffset, getIExprInterpretation
+  , isSingletonType, singletonTypeVal
   ) where
 
 import Prelude hiding ((.), id)
 import Data.Functor
 import Data.Foldable (toList)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, isJust)
 import Data.Text.Prettyprint.Doc
 import Control.Category
 import Control.Monad.Identity
@@ -1440,6 +1441,39 @@ abstractLinktimeObjects f = do
   let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
   let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> PtrBinder  b ty
   return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
+
+-- === singleton types ===
+
+-- The following implementation should be valid:
+--   isSingletonType :: EnvReader m => Type n -> m n Bool
+--   isSingletonType ty =
+--     singletonTypeVal ty >>= \case
+--       Nothing -> return False
+--       Just _  -> return True
+-- But a separate implementation doesn't have to go under binders,
+-- because it doesn't have to reconstruct the singleton value (which
+-- may be type annotated and whose type may refer to names).
+
+isSingletonType :: Type SimpIR n -> Bool
+isSingletonType topTy = isJust $ checkIsSingleton topTy
+  where
+    checkIsSingleton :: Type r n -> Maybe ()
+    checkIsSingleton ty = case ty of
+      TabPi (TabPiType _ body) -> checkIsSingleton body
+      TC (ProdType tys) -> mapM_ checkIsSingleton tys
+      _ -> Nothing
+
+singletonTypeVal :: (EnvReader m)
+  => Type SimpIR n -> m n (Maybe (Atom SimpIR n))
+singletonTypeVal ty = do
+  tree <- typeToTree ty
+  if length tree == 0 then do
+    -- The tree has 0 of these if the type is empty
+    let tree' = fmap (const $ ILit $ Int32Lit 0) tree
+    return $ Just $ RepValAtom $ RepVal ty tree'
+  else
+    return Nothing
+{-# INLINE singletonTypeVal #-}
 
 -- === type checking imp programs ===
 
