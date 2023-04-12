@@ -648,17 +648,29 @@ getElemTypeAndIdxStructure (LeafType ctxs baseTy) = case ctxs of
   Empty -> (UnboxedValue baseTy, Nothing)
   Nest b rest -> case b of
     TabCtx _ -> error "leading idxs should have been stripped off already"
-    DepPairCtx depBinder ->
-      case getIExprInterpretation (LeafType rest baseTy) of
+    DepPairCtx depBinder -> case splitLeadingDepPairs rest of
+      PairB depBinders rest' -> case getIExprInterpretation (LeafType rest' baseTy) of
         RawValue bt -> (UnboxedValue bt, Nothing)
         BufferPtr (BufferType ixs eltTy) -> do
-          let ixs' = case depBinder of
-                LeftB _      -> Nothing
-                RightB UnitB -> Just ixs
+          let ixs' = case allNothingBs (Nest depBinder depBinders) of
+                Just UnitB -> Just ixs
+                Nothing -> Nothing
           (BoxedBuffer eltTy, ixs')
     RefCtx -> (,Nothing) $ UnboxedValue $ hostPtrTy $ elemTypeToBaseType eltTy
       where BufferType _ eltTy = getRefBufferType (LeafType rest baseTy)
     where hostPtrTy ty = PtrType (CPU, ty)
+
+allNothingBs :: Nest (MaybeB b) n l -> Maybe (UnitB n l)
+allNothingBs Empty = Just UnitB
+allNothingBs (Nest (LeftB _) _) = Nothing
+allNothingBs (Nest (RightB UnitB) rest) = allNothingBs rest
+
+splitLeadingDepPairs :: TypeCtx SimpIR n l -> PairB (Nest (MaybeB SBinder)) (TypeCtx SimpIR) n l
+splitLeadingDepPairs = \case
+  Empty -> PairB Empty Empty
+  Nest (DepPairCtx b) rest -> case splitLeadingDepPairs rest of
+    PairB bs rest' -> PairB (Nest b bs) rest'
+  ctxs -> PairB Empty ctxs
 
 tryGetBoxIdxStructure :: LeafType n -> Maybe (IndexStructure SimpIR n)
 tryGetBoxIdxStructure leafTy = snd $ getElemTypeAndIdxStructure leafTy
@@ -727,14 +739,14 @@ valueToTree (RepVal tyTop valTop) = do
     RefTy _ t -> go (RNest ctx RefCtx) t val
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
       Branch [v1, v2] -> do
-        case ctx of
-          REmpty -> do
+        case allDepPairCtxs (unRNest ctx) of
+          Just UnitB -> do
             tree1 <- rec t1 v1
             x <- repValAtom $ RepVal t1 v1
             t2' <- applySubst (b@>SubstVal x) t2
             tree2 <- go (RNest ctx (DepPairCtx NothingB )) t2' v2
             return $ Branch [tree1, tree2]
-          _ -> do
+          Nothing -> do
             tree1 <- rec t1 v1
             tree2 <- go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2 v2
             return $ Branch [tree1, tree2]
@@ -751,6 +763,11 @@ valueToTree (RepVal tyTop valTop) = do
     _ -> error $ "not implemented " ++ pprint ty
     where rec = go ctx
 {-# INLINE valueToTree #-}
+
+allDepPairCtxs :: TypeCtx SimpIR n l -> Maybe (UnitB n l)
+allDepPairCtxs ctx = case splitLeadingDepPairs ctx of
+  PairB bs Empty -> allNothingBs bs
+  _ -> Nothing
 
 storeLeaf :: Emits n => LeafType n -> IExpr n -> IExpr n -> SubstImpM i n ()
 storeLeaf leafTy dest src = case getRefBufferType leafTy of

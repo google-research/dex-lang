@@ -2605,7 +2605,7 @@ def (**)(
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
   -- TODO(https://github.com/google-research/dex-lang/issues/1212) Replace with tiled_matmul.
-  naive_matmul(x, y)
+  tiled_matmul(x, y)
 
 def (**.)(mat: n=>m=>Float, v: m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
   for i. vdot(mat[i], v)
