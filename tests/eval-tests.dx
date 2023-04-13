@@ -966,18 +966,6 @@ def all_prefixes(s:String)  -> List String =
 :p all_prefixes "fence"
 > (AsList 6 ["", "f", "fe", "fen", "fenc", "fence"])
 
--- -- Record references
--- -- Regression test for https://github.com/google-research/dex-lang/issues/694
--- data Thing = T {a: Float}
-
--- def scan_over(xs:n=>Float) -> n=>Float given (n|Ix) =
---   snd $ scan (T {a=1.0}) \i t.
---     (T {a}) = t
---     (T {a=a + xs[i]}, a)
-
--- scan_over [1.0, 2.0, 3.0]
--- > [1., 2., 4.]
-
 -- NonEmpty tests
 
 first_ix :: ()

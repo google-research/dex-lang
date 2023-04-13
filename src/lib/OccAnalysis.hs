@@ -13,7 +13,6 @@ import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
-import LabeledItems
 import IRVariants
 import Name
 import MTL1
@@ -474,11 +473,6 @@ instance HasOCC e => HasOCC (ComposeE (PrimTC r) e) where
   occ _ (ComposeE tc) = ComposeE <$> traverse (occ accessOnce) tc
   {-# INLINE occ #-}
 
-instance HasOCC e => HasOCC (ComposeE LabeledItems e) where
-  occ _ (ComposeE items) = ComposeE <$> traverse (occ accessOnce) items
-  {-# INLINE occ #-}
-
-instance (HasOCC e1, HasOCC e2) => HasOCC (ExtLabeledItemsE e1 e2)
 instance HasOCC (LamExpr SimpIR) where
   occ _ _ = error "Impossible"
   {-# INLINE occ #-}

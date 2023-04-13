@@ -248,7 +248,6 @@ pat = propagateSrcB pat' where
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatDepPair $ PairB lhs' rhs'
-  pat' (CBraces   gs) = UPatRecord <$> fieldRowPatList CSEqual gs
   pat' (CBrackets gs) = UPatTable . toNest <$> (mapM pat gs)
   -- TODO: use Python-style trailing comma (like `(x,y,)`) for singleton tuples
   pat' (CParens [g]) = dropSrcB <$> casePat g
@@ -269,31 +268,6 @@ pat = propagateSrcB pat' where
       WithSrc _ (CParens gs) -> UPatCon (fromString name) . toNest <$> mapM pat gs
       _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
   pat' _ = throw SyntaxErr "Illegal pattern"
-
-fieldRowPatList :: Bin' -> [Group] -> SyntaxM (UFieldRowPat VoidS VoidS)
-fieldRowPatList bind groups = go groups UEmptyRowPat where
-  go [] rest = return rest
-  go (g:gs) rest = case g of
-    Binary binder lhs rhs | binder == bind -> do
-      header <- case lhs of
-        (Prefix "@..." field) -> UDynFieldsPat . fromString <$>
-          identifier "record pattern dynamic remainder name" field
-        (Prefix "@"    field) -> UDynFieldPat . fromString <$>
-          identifier "record pattern dynamic field name" field
-        field -> UStaticFieldPat <$> identifier "record pattern field" field
-      rhs' <- pat rhs
-      header rhs' <$> go gs rest
-    Prefix "..." field -> case gs of
-      [] -> case field of
-        (WithSrc _ CEmpty) -> return $ URemFieldsPat UIgnore
-        (WithSrc _ CHole) -> return $ URemFieldsPat UIgnore
-        name -> URemFieldsPat . fromString
-          <$> identifier "record pattern remainder name" name
-      _ -> throw SyntaxErr "Ellipsis-pattern must be last"
-    WithSrc _ (CParens [g']) -> go (g':gs) rest
-    field@(WithSrc src _) -> do
-      field' <- identifier "record pattern field pun" field
-      UStaticFieldPat (fromString field') (WithSrcB src $ fromString field') <$> go gs rest
 
 data ParamStyle
  = TypeParam  -- binder optional, used in pi types
@@ -418,7 +392,6 @@ expr = propagateSrcE expr' where
   expr' (CChar char)        = return $ charExpr char
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
-  expr' (CLabel prefix str) = return $ labelExpr prefix str
   expr' (CParens [g])       = dropSrcE <$> expr g
   expr' (CParens gs) = UPrim UTuple <$> mapM expr gs
   -- Table constructors here.  Other uses of square brackets
@@ -547,9 +520,6 @@ charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
 
 unitExpr :: UExpr' VoidS
 unitExpr = UPrim (UPrimCon $ ProdCon []) []
-
-labelExpr :: LabelPrefix -> String -> UExpr' VoidS
-labelExpr PlainLabel str = ULabel str
 
 -- === Builders ===
 

@@ -7,23 +7,20 @@
 module RuntimePrint (showAny) where
 
 import Control.Monad.Reader
-import Data.Foldable (fold, toList)
 import Data.Functor
-import qualified Data.Map.Strict as M
 
 import Builder
 import Core
 import Err
 import IRVariants
 import MTL1
-import LabeledItems
 import Name
 import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
 import QueryType
-import Util (restructure, enumerate)
+import Util (enumerate)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
@@ -93,18 +90,6 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
-    StaticRecordTyCon tys -> do
-      xs <- getUnpacked $ unwrapNewtype atom
-      let LabeledItems row = restructure xs tys
-      braces $ sepBy ", " $ fold $ M.toAscList row <&> \(k, vs) ->
-        toList vs <&> \v -> do
-          emitLit (pprint k <> " = ")
-          rec v
-    RecordTyCon _   -> unexpectedPolymorphism
-    LabelCon _       -> notAType
-    LabelType        -> printAsConstant
-    LabeledRowKindTC -> printAsConstant
-    LabeledRowCon _  -> notAType
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Word8Ty]) -> do
@@ -168,19 +153,11 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
     notAType :: Print n
     notAType = error $ "Error querying type of: " ++ pprint atom
 
-    unexpectedPolymorphism :: Print n
-    unexpectedPolymorphism = do
-      emitLit ("Warning: unexpected polymorphism in evaluated term"
-              ++ pprint atom)
-
 parens :: Emits n => Print n -> Print n
 parens x = emitCharLit '(' >> x >> emitCharLit ')'
 
 brackets :: Emits n => Print n -> Print n
 brackets x = emitCharLit '[' >> x >> emitCharLit ']'
-
-braces :: Emits n => Print n -> Print n
-braces x = emitCharLit '{' >> x >> emitCharLit '}'
 
 sepBy :: forall n. Emits n => String -> [Print n] -> Print n
 sepBy s xsTop = rec xsTop where

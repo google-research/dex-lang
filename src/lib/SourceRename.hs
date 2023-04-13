@@ -204,20 +204,10 @@ instance SourceRenamableE UExpr' where
     UTypeAnn e ty -> UTypeAnn <$> sourceRenameE e <*> sourceRenameE ty
     UTabCon xs -> UTabCon <$> mapM sourceRenameE xs
     UPrim p xs -> UPrim p <$> mapM sourceRenameE xs
-    ULabel name -> return $ ULabel name
     UFieldAccess x f -> UFieldAccess <$> sourceRenameE x <*> pure f
-    URecord elems -> URecord <$> mapM sourceRenameE elems
-    ULabeledRow elems -> ULabeledRow <$> mapM sourceRenameE elems
-    URecordTy elems -> URecordTy <$> mapM sourceRenameE elems
     UNatLit   x -> return $ UNatLit x
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
-
-instance SourceRenamableE UFieldRowElem where
-  sourceRenameE = \case
-    UStaticField l e -> UStaticField l <$> sourceRenameE e
-    UDynField    v e -> UDynField  <$> sourceRenameE v <*> sourceRenameE e
-    UDynFields   v   -> UDynFields <$> sourceRenameE v
 
 instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =
@@ -445,27 +435,7 @@ instance SourceRenamablePat UPat' where
         sourceRenamePat sibs' p2 \sibs'' p2' ->
           cont sibs'' $ UPatDepPair $ PairB p1' p2'
     UPatProd bs -> sourceRenamePat sibs bs \sibs' bs' -> cont sibs' $ UPatProd bs'
-    UPatRecord rpat -> sourceRenamePat sibs rpat \sibs' rpat' -> cont sibs' (UPatRecord rpat')
     UPatTable ps -> sourceRenamePat sibs ps \sibs' ps' -> cont sibs' $ UPatTable ps'
-
-instance SourceRenamablePat UFieldRowPat where
-  sourceRenamePat sibs pat cont = case pat of
-    UEmptyRowPat    -> cont sibs UEmptyRowPat
-    URemFieldsPat b -> sourceRenamePat sibs b \sibs' b' -> cont sibs' (URemFieldsPat b')
-    UDynFieldsPat v p rest -> do
-      v' <- sourceRenameE v
-      sourceRenamePat sibs p \sibs' p' ->
-        sourceRenamePat sibs' rest \sibs'' rest' ->
-          cont sibs'' $ UDynFieldsPat v' p' rest'
-    UStaticFieldPat l p rest -> do
-      sourceRenamePat sibs p \sibs' p' ->
-        sourceRenamePat sibs' rest \sibs'' rest' ->
-          cont sibs'' $ UStaticFieldPat l p' rest'
-    UDynFieldPat    v p rest -> do
-      v' <- sourceRenameE v
-      sourceRenamePat sibs p \sibs' p' ->
-        sourceRenamePat sibs' rest \sibs'' rest' ->
-          cont sibs'' $ UDynFieldPat v' p' rest'
 
 instance SourceRenamablePat UnitB where
   sourceRenamePat sibs UnitB cont = cont sibs UnitB
@@ -539,19 +509,10 @@ instance HasSourceNames UPat' where
     UPatCon _ bs -> sourceNames bs
     UPatDepPair (PairB p1 p2) -> sourceNames p1 <> sourceNames p2
     UPatProd bs -> sourceNames bs
-    UPatRecord p -> sourceNames p
     UPatTable ps -> sourceNames ps
 
 instance HasSourceNames b => HasSourceNames (WithSrcB b) where
   sourceNames (WithSrcB _ pat) = sourceNames pat
-
-instance HasSourceNames UFieldRowPat where
-  sourceNames = \case
-    UEmptyRowPat             -> mempty
-    URemFieldsPat b          -> sourceNames b
-    UDynFieldsPat   _ p rest -> sourceNames p <> sourceNames rest
-    UStaticFieldPat _ p rest -> sourceNames p <> sourceNames rest
-    UDynFieldPat    _ p rest -> sourceNames p <> sourceNames rest  -- Shouldn't we include v?
 
 instance (HasSourceNames b1, HasSourceNames b2)
          => HasSourceNames (PairB b1 b2) where

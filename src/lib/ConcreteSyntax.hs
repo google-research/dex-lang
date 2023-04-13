@@ -694,10 +694,6 @@ ops =
   , [symOpL ">>>"]
   , [symOpL "<<<"]
   , [symOpL   "@"]
-  -- TODO Actually delete code for parsing records
-  -- , [unOpPre  "@"]
-  -- , [unOpPre "@..."]
-  -- , [unOpPre "..."]
   , [symOpN  "::"]
   , [symOpR   "$"]
   , [symOpL   "|"]
@@ -850,9 +846,7 @@ primNames = M.fromList
   , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("Nat"           , UNat)
   , ("Fin"           , UFin)
-  , ("Label"         , ULabelType)
   , ("EffKind"       , UEffectRowKind)
-  , ("LabeledRowKind", ULabeledRowKind)
   , ("NatCon"        , UNatCon)
   , ("Ref"       , UPrimTC $ RefType () ())
   , ("HeapType"  , UPrimTC $ HeapType)

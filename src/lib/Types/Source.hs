@@ -35,7 +35,6 @@ import Data.Store (Store (..))
 import Name
 import IRVariants
 import Err
-import LabeledItems
 import Util (File (..))
 
 import Types.Primitives
@@ -136,7 +135,6 @@ data Group'
   | CChar Char
   | CFloat Double
   | CHole
-  | CLabel LabelPrefix String
   | CParens   [Group]
   | CBrackets [Group]
   | CBraces   [Group]
@@ -253,24 +251,13 @@ data UExpr' (n::S) =
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
  | UPrim PrimName [UExpr n]
- | ULabel String
  | UFieldAccess (UExpr n) FieldName
- | URecord (UFieldRowElems n)                        -- {@v=x, a=y, b=z, ...rest}
- | ULabeledRow (UFieldRowElems n)                    -- {@v:X ? a:Y ? b:Z ? ...rest}
- | URecordTy (UFieldRowElems n)                      -- {@v:X & a:Y & b:Z & ...rest}
  | UNatLit   Word64
  | UIntLit   Int
  | UFloatLit Double
    deriving (Show, Generic)
 
 type UNamedArg (n::S) = (SourceName, UExpr n)
-type UFieldRowElems (n::S) = [UFieldRowElem n]
-data UFieldRowElem (n::S)
-  = UStaticField String                (UExpr n)
-  | UDynField    (SourceNameOr UVar n) (UExpr n)
-  | UDynFields   (UExpr n)
-  deriving (Show)
-
 type FieldName = WithSrc FieldName'
 data FieldName' =
    FieldName SourceName
@@ -402,24 +389,12 @@ type UOptAnnBinder = UAnnBinder AnnOptional :: B
 data UAlt (n::S) where
   UAlt :: UPat n l -> UBlock l -> UAlt n
 
-data UFieldRowPat (n::S) (l::S) where
-  UEmptyRowPat    :: UFieldRowPat n n
-  URemFieldsPat   :: UAtomBinder n l -> UFieldRowPat n l
-  UStaticFieldPat :: Label               -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
-  UDynFieldsPat   :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
-  UDynFieldPat    :: SourceNameOr UVar n -> UPat n l' -> UFieldRowPat l' l -> UFieldRowPat n l
-
-instance Show (UFieldRowPat n l) where
-  show _ = "UFieldRowPat <TODO>"
-
 type UPat = WithSrcB UPat'
 data UPat' (n::S) (l::S) =
    UPatBinder (UAtomBinder n l)
  | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
  | UPatProd (Nest UPat n l)
  | UPatDepPair (PairB UPat UPat n l)
- -- The name+ExtLabeledItems and the PairBs are parallel, constrained by the parser.
- | UPatRecord (UFieldRowPat n l)
  | UPatTable (Nest UPat n l)
   deriving (Show)
 
@@ -571,14 +546,13 @@ data PrimName =
     UPrimTC  (PrimTC CoreIR ())
   | UPrimCon (PrimCon CoreIR ())
   | UPrimOp  (PrimOp ())
-  | URecordOp (RecordOp ())
   | UMAsk | UMExtend | UMGet | UMPut
   | UWhile | ULinearize | UTranspose
   | URunReader | URunWriter | URunState | URunIO | UCatchException
   | UProjNewtype | UExplicitApply | UMonoLiteral
   | UIndexRef | UApplyMethod Int
-  | UNat | UNatCon | UFin | ULabelType
-  | UEffectRowKind | ULabeledRowKind
+  | UNat | UNatCon | UFin
+  | UEffectRowKind
   | UTuple -- overloaded for type constructor and data constructor, resolved in inference
     deriving (Show, Eq)
 

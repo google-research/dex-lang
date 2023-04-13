@@ -17,7 +17,6 @@ import GHC.Exts (Constraint)
 import GHC.Float
 import Control.Monad (void)
 import Data.Foldable (toList, fold)
-import Data.Functor ((<&>))
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
@@ -25,7 +24,6 @@ import Data.Text.Prettyprint.Doc
 import Data.Text (Text, snoc, uncons, unsnoc, unpack)
 import qualified Data.Set        as S
 import Data.String (fromString)
-import Data.Maybe (isNothing)
 import qualified System.Console.ANSI as ANSI
 import System.Console.ANSI hiding (Color)
 import System.IO.Unsafe
@@ -34,7 +32,6 @@ import Numeric
 
 import ConcreteSyntax
 import Err
-import LabeledItems
 import IRVariants
 import Name
 import Occurrence (Count (Bounded), UsageInfo (..))
@@ -44,7 +41,7 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import Util (restructure, Tree (..))
+import Util (Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
 -- knows the precedence level of the immediately enclosing operation,
@@ -171,7 +168,6 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (UserEffectOp op) = prettyPrec op
-  prettyPrec (RecordOp op) = prettyPrec op
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (DAMOp op) = prettyPrec op
   prettyPrec (ApplyMethod d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
@@ -182,16 +178,6 @@ instance IRRep r => PrettyPrec (Expr r n) where
     MPut x      -> pApp ref <+> ":=" <+> pApp x
     IndexRef i  -> pApp ref <+> "!" <+> pApp i
     ProjRef  i  -> "proj" <+> pApp ref <+> p i
-
-instance IRRep r => Pretty (RecordOp (Atom r n)) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (RecordOp (Atom r n)) where
-  prettyPrec = \case
-    RecordCons items rest -> atPrec LowestPrec $ "RecordCons" <+> pArg items <+> pArg rest
-    RecordConsDynamic lab val rec -> atPrec LowestPrec $
-      "RecordConsDynamic" <+> pArg lab <+> pArg val <+> pArg rec
-    RecordSplit fields val -> atPrec AppPrec $
-      "RecordSplit" <+> pArg fields <+> pArg val
-    op -> atPrec ArgPrec $ p (show  op)
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -318,43 +304,6 @@ instance Pretty Projection where
   pretty = \case
     UnwrapNewtype -> "u"
     ProjectProduct i -> p i
-
-prettyRecordTyRow :: FieldRowElems n -> Doc ann -> DocPrec ann
-prettyRecordTyRow elems separator = do
-  atPrec ArgPrec $ align $ group $ braces $ (prefix <>) $
-    concatWith (surround $ line <> separator <> " ") $ p <$> fromFieldRowElems elems
-    where prefix = case fromFieldRowElems elems of
-                      [] -> separator
-                      [DynFields _] -> separator
-                      _ -> mempty
-
-instance Pretty (FieldRowElem n) where
-  pretty = \case
-    StaticFields items -> concatWith (surround $ line <> "& ") $
-      withLabels items <&> \(l, _, ty) -> p l <> ":" <+> pLowest ty
-    DynField  l ty -> "@" <> p l <> ":" <+> p ty
-    DynFields f    -> "..." <> p f
-
-prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
-  => ExtLabeledItems a b -> Maybe (Doc ann) -> Doc ann -> Doc ann -> DocPrec ann
-prettyExtLabeledItems (Ext (LabeledItems row) rest) prefix separator bindwith =
-  atPrec ArgPrec $ align $ group $ innerDoc
-  where
-    elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
-    fmtElem (label, v) = p label <> bindwith <+> pLowest v
-    docs = map fmtElem elems
-    suffix = case rest of
-      Just v -> separator <> " ..." <> pArg v
-      Nothing -> if length docs == 0 && isNothing prefix then separator else mempty
-    innerDoc = "{" <> flatAlt " " ""
-      <> (case prefix of Nothing -> mempty; Just pref -> pref <> separator <> " ")
-      <> concatWith (surround (separator <> " ")) docs
-      <> suffix <> "}"
-
-prettyLabeledItems :: PrettyPrec a
-  => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
-prettyLabeledItems items =
-  prettyExtLabeledItems (Ext items (Nothing :: Maybe ())) Nothing
 
 forStr :: ForAnn -> Doc ann
 forStr Fwd = "for"
@@ -694,11 +643,7 @@ instance PrettyPrec (UExpr' n) where
     UPrim prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (prettyLines alts)
-    ULabel name -> atPrec ArgPrec $ "&" <> p name
-    ULabeledRow elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "?") ": " elems
     UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f
-    URecord   elems -> atPrec ArgPrec $ prettyUFieldRowElems (line' <> ",") "=" elems
-    URecordTy elems -> atPrec ArgPrec $ prettyUFieldRowElems (line <> "&") ": " elems
     UNatLit   v -> atPrec ArgPrec $ p v
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
@@ -708,13 +653,6 @@ instance Pretty FieldName' where
   pretty = \case
     FieldName s -> pretty s
     FieldNum n  -> pretty n
-
-prettyUFieldRowElems :: Doc ann -> Doc ann -> UFieldRowElems n -> Doc ann
-prettyUFieldRowElems separator bindwith elems =
-  braces $ concatWith (surround $ separator <> " ") $ elems <&> \case
-    UStaticField l e -> p l <> bindwith <> p e
-    UDynField    v e -> p v <> bindwith <> p e
-    UDynFields   v   -> "..." <> p v
 
 instance Pretty (UAlt n) where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
@@ -798,21 +736,7 @@ instance PrettyPrec (UPat' n l) where
     UPatProd xs -> atPrec ArgPrec $ parens $ commaSep (fromNest xs)
     UPatDepPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ",> " <> p y
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (fromNest pats)
-    UPatRecord pats -> atPrec ArgPrec $ prettyUFieldRowPat "," "=" pats
     UPatTable pats -> atPrec ArgPrec $ p pats
-
-prettyUFieldRowPat :: forall n l ann. Doc ann -> Doc ann -> UFieldRowPat n l -> Doc ann
-prettyUFieldRowPat separator bindwith pat =
-  braces $ concatWith (surround $ separator <> " ") $ go pat
-  where
-    go :: UFieldRowPat n' l' -> [Doc ann]
-    go = \case
-      UEmptyRowPat          -> []
-      URemFieldsPat UIgnore -> ["..."]
-      URemFieldsPat b       -> ["..." <> p b]
-      UDynFieldsPat   v r rest -> ("@..." <> p v <> bindwith <> p r) : go rest
-      UDynFieldPat    v r rest -> ("@" <> p v <> bindwith <> p r) : go rest
-      UStaticFieldPat l r rest -> (p l <> bindwith <> p r) : go rest
 
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
@@ -971,8 +895,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC r e) where
 prettyPrecNewtype :: NewtypeCon n -> CAtom n -> DocPrec ann
 prettyPrecNewtype con x = case (con, x) of
   (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
-  (RecordCon labels, ProdVal itemList) ->
-    prettyLabeledItems (restructure itemList labels) (line' <> ",") " ="
   (_, x') -> prettyPrec x'
 
 instance Pretty (NewtypeTyCon n) where pretty = prettyFromPrettyPrec
@@ -980,12 +902,7 @@ instance PrettyPrec (NewtypeTyCon n) where
   prettyPrec = \case
     Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
-    RecordTyCon elems -> prettyRecordTyRow elems "&"
     EffectRowKind -> atPrec ArgPrec "EffKind"
-    LabeledRowKindTC -> atPrec ArgPrec "Fields"
-    LabelType -> atPrec ArgPrec "Label"
-    LabelCon name -> atPrec ArgPrec $ "##" <> p name
-    LabeledRowCon elems -> prettyRecordTyRow elems "?"
     UserADTType "RangeTo"      _ (TyConParams _ [i]) -> atPrec LowestPrec $ ".."  <> pApp i
     UserADTType "RangeToExc"   _ (TyConParams _ [i]) -> atPrec LowestPrec $ "..<" <> pApp i
     UserADTType "RangeFrom"    _ (TyConParams _ [i]) -> atPrec LowestPrec $ pApp i <>  ".."

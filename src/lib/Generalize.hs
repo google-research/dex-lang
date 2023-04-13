@@ -144,15 +144,10 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Nat -> return Nat
     Fin n -> Fin <$> f DataParam NatTy n
     EffectRowKind    -> return EffectRowKind
-    LabeledRowKindTC -> return LabeledRowKindTC
-    LabelType        -> return LabelType
-    RecordTyCon elems -> RecordTyCon  <$> traverserseFieldRowElemTypes (f TypeParam TyKind) elems
     UserADTType sn def (TyConParams infs params) -> do
       Abs roleBinders UnitE <- getDataDefRoleBinders def
       params' <- traverseRoleBinders f roleBinders params
       return $ UserADTType sn def $ TyConParams infs params'
-    LabelCon l -> return $ LabelCon l
-    LabeledRowCon r -> return $ LabeledRowCon r
   _ -> error $ "Not implemented: " ++ pprint ty
 {-# INLINE traverseTyParams #-}
 
@@ -174,17 +169,6 @@ traverseRoleBinders f allBinders allParams =
       return $ param' : params''
     go _ _ = error "zip error"
 {-# INLINE traverseRoleBinders #-}
-
-traverserseFieldRowElemTypes
-  :: Monad m => (Type CoreIR n -> m (Type CoreIR n))
-  -> FieldRowElems n -> m (FieldRowElems n)
-traverserseFieldRowElemTypes f els = fieldRowElemsFromList <$> traverse checkElem elemList
-  where
-    elemList = fromFieldRowElems els
-    checkElem = \case
-      StaticFields items -> StaticFields <$> traverse f items
-      DynField _ _ -> error "shouldn't have dynamic fields post-simplification"
-      DynFields _  -> error "shouldn't have dynamic fields post-simplification"
 
 getDataDefRoleBinders :: EnvReader m => TyConName n -> m n (Abs RolePiBinders UnitE n)
 getDataDefRoleBinders def = do

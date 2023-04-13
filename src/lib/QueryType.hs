@@ -11,8 +11,6 @@ import Control.Monad
 import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.List (elemIndex)
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
 
 import Types.Primitives
 import Types.Core
@@ -22,7 +20,6 @@ import IRVariants
 import Core
 import CheapReduction
 import Err
-import LabeledItems
 import Name hiding (withFreshM)
 import Subst
 import Util
@@ -330,7 +327,7 @@ instance IRRep r => HasType r (Atom r) where
     DictCon dictExpr -> getTypeE dictExpr
     DictTy (DictType _ _ _) -> return TyKind
     NewtypeTyCon con -> getTypeE con
-    NewtypeCon con x -> getNewtypeType con x
+    NewtypeCon con _ -> getNewtypeType con
     RepValAtom repVal -> do RepVal ty _ <- substM repVal; return ty
     ProjectElt (ProjectProduct i) x -> do
       ty <- getTypeE x
@@ -355,20 +352,12 @@ instance HasType CoreIR NewtypeTyCon where
     Nat               -> return TyKind
     Fin _             -> return TyKind
     EffectRowKind     -> return TyKind
-    LabelType         -> return TyKind
-    RecordTyCon  _    -> return TyKind
-    LabeledRowKindTC  -> return TyKind
     UserADTType _ _ _ -> return TyKind
-    LabelCon _        -> return $ NewtypeTyCon LabelType
-    LabeledRowCon _   -> return LabeledRowKind
 
-getNewtypeType :: NewtypeCon i -> CAtom i -> TypeQueryM i o (CType o)
-getNewtypeType con x = case con of
+getNewtypeType :: NewtypeCon i -> TypeQueryM i o (CType o)
+getNewtypeType con = case con of
   NatCon          -> return $ NewtypeTyCon Nat
   FinCon n        -> NewtypeTyCon . Fin <$> substM n
-  RecordCon labels -> do
-    TC (ProdType tys) <- getTypeE x
-    return $ StaticRecordTy $ restructure tys labels
   UserADTData d params -> do
     d' <- substM d
     params' <- substM params
@@ -489,7 +478,6 @@ instance IRRep r => HasType r (Expr r) where
     DAMOp           op -> getTypeE op
     UserEffectOp    op -> getTypeE op
     PrimOp          op -> getTypeE $ ComposeE op
-    RecordOp        op -> getTypeE $ ComposeE op
     Hof  hof -> getTypeHof hof
     Case _ _ resultTy _ -> substM resultTy
     ApplyMethod dict i args -> do
@@ -576,66 +564,6 @@ instance IRRep r => HasType r (ComposeE PrimOp (Atom r)) where
         TC (RefType h _) -> TC . RefType h <$> substM vty
         ty -> error $ "Not a reference type: " ++ pprint ty
 
-instance HasType CoreIR (ComposeE RecordOp CAtom) where
-  getTypeE (ComposeE recordOp) = case recordOp of
-    RecordCons l r -> do
-      lty <- getTypeE l
-      rty <- getTypeE r
-      case (lty, rty) of
-        (RecordTyWithElems lelems, RecordTyWithElems relems) ->
-          return $ RecordTyWithElems $ lelems ++ relems
-        _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
-    RecordConsDynamic lab val record -> do
-      lab' <- substM lab
-      vty <- getTypeE val
-      rty <- getTypeE record
-      case rty of
-        RecordTy rest -> case lab' of
-          NewtypeTyCon (LabelCon l) -> return $ RecordTy $ prependFieldRowElem
-                                (StaticFields (labeledSingleton l vty)) rest
-          Var labVar       -> return $ RecordTy $ prependFieldRowElem
-                                (DynField labVar vty) rest
-          _ -> error "Unexpected label atom"
-        _ -> throw TypeErr
-              $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
-    RecordSplitDynamic lab record -> do
-      lab' <- cheapNormalize =<< substM lab
-      rty <- getTypeE record
-      case (lab', rty) of
-        (NewtypeTyCon (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
-          let (h, items') = splitLabeledItems (labeledSingleton l ()) items
-          return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
-        (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
-          return $ PairTy ty $ RecordTyWithElems rest
-        -- There are more cases we could implement, but do we need to?
-        _ -> throw TypeErr $ "Can't split a label "
-              <> pprint lab' <> " from atom of type " <> pprint rty
-    RecordSplit fields record -> do
-      fields' <- cheapNormalize =<< substM fields
-      fullty  <- cheapNormalize =<< getTypeE record
-      let splitFailed =
-            throw TypeErr $ "Invalid record split: "
-              <> pprint fields' <> " from " <> pprint fullty
-      case (fields', fullty) of
-        (LabeledRow els, RecordTyWithElems els') ->
-          stripPrefix (fromFieldRowElems els) els' >>= \case
-            Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
-            Nothing -> splitFailed
-        (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-          return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
-        _ -> splitFailed
-      where
-        stripPrefix = curry \case
-          ([]  , ys  ) -> return $ Just ys
-          (x:xs, y:ys) -> alphaEq x y >>= \case
-            True  -> stripPrefix xs ys
-            False -> case (x, y) of
-              (StaticFields xf, StaticFields yf) -> do
-                NoExt rest <- labeledRowDifference' (NoExt yf) (NoExt xf)
-                return $ Just $ StaticFields rest : ys
-              _ -> return Nothing
-          _ -> return Nothing
-
 instantiateHandlerType :: EnvReader m => HandlerName n -> CAtom n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
@@ -650,25 +578,6 @@ getTypeBaseType e =
   getTypeE e >>= \case
     TC (BaseType b) -> return b
     ty -> throw TypeErr $ "Expected a base type. Got: " ++ pprint ty
-
-labeledRowDifference'
-  :: IRRep r
-  => ExtLabeledItems (Type r o) (AtomName r o)
-  -> ExtLabeledItems (Type r o) (AtomName r o)
-  -> TypeQueryM i o (ExtLabeledItems (Type r o) (AtomName r o))
-labeledRowDifference' (Ext (LabeledItems items) rest)
-                      (Ext (LabeledItems subitems) subrest) = do
-  -- Extract remaining types from the left.
-  let
-    neDiff xs ys = NE.nonEmpty $ NE.drop (length ys) xs
-    diffitems = M.differenceWith neDiff items subitems
-  -- Check tail.
-  diffrest <- case (subrest, rest) of
-    (Nothing, _) -> return rest
-    (Just v, Just v') | v == v' -> return Nothing
-    _ -> throw TypeErr $ "Row tail " ++ pprint subrest
-      ++ " is not known to be a subset of " ++ pprint rest
-  return $ Ext (LabeledItems diffitems) diffrest
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
@@ -851,7 +760,6 @@ exprEffects expr = case expr of
     dict' <- substM dict
     methodTy <- getMethodType dict' i
     appEffects (Pi methodTy) args
-  RecordOp _        -> return Pure
 
 instance IRRep r => HasEffectsE (Block r) r where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

@@ -491,7 +491,6 @@ dceNest decls ans = case decls of
 
 -- The generic instances
 
-instance (HasDCE e1, HasDCE e2) => HasDCE (ExtLabeledItemsE e1 e2)
 instance HasDCE SExpr
 instance HasDCE (RefOp SimpIR)
 instance HasDCE (BaseMonoid SimpIR)

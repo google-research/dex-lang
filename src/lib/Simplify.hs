@@ -14,7 +14,6 @@ import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Maybe
-import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 import GHC.Exts (inline)
 
@@ -25,7 +24,6 @@ import Core
 import Err
 import Generalize
 import IRVariants
-import LabeledItems
 import Linearize
 import Name
 import Subst
@@ -36,7 +34,7 @@ import Transpose
 import Types.Core
 import Types.Source
 import Types.Primitives
-import Util (enumerate, foldMapM, restructure)
+import Util (enumerate, foldMapM)
 
 -- === Simplification ===
 
@@ -56,9 +54,6 @@ import Util (enumerate, foldMapM, restructure)
 -- elaborating the expression into a Maybe-style monad.  Note: the
 -- plan is for `CatchException` to become a user-defined effect, and
 -- for simplification to discharge all of them.
-
--- Simplification also discharges bulk record operations
--- by converting them into individual projections and constructors.
 
 -- Simplification also opportunistically does peep-hole optimizations:
 -- some constant folding, case-of-known-constructor, projecting known
@@ -329,7 +324,6 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     ans <- simplifyRefOp eff ref'
     liftSimpAtom resultTy ans
   Hof hof -> simplifyHof hint hof
-  RecordOp op -> simplifyRecordOp  =<< mapM simplifyAtom op
   TabCon _ ty xs -> do
     ty' <- substM ty
     tySimp <- getRepType ty'
@@ -746,50 +740,6 @@ buildSimplifiedBlock cont = do
       let ty' = ignoreHoistFailure $ hoist (toScopeFrag decls) ty
       return $ SimplifiedBlock block (CoerceRecon ty')
 
-simplifyRecordOp :: Emits o => RecordOp (CAtom o) -> SimplifyM i o (CAtom o)
-simplifyRecordOp op = case op of
-  RecordCons left right -> getType left >>= \case
-    StaticRecordTy leftTys -> getType right >>= \case
-      StaticRecordTy rightTys -> do
-        -- Unpack, then repack with new arguments (possibly in the middle).
-        leftList <- getUnpacked $ unwrapNewtype left
-        let leftItems = restructure leftList leftTys
-        rightList <- getUnpacked $ unwrapNewtype right
-        let rightItems = restructure rightList rightTys
-        return $ Record (void (leftTys <> rightTys)) $ toList $ leftItems <> rightItems
-      _ -> error "not a record"
-    _ -> error "not a record"
-  RecordConsDynamic ~(NewtypeTyCon (LabelCon l)) val rec -> do
-    getType rec >>= \case
-      StaticRecordTy itemTys -> do
-        itemList <- getUnpacked $ unwrapNewtype rec
-        let items = restructure itemList itemTys
-        return $ Record (labeledSingleton l () <> void itemTys) $
-          toList $ labeledSingleton l val <> items
-      _ -> error "not a record"
-  RecordSplit f full -> getType full >>= \case
-    StaticRecordTy fullTys -> case f of
-      LabeledRow f' | [StaticFields fields] <- fromFieldRowElems f' -> do
-        -- Unpack, then repack into two pieces.
-        fullList <- getUnpacked $ unwrapNewtype full
-        let fullItems = restructure fullList fullTys
-        let (_, remaining) = splitLabeledItems fields fullTys
-        let (left, right) = splitLabeledItems fields fullItems
-        return $ PairVal (Record (void fields)    (toList left ))
-                         (Record (void remaining) (toList right))
-      _ -> error "failed to simplifiy a field row"
-    _ -> error "not a record"
-  RecordSplitDynamic ~(NewtypeTyCon (LabelCon l)) rec ->
-    getType rec >>= \case
-      StaticRecordTy itemTys -> do
-        itemList <- getUnpacked $ unwrapNewtype rec
-        let items = restructure itemList itemTys
-        let (val, rest) = splitLabeledItems (labeledSingleton l ()) items
-        let (_, otherItemTys) = splitLabeledItems (labeledSingleton l ()) itemTys
-        return $ PairVal (head $ toList val) $
-          Record (void otherItemTys) $ toList rest
-      _ -> error "not a record"
-
 simplifyOp :: Emits o => PrimOp (CAtom o) -> SimplifyM i o (CAtom o)
 simplifyOp op = do
   ty <- getType $ PrimOp op
@@ -1033,7 +983,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
           -- TODO: we're throwing away core type information here. Once we
           -- support core-level tangent types we should make an effort to
           -- correctly restore the core types before applying `fLin`. Right now,
-          -- a custom linearization defined for a function on records, ADTs etc will
+          -- a custom linearization defined for a function on ADTs will
           -- not work.
           fLin' <- sinkM fLin
           Pi (CorePiType _ bs _ _) <- getType fLin'

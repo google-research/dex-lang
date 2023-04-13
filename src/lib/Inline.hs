@@ -14,7 +14,6 @@ import Core
 import Err
 import CheapReduction
 import IRVariants
-import LabeledItems
 import Name
 import Subst
 import Occurrence hiding (Var)
@@ -412,12 +411,7 @@ instance Inlinable e => Inlinable (ComposeE (PrimTC SimpIR) e) where
   inline ctx (ComposeE tc) =
     (ComposeE <$> traverse (inline Stop) tc) >>= reconstruct ctx
   {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE LabeledItems e) where
-  inline ctx (ComposeE items) =
-    (ComposeE <$> traverse (inline Stop) items) >>= reconstruct ctx
-  {-# INLINE inline #-}
 
-instance (Inlinable e1, Inlinable e2) => Inlinable (ExtLabeledItemsE e1 e2)
 instance Inlinable (LamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)

@@ -68,18 +68,6 @@ data MemOp e =
  | PtrStore e e
    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data RecordOp e =
- -- Concatenate two records.
-   RecordCons e e
- -- Split off a labeled row from the front of the record.
- | RecordSplit  e e
- -- Add a dynamically named field to a record (on the left).
- -- Args are as follows: label, value, record.
- | RecordConsDynamic e e e
- -- Splits a label from the record.
- | RecordSplitDynamic e e
-   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
-
 data PrimOp e =
    UnOp     UnOp  e
  | BinOp    BinOp e e
@@ -322,7 +310,6 @@ instance Store a => Store (PrimOp    a)
 instance Store a => Store (MemOp     a)
 instance Store a => Store (VectorOp  a)
 instance Store a => Store (MiscOp    a)
-instance Store a => Store (RecordOp a)
 
 instance Hashable RWS
 instance Hashable Direction
@@ -348,7 +335,6 @@ instance Hashable a => Hashable (PrimOp    a)
 instance Hashable a => Hashable (MemOp     a)
 instance Hashable a => Hashable (VectorOp  a)
 instance Hashable a => Hashable (MiscOp    a)
-instance Hashable a => Hashable (RecordOp a)
 instance Store (b n l) => Store (WithExpl b n l)
 
 instance (Color c, BindsOneName b c) => BindsOneName (WithExpl b) c where

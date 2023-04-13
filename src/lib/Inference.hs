@@ -27,7 +27,6 @@ import Data.Maybe (fromJust, fromMaybe, catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
 import Data.Word
 import qualified Data.HashMap.Strict as HM
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -40,7 +39,6 @@ import Core
 import Err
 import GenericTraversal
 import IRVariants
-import LabeledItems
 import MTL1
 import Name
 import Subst
@@ -1007,48 +1005,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
           _ -> return $ Var v
         x' -> return x'
     matchRequirement =<< matchPrimApp prim xs'
-  ULabel name -> matchRequirement $ NewtypeTyCon $ LabelCon name
   UFieldAccess _ _ -> inferAndInstantiate
-  URecord elems ->
-    matchRequirement =<< resolveDelay =<< foldM go (Nothing, mempty) (reverse elems)
-    where
-      go :: EmitsInf o
-         => (Maybe (CAtom o), LabeledItems (CAtom o)) -> UFieldRowElem i
-         -> InfererM i o (Maybe (CAtom o), LabeledItems (CAtom o))
-      go delayedRec = \case
-        UStaticField l e -> do
-          e' <- inferRho noHint e
-          return (rec, labeledSingleton l e' <> delayItems)
-          where (rec, delayItems) = delayedRec
-        UDynField    v e -> do
-          v' <- checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType)
-          e' <- inferRho noHint e
-          rec' <- emitExpr . RecordOp . RecordConsDynamic v' e' =<< resolveDelay delayedRec
-          return (Just rec', mempty)
-        UDynFields   v -> do
-          anyFields <- freshInferenceName MiscInfVar LabeledRowKind
-          v' <- checkRho noHint v $ RecordTyWithElems [DynFields anyFields]
-          case delayedRec of
-            (Nothing, delayItems) | null delayItems -> return (Just v', mempty)
-            _ -> do
-              rec' <- emitExpr . RecordOp . RecordCons v' =<< resolveDelay delayedRec
-              return (Just rec', mempty)
-
-      resolveDelay :: EmitsInf o
-                   => (Maybe (CAtom o), LabeledItems (CAtom o)) -> InfererM i o (CAtom o)
-      resolveDelay = \case
-        (Nothing , delayedItems) -> getRecord delayedItems
-        (Just rec, delayedItems) -> case null delayedItems of
-          True  -> return rec
-          False -> do
-            dr <- getRecord delayedItems
-            emitExpr $ RecordOp $ RecordCons dr rec
-        where
-          getRecord delayedItems = do
-            tys <- traverse getType delayedItems
-            return $ Record (void tys) $ toList delayedItems
-  URecordTy   elems -> matchRequirement =<< RecordTyWithElems . concat <$> mapM inferFieldRowElem elems
-  ULabeledRow elems -> matchRequirement =<< LabeledRow . fieldRowElemsFromList . concat <$> mapM inferFieldRowElem elems
   UNatLit x -> do
     let defaultVal = Con $ Lit $ Word32Lit $ fromIntegral x
     let litVal     = Con $ Lit $ Word64Lit $ fromIntegral x
@@ -1478,22 +1435,6 @@ checkNamedArgValidity (Abs bs _) offeredNames = do
     throw TypeErr $ "Unrecognized named arguments: " ++ pprint unrecognizedNames
       ++ "\nShould be one of: " ++ pprint acceptedNames
 
-inferFieldRowElem :: EmitsBoth o => UFieldRowElem i -> InfererM i o [FieldRowElem o]
-inferFieldRowElem = \case
-  UStaticField l ty -> do
-    ty' <- checkUType ty
-    return [StaticFields $ labeledSingleton l ty']
-  UDynField    v ty -> do
-    ty' <- checkUType ty
-    checkRho noHint (WithSrcE Nothing $ UVar v) (NewtypeTyCon LabelType) >>= \case
-      NewtypeTyCon (LabelCon l) -> return [StaticFields $ labeledSingleton l ty']
-      Var v'           -> return [DynField v' ty']
-      _                -> error "Unexpected Label atom"
-  UDynFields   v    -> checkRho noHint v LabeledRowKind >>= \case
-    LabeledRow row -> return $ fromFieldRowElems row
-    Var v'         -> return [DynFields v']
-    _              -> error "Unexpected Fields atom"
-
 inferPrimArg :: EmitsBoth o => UExpr i -> InfererM i o (CAtom o)
 inferPrimArg x = do
   xBlock <- buildBlockInf $ inferRho noHint x
@@ -1507,14 +1448,11 @@ matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
 matchPrimApp = \case
  UNat                -> \case ~[]  -> return $ NewtypeTyCon Nat
  UFin                -> \case ~[n] -> return $ NewtypeTyCon (Fin n)
- ULabelType          -> \case ~[]  -> return $ NewtypeTyCon LabelType
  UEffectRowKind      -> \case ~[]  -> return $ NewtypeTyCon EffectRowKind
- ULabeledRowKind     -> \case ~[]  -> return $ NewtypeTyCon LabeledRowKindTC
  UNatCon             -> \case ~[x] -> return $ NewtypeCon NatCon x
  UPrimTC  tc  -> \xs -> TC  <$> restructurePrim tc  xs
  UPrimCon con -> \xs -> Con <$> restructurePrim con xs
  UPrimOp  op         -> \xs -> ee =<< (PrimOp          <$> restructurePrim op xs)
- URecordOp op -> \xs -> ee =<< (RecordOp <$> restructurePrim op xs)
  UMAsk      -> \case ~[r]    -> ee $ RefOp r MAsk
  UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
  UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
@@ -2110,75 +2048,6 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emit . Atom
         bindLetPats ps xs cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
-  UPatRecord rowPat -> do
-    bindPats cont ([], Empty, v) rowPat
-    where
-      bindPats :: EmitsBoth o
-               => InfererM i' o a -> ([Label], Nest UPat i l, CAtomName o) -> UFieldRowPat l i' -> InfererM i o a
-      bindPats c rv = \case
-        UEmptyRowPat -> case rv of
-          (_ , Empty, _) -> c
-          (ls, ps   , r) -> do
-            labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
-            constrainVarTy r $ StaticRecordTy labelTypeVars
-            itemsNestOrdered <- unpackInLabelOrder (Var r) ls
-            bindLetPats ps itemsNestOrdered c
-        URemFieldsPat b ->
-          resolveDelay rv \rv' -> do
-            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
-            constrainVarTy rv' $ RecordTyWithElems [DynFields tailVar]
-            bindLetPat (WithSrcB Nothing $ UPatBinder b) rv' c
-        UStaticFieldPat l p rest -> do
-          -- Note that the type constraint will be added when the delay is resolved
-          let (ls, ps, rvn) = rv
-          bindPats c (ls ++ [l], joinNest ps (Nest p Empty), rvn) rest
-        UDynFieldsPat fv p rest -> do
-          resolveDelay rv \rv' -> do
-            fv' <- emit . Atom =<< checkRho noHint
-              (WithSrcE Nothing $ UVar fv) LabeledRowKind
-            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
-            constrainVarTy rv' $ RecordTyWithElems [DynFields fv', DynFields tailVar]
-            ans <- emitExpr (RecordOp $ RecordSplit (Var fv') (Var rv'))
-            [subr, rv''] <- emitUnpacked ans
-            bindLetPat p subr $ bindPats c (mempty, Empty, rv'') rest
-        UDynFieldPat lv p rest ->
-          resolveDelay rv \rv' -> do
-            lv' <- emit. Atom  =<< checkRho noHint
-              (WithSrcE Nothing $ UVar lv) (NewtypeTyCon LabelType)
-            fieldTy <- freshType TyKind
-            tailVar <- freshInferenceName MiscInfVar LabeledRowKind
-            constrainVarTy rv' $ RecordTyWithElems [DynField lv' fieldTy, DynFields tailVar]
-            ans <- emitExpr (RecordOp $ RecordSplitDynamic (Var lv') (Var rv'))
-            [val, rv''] <- emitUnpacked ans
-            bindLetPat p val $ bindPats c (mempty, Empty, rv'') rest
-
-      -- Unpacks the record and returns the components in order, as if they
-      -- were looked up by consecutive labels. Note that the number of labels
-      -- should match the total number of record fields, and the record should
-      -- have no dynamic extensions!
-      unpackInLabelOrder :: EmitsBoth o => CAtom o -> [Label] -> InfererM i o [CAtomName o]
-      unpackInLabelOrder r ls = do
-        itemsNatural <- emitUnpacked . unwrapNewtype =<< zonk r
-        let labelOrder = toList $ foldMap (\(i, l) -> labeledSingleton l i) $ enumerate ls
-        let itemsMap = M.fromList $ zip labelOrder itemsNatural
-        return $ (itemsMap M.!) <$> [0..M.size itemsMap - 1]
-
-      resolveDelay
-        :: EmitsBoth o => ([Label], Nest UPat i l, CAtomName o)
-        -> (CAtomName o -> InfererM l o a) -> InfererM i o a
-      resolveDelay (ls, ps, r) f = case ps of
-        Empty -> f r
-        _     -> do
-          labelTypeVars <- mapM (const $ freshType TyKind) $ foldMap (`labeledSingleton` ()) ls
-          tailVar <- freshInferenceName MiscInfVar LabeledRowKind
-          constrainVarTy r $ RecordTyWithElems [StaticFields labelTypeVars, DynFields tailVar]
-          [itemsRecord, restRecord] <- getUnpacked =<<
-            (emitExpr $ RecordOp (RecordSplit
-              (LabeledRow $ fieldRowElemsFromList [StaticFields labelTypeVars])
-              (Var r)))
-          itemsNestOrdered <- unpackInLabelOrder itemsRecord ls
-          restRecordName <- emit (Atom restRecord)
-          bindLetPats ps itemsNestOrdered $ f restRecordName
   UPatTable ps -> do
     elemTy <- freshType TyKind
     let n = fromIntegral (nestLength ps) :: Word32
@@ -2536,12 +2405,7 @@ instance Unifiable NewtypeTyCon where
     (Nat, Nat) -> return ()
     (Fin n, Fin n') -> unify n n'
     (EffectRowKind, EffectRowKind) -> return ()
-    (LabeledRowKindTC, LabeledRowKindTC) -> return ()
-    (LabelType, LabelType) -> return ()
-    (LabelCon s, LabelCon s') -> guard (s == s')
     (UserADTType _ c params, UserADTType _ c' params') -> guard (c == c') >> unify params params'
-    (RecordTyCon  els, RecordTyCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
-    (LabeledRowCon els, LabeledRowCon els') -> bindM2 unifyZonked (cheapNormalize els) (cheapNormalize els')
     _ -> empty
 
 instance Unifiable (IxType CoreIR) where
@@ -2576,79 +2440,6 @@ instance Unifiable (EffectRow CoreIR) where
          unify (EffectRow mempty t1) (extendEffRow extras2 newRow)
          unify (extendEffRow extras1 newRow) (EffectRow mempty t2)
        _ -> unifyEq r1 r2
-
--- TODO: This unification procedure is incomplete! There are types that we might
--- want to treat as equivalent, but for now they would be rejected conservatively!
--- One example would is the unification of {a: ty} and {@infVar: ty}.
-instance Unifiable FieldRowElems where
-  unifyZonked e1 e2 = go (fromFieldRowElems e1) (fromFieldRowElems e2)
-    where
-      go = curry \case
-        ([]           , []           ) -> return ()
-        ([DynFields f], [DynFields g]) | f == g -> return ()
-        ([DynFields f], r            ) -> extendSolution f $ LabeledRow $ fieldRowElemsFromList r
-        (l            , [DynFields f]) -> extendSolution f $ LabeledRow $ fieldRowElemsFromList l
-        (l@(h:t)      , r@(h':t')    ) -> (unifyElem h h' >> go t t') <|> unifyAsExtLabledItems l r
-        (l            , r            ) -> unifyAsExtLabledItems l r
-
-      unifyElem :: forall n. EmitsInf n => FieldRowElem n -> FieldRowElem n -> SolverM n ()
-      unifyElem f1 f2 = case (f1, f2) of
-        (DynField v ty     , DynField v' ty'    ) -> unify (Var v :: CAtom n) (Var v') >> unify ty ty'
-        (DynFields r       , DynFields r'       ) -> unify (Var r :: CAtom n) (Var r')
-        (StaticFields items, StaticFields items') -> do
-          guard $ reflectLabels items == reflectLabels items'
-          zipWithM_ unify (toList items) (toList items')
-        _ -> unifyEq f1 f2
-
-      unifyAsExtLabledItems l r = bindM2 unify (asExtLabeledItems l) (asExtLabeledItems r)
-
-      asExtLabeledItems x = ExtLabeledItemsE <$> fieldRowElemsAsExtRow (fieldRowElemsFromList x)
-
-instance Unifiable (ExtLabeledItemsE CType CAtomName) where
-  unifyZonked x1 x2 =
-        unifyDirect x1 x2
-    <|> unifyDirect x2 x1
-    <|> unifyZip x1 x2
-
-   where
-     unifyDirect :: EmitsInf n
-                 => ExtLabeledItemsE CType CAtomName n
-                 -> ExtLabeledItemsE CType CAtomName n -> SolverM n ()
-     unifyDirect (ExtLabeledItemsE (Ext NoLabeledItems (Just v))) (ExtLabeledItemsE r@(Ext items mv)) =
-       case mv of
-         Just v' | v == v' -> guard $ null items
-         _ -> extendSolution v $ LabeledRow $ extRowAsFieldRowElems r
-     unifyDirect _ _ = empty
-     {-# INLINE unifyDirect #-}
-
-     unifyZip :: EmitsInf n
-              => ExtLabeledItemsE CType CAtomName n
-              -> ExtLabeledItemsE CType CAtomName n -> SolverM n ()
-     unifyZip (ExtLabeledItemsE r1) (ExtLabeledItemsE r2) = case (r1, r2) of
-       (Ext NoLabeledItems Nothing, Ext NoLabeledItems Nothing) -> return ()
-       (_, Ext NoLabeledItems _) -> empty
-       (Ext NoLabeledItems _, _) -> empty
-       (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
-         let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ NE.zip tys1 tys2
-         sequence_ $ M.intersectionWith unifyPrefixes items1 items2
-         let diffDrop xs ys = NE.nonEmpty $ NE.drop (length ys) xs
-         let extras1 = M.differenceWith diffDrop items1 items2
-         let extras2 = M.differenceWith diffDrop items2 items1
-         if t1 /= t2 then do
-           newTail <- freshInferenceName MiscInfVar LabeledRowKind
-           unify (ExtLabeledItemsE (Ext NoLabeledItems t1))
-                 (ExtLabeledItemsE (Ext (LabeledItems extras2) (Just newTail)))
-           unify (ExtLabeledItemsE (Ext NoLabeledItems t2))
-                 (ExtLabeledItemsE (Ext (LabeledItems extras1) (Just newTail)))
-         else if M.null extras1 && M.null extras2 then
-           -- Redundant equation t1 == t1
-           return ()
-         else
-           -- There is no substituion that equates two records with
-           -- different fields but the same tail.
-           -- Catching this fixes the infinite loop described in
-           -- Issue #818.
-           empty
 
 unifyEq :: AlphaEqE e => e n -> e n -> SolverM n ()
 unifyEq e1 e2 = guard =<< alphaEq e1 e2
@@ -3094,7 +2885,6 @@ synthDictForData dictTy@(DictType "Data" dName [ty]) = case ty of
   TabPi (TabPiType b eltTy) -> recurBinder (Abs b eltTy) >> success
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l >> recurBinder (Abs b r) >> success
-  NewtypeTyCon LabelType -> notData
   NewtypeTyCon nt -> do
     (_, ty') <- unwrapNewtypeType nt
     recur ty' >> success

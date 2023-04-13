@@ -69,7 +69,6 @@ library
                      , LLVM.Compile
                      , LLVM.CUDA
                      , LLVM.Shims
-                     , LabeledItems
                      , Lexing
                      , Linearize
                      , Logging

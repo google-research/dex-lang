@@ -93,7 +93,6 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
       Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
     TabCon d' <$> tge ty <*> mapM tge xs
   ApplyMethod d i xs -> ApplyMethod <$> tge d <*> pure i <*> mapM tge xs
-  RecordOp op -> RecordOp <$> mapM tge op
   DAMOp op -> DAMOp <$> case op of
     Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
     RememberDest d body  -> RememberDest <$> tge d <*> tge body
@@ -157,14 +156,6 @@ instance IRRep r => GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
 
-instance GenericallyTraversableE CoreIR FieldRowElems where
-  traverseGenericE elems = do
-    els' <- fromFieldRowElems <$> substM elems
-    dropSubst $ fieldRowElemsFromList <$> forM els' \case
-      StaticFields items  -> StaticFields <$> mapM tge items
-      DynField  labVar ty -> DynField labVar <$> tge ty
-      DynFields rowVar    -> return $ DynFields rowVar
-
 instance GenericallyTraversableE CoreIR TyConParams where
   traverseGenericE (TyConParams infs params) =
     TyConParams infs <$> mapM tge params
@@ -227,18 +218,12 @@ instance IRRep r => GenericallyTraversableE r (Hof r) where
 instance GenericallyTraversableE CoreIR NewtypeTyCon where
   traverseGenericE = \case
     UserADTType s d p -> UserADTType s <$> substM d <*> tge p
-    LabeledRowCon tys -> LabeledRowCon <$> tge tys
-    RecordTyCon tys   -> RecordTyCon <$> tge tys
-    LabelCon s        -> return $ LabelCon s
-    LabelType         -> return LabelType
-    LabeledRowKindTC  -> return LabeledRowKindTC
     Nat               -> return Nat
     Fin x             -> Fin <$> tge x
     EffectRowKind     -> return EffectRowKind
 
 instance GenericallyTraversableE CoreIR NewtypeCon where
   traverseGenericE = \case
-    RecordCon  items     -> return $ RecordCon items
     UserADTData d params -> UserADTData <$> substM d <*> tge params
     NatCon               -> return NatCon
     FinCon n             -> FinCon <$> tge n

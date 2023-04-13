@@ -23,7 +23,6 @@
 
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
-import Control.Applicative
 import Data.Word
 import Data.Functor
 import Data.Hashable
@@ -37,7 +36,6 @@ import Foreign.Ptr
 
 import Name
 import Err
-import LabeledItems
 import Util (FileHash, SnocList (..), Tree (..))
 import IRVariants
 
@@ -93,7 +91,6 @@ data Expr r n where
  App             :: CAtom n -> [CAtom n]        -> Expr CoreIR n
  UserEffectOp    :: UserEffectOp n              -> Expr CoreIR n
  ApplyMethod     :: CAtom n -> Int -> [CAtom n] -> Expr CoreIR n
- RecordOp        :: RecordOp (Atom CoreIR n)    -> Expr CoreIR n
  DAMOp           :: DAMOp SimpIR n              -> Expr SimpIR n
 
 deriving instance IRRep r => Show (Expr r n)
@@ -136,18 +133,6 @@ type FunObjCodeName = Name FunObjCodeNameC
 type AtomBinderP (r::IR) = BinderP (AtomNameC r)
 type Binder r = AtomBinderP r (Type r) :: B
 type Alt r = Abs (Binder r) (Block r) :: E
-
--- The additional invariant enforced by this newtype is that the list should
--- never contain empty StaticFields members, nor StaticFields in two consecutive
--- positions.
-newtype FieldRowElems (n::S) = UnsafeFieldRowElems { fromFieldRowElems :: [FieldRowElem n] }
-        deriving (Show, Generic)
-
-data FieldRowElem (n::S)
-  = StaticFields (LabeledItems (Type CoreIR n))
-  | DynField     (AtomName CoreIR n) (Type CoreIR n)
-  | DynFields    (AtomName CoreIR n)
-  deriving (Show, Generic)
 
 newtype DotMethods n = DotMethods (M.Map SourceName (CAtomName n))
         deriving (Show, Generic, Monoid, Semigroup)
@@ -333,8 +318,7 @@ type SLam    = LamExpr SimpIR
 
 -- Describes how to lift the "shallow" representation type to the newtype.
 data NewtypeCon (n::S) =
-   RecordCon  (LabeledItems ())
- | UserADTData (TyConName n) (TyConParams n)
+   UserADTData (TyConName n) (TyConParams n)
  | NatCon
  | FinCon (Atom CoreIR n)
    deriving (Show, Generic)
@@ -343,22 +327,11 @@ data NewtypeTyCon (n::S) =
    Nat
  | Fin (Atom CoreIR n)
  | EffectRowKind
- | LabeledRowKindTC
- | LabelType
- | RecordTyCon  (FieldRowElems n)
- | LabelCon String
- | LabeledRowCon (FieldRowElems n)
  | UserADTType SourceName (TyConName n) (TyConParams n)
    deriving (Show, Generic)
 
 pattern TypeCon :: SourceName -> TyConName n -> TyConParams n -> CAtom n
 pattern TypeCon s d xs = NewtypeTyCon (UserADTType s d xs)
-
-pattern LabeledRow :: FieldRowElems n -> Atom CoreIR n
-pattern LabeledRow xs = NewtypeTyCon (LabeledRowCon xs)
-
-pattern RecordTy :: FieldRowElems n -> Atom CoreIR n
-pattern RecordTy xs = NewtypeTyCon (RecordTyCon xs)
 
 isSumCon :: NewtypeCon n -> Bool
 isSumCon = \case
@@ -963,9 +936,6 @@ pattern ProdTy tys = TC (ProdType tys)
 pattern ProdVal :: [Atom r n] -> Atom r n
 pattern ProdVal xs = Con (ProdCon xs)
 
-pattern Record :: LabeledItems () -> [Atom CoreIR n] -> Atom CoreIR n
-pattern Record ty xs = NewtypeCon (RecordCon ty) (ProdVal xs)
-
 pattern SumTy :: [Type r n] -> Type r n
 pattern SumTy cs = TC (SumType cs)
 
@@ -1014,9 +984,6 @@ pattern TyKind = TC TypeKind
 pattern EffKind :: Kind CoreIR n
 pattern EffKind = NewtypeTyCon EffectRowKind
 
-pattern LabeledRowKind :: Kind CoreIR n
-pattern LabeledRowKind = NewtypeTyCon LabeledRowKindTC
-
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = NewtypeTyCon (Fin (NatVal n))
 
@@ -1059,52 +1026,6 @@ pattern FalseAtom = Con (Lit (Word8Lit 0))
 
 pattern TrueAtom :: Atom r n
 pattern TrueAtom = Con (Lit (Word8Lit 1))
-
-fieldRowElemsFromList :: [FieldRowElem n] -> FieldRowElems n
-fieldRowElemsFromList = foldr prependFieldRowElem (UnsafeFieldRowElems [])
-
-prependFieldRowElem :: FieldRowElem n -> FieldRowElems n -> FieldRowElems n
-prependFieldRowElem e (UnsafeFieldRowElems els) = case e of
-  DynField  _ _ -> UnsafeFieldRowElems $ e : els
-  DynFields _   -> UnsafeFieldRowElems $ e : els
-  StaticFields items | null items -> UnsafeFieldRowElems els
-  StaticFields items -> case els of
-    (StaticFields items':rest) -> UnsafeFieldRowElems $ StaticFields (items <> items') : rest
-    _                          -> UnsafeFieldRowElems $ e : els
-
-extRowAsFieldRowElems :: ExtLabeledItems (CType n) (CAtomName n) -> FieldRowElems n
-extRowAsFieldRowElems (Ext items ext) = UnsafeFieldRowElems $ itemsEl ++ extEl
-  where
-    itemsEl = if null items then [] else [StaticFields items]
-    extEl = case ext of Nothing -> []; Just r -> [DynFields r]
-
-fieldRowElemsAsExtRow
-  :: Alternative f => FieldRowElems n -> f (ExtLabeledItems (CType n) (CAtomName  n))
-fieldRowElemsAsExtRow (UnsafeFieldRowElems els) = case els of
-  []                                -> pure $ Ext mempty Nothing
-  [DynFields r]                     -> pure $ Ext mempty (Just r)
-  [StaticFields items]              -> pure $ Ext items  Nothing
-  [StaticFields items, DynFields r] -> pure $ Ext items  (Just r)
-  _ -> empty
-
-getAtMostSingleStatic :: NewtypeTyCon n -> Maybe (LabeledItems (CType n))
-getAtMostSingleStatic = \case
-  RecordTyCon (UnsafeFieldRowElems els) -> case els of
-    [] -> Just mempty
-    [StaticFields items] -> Just items
-    _ -> Nothing
-  _ -> Nothing
-
-pattern StaticRecordTy :: LabeledItems (CType n) -> Type CoreIR n
-pattern StaticRecordTy items = NewtypeTyCon (StaticRecordTyCon items)
-
-pattern StaticRecordTyCon :: LabeledItems (Type CoreIR n) -> NewtypeTyCon n
-pattern StaticRecordTyCon items <- (getAtMostSingleStatic -> Just items)
-  where StaticRecordTyCon items = RecordTyCon (fieldRowElemsFromList [StaticFields items])
-
-pattern RecordTyWithElems :: [FieldRowElem n] -> Atom CoreIR n
-pattern RecordTyWithElems elems <- RecordTy (UnsafeFieldRowElems elems)
-  where RecordTyWithElems elems = RecordTy $ fieldRowElemsFromList elems
 
 -- === Typeclass instances for Name and other Haskell libraries ===
 
@@ -1215,22 +1136,19 @@ instance HasNameHint (DataConDef n) where
   getNameHint (DataConDef v _ _ _) = getNameHint v
 
 instance GenericE NewtypeCon where
-  type RepE NewtypeCon = EitherE4
-   {- RecordCon -}    (LiftE (LabeledItems ()))
+  type RepE NewtypeCon = EitherE3
    {- UserADTData -}  (TyConName `PairE` TyConParams)
    {- NatCon -}       UnitE
    {- FinCon -}       CAtom
   fromE = \case
-    RecordCon  l    -> Case0 $ LiftE l
-    UserADTData d p -> Case1 $ d `PairE` p
-    NatCon          -> Case2 UnitE
-    FinCon n        -> Case3 n
+    UserADTData d p -> Case0 $ d `PairE` p
+    NatCon          -> Case1 UnitE
+    FinCon n        -> Case2 n
   {-# INLINE fromE #-}
   toE = \case
-    Case0 (LiftE l)     -> RecordCon  l
-    Case1 (d `PairE` p) -> UserADTData d p
-    Case2 UnitE         -> NatCon
-    Case3 n             -> FinCon n
+    Case0 (d `PairE` p) -> UserADTData d p
+    Case1 UnitE         -> NatCon
+    Case2 n             -> FinCon n
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1241,45 +1159,23 @@ instance AlphaHashableE NewtypeCon
 instance RenameE        NewtypeCon
 
 instance GenericE NewtypeTyCon where
-  type RepE NewtypeTyCon = EitherE2
-           ( EitherE5
+  type RepE NewtypeTyCon = EitherE4
     {- Nat -}              UnitE
     {- Fin -}              CAtom
     {- EffectRowKind -}    UnitE
-    {- LabeledRowKindTC -} UnitE
-    {- LabelType -}        UnitE
-         ) ( EitherE4
-    {- RecordTyCon -}      FieldRowElems
-    {- LabelCon -}         (LiftE String)
-    {- LabeledRowCon -}    FieldRowElems
     {- UserADTType -}      (LiftE SourceName `PairE` TyConName `PairE` TyConParams)
-         )
   fromE = \case
-    Nat               -> Case0 $ Case0 UnitE
-    Fin n             -> Case0 $ Case1 n
-    EffectRowKind     -> Case0 $ Case2 UnitE
-    LabeledRowKindTC  -> Case0 $ Case3 UnitE
-    LabelType         -> Case0 $ Case4 UnitE
-    RecordTyCon   xs  -> Case1 $ Case0 xs
-    LabelCon      s   -> Case1 $ Case1 (LiftE s)
-    LabeledRowCon x   -> Case1 $ Case2 x
-    UserADTType s d p -> Case1 $ Case3 (LiftE s `PairE` d `PairE` p)
+    Nat               -> Case0 UnitE
+    Fin n             -> Case1 n
+    EffectRowKind     -> Case2 UnitE
+    UserADTType s d p -> Case3 (LiftE s `PairE` d `PairE` p)
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 case0 -> case case0 of
-      Case0 UnitE -> Nat
-      Case1 n     -> Fin n
-      Case2 UnitE -> EffectRowKind
-      Case3 UnitE -> LabeledRowKindTC
-      Case4 UnitE -> LabelType
-      _ -> error "impossible"
-    Case1 case1 -> case case1 of
-      Case0 xs                            -> RecordTyCon   xs
-      Case1 (LiftE s)                     -> LabelCon      s
-      Case2 x                             -> LabeledRowCon x
-      Case3 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
-      _ -> error "impossible"
+    Case0 UnitE -> Nat
+    Case1 n     -> Fin n
+    Case2 UnitE -> EffectRowKind
+    Case3 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1439,44 +1335,6 @@ instance IRRep r => RenameE        (RefOp r)
 instance IRRep r => AlphaEqE       (RefOp r)
 instance IRRep r => AlphaHashableE (RefOp r)
 
-instance GenericE FieldRowElem where
-  type RepE FieldRowElem =
-    EitherE3 (ExtLabeledItemsE CType UnitE) (AtomName CoreIR `PairE` CType) (AtomName CoreIR)
-  fromE = \case
-    StaticFields items         -> Case0 $ ExtLabeledItemsE $ NoExt items
-    DynField  labVarName labTy -> Case1 $ labVarName `PairE` labTy
-    DynFields fieldVarName     -> Case2 $ fieldVarName
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 (ExtLabeledItemsE (Ext items _)) -> StaticFields items
-    Case1 (n `PairE` t) -> DynField n t
-    Case2 n             -> DynFields n
-    _ -> error "unreachable"
-  {-# INLINE toE #-}
-instance SinkableE      FieldRowElem
-instance HoistableE     FieldRowElem
-instance RenameE        FieldRowElem
-instance AlphaEqE       FieldRowElem
-instance AlphaHashableE FieldRowElem
-
-instance GenericE FieldRowElems where
-  type RepE FieldRowElems = ListE FieldRowElem
-  fromE = ListE . fromFieldRowElems
-  {-# INLINE fromE #-}
-  toE = fieldRowElemsFromList . fromListE
-  {-# INLINE toE #-}
-instance SinkableE      FieldRowElems
-instance HoistableE     FieldRowElems
-instance RenameE        FieldRowElems
-instance AlphaEqE       FieldRowElems
-instance AlphaHashableE FieldRowElems
-
-newtype ExtLabeledItemsE (e1::E) (e2::E) (n::S) =
-  ExtLabeledItemsE
-   { fromExtLabeledItemsE :: ExtLabeledItems (e1 n) (e2 n) }
-   deriving (Show, Generic)
-instance (Store (e1 n), Store (e2 n)) => Store (ExtLabeledItemsE e1 e2 n)
-
 instance GenericE SimpInCore where
   type RepE SimpInCore = EitherE4
    {- LiftSimp -} (CType `PairE` SAtom)
@@ -1609,13 +1467,12 @@ instance IRRep r => GenericE (Expr r) where
  {- Hof -}    (Hof r)
  {- TopApp -} (WhenSimp r (TopFunName `PairE` ListE (Atom r)))
     )
-    ( EitherE7
+    ( EitherE6
  {- TabCon -}          (MaybeE (WhenCore r Dict) `PairE` Type r `PairE` ListE (Atom r))
  {- RefOp -}           (Atom r `PairE` RefOp r)
  {- PrimOp -}          (ComposeE PrimOp (Atom r))
  {- UserEffectOp -}    (WhenCore r UserEffectOp)
  {- ApplyMethod -}     (WhenCore r (Atom r `PairE` LiftE Int `PairE` ListE (Atom r)))
- {- RecordOp -}        (WhenCore r (ComposeE RecordOp (Atom r)))
  {- DAMOp -}           (WhenSimp r (DAMOp r)))
 
   fromE = \case
@@ -1630,8 +1487,7 @@ instance IRRep r => GenericE (Expr r) where
     PrimOp op          -> Case1 $ Case2 (ComposeE op)
     UserEffectOp op    -> Case1 $ Case3 (WhenIRE op)
     ApplyMethod d i xs -> Case1 $ Case4 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs))
-    RecordOp op        -> Case1 $ Case5 (WhenIRE (ComposeE op))
-    DAMOp op           -> Case1 $ Case6 (WhenIRE op)
+    DAMOp op           -> Case1 $ Case5 (WhenIRE op)
   {-# INLINE fromE #-}
   toE = \case
     Case0 case0 -> case case0 of
@@ -1648,8 +1504,7 @@ instance IRRep r => GenericE (Expr r) where
       Case2 (ComposeE op)         -> PrimOp op
       Case3 (WhenIRE op)            -> UserEffectOp op
       Case4 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod d i xs
-      Case5 (WhenIRE (ComposeE op)) -> RecordOp op
-      Case6 (WhenIRE op)            -> DAMOp op
+      Case5 (WhenIRE op)            -> DAMOp op
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1659,22 +1514,6 @@ instance IRRep r => HoistableE     (Expr r)
 instance IRRep r => AlphaEqE       (Expr r)
 instance IRRep r => AlphaHashableE (Expr r)
 instance IRRep r => RenameE        (Expr r)
-
-instance GenericE (ExtLabeledItemsE e1 e2) where
-  type RepE (ExtLabeledItemsE e1 e2) = EitherE (ComposeE LabeledItems e1)
-                                               (ComposeE LabeledItems e1 `PairE` e2)
-  fromE (ExtLabeledItemsE (Ext items Nothing))  = LeftE  (ComposeE items)
-  fromE (ExtLabeledItemsE (Ext items (Just t))) = RightE (ComposeE items `PairE` t)
-  {-# INLINE fromE #-}
-  toE (LeftE  (ComposeE items          )) = ExtLabeledItemsE (Ext items Nothing)
-  toE (RightE (ComposeE items `PairE` t)) = ExtLabeledItemsE (Ext items (Just t))
-  {-# INLINE toE #-}
-
-instance (SinkableE e1, SinkableE e2) => SinkableE (ExtLabeledItemsE e1 e2)
-instance (HoistableE  e1, HoistableE  e2) => HoistableE  (ExtLabeledItemsE e1 e2)
-instance (AlphaEqE    e1, AlphaEqE    e2) => AlphaEqE    (ExtLabeledItemsE e1 e2)
-instance (AlphaHashableE    e1, AlphaHashableE    e2) => AlphaHashableE    (ExtLabeledItemsE e1 e2)
-instance (RenameE     e1, RenameE     e2) => RenameE     (ExtLabeledItemsE e1 e2)
 
 instance IRRep r => GenericE (Block r) where
   type RepE (Block r) = PairE (MaybeE (PairE (Type r) (EffectRow r))) (Abs (Nest (Decl r)) (Atom r))
@@ -2619,8 +2458,6 @@ instance IRRep r => Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
 instance Store (LinearizationSpec n)
 instance IRRep r => Store (DeclBinding r n)
-instance Store (FieldRowElem  n)
-instance Store (FieldRowElems n)
 instance IRRep r => Store (Decl r n l)
 instance Store (TyConParams n)
 instance Store (DataConDefs n)

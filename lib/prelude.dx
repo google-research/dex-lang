@@ -8,7 +8,6 @@
 Type = %TyKind()
 Heap = %HeapType()
 Effects = %EffKind()
-Fields = %LabeledRowKind()
 
 Int64 = %Int64()
 Int32 = %Int32()
@@ -20,8 +19,6 @@ Word32 = %Word32()
 Word64 = %Word64()
 Byte = Word8
 Char = Byte
-
-Label = %Label()
 
 RawPtr : Type = %Word8Ptr()
 

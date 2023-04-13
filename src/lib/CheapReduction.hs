@@ -33,7 +33,6 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import LabeledItems
 import PPrint ()
 import Types.Core
 import Types.Imp
@@ -112,18 +111,6 @@ liftCheapReducerM subst (CheapReducerM m) = do
   liftM runIdentity $ liftEnvReaderT $ runScopedT1
     (runMaybeT1 $ runSubstReaderT subst m) mempty
 {-# INLINE liftCheapReducerM #-}
-
-cheapReduceFromSubst :: NiceE CoreIR e => e i -> CheapReducerM CoreIR i o (e o)
-cheapReduceFromSubst e = traverseNames cheapSubstName =<< substM e
-  where
-    cheapSubstName :: forall c i o . Color c => Name c o -> CheapReducerM CoreIR i o (AtomSubstVal c o)
-    cheapSubstName v =
-      case eqColorRep @c @(AtomNameC CoreIR) of
-        Just ColorsEqual -> lookupEnv v >>= \case
-          AtomNameBinding (LetBound (DeclBinding _ _ (Atom x))) ->
-            liftM SubstVal $ dropSubst $ cheapReduceFromSubst x
-          _ -> return $ Rename v
-        Nothing -> return $ Rename v
 
 cheapReduceWithDeclsB
   :: NiceE r e
@@ -306,9 +293,6 @@ instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
     cheapReduceE (LeftE e) = LeftE <$> cheapReduceE e
     cheapReduceE (RightE e) = RightE <$> cheapReduceE e
 
-instance CheaplyReducibleE CoreIR FieldRowElems FieldRowElems where
-  cheapReduceE elems = cheapReduceFromSubst elems
-
 -- XXX: TODO: figure out exactly what our normalization invariants are. We
 -- shouldn't have to choose `normalizeProj` or `asNaryProj` on a
 -- case-by-case basis. This is here for now because it makes it easier to switch
@@ -421,7 +405,6 @@ unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type Co
 unwrapNewtypeType = \case
   Nat                   -> return (NatCon, IdxRepTy)
   Fin n                 -> return (FinCon n, NatTy)
-  StaticRecordTyCon tys    -> return (RecordCon  (void tys), ProdTy (toList tys))
   UserADTType _ defName params -> do
     def <- lookupTyCon defName
     ty' <- dataDefRep <$> instantiateTyConDef def params
@@ -530,40 +513,6 @@ instance SubstE AtomSubstVal SpecializationSpec where
                SubstVal (Var v) -> v
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
-
-instance IRRep r => SubstE AtomSubstVal (ExtLabeledItemsE (Atom r) (AtomName r)) where
-  substE (scope, env) (ExtLabeledItemsE (Ext items maybeExt)) = do
-    let items' = fmap (substE (scope, env)) items
-    let ext = case maybeExt of
-                Nothing -> NoExt NoLabeledItems
-                Just v -> case env ! v of
-                  Rename        v'  -> Ext NoLabeledItems $ Just v'
-                  SubstVal (Var v') -> Ext NoLabeledItems $ Just v'
-                  SubstVal (NewtypeTyCon (LabeledRowCon row)) -> case fieldRowElemsAsExtRow row of
-                    Just row' -> row'
-                    Nothing -> error "Not implemented: unrepresentable subst of ExtLabeledItems"
-                  _ -> error "Not a valid labeled row substitution"
-    ExtLabeledItemsE $ prefixExtLabeledItems items' ext
-
-instance SubstE AtomSubstVal FieldRowElems where
-  substE :: forall i o. Distinct o => (Env o, Subst AtomSubstVal i o) -> FieldRowElems i -> FieldRowElems o
-  substE env (UnsafeFieldRowElems els) = fieldRowElemsFromList $ foldMap substItem els
-    where
-      substItem = \case
-        DynField v ty -> case snd env ! v of
-          SubstVal (NewtypeTyCon (LabelCon l)) -> [StaticFields $ labeledSingleton l ty']
-          SubstVal (Var v') -> [DynField v' ty']
-          Rename v'         -> [DynField v' ty']
-          _ -> error "ill-typed substitution"
-          where ty' = substE env ty
-        DynFields v -> case snd env ! v of
-          SubstVal (NewtypeTyCon (LabeledRowCon items)) -> fromFieldRowElems items
-          SubstVal (Var v') -> [DynFields v']
-          Rename v'         -> [DynFields v']
-          _ -> error "ill-typed substitution"
-        StaticFields items -> [StaticFields items']
-          where ExtLabeledItemsE (NoExt items') = substE env
-                  (ExtLabeledItemsE (NoExt items) :: ExtLabeledItemsE CAtom CAtomName i)
 
 instance SubstE AtomSubstVal EffectDef
 instance SubstE AtomSubstVal EffectOpType

@@ -23,7 +23,6 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
 
 import Err
-import LabeledItems
 import Types.Primitives
 
 data ParseCtx = ParseCtx
@@ -129,10 +128,6 @@ keyWordSet = HS.fromList keyWordStrs
 
 keyWordStrs :: [String]
 keyWordStrs = map keyWordToken [DefKW .. PassKW]
-
-fieldLabel :: Lexer Label
-fieldLabel = label "field label" $ lexeme $
-  checkNotKeyword $ (:) <$> (lowerChar <|> upperChar) <*> many nameTailChar
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar

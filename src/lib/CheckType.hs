@@ -17,14 +17,11 @@ import Control.Monad.Reader
 import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Map.Strict as M
 
 import CheapReduction
 import Core
 import Err
 import IRVariants
-import LabeledItems
 import Name
 import Subst
 import PPrint ()
@@ -33,7 +30,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (forMZipped_, restructure)
+import Util (forMZipped_)
 
 -- === top-level API ===
 
@@ -283,7 +280,6 @@ typeCheckExpr effs expr = case expr of
       -- each index from the ix dict.
       HoistFailure _    -> forM_ xs checkE
     return ty'
-  RecordOp x -> typeCheckRecordOp x
   DAMOp op -> typeCheckDAMOp effs op
   UserEffectOp op -> typeCheckUserEffect op
 
@@ -405,9 +401,6 @@ typeCheckNewtypeCon
 typeCheckNewtypeCon con x = case con of
   NatCon   -> x|:IdxRepTy          >> return Nat
   FinCon n -> n|:NatTy >> x|:NatTy >> renameM (Fin n)
-  RecordCon  labels -> do
-    TC (ProdType tys) <- getTypeE x
-    return $ StaticRecordTyCon $ restructure tys labels
   UserADTData d params -> do
     d' <- renameM d
     def@(TyConDef sn _ _) <- lookupTyCon d'
@@ -419,12 +412,7 @@ typeCheckNewtypeTyCon :: Typer m => NewtypeTyCon i -> m i o (CType o)
 typeCheckNewtypeTyCon = \case
   Nat        -> return TyKind
   Fin n      -> checkTypeE NatTy n >> return TyKind
-  LabelCon _ -> return $ NewtypeTyCon $ LabelType
-  LabelType  -> return TyKind
   EffectRowKind    -> return TyKind
-  RecordTyCon   elems -> checkFieldRowElems elems $> TyKind
-  LabeledRowCon elems -> checkFieldRowElems elems $> LabeledRowKind
-  LabeledRowKindTC -> return TyKind
   UserADTType _ d params -> do
     def <- lookupTyCon =<< renameM d
     params' <- renameM params
@@ -857,63 +845,6 @@ checkUnOp op x = do
       where
         u = SomeUIntArg; f = SomeFloatArg; sr = SameReturn
 
-typeCheckRecordOp :: Typer m => RecordOp (CAtom i) -> m i o (CType o)
-typeCheckRecordOp = \case
-  RecordCons l r -> do
-    lty <- getTypeE l
-    rty <- getTypeE r
-    case (lty, rty) of
-      (RecordTyWithElems lelems, RecordTyWithElems relems) ->
-        return $ RecordTyWithElems $ lelems ++ relems
-      _ -> throw TypeErr $ "Can't concatenate " <> pprint lty <> " and " <> pprint rty <> " as records"
-  RecordConsDynamic lab val record -> do
-    lab' <- checkTypeE (NewtypeTyCon LabelType) lab
-    vty <- getTypeE val
-    rty <- getTypeE record
-    case rty of
-      RecordTy rest -> case lab' of
-        NewtypeTyCon (LabelCon l) -> return $ RecordTy $ prependFieldRowElem (StaticFields (labeledSingleton l vty)) rest
-        Var labVar       -> return $ RecordTy $ prependFieldRowElem (DynField labVar vty) rest
-        _ -> error "Unexpected label atom"
-      _ -> throw TypeErr $ "Can't add a dynamic field to a non-record value of type " <> pprint rty
-  RecordSplitDynamic lab record -> do
-    lab' <- cheapNormalize =<< checkTypeE (NewtypeTyCon LabelType) lab
-    rty <- getTypeE record
-    case (lab', rty) of
-      (NewtypeTyCon (LabelCon l), RecordTyWithElems (StaticFields items:rest)) -> do
-        -- We could cheap normalize the rest to increase the chance of this
-        -- succeeding, but no need to for now.
-        unless (isJust $ lookupLabelHead items l) $ throw TypeErr "Label not immediately present in record"
-        let (h, items') = splitLabeledItems (labeledSingleton l ()) items
-        return $ PairTy (head $ toList h) $ RecordTyWithElems (StaticFields items':rest)
-      (Var labVar', RecordTyWithElems (DynField labVar'' ty:rest)) | labVar' == labVar'' ->
-        return $ PairTy ty $ RecordTyWithElems rest
-      -- There are more cases we could implement, but do we need to?
-      _ -> throw TypeErr $ "Can't split a label " <> pprint lab' <> " from atom of type " <> pprint rty
-  RecordSplit fields record -> do
-    fields' <- cheapNormalize =<< checkTypeE LabeledRowKind fields
-    fullty  <- cheapNormalize =<< getTypeE record
-    let splitFailed = throw TypeErr $ "Invalid record split: " <> pprint fields' <> " from " <> pprint fullty
-    case (fields', fullty) of
-      (LabeledRow els, RecordTyWithElems els') ->
-        stripPrefix (fromFieldRowElems els) els' >>= \case
-          Just rest -> return $ PairTy (RecordTy els) (RecordTyWithElems rest)
-          Nothing -> splitFailed
-      (Var v, RecordTyWithElems (DynFields v':rest)) | v == v' ->
-        return $ PairTy (RecordTyWithElems [DynFields v']) (RecordTyWithElems rest)
-      _ -> splitFailed
-    where
-      stripPrefix = curry \case
-        ([]  , ys  ) -> return $ Just ys
-        (x:xs, y:ys) -> alphaEq x y >>= \case
-          True  -> stripPrefix xs ys
-          False -> case (x, y) of
-            (StaticFields xf, StaticFields yf) -> do
-              NoExt rest <- labeledRowDifference (NoExt yf) (NoExt xf)
-              return $ Just $ StaticFields rest : ys
-            _ -> return Nothing
-        _ -> return Nothing
-
 -- === various helpers for querying types ===
 
 checkedInstantiateTyConDef
@@ -969,54 +900,6 @@ checkExtends allowed (EffectRow effs effTail) = do
   forM_ (eSetToList effs) \eff -> unless (eff `eSetMember` allowedEffs) $
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
-
--- === labeled row types ===
-
-checkFieldRowElems :: forall m i o. Typer m => FieldRowElems i -> m i o ()
-checkFieldRowElems els = mapM_ checkElem elemList
-  where
-    elemList = fromFieldRowElems els
-    checkElem :: FieldRowElem i -> m i o ()
-    checkElem = \case
-      StaticFields items -> checkLabeledRow $ NoExt items
-      DynField labVar ty -> do
-        Var labVar |: (NewtypeTyCon LabelType :: CType o)
-        ty |: TyKind
-      DynFields row -> checkLabeledRow $ Ext mempty $ Just row
-
-checkLabeledRow :: forall m i o. Typer m => ExtLabeledItems (CType i) (CAtomName i) -> m i o ()
-checkLabeledRow (Ext items rest) = do
-  mapM_ (|: TyKind) items
-  forM_ rest \name -> do
-    name' <- lookupSubstM name
-    ty <- atomBindingType <$> lookupAtomName name'
-    checkTypesEq LabeledRowKind ty
-
-labeledRowDifference :: Typer m
-                     => ExtLabeledItems (CType o) (AtomName r o)
-                     -> ExtLabeledItems (CType o) (AtomName r o)
-                     -> m i o (ExtLabeledItems (CType o) (AtomName r o))
-labeledRowDifference (Ext (LabeledItems items) rest)
-                     (Ext (LabeledItems subitems) subrest) = do
-  -- Check types in the right.
-  _ <- flip M.traverseWithKey subitems \label subtypes ->
-    case M.lookup label items of
-      Just types -> forMZipped_
-          subtypes
-          (NE.fromList $ NE.take (length subtypes) types)
-          checkTypesEq
-      Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
-  -- Extract remaining types from the left.
-  let
-    neDiff xs ys = NE.nonEmpty $ NE.drop (length ys) xs
-    diffitems = M.differenceWith neDiff items subitems
-  -- Check tail.
-  diffrest <- case (subrest, rest) of
-    (Nothing, _) -> return rest
-    (Just v, Just v') | v == v' -> return Nothing
-    _ -> throw TypeErr $ "Row tail " ++ pprint subrest
-      ++ " is not known to be a subset of " ++ pprint rest
-  return $ Ext (LabeledItems diffitems) diffrest
 
 -- === "Data" type class ===
 
@@ -1077,7 +960,6 @@ checkDataLike ty = case ty of
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l
     renameBinders b \_ -> checkDataLike r
-  NewtypeTyCon LabelType -> notData
   NewtypeTyCon nt -> do
     (_, ty') <- unwrapNewtypeType =<< renameM nt
     dropSubst $ recur ty'

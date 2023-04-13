@@ -366,10 +366,6 @@ grad (\x . (min' x (x+1))) 1.0
 grad (\x . [x][argmin [x]]) 1.0
 > 1.
 
--- -- Regression test for bug #821, AD of a record-typed function
--- grad (get_at #foo) { foo = 1 }
--- > {foo = 1.}
-
 -------------------- Custom linearization --------------------
 
 @noinline
