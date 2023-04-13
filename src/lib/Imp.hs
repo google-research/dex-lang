@@ -372,9 +372,7 @@ toImpRefOp refDest' m = do
     MExtend (BaseMonoid _ combine) x -> do
       xTy <- getType x
       refVal <- loadAtom refDest
-      result <- liftBuilderImp $
-                  liftMonoidCombine (sink xTy) (sink combine) (sink refVal) (sink x)
-      storeAtom refDest result
+      liftMonoidCombine refDest xTy combine refVal x
       return UnitVal
     MPut x -> storeAtom refDest x >> return UnitVal
     MGet -> do
@@ -387,24 +385,28 @@ toImpRefOp refDest' m = do
     IndexRef i -> destToAtom <$> indexDest refDest i
     ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
   where
-    liftMonoidCombine
-      :: Emits n => SType n -> LamExpr SimpIR n
-      -> SAtom n -> SAtom n -> SBuilderM n (SAtom n)
-    liftMonoidCombine accTy bc x y = do
+    liftMonoidCombine :: Emits o
+      => (Dest o) -> SType o -> LamExpr SimpIR o
+      -> SAtom o -> SAtom o -> SubstImpM n o ()
+    liftMonoidCombine accDest accTy bc x y = do
       LamExpr (Nest (_:>baseTy) _) _ <- return bc
       alphaEq accTy baseTy >>= \case
         -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
         True -> do
           BinaryLamExpr xb yb body <- return bc
           body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
-          emitBlock body'
+          ans <- liftBuilderImp $ emitBlock (sink body')
+          storeAtom accDest ans
         False -> case accTy of
           TabTy (b:>ixTy) eltTy -> do
-            buildFor noHint Fwd ixTy \i -> do
-              xElt <- tabApp (sink x) (Var i)
-              yElt <- tabApp (sink y) (Var i)
-              eltTy' <- applyRename (b@>i) eltTy
-              liftMonoidCombine eltTy' (sink bc) xElt yElt
+            n <- indexSetSizeImp ixTy
+            emitLoop noHint Fwd n \i -> do
+              idx <- unsafeFromOrdinalImp (sink ixTy) i
+              xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
+              yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
+              eltTy' <- applySubst (b@>SubstVal idx) eltTy
+              ithDest <- indexDest (sink accDest) idx
+              liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
 
@@ -514,27 +516,11 @@ toImpMemOp op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpFor
-  :: Emits o => SType o -> Direction
-  -> IxDict SimpIR i -> LamExpr SimpIR i
-  -> SubstImpM i o (SAtom o)
-toImpFor resultTy d ixDict (UnaryLamExpr b body) = do
-  ixTy <- ixTyFromDict =<< substM ixDict
-  n <- indexSetSizeImp ixTy
-  dest <- allocDest resultTy
-  emitLoop (getNameHint b) d n \i -> do
-    idx <- unsafeFromOrdinalImp (sink ixTy) i
-    ithDest <- indexDest (sink dest) idx
-    extendSubst (b @> SubstVal idx) $
-      translateBlock body >>= storeAtom ithDest
-  loadAtom dest
-toImpFor _ _ _ _ = error "expected a lambda as the atom argument"
-
 toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
 toImpHof hof = do
   resultTy <- getTypeSubst (Hof hof)
   case hof of
-    For d ixDict lam -> toImpFor resultTy d ixDict lam
+    For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
     While body -> do
       body' <- buildBlockImp do
         ans <- fromScalarAtom =<< translateBlock body
@@ -558,10 +544,8 @@ toImpHof hof = do
           wDest <- atomToDest =<< substM d'
           return (aDest, wDest)
       e' <- substM e
-      emptyVal <- liftBuilderImp do
-        PairE accTy' e'' <- sinkM $ PairE accTy e'
-        liftMonoidEmpty accTy' e''
-      storeAtom wDest emptyVal
+      PairE accTy' e'' <- sinkM $ PairE accTy e'
+      liftMonoidEmpty wDest accTy' e''
       extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
         translateBlock body >>= storeAtom aDest
       PairVal <$> loadAtom aDest <*> loadAtom wDest
@@ -581,17 +565,20 @@ toImpHof hof = do
     RunIO body -> translateBlock body
     RunInit body -> translateBlock body
     where
-      liftMonoidEmpty :: Emits n => SType n -> SAtom n -> SBuilderM n (SAtom n)
-      liftMonoidEmpty accTy x = do
+      liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
+      liftMonoidEmpty accDest accTy x = do
         xTy <- getType x
         alphaEq xTy accTy >>= \case
-          True -> return x
+          True -> storeAtom accDest x
           False -> case accTy of
             TabTy (b:>ixTy) eltTy -> do
-              buildFor noHint Fwd ixTy \i -> do
+              n <- indexSetSizeImp ixTy
+              emitLoop noHint Fwd n \i -> do
+                idx <- unsafeFromOrdinalImp (sink ixTy) i
                 x' <- sinkM x
-                eltTy' <- applyRename (b@>i) eltTy
-                liftMonoidEmpty eltTy' x'
+                eltTy' <- applySubst (b@>SubstVal idx) eltTy
+                ithDest <- indexDest (sink accDest) idx
+                liftMonoidEmpty ithDest eltTy' x'
             _ -> error $ "Base monoid type mismatch: can't lift " ++
                   pprint xTy ++ " to " ++ pprint accTy
 
