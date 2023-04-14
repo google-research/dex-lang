@@ -28,7 +28,7 @@ instance FooBar1(Int)
   -- but the instance `FooBar1 Int` is currently still being defined and, at
   -- this point, can only grant access to method `foo1` (with index 0).
   bar1 = \x. bar1 x + 1
-> Type error:Wrong number of arugments provided. Expected 1 but got 0
+> Type error:Wrong number of positional arguments provided. Expected 1 but got 0
 >
 >   foo1 = \x. x + 1
 >   ^^^^^^^^^^^^^^^^
