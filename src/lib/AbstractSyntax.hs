@@ -397,7 +397,6 @@ expr = propagateSrcE expr' where
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   expr' (CBrackets gs) = UTabCon <$> mapM expr gs
-  expr' (CBraces _) = throw SyntaxErr $ "Unexpected effects"
   expr' (CGivens _) = throw SyntaxErr $ "Unexpected `given` clause"
   expr' (CArrow lhs effs rhs) = do
     case lhs of

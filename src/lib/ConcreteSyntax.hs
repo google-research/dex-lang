@@ -615,7 +615,6 @@ leafGroup = do
       '('  ->  (CIdentifier <$> symName)
            <|> cParens
       '['  -> cBrackets
-      '{'  -> cBraces
       '\"' -> CString <$> strLit
       '\'' -> CChar <$> charLit
       '%'  -> do
@@ -651,9 +650,6 @@ cParens = CParens <$> parens (commaSep cParenGroup)
 
 cBrackets :: Parser Group'
 cBrackets = CBrackets <$> brackets (commaSep cGroup)
-
-cBraces :: Parser Group'
-cBraces = CBrackets <$> braces (commaSep cGroup)
 
 -- A `PrecTable` is enough information to (i) remove or replace
 -- operators for special contexts, and (ii) build the input structure

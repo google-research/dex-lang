@@ -6,9 +6,7 @@
 
 module JaxADTSpec (spec) where
 
-import qualified Data.ByteString.Lazy.Char8 as B
 import Data.Aeson (encode, decode)
-import Data.Aeson.Encode.Pretty (encodePretty)
 import Test.Hspec
 
 import Name
@@ -57,7 +55,6 @@ spec :: Spec
 spec = do
   describe "JaxADT" do
     it "round-trips to json" do
-      -- putStrLn $ B.unpack $ encodePretty a_jaxpr
       let first = encode $ a_jaxpr ten_vec
       let (Just decoded) = (decode first :: Maybe (Jaxpr VoidS))
       let second = encode decoded
