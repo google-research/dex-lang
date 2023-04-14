@@ -353,15 +353,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     AllocDest ty  -> do
       d <- liftM destToAtom $ allocDest =<< substM ty
       return d
-  TabCon _ ty rows -> do
-    resultTy@(TabPi (TabPiType b _)) <- substM ty
-    let ixTy = binderAnn b
-    dest <- allocDest resultTy
-    forM_ (zip [0..] rows) \(i, row) -> do
-      row' <- substM row
-      ithDest <- indexDest dest =<< unsafeFromOrdinalImp ixTy (IIdxRepVal i)
-      storeAtom ithDest row'
-    loadAtom dest
+  TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
 
 toImpRefOp :: Emits o
   => SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)

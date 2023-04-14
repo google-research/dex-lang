@@ -106,8 +106,7 @@ instance HoistableState LFS where
 -- annotations manually... The only interesting cases below are really For and TabCon.
 instance GenericTraverser SimpIR UnitB LFS where
   traverseExpr expr = case expr of
-    -- TODO: re-enable after fixing traverseTabCon bug
-    -- TabCon ty els -> traverseTabCon Nothing ty els
+    TabCon Nothing ty els -> traverseTabCon Nothing ty els
     Hof (For dir ixDict body) -> traverseFor Nothing dir ixDict body
     Case _ _ _ _ -> do
       Case e alts ty _ <- traverseExprDefault expr
@@ -146,21 +145,34 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
       DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
 traverseFor _ _ _ _ = error "expected a unary lambda expression"
 
--- This is buggy. Slicing `indexRef` violates the linearity constraints on dest.
-_traverseTabCon :: Emits o => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
-_traverseTabCon maybeDest tabTy elems = do
+traverseTabCon :: forall i o. Emits o
+  => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
+traverseTabCon maybeDest tabTy elems = do
   tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
     Nothing -> emitExpr $ DAMOp $ AllocDest tabTy'
+  destTy <- getType dest
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
     buildBlock $ unsafeFromOrdinal (sink ixTy') $ Var $ sink ord
-  forM_ (enumerate elems) \(ord, e) -> do
-    i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
-      traverseBlock ufoBlock
-    idest <- indexRef dest i
-    place (FullDest idest) =<< traverseAtom e
-  return $ DAMOp $ Freeze dest
+  -- This is emitting a chain of RememberDest ops to force `dest` to be used
+  -- linearly, and to force reads of the `Freeze dest'` result not to be
+  -- reordered in front of the writes.
+  -- TODO: We technically don't need to sequentialize the writes, since the
+  -- slices are all independent of each other.  Do we need a new `JoinDests`
+  -- operation to represent that pattern?
+  let go incoming_dest [] = return incoming_dest
+      go incoming_dest ((ord, e):rest) = do
+        i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
+          traverseBlock ufoBlock
+        do_one_elt <- buildUnaryLamExpr "dest" destTy \local_dest -> do
+          idest <- indexRef (Var local_dest) (sink i)
+          place (FullDest idest) =<< traverseAtom e
+          return UnitVal
+        carried_dest <- emitExpr $ DAMOp $ RememberDest incoming_dest do_one_elt
+        go carried_dest rest
+  dest' <- go dest (enumerate elems)
+  return $ DAMOp $ Freeze dest'
 
 
 -- Destination-passing traversals
@@ -241,8 +253,7 @@ traverseDeclNestWithDestS destMap s = \case
 
 traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 traverseExprWithDest dest expr = case expr of
-  -- TODO: re-enable after fixing traverseTabCon bug
-  -- TabCon ty els -> traverseTabCon tabDest ty els
+  TabCon Nothing ty els -> traverseTabCon tabDest ty els
   Hof (For dir ixDict body) -> traverseFor tabDest dir ixDict body
   Hof (RunWriter Nothing m body) -> traverseRWS body \ref' body' -> do
     m' <- traverseGenericE m
