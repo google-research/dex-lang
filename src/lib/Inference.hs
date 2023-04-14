@@ -1379,7 +1379,7 @@ checkArity bs args = do
   let arity = length [() | Explicit <- nestToList (\(WithExpl expl _) -> expl) bs]
   let numArgs = length args
   when (numArgs /= arity) do
-    throw TypeErr $ "Wrong number of arugments provided. Expected " ++
+    throw TypeErr $ "Wrong number of positional arguments provided. Expected " ++
       pprint arity ++ " but got " ++ pprint numArgs
 
 -- TODO: check that there are no extra named args provided

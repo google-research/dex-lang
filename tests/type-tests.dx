@@ -614,11 +614,11 @@ interface I(param:Type)
 
 instance I(A, extraneous) given (extraneous)
   m = todo
-> Type error:Wrong number of arugments provided. Expected 1 but got 2
+> Type error:Wrong number of positional arguments provided. Expected 1 but got 2
 
 instance I()
   m = todo
-> Type error:Wrong number of arugments provided. Expected 1 but got 0
+> Type error:Wrong number of positional arguments provided. Expected 1 but got 0
 
 -- This example shows that constraints that we learn from the body of a function
 -- can be used outside the function.
