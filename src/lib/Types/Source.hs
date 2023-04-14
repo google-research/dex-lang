@@ -137,7 +137,6 @@ data Group'
   | CHole
   | CParens   [Group]
   | CBrackets [Group]
-  | CBraces   [Group]
   | CBin Bin Group Group
   | CPrefix SourceName Group -- covers unary - and unary + among others
   | CPostfix SourceName Group
