@@ -275,7 +275,7 @@ instance GenericE SimplifiedBlock where
 instance SinkableE SimplifiedBlock
 instance RenameE SimplifiedBlock
 instance HoistableE SimplifiedBlock
-instance CheckableE SimplifiedBlock where
+instance CheckableE SimpIR SimplifiedBlock where
   checkE (SimplifiedBlock block _) =
     -- TODO: CheckableE instance for the recon too
     checkE block

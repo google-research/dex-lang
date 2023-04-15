@@ -738,7 +738,7 @@ withCompileTime m = do
   (Result outs err, t) <- measureSeconds m
   return $ Result (outs ++ [TotalTime t]) err
 
-checkPass :: (Topper m, Pretty (e n), CheckableE e)
+checkPass :: (Topper m, Pretty (e n), CheckableE r e)
           => PassName -> m n (e n) -> m n (e n)
 checkPass name cont = do
   result <- logPass name do
