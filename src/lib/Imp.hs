@@ -1504,7 +1504,7 @@ impInstrTypes instr = case instr of
   IShowScalar _ _  -> return [Scalar Word32Type]
   where hostPtrTy ty = PtrType (CPU, ty)
 
-instance CheckableE ImpFunction where
+instance CheckableE SimpIR ImpFunction where
   checkE _ = return () -- TODO
 
 -- TODO: Don't use Core Envs for Imp!

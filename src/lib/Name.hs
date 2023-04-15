@@ -3179,6 +3179,12 @@ instance Monad HoistExcept where
 
 -- === extra data structures ===
 
+-- A map from names in some scope to values that do not contain names.  This is
+-- not trying to enforce completeness -- a name in the scope can fail to be in
+-- the map.
+
+-- Hoisting the map removes entries that are no longer in scope.
+
 newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
                                  deriving (Eq, Semigroup, Monoid, Store)
 
@@ -3217,6 +3223,9 @@ traverseNameMap f (UnsafeNameMap raw) = UnsafeNameMap <$> traverse f raw
 mapNameMap :: (a -> b) -> NameMap c a n -> (NameMap c b n)
 mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
 {-# INLINE mapNameMap #-}
+
+instance SinkableE (NameMap c a) where
+  sinkingProofE = undefined
 
 newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
   deriving (Eq, Semigroup, Monoid, Store)

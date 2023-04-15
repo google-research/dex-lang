@@ -761,7 +761,7 @@ data Effect (r::IR) (n::S) =
  | ExceptionEffect
  | IOEffect
  | UserEffect (Name EffectNameC n)
- | InitEffect
+ | InitEffect  -- Internal effect modeling writing to a destination.
  deriving (Generic, Show)
 
 data EffectRow (r::IR) (n::S) =

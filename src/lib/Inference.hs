@@ -3077,7 +3077,7 @@ instance PrettyE e => Pretty (UDeclInferenceResult e l) where
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
 
-instance (RenameE e, CheckableE e) => CheckableE (UDeclInferenceResult e) where
+instance (RenameE e, CheckableE CoreIR e) => CheckableE CoreIR (UDeclInferenceResult e) where
   checkE = \case
     UDeclResultDone _ -> return ()
     UDeclResultBindName _ block _ -> checkE block
