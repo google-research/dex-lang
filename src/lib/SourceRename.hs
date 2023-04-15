@@ -224,7 +224,6 @@ instance SourceRenamableE UEffect where
   sourceRenameE UExceptionEffect = return UExceptionEffect
   sourceRenameE UIOEffect = return UIOEffect
   sourceRenameE (UUserEffect name) = UUserEffect <$> sourceRenameE name
-  sourceRenameE UInitEffect = return UInitEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $

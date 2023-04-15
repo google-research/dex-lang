@@ -191,7 +191,6 @@ data UEffect (n::S) =
  | UExceptionEffect
  | UIOEffect
  | UUserEffect (SourceOrInternalName EffectNameC n)
- | UInitEffect
 
 data UEffectRow (n::S) =
   UEffectRow (S.Set (UEffect n)) (Maybe (SourceOrInternalName (AtomNameC CoreIR) n))

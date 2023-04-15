@@ -401,7 +401,6 @@ instance Pretty (UEffect n) where
     UExceptionEffect -> "Except"
     UIOEffect        -> "IO"
     UUserEffect name -> p name
-    UInitEffect      -> "Init"
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
