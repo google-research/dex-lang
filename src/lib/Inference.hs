@@ -1942,7 +1942,6 @@ checkUEff eff = case eff of
   UExceptionEffect -> return ExceptionEffect
   UIOEffect        -> return IOEffect
   UUserEffect ~(SIInternalName _ name) -> UserEffect <$> renameM name
-  UInitEffect -> return InitEffect
 
 constrainVarTy :: EmitsInf o => CAtomName o -> CType o -> InfererM i o ()
 constrainVarTy v tyReq = do
