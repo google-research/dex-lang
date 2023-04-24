@@ -401,20 +401,6 @@ linearizeExpr expr = case expr of
     zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
   PrimOp op      -> linearizeOp op
-  RefOp ref m -> case m of
-    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ RefOp ref' MAsk
-    MExtend monoid x -> do
-      -- TODO: check that we're dealing with a +/0 monoid
-      monoid' <- renameM monoid
-      zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-        liftM Var $ emit $ RefOp ref' $ MExtend (sink monoid') x'
-    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ RefOp ref' MGet
-    MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-                liftM Var $ emit $ RefOp ref' $ MPut x'
-    IndexRef i -> zipLin (la ref) (pureLin i) `bindLin`
-                    \(PairE ref' i') -> emitExpr $ RefOp ref' $ IndexRef i'
-    ProjRef i -> la ref `bindLin` \ref' -> emitExpr $ RefOp ref' $ ProjRef i
-  Hof e      -> linearizeHof e
   Case e alts resultTy effs -> do
     e' <- renameM e
     effs' <- renameM effs
@@ -444,12 +430,24 @@ linearizeExpr expr = case expr of
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon Nothing (sink ty') xs'
-  DAMOp _        -> error "shouldn't occur here"
-  where
-    la = linearizeAtom
 
-linearizeOp :: Emits o => PrimOp (Atom SimpIR i) -> LinM i o SAtom SAtom
+linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
+  Hof e      -> linearizeHof e
+  DAMOp _        -> error "shouldn't occur here"
+  RefOp ref m -> case m of
+    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimOp $ RefOp ref' MAsk
+    MExtend monoid x -> do
+      -- TODO: check that we're dealing with a +/0 monoid
+      monoid' <- renameM monoid
+      zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+        liftM Var $ emit $ PrimOp $ RefOp ref' $ MExtend (sink monoid') x'
+    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimOp $ RefOp ref' MGet
+    MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
+                liftM Var $ emit $ PrimOp $ RefOp ref' $ MPut x'
+    IndexRef i -> zipLin (la ref) (pureLin i) `bindLin`
+                    \(PairE ref' i') -> emitOp $ RefOp ref' $ IndexRef i'
+    ProjRef i -> la ref `bindLin` \ref' -> emitOp $ RefOp ref' $ ProjRef i
   UnOp  uop x       -> linearizeUnOp  uop x
   BinOp bop x y     -> linearizeBinOp bop x y
   -- XXX: This assumes that pointers are always constants
@@ -458,8 +456,9 @@ linearizeOp op = case op of
   VectorOp _ -> error "not implemented"
   where
     emitZeroT = withZeroT $ liftM Var $ emit =<< renameM (PrimOp op)
+    la = linearizeAtom
 
-linearizeMiscOp :: Emits o => MiscOp (Atom SimpIR i) -> LinM i o SAtom SAtom
+linearizeMiscOp :: Emits o => MiscOp SimpIR i -> LinM i o SAtom SAtom
 linearizeMiscOp op = case op of
   SumTag _     -> emitZeroT
   ToEnum _ _   -> emitZeroT
@@ -588,14 +587,15 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof SimpIR i -> LinM i o SAtom SAtom
 linearizeHof hof = case hof of
-  For d ixDict (UnaryLamExpr (ib:>ixTy) body) -> do
+  For d ixDict lam -> do
+    UnaryLamExpr (ib:>ixTy) body <- return lam
     ixDict' <- renameM ixDict
     ixTy'   <- renameM ixTy
     let ixTyDict = IxType ixTy' ixDict'
     (lam', Abs ib' linLam) <- withFreshBinder noHint ixTy' \ib' -> do
       (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
       return (UnaryLamExpr ib' block', Abs ib' linLam)
-    primalsAux <- emitExpr $ Hof $ For d ixDict' lam'
+    primalsAux <- emitExpr $ PrimOp $ Hof $ For d ixDict' lam'
     case linLam of
       TrivialRecon linLam' ->
         return $ WithTangent primalsAux do
@@ -614,7 +614,7 @@ linearizeHof hof = case hof of
   RunReader r lam -> do
     WithTangent r' rLin <- linearizeAtom r
     (lam', recon) <- linearizeEffectFun Reader lam
-    primalAux <- liftM Var (emit $ Hof $ RunReader r' lam')
+    primalAux <- liftM Var (emit $ PrimOp $ Hof $ RunReader r' lam')
     referentTy <- getReferentTypeRWSAction lam'
     (primal, linLam) <- reconstruct primalAux recon
     return $ WithTangent primal do
@@ -623,11 +623,11 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitExpr $ Hof $ RunReader rLin' tanEffLam
+      emitOp $ Hof $ RunReader rLin' tanEffLam
   RunState Nothing sInit lam -> do
     WithTangent sInit' sLin <- linearizeAtom sInit
     (lam', recon) <- linearizeEffectFun State lam
-    (primalAux, sFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunState Nothing sInit' lam')
+    (primalAux, sFinal) <- fromPair =<< liftM Var (emit $ PrimOp $ Hof $ RunState Nothing sInit' lam')
     referentTy <- getReferentTypeRWSAction lam'
     (primal, linLam) <- reconstruct primalAux recon
     return $ WithTangent (PairVal primal sFinal) do
@@ -636,12 +636,12 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitExpr $ Hof $ RunState Nothing sLin' tanEffLam
+      emitOp $ Hof $ RunState Nothing sLin' tanEffLam
   RunWriter Nothing bm lam -> do
     -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
     bm' <- renameM bm
     (lam', recon) <- linearizeEffectFun Writer lam
-    (primalAux, wFinal) <- fromPair =<< liftM Var (emit $ Hof $ RunWriter Nothing bm' lam')
+    (primalAux, wFinal) <- fromPair =<< liftM Var (emit $ PrimOp $ Hof $ RunWriter Nothing bm' lam')
     (primal, linLam) <- reconstruct primalAux recon
     referentTy <- getReferentTypeRWSAction lam'
     return $ WithTangent (PairVal primal wFinal) do
@@ -650,10 +650,10 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitExpr $ Hof $ RunWriter Nothing bm'' tanEffLam
+      emitOp $ Hof $ RunWriter Nothing bm'' tanEffLam
   RunIO body -> do
     (body', recon) <- linearizeBlockDefunc body
-    primalAux <- liftM Var $ emit $ Hof $ RunIO body'
+    primalAux <- liftM Var $ emit $ PrimOp $ Hof $ RunIO body'
     (primal, linLam) <- reconstruct primalAux recon
     return $ WithTangent primal do
       withSubstReaderT $ applyLinLam $ sink linLam

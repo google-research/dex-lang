@@ -305,11 +305,11 @@ instance HasOCC (DeclBinding SimpIR) where
 
 instance HasOCC SExpr where
   occ a expr = case expr of
-    (TabApp array ixs) -> do
+    TabApp array ixs -> do
       (a', ixs') <- go a ixs
       array' <- occ a' array
       return $ TabApp array' ixs'
-    (Case scrut alts ty effs) -> do
+    Case scrut alts ty effs -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
       (alts', innerFVs) <- unzip <$> mapM (isolated . occAlt a scrutIx) alts
@@ -326,11 +326,11 @@ instance HasOCC SExpr where
         (summ, ix') <- occurrenceAndSummary ix
         return (location summ acc', ix':ixs')
 
-instance HasOCC (ComposeE PrimOp SAtom) where
-  -- I'm pretty sure the others are all strict, and not usefully analyzable
-  -- for what they do to the incoming access pattern.
-  occ _ (ComposeE op) = ComposeE <$> traverse (occ accessOnce) op
-  {-# INLINE occ #-}
+instance HasOCC (PrimOp   SimpIR)
+instance HasOCC (MemOp    SimpIR)
+instance HasOCC (VectorOp SimpIR)
+instance HasOCC (MiscOp   SimpIR)
+instance HasOCC (DAMOp    SimpIR)
 
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
@@ -465,14 +465,8 @@ instance HasOCC (RefOp SimpIR) where
 
 -- === The generic instances ===
 
-instance HasOCC e => HasOCC (ComposeE (PrimCon r) e) where
-  occ _ (ComposeE con) = ComposeE <$> traverse (occ accessOnce) con
-  {-# INLINE occ #-}
-
-instance HasOCC e => HasOCC (ComposeE (PrimTC r) e) where
-  occ _ (ComposeE tc) = ComposeE <$> traverse (occ accessOnce) tc
-  {-# INLINE occ #-}
-
+instance HasOCC (Con SimpIR)
+instance HasOCC (TC SimpIR)
 instance HasOCC (LamExpr SimpIR) where
   occ _ _ = error "Impossible"
   {-# INLINE occ #-}
@@ -481,8 +475,8 @@ instance HasOCC (DepPairType SimpIR)
 instance HasOCC (EffectRow SimpIR)
 instance HasOCC (EffectRowTail SimpIR)
 instance HasOCC (Effect SimpIR)
-instance HasOCC (DAMOp SimpIR)
 instance HasOCC (IxDict SimpIR)
+instance HasOCC (GenericOpRep const SimpIR) where
 
 instance HasOCC (RepVal SimpIR) where
   occ _ (RepVal ty rep) = RepVal <$> occTy ty <*> pure rep

@@ -21,7 +21,6 @@ import Control.Category
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Unsafe.Coerce
-import GHC.Exts (inline)
 
 import Builder
 import Core
@@ -107,7 +106,7 @@ instance HoistableState LFS where
 instance GenericTraverser SimpIR UnitB LFS where
   traverseExpr expr = case expr of
     TabCon Nothing ty els -> traverseTabCon Nothing ty els
-    Hof (For dir ixDict body) -> traverseFor Nothing dir ixDict body
+    PrimOp (Hof (For dir ixDict body)) -> traverseFor Nothing dir ixDict body
     Case _ _ _ _ -> do
       Case e alts ty _ <- traverseExprDefault expr
       eff' <- foldMapM getEffects alts
@@ -129,20 +128,20 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
         (i, _) <- fromPair $ Var b'
         extendSubst (ib @> SubstVal i) $ traverseBlock body $> UnitVal
-      void $ emit $ DAMOp $ Seq dir ixDict' UnitVal body'
+      void $ emitOp $ DAMOp $ Seq dir ixDict' UnitVal body'
       Atom . fromJust <$> singletonTypeVal ansTy
     False -> do
       initDest <- ProdVal . (:[]) <$> case maybeDest of
         Just  d -> return d
-        Nothing -> emitExpr $ DAMOp $ AllocDest ansTy
+        Nothing -> emitOp $ DAMOp $ AllocDest ansTy
       destTy <- getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
         dest <- normalizeProj (ProjectProduct 0) destProd
-        idest <- emitExpr $ RefOp dest $ IndexRef i
+        idest <- emitOp $ RefOp dest $ IndexRef i
         extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
-      let seqHof = DAMOp $ Seq dir ixDict' initDest body'
-      DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
+      let seqHof = PrimOp $ DAMOp $ Seq dir ixDict' initDest body'
+      PrimOp . DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
 traverseFor _ _ _ _ = error "expected a unary lambda expression"
 
 traverseTabCon :: forall i o. Emits o
@@ -151,7 +150,7 @@ traverseTabCon maybeDest tabTy elems = do
   tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitExpr $ DAMOp $ AllocDest tabTy'
+    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
   destTy <- getType dest
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
     buildBlock $ unsafeFromOrdinal (sink ixTy') $ Var $ sink ord
@@ -169,11 +168,10 @@ traverseTabCon maybeDest tabTy elems = do
           idest <- indexRef (Var local_dest) (sink i)
           place (FullDest idest) =<< traverseAtom e
           return UnitVal
-        carried_dest <- emitExpr $ DAMOp $ RememberDest incoming_dest do_one_elt
+        carried_dest <- emitExpr $ PrimOp $ DAMOp $ RememberDest incoming_dest do_one_elt
         go carried_dest rest
   dest' <- go dest (enumerate elems)
-  return $ DAMOp $ Freeze dest'
-
+  return $ PrimOp $ DAMOp $ Freeze dest'
 
 -- Destination-passing traversals
 --
@@ -254,11 +252,11 @@ traverseDeclNestWithDestS destMap s = \case
 traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 traverseExprWithDest dest expr = case expr of
   TabCon Nothing ty els -> traverseTabCon tabDest ty els
-  Hof (For dir ixDict body) -> traverseFor tabDest dir ixDict body
-  Hof (RunWriter Nothing m body) -> traverseRWS body \ref' body' -> do
+  PrimOp (Hof (For dir ixDict body)) -> traverseFor tabDest dir ixDict body
+  PrimOp (Hof (RunWriter Nothing m body)) -> traverseRWS body \ref' body' -> do
     m' <- traverseGenericE m
     return $ RunWriter ref' m' body'
-  Hof (RunState Nothing s body) -> traverseRWS body \ref' body' -> do
+  PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
     s' <- traverseAtom s
     return $ RunState ref' s' body'
   _ -> generic
@@ -284,7 +282,7 @@ traverseExprWithDest dest expr = case expr of
         Just (bodyDest, refDest) -> do
           let RefTy _ ty = binderType rb
           ty' <- traverseGenericE $ ignoreHoistFailure $ hoist hb ty
-          liftM Hof $ mkHof refDest =<<
+          liftM (PrimOp . Hof) $ mkHof refDest =<<
             buildEffLam (getNameHint rb) ty' \hb' rb' ->
               extendRenamer (hb@>hb' <.> rb@>rb') do
                 case bodyDest of
@@ -306,10 +304,10 @@ traverseExprWithDest dest expr = case expr of
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
-  FullDest d   -> void $ emitExpr $ DAMOp $ Place d x
+  FullDest d   -> void $ emitOp $ DAMOp $ Place d x
   ProjDest p d -> do
     x' <- normalizeNaryProj (NE.toList p) x
-    void $ emitExpr $ DAMOp $ Place d x'
+    void $ emitOp $ DAMOp $ Place d x'
 
 -- === Vectorization ===
 
@@ -385,13 +383,13 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        DAMOp (Seq dir (IxDictRawFin (IdxRepVal n)) dest@(ProdVal [_]) body)
+        PrimOp (DAMOp (Seq dir (IxDictRawFin (IdxRepVal n)) dest@(ProdVal [_]) body))
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
               let vn = n `div` loopWidth
               body' <- vectorizeSeq loopWidth frag body
               dest' <- applyRename frag dest
-              emit $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal vn)) dest' body')
+              emit $ PrimOp $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal vn)) dest' body')
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
@@ -399,7 +397,7 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applyRename frag dest
                 body' <- applyRename frag body
-                emit $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal n)) dest' body'
+                emit $ PrimOp $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal n)) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> v) rest
 
@@ -469,18 +467,6 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
     Atom atom -> vectorizeAtom atom
     PrimOp op -> vectorizePrimOp op
-    DAMOp op -> vectorizeDAMOp op
-    RefOp ref op -> vectorizeRefOp ref op
-    -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
-    -- being picky about the IO-inducing ops it supports, and expect it to
-    -- complain about FFI calls and the like.
-    Hof (RunIO body) -> do
-    -- TODO: buildBlockAux?
-      Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
-        VVal vy y <- vectorizeBlock body
-        PairE (LiftE vy) <$> withType y
-      body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
-      VVal vy . Var <$> emit (Hof (RunIO body'))
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
 
 vectorizeDAMOp :: Emits o => DAMOp SimpIR i -> VectorizeM i o (VAtom o)
@@ -490,11 +476,11 @@ vectorizeDAMOp op =
       VVal vref ref <- vectorizeAtom ref'
       sval@(VVal vval val) <- vectorizeAtom val'
       VVal Uniform <$> case (vref, vval) of
-        (Uniform   , Uniform   ) -> emitExpr $ DAMOp $ Place ref val
+        (Uniform   , Uniform   ) -> emitExpr $ PrimOp $ DAMOp $ Place ref val
         (Uniform   , _         ) -> throwVectErr "Write conflict? This should never happen!"
         (Varying   , _         ) -> throwVectErr "Vector scatter not implemented"
-        (Contiguous, Varying   ) -> emitExpr $ DAMOp $ Place ref val
-        (Contiguous, Contiguous) -> emitExpr . DAMOp . Place ref =<< ensureVarying sval
+        (Contiguous, Varying   ) -> emitExpr $ PrimOp $ DAMOp $ Place ref val
+        (Contiguous, Contiguous) -> emitExpr . PrimOp . DAMOp . Place ref =<< ensureVarying sval
         _ -> throwVectErr "Not implemented yet"
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
@@ -515,34 +501,53 @@ vectorizeRefOp ref' op =
             "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
 
-vectorizePrimOp :: Emits o => PrimOp (Atom SimpIR i) -> VectorizeM i o (VAtom o)
-vectorizePrimOp op = do
-  op' <- (inline traversePrimOp) vectorizeAtom op
-  case op' of
-    UnOp opk sx@(VVal vx x) -> do
-      let v = case vx of Uniform -> Uniform; _ -> Varying
-      x' <- if vx /= v then ensureVarying sx else return x
-      VVal v <$> emitOp (UnOp opk x')
-    BinOp opk sx@(VVal vx x) sy@(VVal vy y) -> do
-      let v = case (vx, vy) of (Uniform, Uniform) -> Uniform; _ -> Varying
-      x' <- if vx /= v then ensureVarying sx else return x
-      y' <- if vy /= v then ensureVarying sy else return y
-      VVal v <$> emitOp (BinOp opk x' y')
-    MiscOp (CastOp (VVal Uniform ty) (VVal vx x)) -> do
-      ty' <- case vx of
-        Uniform    -> return ty
-        Varying    -> getVectorType ty
-        Contiguous -> return ty
-        ProdStability _ -> throwVectErr "Unexpected cast of product type"
-      VVal vx <$> emitOp (MiscOp $ CastOp ty' x)
-    MemOp (PtrOffset (VVal Uniform ptr) (VVal Contiguous off)) -> do
-      VVal Contiguous <$> emitOp (MemOp $ PtrOffset ptr off)
-    MemOp (PtrLoad (VVal Contiguous ptr)) -> do
-      BaseTy (PtrType (addrSpace, a)) <- getType ptr
-      BaseTy av <- getVectorType $ BaseTy a
-      ptr' <- emitOp $ MiscOp $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
-      VVal Varying <$> emitOp (MemOp $ PtrLoad ptr')
-    _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op'
+vectorizePrimOp :: Emits o => PrimOp SimpIR i -> VectorizeM i o (VAtom o)
+vectorizePrimOp op = case op of
+  UnOp opk arg -> do
+    sx@(VVal vx x) <- vectorizeAtom arg
+    let v = case vx of Uniform -> Uniform; _ -> Varying
+    x' <- if vx /= v then ensureVarying sx else return x
+    VVal v <$> emitOp (UnOp opk x')
+  BinOp opk arg1 arg2 -> do
+    sx@(VVal vx x) <- vectorizeAtom arg1
+    sy@(VVal vy y) <- vectorizeAtom arg2
+    let v = case (vx, vy) of (Uniform, Uniform) -> Uniform; _ -> Varying
+    x' <- if vx /= v then ensureVarying sx else return x
+    y' <- if vy /= v then ensureVarying sy else return y
+    VVal v <$> emitOp (BinOp opk x' y')
+  MiscOp (CastOp tyArg arg) -> do
+    VVal Uniform ty <- vectorizeAtom tyArg
+    VVal vx x <- vectorizeAtom arg
+    ty' <- case vx of
+      Uniform    -> return ty
+      Varying    -> getVectorType ty
+      Contiguous -> return ty
+      ProdStability _ -> throwVectErr "Unexpected cast of product type"
+    VVal vx <$> emitOp (MiscOp $ CastOp ty' x)
+  DAMOp op' -> vectorizeDAMOp op'
+  RefOp ref op' -> vectorizeRefOp ref op'
+  MemOp (PtrOffset arg1 arg2) -> do
+    VVal Uniform ptr    <- vectorizeAtom arg1
+    VVal Contiguous off <- vectorizeAtom arg2
+    VVal Contiguous <$> emitOp (MemOp $ PtrOffset ptr off)
+  MemOp (PtrLoad arg) -> do
+    VVal Contiguous ptr <- vectorizeAtom arg
+    BaseTy (PtrType (addrSpace, a)) <- getType ptr
+    BaseTy av <- getVectorType $ BaseTy a
+    ptr' <- emitOp $ MiscOp $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
+    VVal Varying <$> emitOp (MemOp $ PtrLoad ptr')
+  -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
+  -- being picky about the IO-inducing ops it supports, and expect it to
+  -- complain about FFI calls and the like.
+  Hof (RunIO body) -> do
+  -- TODO: buildBlockAux?
+    Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
+      VVal vy y <- vectorizeBlock body
+      PairE (LiftE vy) <$> withType y
+    body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
+    VVal vy . Var <$> emit (PrimOp $ Hof (RunIO body'))
+  _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
+
 
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
@@ -640,6 +645,9 @@ instance HoistableState Word32' where
 
 instance GenericTraverser SimpIR UnitB Word32' where
   traverseExpr expr = case expr of
+    PrimOp (Hof   _) -> traverseExprDefault expr
+    PrimOp (DAMOp _) -> traverseExprDefault expr
+    PrimOp (RefOp _ _) -> traverseExprDefault expr
     PrimOp _ -> do
       expr' <- substM expr
       ty <- getType expr'

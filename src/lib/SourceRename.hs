@@ -178,6 +178,7 @@ instance SourceRenamableB (UAnnBinder req) where
 instance SourceRenamableE UExpr' where
   sourceRenameE expr = setMayShadow True case expr of
     UVar v -> UVar <$> sourceRenameE v
+    ULit l -> return $ ULit l
     ULam lam -> ULam <$> sourceRenameE lam
     UPi (UPiExpr pats appExpl eff body) ->
       sourceRenameB pats \pats' ->

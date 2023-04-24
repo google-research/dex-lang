@@ -364,7 +364,7 @@ getNewtypeType con = case con of
     TyConDef sn _ _ <- lookupTyCon d'
     return $ NewtypeTyCon $ UserADTType sn d' params'
 
-getTypePrimCon :: IRRep r => PrimCon r (Atom r i) -> TypeQueryM i o (Type r o)
+getTypePrimCon :: IRRep r => Con r i -> TypeQueryM i o (Type r o)
 getTypePrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
@@ -475,34 +475,12 @@ instance IRRep r => HasType r (Expr r) where
       typeTabApp fTy xs
     Atom x   -> getTypeE x
     TabCon _ ty _ -> substM ty
-    DAMOp           op -> getTypeE op
-    UserEffectOp    op -> getTypeE op
-    PrimOp          op -> getTypeE $ ComposeE op
-    Hof  hof -> getTypeHof hof
+    PrimOp          op -> getTypeE op
     Case _ _ resultTy _ -> substM resultTy
     ApplyMethod dict i args -> do
       dict' <- substM dict
       methodTy <- getMethodType dict' i
       appType (Pi methodTy) args
-    RefOp ref m -> do
-      TC (RefType h s) <- getTypeE ref
-      case m of
-        MGet        -> return s
-        MPut _      -> return UnitTy
-        MAsk        -> return s
-        MExtend _ _ -> return UnitTy
-        IndexRef i -> do
-          TabTy (b:>_) eltTy <- return s
-          i' <- substM i
-          eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-          return $ TC $ RefType h eltTy'
-        ProjRef p -> TC . RefType h <$> case p of
-          ProjectProduct i -> do
-            ProdTy tys <- return s
-            return $ tys !! i
-          UnwrapNewtype -> do
-            NewtypeTyCon tc <- return s
-            snd <$> unwrapNewtypeType tc
 
 instance IRRep r => HasType r (DAMOp r) where
   getTypeE = \case
@@ -528,41 +506,72 @@ instance HasType CoreIR UserEffectOp where
       return lamTy
     Resume retTy _ -> substM retTy
 
-instance IRRep r => HasType r (ComposeE PrimOp (Atom r)) where
-  getTypeE (ComposeE primOp) = case primOp of
+instance IRRep r => HasType r (PrimOp r) where
+  getTypeE primOp = case primOp of
     BinOp op x _ -> do
       xTy <- getTypeBaseType x
       return $ TC $ BaseType $ typeBinOp op xTy
     UnOp op x -> TC . BaseType . typeUnOp op <$> getTypeBaseType x
-    MemOp op -> case op of
-      IOAlloc t _ -> return $ PtrTy (CPU, t)
-      IOFree _ -> return UnitTy
-      PtrOffset arr _ -> getTypeE arr
-      PtrLoad ptr -> do
-        PtrTy (_, t) <- getTypeE ptr
-        return $ BaseTy t
-      PtrStore _ _ -> return UnitTy
-    MiscOp op -> case op of
-      Select _ x _ -> getTypeE x
-      ThrowError ty -> substM ty
-      ThrowException ty -> substM ty
-      CastOp t _ -> substM t
-      BitcastOp t _ -> substM t
-      UnsafeCoerce t _ -> substM t
-      GarbageVal t -> substM t
-      SumTag _ -> return TagRepTy
-      ToEnum t _ -> substM t
-      OutputStream ->
-        return $ BaseTy $ hostPtrTy $ Scalar Word8Type
-        where hostPtrTy ty = PtrType (CPU, ty)
-      ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
-      ShowScalar _ -> PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
-    VectorOp op -> case op of
-      VectorBroadcast _ vty -> substM vty
-      VectorIota vty -> substM vty
-      VectorSubref ref _ vty -> getTypeE ref >>= \case
-        TC (RefType h _) -> TC . RefType h <$> substM vty
-        ty -> error $ "Not a reference type: " ++ pprint ty
+    Hof  hof -> getTypeHof hof
+    MemOp op -> getTypeE op
+    MiscOp op -> getTypeE op
+    VectorOp op -> getTypeE op
+    DAMOp           op -> getTypeE op
+    UserEffectOp    op -> getTypeE op
+    RefOp ref m -> do
+      TC (RefType h s) <- getTypeE ref
+      case m of
+        MGet        -> return s
+        MPut _      -> return UnitTy
+        MAsk        -> return s
+        MExtend _ _ -> return UnitTy
+        IndexRef i -> do
+          TabTy (b:>_) eltTy <- return s
+          i' <- substM i
+          eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+          return $ TC $ RefType h eltTy'
+        ProjRef p -> TC . RefType h <$> case p of
+          ProjectProduct i -> do
+            ProdTy tys <- return s
+            return $ tys !! i
+          UnwrapNewtype -> do
+            NewtypeTyCon tc <- return s
+            snd <$> unwrapNewtypeType tc
+
+instance IRRep r => HasType r (MemOp r) where
+  getTypeE = \case
+    IOAlloc _ -> return $ PtrTy (CPU, Scalar Word8Type)
+    IOFree _ -> return UnitTy
+    PtrOffset arr _ -> getTypeE arr
+    PtrLoad ptr -> do
+      PtrTy (_, t) <- getTypeE ptr
+      return $ BaseTy t
+    PtrStore _ _ -> return UnitTy
+
+instance IRRep r => HasType r (VectorOp r) where
+  getTypeE = \case
+    VectorBroadcast _ vty -> substM vty
+    VectorIota vty -> substM vty
+    VectorSubref ref _ vty -> getTypeE ref >>= \case
+      TC (RefType h _) -> TC . RefType h <$> substM vty
+      ty -> error $ "Not a reference type: " ++ pprint ty
+
+instance IRRep r => HasType r (MiscOp r) where
+  getTypeE = \case
+    Select _ x _ -> getTypeE x
+    ThrowError ty -> substM ty
+    ThrowException ty -> substM ty
+    CastOp t _ -> substM t
+    BitcastOp t _ -> substM t
+    UnsafeCoerce t _ -> substM t
+    GarbageVal t -> substM t
+    SumTag _ -> return TagRepTy
+    ToEnum t _ -> substM t
+    OutputStream ->
+      return $ BaseTy $ hostPtrTy $ Scalar Word8Type
+      where hostPtrTy ty = PtrType (CPU, ty)
+    ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
+    ShowScalar _ -> PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
 
 instantiateHandlerType :: EnvReader m => HandlerName n -> CAtom n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
@@ -694,6 +703,38 @@ exprEffects expr = case expr of
     xs' <- mapM substM xs
     applySubst (bs @@> fmap SubstVal xs') effs
   TabApp _ _ -> return Pure
+  Case _ _ _ effs -> substM effs
+  TabCon _ _ _      -> return Pure
+  ApplyMethod dict i args -> do
+    dict' <- substM dict
+    methodTy <- getMethodType dict' i
+    appEffects (Pi methodTy) args
+  PrimOp primOp -> primOpEffects primOp
+
+primOpEffects ::IRRep r => PrimOp r i -> TypeQueryM i o (EffectRow r o)
+primOpEffects = \case
+  UnOp  _ _   -> return Pure
+  BinOp _ _ _ -> return Pure
+  VectorOp _  -> return Pure
+  MemOp op -> case op of
+    IOAlloc  _    -> return $ OneEffect IOEffect
+    IOFree   _    -> return $ OneEffect IOEffect
+    PtrLoad  _    -> return $ OneEffect IOEffect
+    PtrStore _ _  -> return $ OneEffect IOEffect
+    PtrOffset _ _ -> return Pure
+  MiscOp op -> case op of
+    ThrowException _ -> return $ OneEffect ExceptionEffect
+    Select _ _ _     -> return Pure
+    ThrowError _     -> return Pure
+    CastOp _ _       -> return Pure
+    UnsafeCoerce _ _ -> return Pure
+    GarbageVal _     -> return Pure
+    BitcastOp _ _    -> return Pure
+    SumTag _         -> return Pure
+    ToEnum _ _       -> return Pure
+    OutputStream     -> return Pure
+    ShowAny _        -> return Pure
+    ShowScalar _     -> return Pure
   RefOp ref m -> do
     TC (RefType h _) <- getTypeSubst ref
     return case m of
@@ -712,29 +753,6 @@ exprEffects expr = case expr of
     Perform effVal _ -> do
       Eff eff <- return effVal
       substM eff
-  PrimOp primOp -> case primOp of
-    UnOp  _ _   -> return Pure
-    BinOp _ _ _ -> return Pure
-    VectorOp _  -> return Pure
-    MemOp op -> case op of
-      IOAlloc  _ _  -> return $ OneEffect IOEffect
-      IOFree   _    -> return $ OneEffect IOEffect
-      PtrLoad  _    -> return $ OneEffect IOEffect
-      PtrStore _ _  -> return $ OneEffect IOEffect
-      PtrOffset _ _ -> return Pure
-    MiscOp op -> case op of
-      ThrowException _ -> return $ OneEffect ExceptionEffect
-      Select _ _ _     -> return Pure
-      ThrowError _     -> return Pure
-      CastOp _ _       -> return Pure
-      UnsafeCoerce _ _ -> return Pure
-      GarbageVal _     -> return Pure
-      BitcastOp _ _    -> return Pure
-      SumTag _         -> return Pure
-      ToEnum _ _       -> return Pure
-      OutputStream     -> return Pure
-      ShowAny _        -> return Pure
-      ShowScalar _     -> return Pure
   DAMOp op -> case op of
     Place    _ _  -> return $ OneEffect InitEffect
     Seq _ _ _ f      -> functionEffs f
@@ -754,12 +772,6 @@ exprEffects expr = case expr of
     CatchException f -> deleteEff ExceptionEffect <$> getEffectsImpl f
     where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
           maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
-  Case _ _ _ effs -> substM effs
-  TabCon _ _ _      -> return Pure
-  ApplyMethod dict i args -> do
-    dict' <- substM dict
-    methodTy <- getMethodType dict' i
-    appEffects (Pi methodTy) args
 
 instance IRRep r => HasEffectsE (Block r) r where
   getEffectsImpl (Block (BlockAnn _ effs) _ _) = substM effs

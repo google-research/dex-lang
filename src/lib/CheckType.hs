@@ -268,32 +268,12 @@ typeCheckExpr effs expr = case expr of
     checkedApplyNaryAbs (Abs bs resultTy) xs'
   Atom x   -> getTypeE x
   PrimOp op -> typeCheckPrimOp effs op
-  Hof  hof -> typeCheckPrimHof effs hof
   Case e alts resultTy caseEffs -> do
     caseEffs' <- renameM caseEffs
     resultTy'  <- renameM resultTy
     checkCase e alts resultTy' caseEffs'
     checkExtends effs caseEffs'
     return resultTy'
-  RefOp ref m -> do
-    TC (RefType h s) <- getTypeE ref
-    case m of
-      MGet      ->           declareEff effs (RWSEffect State  h) $> s
-      MPut  x   -> x|:s   >> declareEff effs (RWSEffect State  h) $> UnitTy
-      MAsk      ->           declareEff effs (RWSEffect Reader h) $> s
-      MExtend _ x -> x|:s >> declareEff effs (RWSEffect Writer h) $> UnitTy
-      IndexRef i -> do
-        TabTy (b:>IxType iTy _) eltTy <- return s
-        i' <- checkTypeE iTy i
-        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-        return $ TC $ RefType h eltTy'
-      ProjRef p -> TC . RefType h <$> case p of
-        ProjectProduct i -> do
-          ProdTy tys <- return s
-          return $ tys !! i
-        UnwrapNewtype -> do
-          NewtypeTyCon tc <- return s
-          snd <$> unwrapNewtypeType tc
   ApplyMethod dict i args -> do
     DictTy (DictType _ className params) <- getTypeE dict
     def@(ClassDef _ _ _ paramBs classBs methodTys) <- lookupClassDef className
@@ -312,8 +292,6 @@ typeCheckExpr effs expr = case expr of
       -- each index from the ix dict.
       HoistFailure _    -> forM_ xs checkE
     return ty'
-  DAMOp op -> typeCheckDAMOp effs op
-  UserEffectOp op -> typeCheckUserEffect op
 
 instance IRRep r => HasType r (Block r) where
   getTypeE = \case
@@ -408,7 +386,7 @@ checkCoreLam (CorePiType expl (Nest piB piBs) effs resultTy) (LamExpr (Nest lamB
       checkCoreLam piTy (LamExpr lamBs body)
 checkCoreLam _ _ = throw TypeErr "zip error"
 
-typeCheckPrimTC :: (Typer m r, IRRep r) => PrimTC r (Atom r i) -> m i o (Type r o)
+typeCheckPrimTC :: (Typer m r, IRRep r) => TC r i -> m i o (Type r o)
 typeCheckPrimTC tc = case tc of
   BaseType _       -> return TyKind
   ProdType tys     -> mapM_ (|:TyKind) tys >> return TyKind
@@ -417,7 +395,7 @@ typeCheckPrimTC tc = case tc of
   TypeKind         -> return TyKind
   HeapType         -> return TyKind
 
-typeCheckPrimCon :: (Typer m r, IRRep r) => PrimCon r (Atom r i) -> m i o (Type r o)
+typeCheckPrimCon :: (Typer m r, IRRep r) => Con r i -> m i o (Type r o)
 typeCheckPrimCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ProdCon xs -> ProdTy <$> mapM getTypeE xs
@@ -451,8 +429,9 @@ typeCheckNewtypeTyCon = \case
     void $ checkedInstantiateTyConDef def params'
     return TyKind
 
-typeCheckPrimOp :: (Typer m r, IRRep r) => EffectRow r o -> PrimOp (Atom r i) -> m i o (Type r o)
+typeCheckPrimOp :: (Typer m r, IRRep r) => EffectRow r o -> PrimOp r i -> m i o (Type r o)
 typeCheckPrimOp effs op = case op of
+  Hof  hof -> typeCheckPrimHof effs hof
   VectorOp vOp -> typeCheckVectorOp vOp
   BinOp binop x y -> do
     xTy <- typeCheckBaseType x
@@ -463,13 +442,34 @@ typeCheckPrimOp effs op = case op of
     TC <$> BaseType <$> checkUnOp unop xTy
   MiscOp x -> typeCheckMiscOp effs x
   MemOp x -> typeCheckMemOp effs x
+  DAMOp op' -> typeCheckDAMOp effs op'
+  UserEffectOp op' -> typeCheckUserEffect op'
+  RefOp ref m -> do
+    TC (RefType h s) <- getTypeE ref
+    case m of
+      MGet      ->           declareEff effs (RWSEffect State  h) $> s
+      MPut  x   -> x|:s   >> declareEff effs (RWSEffect State  h) $> UnitTy
+      MAsk      ->           declareEff effs (RWSEffect Reader h) $> s
+      MExtend _ x -> x|:s >> declareEff effs (RWSEffect Writer h) $> UnitTy
+      IndexRef i -> do
+        TabTy (b:>IxType iTy _) eltTy <- return s
+        i' <- checkTypeE iTy i
+        eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
+        return $ TC $ RefType h eltTy'
+      ProjRef p -> TC . RefType h <$> case p of
+        ProjectProduct i -> do
+          ProdTy tys <- return s
+          return $ tys !! i
+        UnwrapNewtype -> do
+          NewtypeTyCon tc <- return s
+          snd <$> unwrapNewtypeType tc
 
-typeCheckMemOp :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> MemOp (Atom r i) -> m i o (Type r o)
+typeCheckMemOp :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> MemOp r i -> m i o (Type r o)
 typeCheckMemOp effs = \case
-  IOAlloc t n -> do
+  IOAlloc n -> do
     n |: IdxRepTy
     declareEff effs IOEffect
-    return $ PtrTy (CPU, t)
+    return $ PtrTy (CPU, Scalar Word8Type)
   IOFree ptr -> do
     PtrTy _ <- getTypeE ptr
     declareEff effs IOEffect
@@ -488,7 +488,7 @@ typeCheckMemOp effs = \case
     declareEff effs IOEffect
     return $ UnitTy
 
-typeCheckMiscOp :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> MiscOp (Atom r i) -> m i o (Type r o)
+typeCheckMiscOp :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> MiscOp r i -> m i o (Type r o)
 typeCheckMiscOp effs = \case
   Select p x y -> do
     p |: (BaseTy $ Scalar Word8Type)
@@ -543,7 +543,7 @@ checkSomeSumType = \case
     return cases
   t -> error $ "not some sum type: " ++ pprint t
 
-typeCheckVectorOp :: (Typer m r, IRRep r) => VectorOp (Atom r i) -> m i o (Type r o)
+typeCheckVectorOp :: (Typer m r, IRRep r) => VectorOp r i -> m i o (Type r o)
 typeCheckVectorOp = \case
   VectorBroadcast v ty -> do
     ty'@(BaseTy (Vector _ sbt)) <- checkTypeE TyKind ty

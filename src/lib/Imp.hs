@@ -29,7 +29,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
-import GHC.Exts (inline)
 
 import Algebra
 import Builder
@@ -289,7 +288,6 @@ translateDeclNest decls cont = do
 
 translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
 translateExpr expr = confuseGHC >>= \_ -> case expr of
-  Hof hof -> toImpHof hof
   TopApp f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
@@ -305,9 +303,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     f <- atomToRepVal =<< substM f'
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
-  -- Inlining the traversal helps GHC sink the substM below the case inside toImpOp.
-  PrimOp op -> (inline traversePrimOp) substM op >>= toImpOp
-  RefOp refDest eff -> toImpRefOp refDest eff
+  PrimOp op -> toImpOp op
   Case e alts ty _ -> do
     e' <- substM e
     case trySelectBranch e' of
@@ -329,30 +325,6 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
                  extendSubst (b @> SubstVal (sink xs)) $
                    translateBlock body >>= storeAtom (sink dest)
             loadAtom dest
-  DAMOp damOp -> case damOp of
-    Seq d ixDict carry f -> do
-      UnaryLamExpr b body <- return f
-      ixTy <- ixTyFromDict =<< substM ixDict
-      carry' <- substM carry
-      n <- indexSetSizeImp ixTy
-      emitLoop (getNameHint b) d n \i -> do
-        idx <- unsafeFromOrdinalImp (sink ixTy) i
-        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
-          translateBlock body
-      return carry'
-    RememberDest d f -> do
-      UnaryLamExpr b body <- return f
-      d' <- substM d
-      void $ extendSubst (b @> SubstVal d') $ translateBlock body
-      return d'
-    Place ref val -> do
-      val' <- substM val
-      refDest <- atomToDest =<< substM ref
-      storeAtom refDest val' >> return UnitVal
-    Freeze ref -> loadAtom =<< atomToDest =<< substM ref
-    AllocDest ty  -> do
-      d <- liftM destToAtom $ allocDest =<< substM ty
-      return d
   TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
 
 toImpRefOp :: Emits o
@@ -402,21 +374,53 @@ toImpRefOp refDest' m = do
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
 
-toImpOp :: forall i o .
-           Emits o => PrimOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
+  Hof hof -> toImpHof hof
+  RefOp refDest eff -> toImpRefOp refDest eff
+  DAMOp damOp -> case damOp of
+    Seq d ixDict carry f -> do
+      UnaryLamExpr b body <- return f
+      ixTy <- ixTyFromDict =<< substM ixDict
+      carry' <- substM carry
+      n <- indexSetSizeImp ixTy
+      emitLoop (getNameHint b) d n \i -> do
+        idx <- unsafeFromOrdinalImp (sink ixTy) i
+        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
+          translateBlock body
+      return carry'
+    RememberDest d f -> do
+      UnaryLamExpr b body <- return f
+      d' <- substM d
+      void $ extendSubst (b @> SubstVal d') $ translateBlock body
+      return d'
+    Place ref val -> do
+      val' <- substM val
+      refDest <- atomToDest =<< substM ref
+      storeAtom refDest val' >> return UnitVal
+    Freeze ref -> loadAtom =<< atomToDest =<< substM ref
+    AllocDest ty  -> do
+      d <- liftM destToAtom $ allocDest =<< substM ty
+      return d
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
-  MemOp memOp -> toImpMemOp memOp
-  MiscOp miscOp -> toImpMiscOp miscOp
-  VectorOp (VectorBroadcast val vty) -> do
-    val' <- fsa val
+  MemOp    op' -> toImpMemOp    =<< substM op'
+  MiscOp   op' -> toImpMiscOp   =<< substM op'
+  VectorOp op' -> toImpVectorOp =<< substM op'
+  where
+    fsa x = substM x >>= fromScalarAtom
+    returnIExprVal x = return $ toScalarAtom x
+
+toImpVectorOp :: Emits o => VectorOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpVectorOp = \case
+  VectorBroadcast val vty -> do
+    val' <- fromScalarAtom val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
-  VectorOp (VectorIota vty) -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
-  VectorOp (VectorSubref ref i vty) -> do
+  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
+  VectorSubref ref i vty -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
-    refi' <- fsa refi
+    refi' <- fromScalarAtom refi
     let PtrType (addrSpace, _) = getIType refi'
     case vty of
       BaseTy vty'@(Vector _ _) -> do
@@ -424,10 +428,9 @@ toImpOp op = case op of
         repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
       _ -> error "Expected a vector type"
   where
-    fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpMiscOp :: Emits o => MiscOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpMiscOp :: Emits o => MiscOp SimpIR o -> SubstImpM i o (SAtom o)
 toImpMiscOp op = case op of
   ThrowError resultTy -> do
     emitStatement IThrowError
@@ -480,11 +483,11 @@ toImpMiscOp op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpMemOp :: forall i o . Emits o => MemOp (SAtom o) -> SubstImpM i o (SAtom o)
+toImpMemOp :: forall i o . Emits o => MemOp SimpIR o -> SubstImpM i o (SAtom o)
 toImpMemOp op = case op of
-  IOAlloc ty n -> do
+  IOAlloc n -> do
     n' <- fsa n
-    ptr <- emitInstr $ Alloc CPU ty n'
+    ptr <- emitInstr $ Alloc CPU (Scalar Word8Type) n'
     returnIExprVal ptr
   IOFree ptr -> do
     ptr' <- fsa ptr

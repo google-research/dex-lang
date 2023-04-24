@@ -914,6 +914,7 @@ checkOrInferRho
 checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
  addSrcContext pos $ confuseGHC >>= \_ -> case expr of
   UVar _ -> inferAndInstantiate
+  ULit l -> matchRequirement $ Con $ Lit l
   ULam lamExpr -> do
     case reqTy of
       Check (Pi piTy) -> Lam <$> checkULam lamExpr piTy
@@ -925,7 +926,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
       Check _ -> inferUForExpr uFor
       Infer   -> inferUForExpr uFor
     IxType _ ixDict <- asIxType $ binderType b'
-    result <- liftM Var $ emitHinted hint $ Hof $ For dir ixDict lam
+    result <- liftM Var $ emitHinted hint $ PrimOp $ Hof $ For dir ixDict lam
     matchRequirement result
   UApp f posArgs namedArgs -> do
     f' <- inferWithoutInstantiation f >>= zonk
@@ -1450,37 +1451,33 @@ matchPrimApp = \case
  UFin                -> \case ~[n] -> return $ NewtypeTyCon (Fin n)
  UEffectRowKind      -> \case ~[]  -> return $ NewtypeTyCon EffectRowKind
  UNatCon             -> \case ~[x] -> return $ NewtypeCon NatCon x
- UPrimTC  tc  -> \xs -> TC  <$> restructurePrim tc  xs
- UPrimCon con -> \xs -> Con <$> restructurePrim con xs
- UPrimOp  op         -> \xs -> ee =<< (PrimOp          <$> restructurePrim op xs)
- UMAsk      -> \case ~[r]    -> ee $ RefOp r MAsk
- UMGet      -> \case ~[r]    -> ee $ RefOp r MGet
- UMPut      -> \case ~[r, x] -> ee $ RefOp r $ MPut x
- UIndexRef  -> \case ~[r, i] -> ee $ RefOp r $ IndexRef i
- UApplyMethod i -> \case ~(d:args) -> ee $ ApplyMethod d i args
- ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Linearize f' x
- UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; ee $ Hof $ Transpose f' x
- URunReader -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunReader x f'
- URunState  -> \case ~[x, f]  -> do f' <- lam2 f; ee $ Hof $ RunState  Nothing x f'
- UWhile     -> \case ~[f]     -> do f' <- lam0 f; ee $ Hof $ While f'
- URunIO     -> \case ~[f]     -> do f' <- lam0 f; ee $ Hof $ RunIO f'
- UCatchException-> \case ~[f] -> do f' <- lam0 f; ee $ Hof $ CatchException f'
- UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; ee $ RefOp r $ MExtend (BaseMonoid z f') x
+ UBaseType b         -> \case ~[]  -> return $ TC $ BaseType b
+ UPrimTC op -> return . TC  . matchGenericOp (Right op)
+ UCon    op -> return . Con . matchGenericOp (Right op)
+ UMiscOp op -> emitOp . MiscOp . matchGenericOp op
+ UMemOp  op -> emitOp . MemOp  . matchGenericOp op
+ UBinOp op -> \case ~[x, y] -> emitOp $ BinOp op x y
+ UUnOp  op -> \case ~[x]    -> emitOp $ UnOp  op x
+ UMAsk      -> \case ~[r]    -> emitOp $ RefOp r MAsk
+ UMGet      -> \case ~[r]    -> emitOp $ RefOp r MGet
+ UMPut      -> \case ~[r, x] -> emitOp $ RefOp r $ MPut x
+ UIndexRef  -> \case ~[r, i] -> emitOp $ RefOp r $ IndexRef i
+ UApplyMethod i -> \case ~(d:args) -> emitExpr $ ApplyMethod d i args
+ ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Linearize f' x
+ UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Transpose f' x
+ URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunReader x f'
+ URunState  -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunState  Nothing x f'
+ UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ While f'
+ URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ RunIO f'
+ UCatchException-> \case ~[f] -> do f' <- lam0 f; emitOp $ CatchException f'
+ UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitOp $ RefOp r $ MExtend (BaseMonoid z f') x
  URunWriter -> \args -> do
    [idVal, combiner, f] <- return args
    combiner' <- lam2 combiner
    f' <- lam2 f
-   ee $ Hof $ RunWriter Nothing (BaseMonoid idVal combiner') f'
+   emitOp $ RunWriter Nothing (BaseMonoid idVal combiner') f'
  p -> \case xs -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
  where
-   ee = emitExpr
-
-   restructurePrim :: Traversable f => f () -> [CAtom o] -> InfererM i o (f (CAtom o))
-   restructurePrim voidPrim args = do
-     when (length voidPrim /= length args) $ throw TypeErr $
-       "Wrong number of args. Expected " <> show (length voidPrim) <> " got " <> show (length args)
-     return $ restructure args voidPrim
-
    lam2 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)
    lam2 x = do
      ExplicitCoreLam (BinaryNest b1 b2) body <- return x
@@ -1495,6 +1492,9 @@ matchPrimApp = \case
    lam0 x = do
      ExplicitCoreLam Empty body <- return x
      return body
+
+   matchGenericOp :: GenericOp op => OpConst op CoreIR -> [CAtom n] -> op CoreIR n
+   matchGenericOp op xs = fromJust $ toOp $ GenericOpRep op xs []
 
 pattern ExplicitCoreLam :: Nest CBinder n l -> CBlock l -> CAtom n
 pattern ExplicitCoreLam bs body <- Lam (CoreLamExpr _ (LamExpr bs body))
@@ -2385,10 +2385,10 @@ instance Unifiable (Atom CoreIR) where
       (Pi piTy, Pi piTy') -> unify piTy piTy'
       (TabPi piTy, TabPi piTy') -> unifyTabPiType piTy piTy'
       (TC con, TC con') -> do
-        guard $ sameConstructor con con'
-        -- TODO: Optimize this!
-        guard $ void con == void con'
-        zipWithM_ unify (toList con) (toList con')
+        GenericOpRep name  xs  [] <- return $ fromEGenericOpRep con
+        GenericOpRep name' xs' [] <- return $ fromEGenericOpRep con'
+        guard $ name == name' && length xs == length xs'
+        zipWithM_ unify xs xs'
       (Eff eff, Eff eff') -> unify eff eff'
       (DictTy d, DictTy d') -> unify d d'
       (NewtypeTyCon con, NewtypeTyCon con') -> unify con con'

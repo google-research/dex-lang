@@ -40,7 +40,7 @@ simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
       body <- buildBlock do
         simplifyEqns eqns do
           outs <- (map fst) <$> mapM simplifyAtom outvars
-          return $ Con $ P.ProdCon $ outs
+          return $ Con $ ProdCon $ outs
       return $ LamExpr (invarsB >>> constvarsB) body
 
 simplifyJBinders
@@ -104,7 +104,7 @@ simplifyAtom = \case
         Rename nm' -> return (Var nm', ty)
   -- TODO In Jax, literals can presumably include (large) arrays.  How should we
   -- represent them here?
-  JLiteral (JLit {..}) -> return (Con (P.Lit (P.Float32Lit 0.0)), ty)
+  JLiteral (JLit {..}) -> return (Con (Lit (P.Float32Lit 0.0)), ty)
 
 simplifyPrim :: Emits o
   => [(SAtom o, JVarType)] -> Primitive -> JaxSimpM i o [SAtom o]
@@ -119,7 +119,7 @@ unaryExpandRank :: forall i o. Emits o
 unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
-    [] -> emitExprToAtom $ PrimOp (P.UnOp op arg')
+    [] -> emitExprToAtom $ PrimOp (UnOp op arg')
     (DimSize sz:rest) -> buildFor noHint P.Fwd (finIxTy sz) \i -> do
       ixed <- emitExprToAtom $ TabApp (sink arg') [Var i]
       go ixed rest

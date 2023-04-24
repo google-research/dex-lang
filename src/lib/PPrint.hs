@@ -15,7 +15,6 @@ module PPrint (
 import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
 import GHC.Float
-import Control.Monad (void)
 import Data.Foldable (toList, fold)
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.Map.Strict as M
@@ -164,20 +163,10 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TopApp f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
-  prettyPrec (UserEffectOp op) = prettyPrec op
   prettyPrec (PrimOp op) = prettyPrec op
-  prettyPrec (DAMOp op) = prettyPrec op
   prettyPrec (ApplyMethod d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
-  prettyPrec (RefOp ref eff) = atPrec LowestPrec case eff of
-    MAsk        -> "ask" <+> pApp ref
-    MExtend _ x -> "extend" <+> pApp ref <+> pApp x
-    MGet        -> "get" <+> pApp ref
-    MPut x      -> pApp ref <+> ":=" <+> pApp x
-    IndexRef i  -> pApp ref <+> "!" <+> pApp i
-    ProjRef  i  -> "proj" <+> pApp ref <+> p i
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -621,6 +610,7 @@ instance Pretty (UBlock' n) where
 instance Pretty (UExpr' n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UExpr' n) where
   prettyPrec expr = case expr of
+    ULit l -> prettyPrec l
     UVar v -> atPrec ArgPrec $ p v
     ULam lam -> prettyPrec lam
     UApp    f xs named -> atPrec AppPrec $ pAppArg (pApp f) xs <+> p named
@@ -846,9 +836,9 @@ instance Pretty (ImpInstr n)  where
     DebugPrint s x -> "debug_print" <+> p (show s) <+> p x
     IPtrLoad ptr   -> "load" <+> p ptr
     IPtrOffset ptr idx -> p ptr <+> "+>" <+> p idx
-    IBinOp op x y -> opDefault (UPrimOp $ BinOp op () ()) [x, y]
-    IUnOp  op x   -> opDefault (UPrimOp $ UnOp  op ()   ) [x]
-    ISelect x y z -> opDefault (UPrimOp $ MiscOp (Select () () ())) [x, y, z]
+    IBinOp op x y -> opDefault (UBinOp op) [x, y]
+    IUnOp  op x   -> opDefault (UUnOp  op) [x]
+    ISelect x y z -> "select" <+> p x <+> p y <+> p z
     IOutputStream -> "outputStream"
     IShowScalar ptr x -> "show_scalar" <+> p ptr <+> p x
     where opDefault name xs = prettyOpDefault name xs $ AppPrec
@@ -878,8 +868,8 @@ instance PrettyPrec ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance PrettyPrec e => Pretty (PrimTC r e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimTC r e) where
+instance IRRep r => Pretty (TC r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (TC r n) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "()"
@@ -914,40 +904,45 @@ instance PrettyPrec (NewtypeTyCon n) where
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) $ ignoreSynthParams (TyConParams infs params)
 
-instance (IRRep r, PrettyPrec e) => Pretty (PrimCon r e) where pretty = prettyFromPrettyPrec
-instance (IRRep r, PrettyPrec e) => PrettyPrec (PrimCon r e) where
-  prettyPrec = prettyPrecPrimCon
--- TODO: Define Show instances in user-space and avoid those overlapping instances!
-instance IRRep r => Pretty (PrimCon r (Atom r n)) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (PrimCon r (Atom r n)) where
-  prettyPrec con = prettyPrecPrimCon con
+instance IRRep r => Pretty (Con r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (Con r n) where
+  prettyPrec = \case
+    Lit l        -> prettyPrec l
+    ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
+    ProdCon xs  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(" ")" ", " $ fmap pLowest xs
+    SumCon _ tag payload -> atPrec ArgPrec $
+      "(" <> p tag <> "|" <+> pApp payload <+> "|)"
+    HeapVal -> atPrec ArgPrec "HeapValue"
 
-prettyPrecPrimCon :: PrettyPrec e => PrimCon r e -> DocPrec ann
-prettyPrecPrimCon con = case con of
-  Lit l        -> prettyPrec l
-  ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
-  ProdCon xs  -> atPrec ArgPrec $ align $ group $
-    encloseSep "(" ")" ", " $ fmap pLowest xs
-  SumCon _ tag payload -> atPrec ArgPrec $
-    "(" <> p tag <> "|" <+> pApp payload <+> "|)"
-  HeapVal -> atPrec ArgPrec "HeapValue"
-
-instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (PrimOp e) where
+instance IRRep r => Pretty (PrimOp r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (PrimOp r n) where
   prettyPrec = \case
     MemOp    op -> prettyPrec op
     VectorOp op -> prettyPrec op
-    op -> prettyOpDefault (UPrimOp $ void op) (toList op)
+    DAMOp op -> prettyPrec op
+    UserEffectOp op -> prettyPrec op
+    Hof hof -> prettyPrec hof
+    RefOp ref eff -> atPrec LowestPrec case eff of
+      MAsk        -> "ask" <+> pApp ref
+      MExtend _ x -> "extend" <+> pApp ref <+> pApp x
+      MGet        -> "get" <+> pApp ref
+      MPut x      -> pApp ref <+> ":=" <+> pApp x
+      IndexRef i  -> pApp ref <+> "!" <+> pApp i
+      ProjRef  i  -> "proj" <+> pApp ref <+> p i
+    UnOp  op x   -> prettyOpDefault (UUnOp  op) [x]
+    BinOp op x y -> prettyOpDefault (UBinOp op) [x, y]
+    MiscOp op -> prettyOpGeneric op
 
-instance PrettyPrec e => Pretty (MemOp e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (MemOp e) where
+instance IRRep r => Pretty (MemOp r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (MemOp r n) where
   prettyPrec = \case
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
-    op -> prettyOpDefault (UPrimOp $ MemOp $ void op) (toList op)
+    op -> prettyOpGeneric op
 
-instance PrettyPrec e => Pretty (VectorOp e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (VectorOp e) where
+instance IRRep r => Pretty (VectorOp r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (VectorOp r n) where
   prettyPrec = \case
     VectorBroadcast v vty -> atPrec LowestPrec $ "vbroadcast" <+> pApp v <+> pApp vty
     VectorIota vty -> atPrec LowestPrec $ "viota" <+> pApp vty
@@ -959,6 +954,11 @@ prettyOpDefault name args =
     0 -> atPrec ArgPrec primName
     _ -> atPrec AppPrec $ pAppArg primName args
   where primName = p name
+
+prettyOpGeneric :: (IRRep r, GenericOp op, Show (OpConst op r)) => op r n -> DocPrec ann
+prettyOpGeneric op = case fromEGenericOpRep op of
+  GenericOpRep op' [] [] -> atPrec ArgPrec (p $ show op')
+  GenericOpRep op' xs lams -> atPrec AppPrec $ pAppArg (p (show op')) xs <+> p lams
 
 instance Pretty PrimName where
    pretty primName = p $ "%" ++ showPrimName primName

@@ -216,7 +216,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (Hof (For _ _ (UnaryLamExpr _ body))) = 1 + ixDepthBlock body
+    ixDepthExpr (PrimOp (Hof (For _ _ (UnaryLamExpr _ body)))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
     ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
@@ -398,20 +398,13 @@ instance Inlinable (Name SpecializedDictNameC) where
   inline ctx n = substM n >>= reconstruct ctx
 instance Inlinable (Name TopFunNameC) where
   inline ctx n = substM n >>= reconstruct ctx
-
-instance Inlinable e => Inlinable (ComposeE PrimOp e) where
-  inline ctx (ComposeE op) =
-    (ComposeE <$> traverse (inline Stop) op) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE (PrimCon SimpIR) e) where
-  inline ctx (ComposeE con) =
-    (ComposeE <$> traverse (inline Stop) con) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE (PrimTC SimpIR) e) where
-  inline ctx (ComposeE tc) =
-    (ComposeE <$> traverse (inline Stop) tc) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
+instance Inlinable (GenericOpRep const SimpIR)
+instance Inlinable (PrimOp SimpIR)
+instance Inlinable (MemOp SimpIR)
+instance Inlinable (VectorOp SimpIR)
+instance Inlinable (MiscOp SimpIR)
+instance Inlinable (Con SimpIR)
+instance Inlinable (TC SimpIR)
 instance Inlinable (LamExpr SimpIR)
 instance Inlinable (TabPiType SimpIR)
 instance Inlinable (DepPairType SimpIR)

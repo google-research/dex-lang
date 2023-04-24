@@ -33,6 +33,7 @@ import Name
 import Types.Core
 import Types.Source
 import Types.Primitives
+import qualified Types.OpNames as P
 import Util
 
 -- TODO: implement this more efficiently rather than just parsing the whole
@@ -826,7 +827,7 @@ primNames = M.fromList
   , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
   , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
   , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  , ("TyKind"    , UPrimTC $ TypeKind)
+  , ("TyKind"    , UPrimTC $ P.TypeKind)
   , ("Float64"   , baseTy $ Scalar Float64Type)
   , ("Float32"   , baseTy $ Scalar Float32Type)
   , ("Int64"     , baseTy $ Scalar Int64Type)
@@ -844,38 +845,37 @@ primNames = M.fromList
   , ("Fin"           , UFin)
   , ("EffKind"       , UEffectRowKind)
   , ("NatCon"        , UNatCon)
-  , ("Ref"       , UPrimTC $ RefType () ())
-  , ("HeapType"  , UPrimTC $ HeapType)
+  , ("Ref"       , UPrimTC $ P.RefType)
+  , ("HeapType"  , UPrimTC $ P.HeapType)
   , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ IOAlloc (Scalar Word8Type) ())
-  , ("free"     , memOp $ IOFree ())
-  , ("ptrOffset", memOp $ PtrOffset () ())
-  , ("ptrLoad"  , memOp $ PtrLoad ())
-  , ("ptrStore" , memOp $ PtrStore () ())
-  , ("throwError"    , miscOp $ ThrowError ())
-  , ("throwException", miscOp $ ThrowException ())
-  , ("dataConTag"    , miscOp $ SumTag ())
-  , ("toEnum"        , miscOp $ ToEnum () ())
-  , ("outputStream"  , miscOp $ OutputStream)
-  , ("cast"          , miscOp $ CastOp () ())
-  , ("bitcast"       , miscOp $ BitcastOp () ())
-  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce () ())
-  , ("garbageVal"    , miscOp $ GarbageVal ())
-  , ("select"        , miscOp $ Select () () ())
-  , ("showAny"       , miscOp $ ShowAny ())
-  , ("showScalar"    , miscOp $ ShowScalar ())
+  , ("alloc"    , memOp $ P.IOAlloc)
+  , ("free"     , memOp $ P.IOFree)
+  , ("ptrOffset", memOp $ P.PtrOffset)
+  , ("ptrLoad"  , memOp $ P.PtrLoad)
+  , ("ptrStore" , memOp $ P.PtrStore)
+  , ("throwError"    , miscOp $ P.ThrowError)
+  , ("throwException", miscOp $ P.ThrowException)
+  , ("dataConTag"    , miscOp $ P.SumTag)
+  , ("toEnum"        , miscOp $ P.ToEnum)
+  , ("outputStream"  , miscOp $ P.OutputStream)
+  , ("cast"          , miscOp $ P.CastOp)
+  , ("bitcast"       , miscOp $ P.BitcastOp)
+  , ("unsafeCoerce"  , miscOp $ P.UnsafeCoerce)
+  , ("garbageVal"    , miscOp $ P.GarbageVal)
+  , ("select"        , miscOp $ P.Select)
+  , ("showAny"       , miscOp $ P.ShowAny)
+  , ("showScalar"    , miscOp $ P.ShowScalar)
   , ("projNewtype" , UProjNewtype)
   , ("applyMethod0" , UApplyMethod 0)
   , ("applyMethod1" , UApplyMethod 1)
   , ("applyMethod2" , UApplyMethod 2)
-  , ("pair"         , UPrimCon $ ProdCon [(), ()])
   , ("explicitApply", UExplicitApply)
   , ("monoLit", UMonoLiteral)
   ]
   where
-    binary op = UPrimOp $ BinOp op () ()
-    baseTy b = UPrimTC $ BaseType b
-    memOp op = UPrimOp $ MemOp op
-    unary  op = UPrimOp $ UnOp  op ()
+    binary op = UBinOp op
+    baseTy b  = UBaseType b
+    memOp op  = UMemOp op
+    unary  op = UUnOp  op
     ptrTy  ty = PtrType (CPU, ty)
-    miscOp op = UPrimOp $ MiscOp op
+    miscOp op = UMiscOp op

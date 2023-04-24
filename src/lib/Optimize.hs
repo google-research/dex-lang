@@ -42,7 +42,7 @@ optimize = dceTop     -- Clean up user code
 
 -- === Peephole optimizations ===
 
-peepholeOp :: PrimOp (Atom SimpIR o) -> EnvReaderM o (Either (SAtom o) (PrimOp (Atom SimpIR o)))
+peepholeOp :: PrimOp SimpIR o -> EnvReaderM o (Either (SAtom o) (PrimOp SimpIR o))
 peepholeOp op = case op of
   MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case foldCast sTy l of
     Just l' -> lit l'
@@ -228,7 +228,7 @@ instance HoistableState ULS where
 -- constant-foldable after inlining don't count towards it.
 instance GenericTraverser SimpIR UnitB ULS where
   traverseInlineExpr expr = case expr of
-    Hof (For Fwd ixDict body) ->
+    PrimOp (Hof (For Fwd ixDict body)) ->
       case ixDict of
         IxDictRawFin (IdxRepVal n) -> do
           (body', bodyCost) <- withLocalAccounting $ traverseGenericE body
@@ -249,7 +249,7 @@ instance GenericTraverser SimpIR UnitB ULS where
             False -> do
               inc bodyCost
               ixDict' <- traverseGenericE ixDict
-              return $ Right $ Hof $ For Fwd ixDict' body'
+              return $ Right $ PrimOp $ Hof $ For Fwd ixDict' body'
         _ -> nothingSpecial
     -- Avoid unrolling loops with large table literals
     TabCon _ _ els -> inc (length els) >> nothingSpecial
@@ -300,7 +300,7 @@ instance HoistableState LICMS where
 
 instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
-    DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body)) -> do
+    PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
       ix' <- substM ix
       dests' <- traverse traverseAtom dests
       let numCarriesOriginal = length dests'
@@ -324,8 +324,8 @@ instance GenericTraverser SimpIR UnitB LICMS where
         let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
         block <- applySubst s bodyAbs >>= makeBlockFromDecls
         return $ UnaryLamExpr lb' block
-      return $ DAMOp $ Seq dir ix' dests'' body'
-    Hof (For dir ix (LamExpr (UnaryNest b) body)) -> do
+      return $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
+    PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
       ix' <- substM ix
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         Block _ decls ans <- traverseGenericE body
@@ -336,7 +336,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
       body' <- withFreshBinder noHint ixTy \i -> do
         block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
         return $ UnaryLamExpr i block
-      return $ Hof $ For dir ix' body'
+      return $ PrimOp $ Hof $ For dir ix' body'
     expr -> traverseExprDefault expr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
@@ -369,7 +369,7 @@ seqLICM !top !topDestNames !lb !reg decls ans = case decls of
             withSubscopeDistinct lbreg $ withExtEvidence b' $
               extendRenamer (bb@>sink (binderName b')) do
                 extraTopDestNames <- return case b' of
-                  Let bn (DeclBinding _ _ (DAMOp (AllocDest _))) -> [binderName bn]
+                  Let bn (DeclBinding _ _ (PrimOp (DAMOp (AllocDest _)))) -> [binderName bn]
                   _ -> []
                 seqLICM (RNest top b') (extraTopDestNames ++ sinkList topDestNames) lb' reg' bs ans
               where
@@ -504,7 +504,14 @@ instance HasDCE (EffectRow     SimpIR)
 instance HasDCE (Effect        SimpIR)
 instance HasDCE (DeclBinding   SimpIR)
 instance HasDCE (DAMOp         SimpIR)
+instance HasDCE (Con           SimpIR)
+instance HasDCE (PrimOp        SimpIR)
+instance HasDCE (MemOp         SimpIR)
+instance HasDCE (MiscOp        SimpIR)
+instance HasDCE (VectorOp      SimpIR)
+instance HasDCE (TC            SimpIR)
 instance HasDCE (IxDict        SimpIR)
+instance HasDCE (GenericOpRep c SimpIR)
 
 -- The instances for RepE types
 

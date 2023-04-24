@@ -143,7 +143,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- getType ct >>= tangentBaseMonoidFor
-  void $ liftM Var $ emit $ RefOp ref $ MExtend baseMonoid ct
+  void $ emitOp $ RefOp ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomName o]
 getLinRegions = asks fromListE
@@ -223,9 +223,31 @@ transposeExpr expr ct = case expr of
           LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
+  Case e alts _ _ -> do
+    linearScrutinee <- isLin e
+    case linearScrutinee of
+      True  -> notImplemented
+      False -> do
+        e' <- substNonlin e
+        void $ buildCase e' UnitTy \i v -> do
+          v' <- emit (Atom v)
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> RenameNonlin v') do
+            transposeBlock body (sink ct)
+          return UnitVal
+  TabCon _ ty es -> do
+    TabTy b _ <- return ty
+    idxTy <- substNonlin $ binderAnn b
+    forM_ (enumerate es) \(ordinalIdx, e) -> do
+      i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
+      tabApp ct i >>= transposeAtom e
+
+transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
+transposeOp op ct = case op of
+  DAMOp _        -> error "unreachable" -- TODO: rule out statically
   RefOp refArg m   -> do
     refArg' <- substNonlin refArg
-    let emitEff = liftM Var . emit . RefOp refArg'
+    let emitEff = emitOp . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- getType ct >>= tangentBaseMonoidFor
@@ -242,28 +264,6 @@ transposeExpr expr ct = case expr of
       IndexRef _ -> notImplemented
       ProjRef _  -> notImplemented
   Hof hof       -> transposeHof hof ct
-  Case e alts _ _ -> do
-    linearScrutinee <- isLin e
-    case linearScrutinee of
-      True  -> notImplemented
-      False -> do
-        e' <- substNonlin e
-        void $ buildCase e' UnitTy \i v -> do
-          v' <- emit (Atom v)
-          Abs b body <- return $ alts !! i
-          extendSubst (b @> RenameNonlin v') do
-            transposeBlock body (sink ct)
-          return UnitVal
-  DAMOp _        -> error "unreachable" -- TODO: rule out statically
-  TabCon _ ty es -> do
-    TabTy b _ <- return ty
-    idxTy <- substNonlin $ binderAnn b
-    forM_ (enumerate es) \(ordinalIdx, e) -> do
-      i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
-      tabApp ct i >>= transposeAtom e
-
-transposeOp :: Emits o => PrimOp (SAtom i) -> SAtom o -> TransposeM i o ()
-transposeOp op ct = case op of
   MiscOp miscOp   -> transposeMiscOp miscOp ct
   UnOp  FNeg x    -> transposeAtom x =<< neg ct
   UnOp  _    _    -> notLinear
@@ -282,7 +282,7 @@ transposeOp op ct = case op of
     notLinear = error $ "Can't transpose a non-linear operation: " ++ pprint op
     unreachable = error $ "Shouldn't appear in transposition: " ++ pprint op
 
-transposeMiscOp :: Emits o => MiscOp (SAtom i) -> SAtom o -> TransposeM i o ()
+transposeMiscOp :: Emits o => MiscOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeMiscOp op _ = case op of
   ThrowError   _        -> notLinear
   SumTag _              -> notLinear
@@ -327,7 +327,8 @@ transposeAtom atom ct = case atom of
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
 transposeHof hof ct = case hof of
-  For ann d (UnaryLamExpr b  body) -> do
+  For ann d lam -> do
+    UnaryLamExpr b  body <- return lam
     ixTy <- ixTyFromDict =<< substNonlin d
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (Var i)

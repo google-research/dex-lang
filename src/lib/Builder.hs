@@ -67,8 +67,8 @@ emitHinted :: (Builder r m, Emits n) => NameHint -> Expr r n -> m n (AtomName r 
 emitHinted hint expr = emitDecl hint PlainLet expr
 {-# INLINE emitHinted #-}
 
-emitOp :: (Builder r m, Emits n) => PrimOp (Atom r n) -> m n (Atom r n)
-emitOp op = Var <$> emit (PrimOp op)
+emitOp :: (Builder r m, IsPrimOp e, Emits n) => e r n -> m n (Atom r n)
+emitOp op = Var <$> emit (PrimOp $ toPrimOp op)
 {-# INLINE emitOp #-}
 
 emitExpr :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
@@ -815,7 +815,7 @@ buildForAnn hint ann (IxType iTy ixDict) body = do
     let v = binderName b
     body' <- buildBlock $ body $ sink v
     return $ LamExpr (UnaryNest b) body'
-  emitExpr $ Hof $ For ann ixDict lam
+  emitExpr $ PrimOp $ Hof $ For ann ixDict lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
          => NameHint -> Direction -> IxType r n
@@ -845,7 +845,7 @@ emitRunWriter
   -> m n (Atom r n)
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam hint accTy \h ref -> body h ref
-  emitExpr $ Hof $ RunWriter Nothing bm lam
+  emitExpr $ PrimOp $ Hof $ RunWriter Nothing bm lam
 
 emitRunState
   :: (Emits n, ScopableBuilder r m)
@@ -855,7 +855,7 @@ emitRunState
 emitRunState hint initVal body = do
   stateTy <- getType initVal
   lam <- buildEffLam hint stateTy \h ref -> body h ref
-  emitExpr $ Hof $ RunState Nothing initVal lam
+  emitExpr $ PrimOp $ Hof $ RunState Nothing initVal lam
 
 emitRunReader
   :: (Emits n, ScopableBuilder r m)
@@ -865,7 +865,7 @@ emitRunReader
 emitRunReader hint r body = do
   rTy <- getType r
   lam <- buildEffLam hint rTy \h ref -> body h ref
-  emitExpr $ Hof $ RunReader r lam
+  emitExpr $ PrimOp $ Hof $ RunReader r lam
 
 -- === vector space (ish) type class ===
 
@@ -1042,7 +1042,7 @@ getNaryProjRef [] ref = return ref
 getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
 getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
-getProjRef i r = emitExpr $ RefOp r $ ProjRef i
+getProjRef i r = emitExpr $ PrimOp $ RefOp r $ ProjRef i
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
@@ -1130,7 +1130,7 @@ naryTabAppHinted :: (Builder r m, Emits n)
 naryTabAppHinted hint f xs = Var <$> emitHinted hint (TabApp f xs)
 
 indexRef :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-indexRef ref i = emitExpr $ RefOp ref $ IndexRef i
+indexRef ref i = emitExpr $ PrimOp $ RefOp ref $ IndexRef i
 
 naryIndexRef :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryIndexRef ref is = foldM indexRef ref is
@@ -1143,7 +1143,7 @@ ptrOffset x i = emitOp $ MemOp $ PtrOffset x i
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unsafePtrLoad x = do
   body <- liftEmitBuilder $ buildBlock $ emitOp . MemOp . PtrLoad =<< sinkM x
-  emitExpr $ Hof $ RunIO body
+  emitExpr $ PrimOp $ Hof $ RunIO body
 
 -- === index set type class ===
 
@@ -1230,7 +1230,7 @@ reduceE monoid xs = liftEmitBuilder do
   getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
     buildFor noHint Fwd (sink ty) \i -> do
       x <- tabApp (sink xs) (Var i)
-      emitExpr $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
+      emitExpr $ PrimOp $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
 
 andMonoid :: (EnvReader m, IRRep r) => m n (BaseMonoid r n)
 andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
@@ -1263,7 +1263,7 @@ emitWhile :: (Emits n, ScopableBuilder r m)
           -> m n ()
 emitWhile cont = do
   body <- buildBlock cont
-  void $ emit $ Hof $ While body
+  void $ emit $ PrimOp $ Hof $ While body
 
 -- Dex implementation, for reference
 -- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =
@@ -1287,7 +1287,7 @@ runMaybeWhile body = do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
-        (emit (RefOp (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
+        (emit (PrimOp $ RefOp (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
         (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)

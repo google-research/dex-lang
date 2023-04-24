@@ -33,6 +33,7 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Name
+import qualified Types.OpNames as P
 import IRVariants
 import Err
 import Util (File (..))
@@ -235,6 +236,7 @@ data UDecl' (n::S) (l::S) where
 type UExpr = WithSrcE UExpr'
 data UExpr' (n::S) =
    UVar (SourceNameOr UVar n)
+ | ULit LitVal
  | ULam (ULamExpr n)
  | UPi  (UPiExpr n)
  | UApp (UExpr n) [UExpr n] [UNamedArg n]
@@ -541,18 +543,22 @@ data EnvQuery =
 -- === Primitive names ===
 
 data PrimName =
-    UPrimTC  (PrimTC CoreIR ())
-  | UPrimCon (PrimCon CoreIR ())
-  | UPrimOp  (PrimOp ())
-  | UMAsk | UMExtend | UMGet | UMPut
-  | UWhile | ULinearize | UTranspose
-  | URunReader | URunWriter | URunState | URunIO | UCatchException
-  | UProjNewtype | UExplicitApply | UMonoLiteral
-  | UIndexRef | UApplyMethod Int
-  | UNat | UNatCon | UFin
-  | UEffectRowKind
-  | UTuple -- overloaded for type constructor and data constructor, resolved in inference
-    deriving (Show, Eq)
+   UBaseType BaseType
+ | UPrimTC   P.TC
+ | UCon      P.Con
+ | UMemOp    P.MemOp
+ | UVectorOp P.VectorOp
+ | UMiscOp   P.MiscOp
+ | UUnOp     UnOp
+ | UBinOp    BinOp
+ | UMAsk | UMExtend | UMGet | UMPut
+ | UWhile | ULinearize | UTranspose
+ | URunReader | URunWriter | URunState | URunIO | UCatchException
+ | UProjNewtype | UExplicitApply | UMonoLiteral
+ | UIndexRef | UApplyMethod Int
+ | UNat | UNatCon | UFin | UEffectRowKind
+ | UTuple -- overloaded for type constructor and data constructor, resolved in inference
+   deriving (Show, Eq)
 
 -- === instances ===
 

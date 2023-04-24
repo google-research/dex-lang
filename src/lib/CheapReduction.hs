@@ -25,7 +25,6 @@ import Data.Functor.Identity
 import Data.Functor ((<&>))
 import qualified Data.List.NonEmpty    as NE
 import qualified Data.Map.Strict as M
-import GHC.Exts (inline)
 
 import Subst
 import Core
@@ -193,7 +192,7 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
         return $ TabPi $ TabPiType b' resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
-    Con con -> Con <$> (inline traversePrimCon) cheapReduceE con
+    Con con -> Con <$> traverseOp con cheapReduceE (error "unexpected lambda")
     DictCon d -> cheapReduceE d
     SimpInCore (LiftSimp t x) -> do
       t' <- cheapReduceE t
@@ -524,9 +523,16 @@ instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance SubstE AtomSubstVal UserEffectOp
 instance IRRep r => SubstE AtomSubstVal (DAMOp r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)
+instance IRRep r => SubstE AtomSubstVal (TC r)
+instance IRRep r => SubstE AtomSubstVal (Con r)
+instance IRRep r => SubstE AtomSubstVal (MiscOp r)
+instance IRRep r => SubstE AtomSubstVal (VectorOp r)
+instance IRRep r => SubstE AtomSubstVal (MemOp r)
+instance IRRep r => SubstE AtomSubstVal (PrimOp r)
 instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
 instance IRRep r => SubstE AtomSubstVal (Block r)
+instance IRRep r => SubstE AtomSubstVal (GenericOpRep const r)
 instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr

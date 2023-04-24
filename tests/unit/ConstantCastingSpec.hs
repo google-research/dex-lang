@@ -18,13 +18,14 @@ import Core
 import Name
 import Optimize
 import Runtime
+import IRVariants
 import TopLevel
 import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
 
-castOp :: ScalarBaseType -> (SAtom n) -> PrimOp (SAtom n)
+castOp :: ScalarBaseType -> (SAtom n) -> PrimOp SimpIR n
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
 
 castLam :: EnvExtender m => ScalarBaseType -> ScalarBaseType -> m n (SLam n)

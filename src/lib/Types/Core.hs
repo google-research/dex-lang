@@ -24,6 +24,7 @@
 module Types.Core (module Types.Core, SymbolicZeros (..)) where
 
 import Data.Word
+import Data.Maybe (fromJust)
 import Data.Functor
 import Data.Hashable
 import Data.Text.Prettyprint.Doc  hiding (nest)
@@ -39,6 +40,7 @@ import Err
 import Util (FileHash, SnocList (..), Tree (..))
 import IRVariants
 
+import qualified Types.OpNames as P
 import Types.Primitives
 import Types.Source
 import Types.Imp
@@ -84,14 +86,10 @@ data Expr r n where
  TabApp :: Atom r n -> [Atom r n]            -> Expr r n
  Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
- Hof    :: Hof r n                           -> Expr r n
  TabCon :: Maybe (WhenCore r Dict n) -> Type r n -> [Atom r n] -> Expr r n
- RefOp  :: Atom r n -> RefOp r n                -> Expr r n
- PrimOp :: PrimOp (Atom r n)                    -> Expr r n
+ PrimOp :: PrimOp r n                           -> Expr r n
  App             :: CAtom n -> [CAtom n]        -> Expr CoreIR n
- UserEffectOp    :: UserEffectOp n              -> Expr CoreIR n
  ApplyMethod     :: CAtom n -> Int -> [CAtom n] -> Expr CoreIR n
- DAMOp           :: DAMOp SimpIR n              -> Expr SimpIR n
 
 deriving instance IRRep r => Show (Expr r n)
 deriving via WrapE (Expr r) n instance IRRep r => Generic (Expr r n)
@@ -230,18 +228,10 @@ data CorePiType (n::S) where
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
 
-data Projection =
-   UnwrapNewtype -- TODO: add `HasCore r` constraint
- | ProjectProduct Int
-     deriving (Show, Eq, Generic)
-
 type Val  = Atom
 type Type = Atom
 type Kind = Type
 type Dict = Atom CoreIR
-
-type TC  r n = PrimTC  r (Atom r n)
-type Con r n = PrimCon r (Atom r n)
 
 -- A nest where the annotation of a binder cannot depend on the binders
 -- introduced before it. You can think of it as introducing a bunch of
@@ -250,7 +240,125 @@ type Con r n = PrimCon r (Atom r n)
 data NonDepNest r ann n l = NonDepNest (Nest (AtomNameBinder r) n l) [ann n]
                             deriving (Generic)
 
+-- === GenericOp class ===
+
+class IsPrimOp (e::IR->E) where
+  toPrimOp :: e r n -> PrimOp r n
+
+instance IsPrimOp PrimOp where
+  toPrimOp x = x
+
+class GenericOp (e::IR->E) where
+  type OpConst e (r::IR) :: *
+  fromOp :: e r n -> GenericOpRep (OpConst e r) r n
+  toOp   :: GenericOpRep (OpConst e r) r n -> Maybe (e r n)
+
+data GenericOpRep (const :: *) (r::IR) (n::S) =
+  GenericOpRep const [Atom r n] [LamExpr r n]
+  deriving (Show, Generic)
+
+instance GenericE (GenericOpRep const r) where
+  type RepE (GenericOpRep const r) = LiftE const `PairE` ListE (Atom r) `PairE` ListE (LamExpr r)
+  fromE (GenericOpRep c xs lams) = LiftE c `PairE` ListE xs `PairE` ListE lams
+  {-# INLINE fromE #-}
+  toE   (LiftE c `PairE` ListE xs `PairE` ListE lams) = GenericOpRep c xs lams
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE (GenericOpRep const r) where
+instance IRRep r => HoistableE (GenericOpRep const r) where
+instance (Eq const, IRRep r) => AlphaEqE (GenericOpRep const r)
+instance (Hashable const, IRRep r) => AlphaHashableE (GenericOpRep const r)
+instance IRRep r => RenameE (GenericOpRep const r) where
+  renameE env (GenericOpRep c xs ys) =
+    GenericOpRep c (map (renameE env) xs) (map (renameE env) ys)
+
+fromEGenericOpRep :: GenericOp e => e r n -> GenericOpRep (OpConst e r) r n
+fromEGenericOpRep = fromOp
+
+toEGenericOpRep :: GenericOp e => GenericOpRep (OpConst e r) r n -> e r n
+toEGenericOpRep = fromJust . toOp
+
+traverseOp
+  :: (GenericOp e, Monad m, OpConst e r ~ OpConst e r')
+  => e r i
+  -> (Atom r i -> m (Atom r' o))
+  -> (LamExpr r i -> m (LamExpr r' o))
+  -> m (e r' o)
+traverseOp op fAtom fLam = do
+  let GenericOpRep c atoms lams = fromOp op
+  atoms' <- mapM fAtom atoms
+  lams'  <- mapM fLam  lams
+  return $ fromJust $ toOp $ GenericOpRep c atoms' lams'
+
 -- === Various ops ===
+
+data TC (r::IR) (n::S) where
+  BaseType :: BaseType             -> TC r n
+  ProdType :: [Type r n]           -> TC r n
+  SumType  :: [Type r n]           -> TC r n
+  RefType  :: Atom r n -> Type r n -> TC r n
+  TypeKind ::                         TC r n   -- TODO: `HasCore r` constraint
+  HeapType ::                         TC r n
+  deriving (Show, Generic)
+
+data Con (r::IR) (n::S) where
+  Lit     :: LitVal                        -> Con r n
+  ProdCon :: [Atom r n]                    -> Con r n
+  SumCon  :: [Type r n] -> Int -> Atom r n -> Con r n -- type, tag, payload
+  HeapVal ::                                  Con r n
+  deriving (Show, Generic)
+
+data PrimOp (r::IR) (n::S) where
+ UnOp     :: P.UnOp  -> Atom r n             -> PrimOp r n
+ BinOp    :: P.BinOp -> Atom r n -> Atom r n -> PrimOp r n
+ MemOp    :: MemOp r n                       -> PrimOp r n
+ VectorOp :: VectorOp r n                    -> PrimOp r n
+ MiscOp   :: MiscOp r n                      -> PrimOp r n
+ Hof      :: Hof r n                         -> PrimOp r n
+ RefOp    :: Atom r n -> RefOp r n           -> PrimOp r n
+ DAMOp        :: DAMOp SimpIR n              -> PrimOp SimpIR n
+ UserEffectOp :: UserEffectOp n              -> PrimOp CoreIR n
+
+deriving instance IRRep r => Show (PrimOp r n)
+deriving via WrapE (PrimOp r) n instance IRRep r => Generic (PrimOp r n)
+
+data MemOp (r::IR) (n::S) =
+   IOAlloc (Atom r n)
+ | IOFree (Atom r n)
+ | PtrOffset (Atom r n) (Atom r n)
+ | PtrLoad (Atom r n)
+ | PtrStore (Atom r n) (Atom r n)
+   deriving (Show, Generic)
+
+data MiscOp (r::IR) (n::S) =
+   Select (Atom r n) (Atom r n) (Atom r n)        -- (3) predicate, val-if-true, val-if-false
+ | CastOp (Type r n) (Atom r n)                   -- (2) Type, then value. See CheckType.hs for valid coercions.
+ | BitcastOp (Type r n) (Atom r n)                -- (2) Type, then value. See CheckType.hs for valid coercions.
+ | UnsafeCoerce (Type r n) (Atom r n)             -- type, then value. Assumes runtime representation is the same.
+ | GarbageVal (Type r n)                 -- type of value (assume `Data` constraint)
+ -- Effects
+ | ThrowError (Type r n)                 -- (1) Hard error (parameterized by result type)
+ | ThrowException (Type r n)             -- (1) Catchable exceptions (unlike `ThrowError`)
+ -- Tag of a sum type
+ | SumTag (Atom r n)
+ -- Create an enum (payload-free ADT) from a Word8
+ | ToEnum (Atom r n) (Atom r n)
+ -- printing
+ | OutputStream
+ | ShowAny (Atom r n)    -- implemented in Simplify
+ | ShowScalar (Atom r n) -- Implemented in Imp. Result is a pair of an `IdxRepValTy`
+                -- giving the logical size of the result and a fixed-size table,
+                -- `Fin showStringBufferSize => Char`, assumed to have sufficient space.
+   deriving (Show, Generic)
+
+showStringBufferSize :: Word32
+showStringBufferSize = 32
+
+data VectorOp r n =
+   VectorBroadcast (Atom r n) (Type r n)         -- value, vector type
+ | VectorIota (Type r n)                         -- vector type
+ | VectorSubref (Atom r n) (Atom r n) (Type r n) -- ref, base ix, vector type
+   deriving (Show, Generic)
 
 data Hof r n where
  For       :: ForAnn -> IxDict r n -> LamExpr r n -> Hof r n
@@ -266,7 +374,6 @@ data Hof r n where
 
 deriving instance IRRep r => Show (Hof r n)
 deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
-
 
 -- Ops for "Dex Abstract Machine"
 data DAMOp r n =
@@ -1252,6 +1359,7 @@ instance IRRep r => RenameE        (DAMOp r)
 instance IRRep r => AlphaEqE       (DAMOp r)
 instance IRRep r => AlphaHashableE (DAMOp r)
 
+instance IsPrimOp Hof where toPrimOp = Hof
 instance IRRep r => GenericE (Hof r) where
   type RepE (Hof r) = EitherE2
     (EitherE6
@@ -1303,32 +1411,28 @@ instance IRRep r => RenameE     (Hof r)
 instance IRRep r => AlphaEqE (Hof r)
 instance IRRep r => AlphaHashableE (Hof r)
 
+instance GenericOp RefOp where
+  type OpConst RefOp r = P.RefOp
+  fromOp = \case
+    MAsk       -> GenericOpRep P.MAsk [] []
+    MExtend (BaseMonoid z f) x -> GenericOpRep P.MExtend [z, x] [f]
+    MGet       -> GenericOpRep P.MGet []  []
+    MPut x     -> GenericOpRep P.MPut [x] []
+    IndexRef x -> GenericOpRep P.IndexRef [x] []
+    ProjRef p  -> GenericOpRep (P.ProjRef p) [] []
+  toOp = \case
+    GenericOpRep P.MAsk     [] []      -> Just $ MAsk
+    GenericOpRep P.MExtend  [z, x] [f] -> Just $ MExtend (BaseMonoid z f) x
+    GenericOpRep P.MGet     []  []     -> Just $ MGet
+    GenericOpRep P.MPut     [x] []     -> Just $ MPut x
+    GenericOpRep P.IndexRef [x] []     -> Just $ IndexRef x
+    GenericOpRep (P.ProjRef p) [] []   -> Just $ ProjRef p
+    _ -> Nothing
+
 instance IRRep r => GenericE (RefOp r) where
-  type RepE (RefOp r) =
-    EitherE6
-      UnitE                         -- MAsk
-      (BaseMonoid r `PairE` Atom r) -- MExtend
-      UnitE                         -- MGet
-      (Atom r)                      -- MPut
-      (Atom r)                      -- IndexRef
-      (LiftE Projection)            -- ProjRef
-  fromE = \case
-    MAsk         -> Case0 UnitE
-    MExtend bm x -> Case1 (bm `PairE` x)
-    MGet         -> Case2 UnitE
-    MPut x       -> Case3 x
-    IndexRef x   -> Case4 x
-    ProjRef i    -> Case5 (LiftE i)
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 UnitE          -> MAsk
-    Case1 (bm `PairE` x) -> MExtend bm x
-    Case2 UnitE          -> MGet
-    Case3 x              -> MPut x
-    Case4 x              -> IndexRef x
-    Case5 (LiftE i)      -> ProjRef i
-    _ -> error "impossible"
-  {-# INLINE toE #-}
+  type RepE (RefOp r) = GenericOpRep (OpConst RefOp r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
 
 instance IRRep r => SinkableE      (RefOp r)
 instance IRRep r => HoistableE     (RefOp r)
@@ -1392,8 +1496,8 @@ instance IRRep r => GenericE (Atom r) where
                                     (Type CoreIR) `PairE`
                                     (LiftE RequiredMethodAccess)))
               ) (EitherE6
-  {- Con -}        (ComposeE (PrimCon r) (Atom r))
-  {- TC -}         (ComposeE (PrimTC  r) (Atom r))
+  {- Con -}        (Con r)
+  {- TC -}         (TC  r)
   {- Eff -}        ( WhenCore r (EffectRow r))
   {- PtrVar -}     PtrName
   {- RepValAtom -} ( WhenSimp r (RepVal r))
@@ -1412,8 +1516,8 @@ instance IRRep r => GenericE (Atom r) where
     NewtypeCon c x -> Case3 $ Case0 $ WhenIRE (c `PairE` x)
     NewtypeTyCon t -> Case3 $ Case1 $ WhenIRE t
     DictHole s t access -> Case3 $ Case2 $ WhenIRE (LiftE s `PairE` t `PairE` LiftE access)
-    Con con -> Case4 $ Case0 $ ComposeE con
-    TC  con -> Case4 $ Case1 $ ComposeE con
+    Con con -> Case4 $ Case0 con
+    TC  con -> Case4 $ Case1 con
     Eff effs -> Case4 $ Case2 $ WhenIRE effs
     PtrVar v -> Case4 $ Case3 $ v
     RepValAtom rv -> Case4 $ Case4 $ WhenIRE $ rv
@@ -1442,8 +1546,8 @@ instance IRRep r => GenericE (Atom r) where
       Case2 (WhenIRE (LiftE s `PairE` t `PairE` LiftE access)) -> DictHole s t access
       _ -> error "impossible"
     Case4 val -> case val of
-      Case0 (ComposeE con) -> Con con
-      Case1 (ComposeE con) -> TC con
+      Case0 con -> Con con
+      Case1 con -> TC con
       Case2 (WhenIRE effs) -> Eff effs
       Case3 v -> PtrVar v
       Case4 (WhenIRE rv) -> RepValAtom rv
@@ -1460,35 +1564,27 @@ instance IRRep r => RenameE        (Atom r)
 
 instance IRRep r => GenericE (Expr r) where
   type RepE (Expr r) = EitherE2
-    ( EitherE6
+    ( EitherE5
  {- App -}    (WhenCore r (Atom r `PairE` ListE (Atom r)))
  {- TabApp -} (Atom r `PairE` ListE (Atom r))
  {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow r)
  {- Atom -}   (Atom r)
- {- Hof -}    (Hof r)
  {- TopApp -} (WhenSimp r (TopFunName `PairE` ListE (Atom r)))
     )
-    ( EitherE6
+    ( EitherE3
  {- TabCon -}          (MaybeE (WhenCore r Dict) `PairE` Type r `PairE` ListE (Atom r))
- {- RefOp -}           (Atom r `PairE` RefOp r)
- {- PrimOp -}          (ComposeE PrimOp (Atom r))
- {- UserEffectOp -}    (WhenCore r UserEffectOp)
- {- ApplyMethod -}     (WhenCore r (Atom r `PairE` LiftE Int `PairE` ListE (Atom r)))
- {- DAMOp -}           (WhenSimp r (DAMOp r)))
+ {- PrimOp -}          (PrimOp r)
+ {- ApplyMethod -}     (WhenCore r (Atom r `PairE` LiftE Int `PairE` ListE (Atom r))))
 
   fromE = \case
     App    f xs        -> Case0 $ Case0 (WhenIRE (f `PairE` ListE xs))
     TabApp f xs        -> Case0 $ Case1 (f `PairE` ListE xs)
     Case e alts ty eff -> Case0 $ Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
     Atom x             -> Case0 $ Case3 (x)
-    Hof hof            -> Case0 $ Case4 hof
-    TopApp f xs        -> Case0 $ Case5 (WhenIRE (f `PairE` ListE xs))
+    TopApp f xs        -> Case0 $ Case4 (WhenIRE (f `PairE` ListE xs))
     TabCon d ty xs     -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
-    RefOp ref op       -> Case1 $ Case1 (ref `PairE` op)
-    PrimOp op          -> Case1 $ Case2 (ComposeE op)
-    UserEffectOp op    -> Case1 $ Case3 (WhenIRE op)
-    ApplyMethod d i xs -> Case1 $ Case4 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs))
-    DAMOp op           -> Case1 $ Case5 (WhenIRE op)
+    PrimOp op          -> Case1 $ Case1 op
+    ApplyMethod d i xs -> Case1 $ Case2 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs))
   {-# INLINE fromE #-}
   toE = \case
     Case0 case0 -> case case0 of
@@ -1496,16 +1592,12 @@ instance IRRep r => GenericE (Expr r) where
       Case1 (f `PairE` ListE xs)                          -> TabApp f xs
       Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
       Case3 (x)                                           -> Atom x
-      Case4 hof                                           -> Hof hof
-      Case5 (WhenIRE (f `PairE` ListE xs))                -> TopApp f xs
+      Case4 (WhenIRE (f `PairE` ListE xs))                -> TopApp f xs
       _ -> error "impossible"
     Case1 case1 -> case case1 of
       Case0 (d `PairE` ty `PairE` ListE xs) -> TabCon (fromMaybeE d) ty xs
-      Case1 (ref `PairE` op)      -> RefOp ref op
-      Case2 (ComposeE op)         -> PrimOp op
-      Case3 (WhenIRE op)            -> UserEffectOp op
-      Case4 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod d i xs
-      Case5 (WhenIRE op)            -> DAMOp op
+      Case1 op -> PrimOp op
+      Case2 (WhenIRE (d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod d i xs
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1515,6 +1607,203 @@ instance IRRep r => HoistableE     (Expr r)
 instance IRRep r => AlphaEqE       (Expr r)
 instance IRRep r => AlphaHashableE (Expr r)
 instance IRRep r => RenameE        (Expr r)
+
+instance IRRep r => GenericE (PrimOp r) where
+  type RepE (PrimOp r) = EitherE2
+   ( EitherE5
+ {- UnOp -}  (LiftE P.UnOp `PairE` Atom r)
+ {- BinOp -} (LiftE P.BinOp `PairE` Atom r `PairE` Atom r)
+ {- MemOp -} (MemOp r)
+ {- VectorOp -} (VectorOp r)
+ {- MiscOp -}   (MiscOp r)
+   ) (EitherE4
+ {- Hof -}           (Hof r)
+ {- RefOp -}         (Atom r `PairE` RefOp r)
+ {- DAMOp -}         (WhenSimp r (DAMOp SimpIR))
+ {- UserEffectOp -}  (WhenCore r UserEffectOp)
+             )
+  fromE = \case
+    UnOp  op x   -> Case0 $ Case0 $ LiftE op `PairE` x
+    BinOp op x y -> Case0 $ Case1 $ LiftE op `PairE` x `PairE` y
+    MemOp op     -> Case0 $ Case2 op
+    VectorOp op  -> Case0 $ Case3 op
+    MiscOp op    -> Case0 $ Case4 op
+    Hof op          -> Case1 $ Case0 op
+    RefOp r op      -> Case1 $ Case1 $ r `PairE` op
+    DAMOp op        -> Case1 $ Case2 $ WhenIRE op
+    UserEffectOp op -> Case1 $ Case3 $ WhenIRE op
+  {-# INLINE fromE #-}
+
+  toE = \case
+    Case0 rep -> case rep of
+      Case0 (LiftE op `PairE` x          ) -> UnOp  op x
+      Case1 (LiftE op `PairE` x `PairE` y) -> BinOp op x y
+      Case2 op -> MemOp op
+      Case3 op -> VectorOp op
+      Case4 op -> MiscOp op
+      _ -> error "impossible"
+    Case1 rep -> case rep of
+      Case0 op -> Hof op
+      Case1 (r `PairE` op) -> RefOp r op
+      Case2 (WhenIRE op)   -> DAMOp op
+      Case3 (WhenIRE op)   -> UserEffectOp op
+      _ -> error "impossible"
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (PrimOp r)
+instance IRRep r => HoistableE     (PrimOp r)
+instance IRRep r => AlphaEqE       (PrimOp r)
+instance IRRep r => AlphaHashableE (PrimOp r)
+instance IRRep r => RenameE        (PrimOp r)
+
+instance GenericOp VectorOp where
+  type OpConst VectorOp r = P.VectorOp
+  fromOp = \case
+    VectorBroadcast x t -> GenericOpRep P.VectorBroadcast [x, t]   []
+    VectorIota t        -> GenericOpRep P.VectorIota      [t]      []
+    VectorSubref x y t  -> GenericOpRep P.VectorSubref    [x, y, t] []
+
+  toOp = \case
+    GenericOpRep P.VectorBroadcast [x, t]    [] -> Just $ VectorBroadcast x t
+    GenericOpRep P.VectorIota      [t]       [] -> Just $ VectorIota t
+    GenericOpRep P.VectorSubref    [x, y, t] [] -> Just $ VectorSubref x y t
+    _ -> Nothing
+
+instance IsPrimOp VectorOp where toPrimOp = VectorOp
+instance IRRep r => GenericE (VectorOp r) where
+  type RepE (VectorOp r) = GenericOpRep (OpConst VectorOp r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
+instance IRRep r => SinkableE      (VectorOp r)
+instance IRRep r => HoistableE     (VectorOp r)
+instance IRRep r => AlphaEqE       (VectorOp r)
+instance IRRep r => AlphaHashableE (VectorOp r)
+instance IRRep r => RenameE        (VectorOp r)
+
+instance GenericOp MemOp where
+  type OpConst MemOp r = P.MemOp
+  fromOp = \case
+    IOAlloc x     -> GenericOpRep P.IOAlloc   [x]    []
+    IOFree x      -> GenericOpRep P.IOFree    [x]    []
+    PtrOffset x y -> GenericOpRep P.PtrOffset [x, y] []
+    PtrLoad x     -> GenericOpRep P.PtrLoad   [x]    []
+    PtrStore x y  -> GenericOpRep P.PtrStore  [x, y] []
+  toOp = \case
+    GenericOpRep P.IOAlloc   [x]    [] -> Just $ IOAlloc x
+    GenericOpRep P.IOFree    [x]    [] -> Just $ IOFree x
+    GenericOpRep P.PtrOffset [x, y] [] -> Just $ PtrOffset x y
+    GenericOpRep P.PtrLoad   [x]    [] -> Just $ PtrLoad x
+    GenericOpRep P.PtrStore  [x, y] [] -> Just $ PtrStore x y
+    _ -> Nothing
+
+instance IsPrimOp MemOp where toPrimOp = MemOp
+instance IRRep r => GenericE (MemOp r) where
+  type RepE (MemOp r) = GenericOpRep (OpConst MemOp r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
+instance IRRep r => SinkableE      (MemOp r)
+instance IRRep r => HoistableE     (MemOp r)
+instance IRRep r => AlphaEqE       (MemOp r)
+instance IRRep r => AlphaHashableE (MemOp r)
+instance IRRep r => RenameE        (MemOp r)
+
+instance GenericOp MiscOp where
+  type OpConst MiscOp r = P.MiscOp
+  fromOp = \case
+    Select p x y     -> GenericOpRep P.Select         [p, x, y] []
+    CastOp t x       -> GenericOpRep P.CastOp         [t, x] []
+    BitcastOp t x    -> GenericOpRep P.BitcastOp      [t, x] []
+    UnsafeCoerce t x -> GenericOpRep P.UnsafeCoerce   [t, x] []
+    GarbageVal t     -> GenericOpRep P.GarbageVal     [t] []
+    ThrowError t     -> GenericOpRep P.ThrowError     [t] []
+    ThrowException t -> GenericOpRep P.ThrowException [t] []
+    SumTag x         -> GenericOpRep P.SumTag         [x] []
+    ToEnum x y       -> GenericOpRep P.ToEnum         [x, y] []
+    OutputStream     -> GenericOpRep P.OutputStream   [] []
+    ShowAny x        -> GenericOpRep P.ShowAny        [x] []
+    ShowScalar x     -> GenericOpRep P.ShowScalar     [x] []
+  toOp = \case
+    GenericOpRep P.Select         [p, x, y] [] -> Just $ Select p x y
+    GenericOpRep P.CastOp         [t, x]    [] -> Just $ CastOp t x
+    GenericOpRep P.BitcastOp      [t, x]    [] -> Just $ BitcastOp t x
+    GenericOpRep P.UnsafeCoerce   [t, x]    [] -> Just $ UnsafeCoerce t x
+    GenericOpRep P.GarbageVal     [t]       [] -> Just $ GarbageVal t
+    GenericOpRep P.ThrowError     [t]       [] -> Just $ ThrowError t
+    GenericOpRep P.ThrowException [t]       [] -> Just $ ThrowException t
+    GenericOpRep P.SumTag         [x]       [] -> Just $ SumTag x
+    GenericOpRep P.ToEnum         [x, y]    [] -> Just $ ToEnum x y
+    GenericOpRep P.OutputStream   []        [] -> Just $ OutputStream
+    GenericOpRep P.ShowAny        [x]       [] -> Just $ ShowAny x
+    GenericOpRep P.ShowScalar     [x]       [] -> Just $ ShowScalar x
+    _ -> Nothing
+
+instance IsPrimOp MiscOp where toPrimOp = MiscOp
+instance IRRep r => GenericE (MiscOp r) where
+  type RepE (MiscOp r) = GenericOpRep (OpConst MiscOp r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
+instance IRRep r => SinkableE      (MiscOp r)
+instance IRRep r => HoistableE     (MiscOp r)
+instance IRRep r => AlphaEqE       (MiscOp r)
+instance IRRep r => AlphaHashableE (MiscOp r)
+instance IRRep r => RenameE        (MiscOp r)
+
+instance GenericOp Con where
+  type OpConst Con r = Either LitVal P.Con
+  fromOp = \case
+    Lit     l  -> GenericOpRep (Left l) [] []
+    ProdCon xs -> GenericOpRep (Right P.ProdCon) xs []
+    SumCon  tys i x -> GenericOpRep (Right (P.SumCon i)) (x:tys) []
+    HeapVal -> GenericOpRep (Right P.HeapVal) [] []
+
+  toOp = \case
+    GenericOpRep (Left l) [] []                  -> Just $ Lit     l
+    GenericOpRep (Right P.ProdCon) xs []         -> Just $ ProdCon xs
+    GenericOpRep (Right (P.SumCon i)) (x:tys) [] -> Just $ SumCon  tys i x
+    GenericOpRep (Right P.HeapVal) [] []         -> Just $ HeapVal
+    _ -> Nothing
+
+instance IRRep r => GenericE (Con r) where
+  type RepE (Con r) = GenericOpRep (OpConst Con r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
+
+instance IRRep r => SinkableE      (Con r)
+instance IRRep r => HoistableE     (Con r)
+instance IRRep r => AlphaEqE       (Con r)
+instance IRRep r => AlphaHashableE (Con r)
+instance IRRep r => RenameE        (Con r)
+
+instance GenericOp TC where
+  type OpConst TC r = Either BaseType P.TC
+  fromOp = \case
+    BaseType b  -> GenericOpRep (Left b) [] []
+    ProdType ts -> GenericOpRep (Right P.ProdType) ts []
+    SumType  ts -> GenericOpRep (Right P.SumType)  ts []
+    RefType  h t -> GenericOpRep (Right P.RefType) [h, t] []
+    TypeKind -> GenericOpRep (Right P.TypeKind) [] []
+    HeapType -> GenericOpRep (Right P.HeapType) [] []
+
+  toOp = \case
+    GenericOpRep (Left b) [] []              -> Just (BaseType b)
+    GenericOpRep (Right P.ProdType) ts []    -> Just (ProdType ts)
+    GenericOpRep (Right P.SumType)  ts []    -> Just (SumType  ts)
+    GenericOpRep (Right P.RefType) [h, t] [] -> Just (RefType  h t)
+    GenericOpRep (Right P.TypeKind) [] []    -> Just TypeKind
+    GenericOpRep (Right P.HeapType) [] []    -> Just HeapType
+    GenericOpRep _ _ _ -> Nothing
+
+
+instance IRRep r => GenericE (TC r) where
+  type RepE (TC r) = GenericOpRep (OpConst TC r) r
+  fromE = fromEGenericOpRep
+  toE   = toEGenericOpRep
+instance IRRep r => SinkableE      (TC r)
+instance IRRep r => HoistableE     (TC r)
+instance IRRep r => AlphaEqE       (TC r)
+instance IRRep r => AlphaHashableE (TC r)
+instance IRRep r => RenameE        (TC r)
 
 instance IRRep r => GenericE (Block r) where
   type RepE (Block r) = PairE (MaybeE (PairE (Type r) (EffectRow r))) (Abs (Nest (Decl r)) (Atom r))
@@ -2452,11 +2741,16 @@ instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
 instance Hashable InfVarDesc
-instance Hashable Projection
 instance Hashable IxMethod
 instance Hashable ParamRole
 instance Hashable a => Hashable (EvalStatus a)
 
+instance IRRep r => Store (MiscOp r n)
+instance IRRep r => Store (VectorOp r n)
+instance IRRep r => Store (MemOp r n)
+instance IRRep r => Store (TC r n)
+instance IRRep r => Store (Con r n)
+instance IRRep r => Store (PrimOp r n)
 instance IRRep r => Store (RepVal r n)
 instance IRRep r => Store (Atom r n)
 instance IRRep r => Store (Expr r n)
@@ -2501,7 +2795,6 @@ instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (ann n) => Store (NonDepNest r ann n l)
-instance Store Projection
 instance Store InfVarDesc
 instance Store IxMethod
 instance Store ParamRole

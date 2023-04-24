@@ -62,6 +62,7 @@ import Name
 import PPrint ()
 import Types.Primitives
 import Types.Source
+import qualified Types.OpNames as P
 import Util
 
 -- === Converting concrete syntax to abstract syntax ===
@@ -515,10 +516,10 @@ expr = propagateSrcE expr' where
       _ -> error "n-ary dependent pairs not implemented"
 
 charExpr :: Char -> (UExpr' VoidS)
-charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
+charExpr c = ULit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: UExpr' VoidS
-unitExpr = UPrim (UPrimCon $ ProdCon []) []
+unitExpr = UPrim (UCon $ P.ProdCon) []
 
 -- === Builders ===
 

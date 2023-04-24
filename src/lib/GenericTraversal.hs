@@ -74,31 +74,19 @@ traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   TopApp f xs -> TopApp <$> substM f <*> mapM tge xs
   TabApp g xs -> TabApp <$> tge g <*> mapM tge xs
   Atom x  -> Atom <$> tge x
-  PrimOp  op -> PrimOp <$> mapM tge op
-  Hof hof -> Hof  <$> tge hof
-  RefOp ref eff -> RefOp <$> tge ref <*> tge eff
+  PrimOp  op -> PrimOp <$>  tge op
   Case scrut alts resultTy _ -> do
     scrut' <- tge scrut
     alts' <- mapM traverseAlt alts
     resultTy' <- tge resultTy
     effs <- foldMapM getEffects alts'
     return $ Case scrut' alts' resultTy' effs
-  UserEffectOp op -> UserEffectOp <$> case op of
-    Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
-    Resume x y       -> Resume <$> tge x <*> tge y
-    Perform x i      -> Perform <$> tge x <*> pure i
   TabCon d ty xs -> do
     d' <- case d of
       Nothing -> return Nothing
       Just (WhenIRE d') -> Just <$> WhenIRE <$> tge d'
     TabCon d' <$> tge ty <*> mapM tge xs
   ApplyMethod d i xs -> ApplyMethod <$> tge d <*> pure i <*> mapM tge xs
-  DAMOp op -> DAMOp <$> case op of
-    Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
-    RememberDest d body  -> RememberDest <$> tge d <*> tge body
-    AllocDest x          -> AllocDest <$> tge x
-    Place x y            -> Place <$> tge x <*> tge y
-    Freeze x             -> Freeze <$> tge x
 
 traverseAtomDefault
   :: forall r f s i o.
@@ -112,8 +100,8 @@ traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
     withFreshBinder (getNameHint b) ty' \b' -> do
       extendRenamer (b@>binderName b') $
         TabPi <$> (TabPiType b' <$> tge resultTy)
-  Con con -> Con <$> mapM tge con
-  TC  tc  -> TC  <$> mapM tge tc
+  Con con -> Con <$> tge con
+  TC  tc  -> TC  <$> tge tc
   Eff _   -> substM atom
   PtrVar _ -> substM atom
   DictCon dictExpr -> DictCon <$> tge dictExpr
@@ -168,6 +156,32 @@ instance IRRep r => GenericallyTraversableE r (DepPairType r) where
 
 instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
   traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> tge f
+
+instance GenericallyTraversableE r (TC r) where
+  traverseGenericE op = traverseOp op tge tge
+
+instance GenericallyTraversableE r (Con r) where
+  traverseGenericE op = traverseOp op tge tge
+
+instance GenericallyTraversableE r (PrimOp r) where
+  traverseGenericE = \case
+    Hof hof -> Hof  <$> tge hof
+    RefOp ref eff -> RefOp <$> tge ref <*> tge eff
+    UserEffectOp op -> UserEffectOp <$> case op of
+      Handle v xs body -> Handle <$> substM v <*> mapM tge xs <*> tge body
+      Resume x y       -> Resume <$> tge x <*> tge y
+      Perform x i      -> Perform <$> tge x <*> pure i
+    DAMOp op -> DAMOp <$> case op of
+      Seq d ixDict carry f -> Seq d <$> tge ixDict <*> tge carry <*> tge f
+      RememberDest d body  -> RememberDest <$> tge d <*> tge body
+      AllocDest x          -> AllocDest <$> tge x
+      Place x y            -> Place <$> tge x <*> tge y
+      Freeze x             -> Freeze <$> tge x
+    UnOp op x -> UnOp op <$> tge x
+    BinOp op x y -> BinOp op <$> tge x <*> tge y
+    MemOp    op -> MemOp    <$> traverseOp op tge tge
+    VectorOp op -> VectorOp <$> traverseOp op tge tge
+    MiscOp   op -> MiscOp   <$> traverseOp op tge tge
 
 instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case
