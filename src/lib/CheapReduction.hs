@@ -185,14 +185,9 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
       runFallibleT1 (trySynthTerm ty access) >>= \case
         Success d -> return d
         Failure _ -> return $ DictHole ctx ty access
-    TabPi (TabPiType (b:>ixTy) resultTy) -> do
-      ixTy' <- cheapReduceE ixTy
-      withFreshBinder (getNameHint b) ixTy' \b' -> do
-        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType b' resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
-    Con con -> Con <$> traverseOp con cheapReduceE (error "unexpected lambda")
+    Con con -> Con <$> traverseOp con cheapReduceE cheapReduceE (error "unexpected lambda")
     DictCon d -> cheapReduceE d
     SimpInCore (LiftSimp t x) -> do
       t' <- cheapReduceE t
@@ -201,6 +196,28 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- These two are a special-case hack. TODO(dougalm): write a traversal over
     -- the NewtypeTyCon (or types generally)
     NewtypeCon NatCon n -> NewtypeCon NatCon <$> cheapReduceE n
+    -- Do recursive reduction via substitution
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
+    _ -> do
+      a' <- substM a
+      dropSubst $ traverseNames cheapReduceName a'
+
+instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
+  cheapReduceE :: forall i o. Type r i -> CheapReducerM r i o (Type r o)
+  cheapReduceE a = case a of
+    -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
+    -- we have a chance to apply tham. Also, recursive traversal of those bodies
+    -- means that we will follow the full call chain, so it's really expensive!
+    -- TODO: we don't collect the dict holes here, so there's a danger of
+    -- dropping them if they turn out to be phantom.
+    TabPi (TabPiType (b:>ixTy) resultTy) -> do
+      ixTy' <- cheapReduceE ixTy
+      withFreshBinder (getNameHint b) ixTy' \b' -> do
+        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
+        return $ TabPi $ TabPiType b' resultTy'
+    -- We traverse the Atom constructors that might contain lambda expressions
+    -- explicitly, to make sure that we can skip normalizing free vars inside those.
     NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
     -- Do recursive reduction via substitution
     -- TODO: we don't collect the dict holes here, so there's a danger of
@@ -471,23 +488,42 @@ instance Color c => SubstE AtomSubstVal (AtomSubstVal c) where
 instance SubstV (SubstVal Atom) (SubstVal Atom) where
 
 instance IRRep r => SubstE AtomSubstVal (Atom r) where
-  substE (env, subst) atom = case fromE atom of
-    Case0 specialCase -> case specialCase of
-      -- Var
-      Case0 v -> do
-        case subst ! v of
-          Rename v' -> Var v'
-          SubstVal x -> x
-      -- ProjectElt
-      Case1 (PairE (LiftE i) x) -> do
-        let x' = substE (env, subst) x
-        runEnvReaderM env $ normalizeProj i x'
-      _ -> error "impossible"
-    Case1 rest -> (toE . Case1) $ substE (env, subst) rest
-    Case2 rest -> (toE . Case2) $ substE (env, subst) rest
-    Case3 rest -> (toE . Case3) $ substE (env, subst) rest
-    Case4 rest -> (toE . Case4) $ substE (env, subst) rest
-    _ -> error "impossible"
+  substE es@(env, subst) = \case
+    Var v -> case subst ! v of
+      Rename v' -> Var v'
+      SubstVal x -> x
+    ProjectElt i x -> do
+     let x' = substE es x
+     runEnvReaderM env $ normalizeProj i x'
+    Con con        -> Con    (substE es con)
+    PtrVar v       -> PtrVar (substE es v)
+    DepPair x y t  -> DepPair (substE es x) (substE es y) (substE es t)
+    Lam lam        -> Lam (substE es lam)
+    Eff  eff       -> Eff (substE es eff)
+    DictCon x      -> DictCon (substE es x)
+    NewtypeCon c x -> NewtypeCon (substE es c) (substE es x)
+    DictHole s t a -> DictHole s (substE es t) a
+    TypeAsAtom t   -> TypeAsAtom (substE es t)
+    SimpInCore x   -> SimpInCore (substE es x)
+    RepValAtom r   -> RepValAtom (substE es r)
+
+instance IRRep r => SubstE AtomSubstVal (Type r) where
+  substE es@(env, subst) = \case
+    TyVar v -> case subst ! v of
+      Rename v' -> TyVar v'
+      SubstVal (Type t) -> t
+      SubstVal atom -> error $ "bad substitution: " ++ pprint v ++ " -> " ++ pprint atom
+    ProjectEltTy i x -> do
+     let x' = substE es x
+     case runEnvReaderM env $ normalizeProj i x' of
+       Type t   -> t
+       _ -> error "bad substitution"
+    TC           t -> TC (substE es t)
+    TabPi        t -> TabPi         (substE es t)
+    DepPairTy    t -> DepPairTy     (substE es t)
+    DictTy       t -> DictTy        (substE es t)
+    Pi           t -> Pi            (substE es t)
+    NewtypeTyCon t -> NewtypeTyCon  (substE es t)
 
 instance SubstE AtomSubstVal SimpInCore
 

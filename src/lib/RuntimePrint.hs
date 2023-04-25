@@ -78,6 +78,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
+  ProjectEltTy _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -92,7 +93,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (TyConParams [Explicit] [Word8Ty]) -> do
+    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
       charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
@@ -121,23 +122,13 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
                 rec =<< normalizeNaryProj (init projs) arg
-  DictHole _ _ _ -> error "shouldn't have DictHole past inference"
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
-  ProjectElt _ _ -> notAType
-  Lam _        -> notAType
-  DictCon _    -> notAType
-  Con _        -> notAType
-  Eff _        -> notAType
-  PtrVar _     -> notAType
-  DepPair _ _  _ -> notAType
-  NewtypeCon _ _ -> notAType
-  Var _ -> error $ "unexpected type variable: " ++ pprint atomTy
-  SimpInCore _ -> error "Don't expect to print SimpInCore"
+  TyVar _ -> error $ "unexpected type variable: " ++ pprint atomTy
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
@@ -149,9 +140,6 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
 
     printAsConstant :: Print n
     printAsConstant = emitLit $ pprint atom
-
-    notAType :: Print n
-    notAType = error $ "Error querying type of: " ++ pprint atom
 
 parens :: Emits n => Print n -> Print n
 parens x = emitCharLit '(' >> x >> emitCharLit ')'
@@ -226,7 +214,7 @@ applyPreludeFunction name args = do
   naryApp f args
 
 strType :: EnvReader m => m n (CType n)
-strType = constructPreludeType "List" $ TyConParams [Explicit] [CharRepTy]
+strType = constructPreludeType "List" $ TyConParams [Explicit] [Type CharRepTy]
 
 constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do

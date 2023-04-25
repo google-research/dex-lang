@@ -937,7 +937,7 @@ symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
 symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
     return $ TypeCon "SymbolicTangent" symTanName $
-      TyConParams [Explicit] [elTy]
+      TyConParams [Explicit] [Type elTy]
   Nothing -> throw UnboundVarErr $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
@@ -946,7 +946,7 @@ symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
 symbolicTangentZero :: EnvReader m => SType n -> m n (SAtom n)
 symbolicTangentZero argTy = return $ SumVal [UnitTy, argTy] 0 UnitVal
 
-symbolicTangentNonZero :: EnvReader m => SAtom n -> m n (SType n)
+symbolicTangentNonZero :: EnvReader m => SAtom n -> m n (SAtom n)
 symbolicTangentNonZero val = do
   ty <- getType val
   return $ SumVal [UnitTy, ty] 1 val

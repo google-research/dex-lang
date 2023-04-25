@@ -313,20 +313,14 @@ instance IRRep r => HasType r (Atom r) where
   getTypeE atom = case atom of
     Var name -> getTypeE name
     Lam (CoreLamExpr piTy _) -> Pi <$> substM piTy
-    Pi _ -> return TyKind
-    TabPi _ -> return TyKind
     DepPair _ _ ty -> do
       ty' <- substM ty
       return $ DepPairTy ty'
-    DepPairTy _ -> return TyKind
     Con con -> getTypePrimCon con
-    TC _ -> return TyKind
     Eff _ -> return EffKind
     PtrVar v -> substM v >>= lookupEnv >>= \case
       PtrBinding ty _ -> return $ PtrTy ty
     DictCon dictExpr -> getTypeE dictExpr
-    DictTy (DictType _ _ _) -> return TyKind
-    NewtypeTyCon con -> getTypeE con
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom repVal -> do RepVal ty _ <- substM repVal; return ty
     ProjectElt (ProjectProduct i) x -> do
@@ -339,6 +333,26 @@ instance IRRep r => HasType r (Atom r) where
         ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
     SimpInCore x -> getTypeE x
     DictHole _ ty _ -> substM ty
+    TypeAsAtom ty -> getTypeE ty
+
+instance IRRep r => HasType r (Type r) where
+  getTypeE :: forall i o. Type r i -> TypeQueryM i o (Type r o)
+  getTypeE = \case
+    NewtypeTyCon con -> getTypeE con
+    Pi _        -> return TyKind
+    TabPi _     -> return TyKind
+    DepPairTy _ -> return TyKind
+    TC _        -> return TyKind
+    DictTy _    -> return TyKind
+    TyVar v     -> getTypeE v
+    ProjectEltTy (ProjectProduct i) x -> do
+      ty <- getTypeE x
+      x' <- substM x
+      projType i ty x'
+    ProjectEltTy UnwrapNewtype x -> do
+      getTypeE x >>= \case
+        NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
+        ty -> error $ "Not a newtype: " ++ pprint x ++ ":" ++ pprint ty
 
 instance HasType CoreIR SimpInCore where
   getTypeE = \case
@@ -377,7 +391,7 @@ getIxClassName = lookupSourceMap "Ix" >>= \case
   Just (UClassVar v) -> return v
   Just _ -> error "not a class var"
 
-dictType :: (Fallible1 m, EnvReader m) => ClassName n -> [CType n] -> m n (DictType n)
+dictType :: (Fallible1 m, EnvReader m) => ClassName n -> [CAtom n] -> m n (DictType n)
 dictType className params = do
   ClassDef sourceName _ _ _ _ _ <- lookupClassDef className
   return $ DictType sourceName className params
@@ -385,7 +399,7 @@ dictType className params = do
 ixDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 ixDictType ty = do
   ixClassName <- getIxClassName
-  dictType ixClassName [ty]
+  dictType ixClassName [Type ty]
 
 getDataClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getDataClassName = lookupSourceMap "Data" >>= \case
@@ -396,12 +410,12 @@ getDataClassName = lookupSourceMap "Data" >>= \case
 dataDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 dataDictType ty = do
   dataClassName <- getDataClassName
-  dictType dataClassName [ty]
+  dictType dataClassName [Type ty]
 
 makePreludeMaybeTy :: EnvReader m => CType n -> m n (CType n)
 makePreludeMaybeTy ty = do
   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [ty]
+  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
 
 appType  :: IRRep r => Type r o -> [Atom r i] -> TypeQueryM i o (Type r o)
 appType fTy xs = do
@@ -573,10 +587,10 @@ instance IRRep r => HasType r (MiscOp r) where
     ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
     ShowScalar _ -> PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
 
-instantiateHandlerType :: EnvReader m => HandlerName n -> CAtom n -> [CAtom n] -> m n (CType n)
+instantiateHandlerType :: EnvReader m => HandlerName n -> CType n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal r) <.> bs @@> (map SubstVal args)) retTy
+  applySubst (rb @> (SubstVal (Type r)) <.> bs @@> (map SubstVal args)) retTy
 
 getSuperclassDicts :: ClassDef n -> CAtom n -> [CAtom n]
 getSuperclassDicts (ClassDef _ _ _ _ classBs _) dict =
@@ -664,7 +678,7 @@ instance IRRep r => HasType r (Block r) where
 ixTyFromDict :: IRRep r => EnvReader m => IxDict r n -> m n (IxType r n)
 ixTyFromDict ixDict = flip IxType ixDict <$> case ixDict of
   IxDictAtom dict -> getType dict >>= \case
-    DictTy (DictType "Ix" _ [iTy]) -> return iTy
+    DictTy (DictType "Ix" _ [Type iTy]) -> return iTy
     _ -> error $ "Not an Ix dict: " ++ pprint dict
   IxDictRawFin _ -> return IdxRepTy
   IxDictSpecialized n _ _ -> return n
@@ -676,7 +690,7 @@ rawStrType = liftEnvReaderM do
     return $ DepPairTy $ DepPairType ExplicitDepPair b tabTy
 
 -- `n` argument is IdxRepVal, not Nat
-rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Atom r n -> m n (Type r n)
+rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Type r n -> m n (Type r n)
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
 -- === querying effects implementation ===

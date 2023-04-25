@@ -332,9 +332,6 @@ linearizeAtom atom = case atom of
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
-  TabPi _         -> emitZeroT
-  DepPairTy _     -> emitZeroT
-  TC _            -> emitZeroT
   PtrVar _        -> emitZeroT
   ProjectElt i x -> do
     WithTangent x' tx <- linearizeAtom x

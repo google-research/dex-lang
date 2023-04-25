@@ -496,6 +496,7 @@ instance HasDCE (RefOp SimpIR)
 instance HasDCE (BaseMonoid SimpIR)
 instance HasDCE (Hof SimpIR)
 instance HasDCE SAtom
+instance HasDCE SType
 instance HasDCE (LamExpr     SimpIR)
 instance HasDCE (TabPiType   SimpIR)
 instance HasDCE (DepPairType SimpIR)

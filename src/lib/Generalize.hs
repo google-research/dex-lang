@@ -39,7 +39,9 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
     go (Nest (WithExpl expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
       arg' <- case (ty', expl) of
-        (TyKind, _) -> liftSubstReaderT $ generalizeType arg
+        (TyKind, _) -> liftSubstReaderT case arg of
+          Type t -> Type <$> generalizeType t
+          _ -> error "not a type"
         (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
         _ -> isData ty' >>= \case
           True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
@@ -104,7 +106,9 @@ emitGeneralizationParameter ty val = GeneralizerM do
 -- Given a type (an Atom of type `Type`), abstracts over all data components
 generalizeType :: Type CoreIR n -> GeneralizerM n (Type CoreIR n)
 generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
-  TypeParam -> generalizeType param
+  TypeParam -> Type <$> case param of
+    Type t -> generalizeType t
+    _ -> error "not a type"
   DictParam -> generalizeDict paramReqTy param
   DataParam -> Var <$> emitGeneralizationParameter paramReqTy param
 
@@ -115,29 +119,29 @@ generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case para
 -- for other operations on types, like newtype stripping.
 
 traverseTyParams
-  :: (EnvReader m, EnvExtender m)
-  => Atom CoreIR n
-  -> (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
-  -> m n (Atom CoreIR n)
+  :: forall m n. (EnvReader m, EnvExtender m)
+  => CType n
+  -> (forall l . DExt n l => ParamRole -> CType l -> CAtom l -> m l (CAtom l))
+  -> m n (CType n)
 traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
   DictTy (DictType sn name params) -> do
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
   TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
-    iTy' <- f TypeParam TyKind iTy
+    iTy' <- f' TypeParam TyKind iTy
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
     withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
-      resultTy' <- applyRename (b@>binderName b') resultTy >>= f TypeParam TyKind
+      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
       return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
   TabPi t -> return $ TabPi t
   TC tc -> TC <$> case tc of
     BaseType b -> return $ BaseType b
-    ProdType tys -> ProdType <$> forM tys \t -> f TypeParam TyKind t
+    ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam TyKind t
     RefType _ _ -> error "not implemented" -- how should we handle the ParamRole for the heap parameter?
-    SumType  tys -> SumType  <$> forM tys \t -> f TypeParam TyKind t
+    SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
     TypeKind     -> return TypeKind
     HeapType     -> return HeapType
   NewtypeTyCon con -> NewtypeTyCon <$> case con of
@@ -149,6 +153,13 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
       params' <- traverseRoleBinders f roleBinders params
       return $ UserADTType sn def $ TyConParams infs params'
   _ -> error $ "Not implemented: " ++ pprint ty
+  where
+    f' :: forall l . DExt n l => ParamRole -> CType l -> CType l -> m l (CType l)
+    f' r t x = fromType <$> f r t (Type x)
+
+    fromType :: CAtom l -> CType l
+    fromType (Type t) = t
+    fromType x = error $ "not a type: " ++ pprint x
 {-# INLINE traverseTyParams #-}
 
 traverseRoleBinders

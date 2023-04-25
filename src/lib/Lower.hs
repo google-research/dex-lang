@@ -516,7 +516,7 @@ vectorizePrimOp op = case op of
     y' <- if vy /= v then ensureVarying sy else return y
     VVal v <$> emitOp (BinOp opk x' y')
   MiscOp (CastOp tyArg arg) -> do
-    VVal Uniform ty <- vectorizeAtom tyArg
+    ty <- vectorizeType tyArg
     VVal vx x <- vectorizeAtom arg
     ty' <- case vx of
       Uniform    -> return ty
@@ -548,6 +548,10 @@ vectorizePrimOp op = case op of
     VVal vy . Var <$> emit (PrimOp $ Hof (RunIO body'))
   _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
+vectorizeType :: SType i -> VectorizeM i o (SType o)
+vectorizeType t = do
+  subst <- getSubst
+  fmapNamesM (uniformSubst subst) t
 
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
@@ -566,14 +570,14 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     _ -> do
       subst <- getSubst
       VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
-    where
-      uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
-      uniformSubst subst n = case subst ! n of
-        VVal Uniform x -> SubstVal x
-        -- TODO(nrink): Throw instead of `error`.
-        _ -> error $ "Can't vectorize atom " ++ pprint atom
 
-getVectorType :: SType o -> VectorizeM i o (SAtom o)
+uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
+uniformSubst subst n = case subst ! n of
+  VVal Uniform x -> SubstVal x
+  -- TODO(nrink): Throw instead of `error`.
+  _ -> error "Can't vectorize atom"
+
+getVectorType :: SType o -> VectorizeM i o (SType o)
 getVectorType ty = addVectErrCtx "getVectorType" ("Type:\n" ++ pprint ty) do
   case ty of
     BaseTy (Scalar sbt) -> do

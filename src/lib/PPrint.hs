@@ -254,24 +254,32 @@ instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
     Var v -> atPrec ArgPrec $ p v
     Lam lam   -> atPrec LowestPrec $ p lam
-    Pi piType -> atPrec LowestPrec $ align $ p piType
-    TabPi piType -> atPrec LowestPrec $ align $ p piType
-    DepPairTy ty -> prettyPrec ty
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <+> ",>" <+> p y
-    TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
     PtrVar v -> atPrec ArgPrec $ p v
     DictCon d -> atPrec LowestPrec $ p d
-    DictTy  t -> atPrec LowestPrec $ p t
     RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
-    NewtypeTyCon con -> prettyPrec con
     SimpInCore x -> prettyPrec x
     DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
+    TypeAsAtom ty -> prettyPrec ty
+
+instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (Type r n) where
+  prettyPrec = \case
+    Pi piType -> atPrec LowestPrec $ align $ p piType
+    TabPi piType -> atPrec LowestPrec $ align $ p piType
+    DepPairTy ty -> prettyPrec ty
+    TC  e -> prettyPrec e
+    DictTy  t -> atPrec LowestPrec $ p t
+    NewtypeTyCon con -> prettyPrec con
+    TyVar v -> atPrec ArgPrec $ p v
+    ProjectEltTy idxs v ->
+      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -877,7 +885,7 @@ instance IRRep r => PrettyPrec (TC r n) where
       encloseSep "(" ")" ", " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
+    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h] <+> p a
     TypeKind -> atPrec ArgPrec "Type"
     HeapType -> atPrec ArgPrec "Heap"
 
@@ -957,8 +965,8 @@ prettyOpDefault name args =
 
 prettyOpGeneric :: (IRRep r, GenericOp op, Show (OpConst op r)) => op r n -> DocPrec ann
 prettyOpGeneric op = case fromEGenericOpRep op of
-  GenericOpRep op' [] [] -> atPrec ArgPrec (p $ show op')
-  GenericOpRep op' xs lams -> atPrec AppPrec $ pAppArg (p (show op')) xs <+> p lams
+  GenericOpRep op' [] [] [] -> atPrec ArgPrec (p $ show op')
+  GenericOpRep op' ts xs lams -> atPrec AppPrec $ pAppArg (p (show op')) xs <+> p ts <+> p lams
 
 instance Pretty PrimName where
    pretty primName = p $ "%" ++ showPrimName primName

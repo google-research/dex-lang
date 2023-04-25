@@ -10,6 +10,7 @@ module GenericTraversal
   ( GenericTraverser (..), GenericallyTraversableE (..)
   , GenericTraverserM (..), liftGenericTraverserM
   , traverseExprDefault, traverseAtomDefault, liftGenericTraverserMTopEmissions
+  , traverseTypeDefault
   , traverseDeclNest, traverseBlock, traverseBinder ) where
 
 import Control.Monad
@@ -68,6 +69,9 @@ class (RenameB f, HoistableB f, OutFrag f, ExtOutMap Env f, SinkableE s, Hoistab
   traverseAtom :: Atom r i -> GenericTraverserM r f s i o (Atom r o)
   traverseAtom = traverseAtomDefault
 
+  traverseType :: Type r i -> GenericTraverserM r f s i o (Type r o)
+  traverseType = traverseTypeDefault
+
 traverseExprDefault :: Emits o => GenericTraverser r f s => Expr r i -> GenericTraverserM r f s i o (Expr r o)
 traverseExprDefault expr = confuseGHC >>= \_ -> case expr of
   App g xs -> App <$> tge g <*> mapM tge xs
@@ -94,26 +98,34 @@ traverseAtomDefault
 traverseAtomDefault atom = confuseGHC >>= \_ -> case atom of
   Var _ -> substM atom
   Lam lamExpr -> Lam <$> tge lamExpr
-  Pi piTy -> Pi <$> tge piTy
-  TabPi (TabPiType (b:>ty) resultTy) -> do
-    ty' <- tge ty
-    withFreshBinder (getNameHint b) ty' \b' -> do
-      extendRenamer (b@>binderName b') $
-        TabPi <$> (TabPiType b' <$> tge resultTy)
   Con con -> Con <$> tge con
-  TC  tc  -> TC  <$> tge tc
   Eff _   -> substM atom
   PtrVar _ -> substM atom
   DictCon dictExpr -> DictCon <$> tge dictExpr
-  DictTy dictTy -> DictTy <$> tge dictTy
   ProjectElt _ _ -> substM atom
-  DepPairTy dty -> DepPairTy <$> tge dty
   DepPair l r dty -> DepPair <$> tge l <*> tge r <*> tge dty
   RepValAtom _ -> substM atom
-  NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
   NewtypeCon con x -> NewtypeCon <$> tge con <*> tge x
   DictHole s ty access -> DictHole s <$> tge ty <*> pure access
   SimpInCore _ -> substM atom
+  TypeAsAtom ty -> TypeAsAtom <$> tge ty
+
+traverseTypeDefault
+  :: forall r f s i o.
+  GenericTraverser r f s => Type r i -> GenericTraverserM r f s i o (Type r o)
+traverseTypeDefault ty = confuseGHC >>= \_ -> case ty of
+  Pi piTy -> Pi <$> tge piTy
+  TabPi (TabPiType (b:>t) resultTy) -> do
+    ty' <- tge t
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      extendRenamer (b@>binderName b') $
+        TabPi <$> (TabPiType b' <$> tge resultTy)
+  TC  tc  -> TC  <$> tge tc
+  DictTy dictTy -> DictTy <$> tge dictTy
+  DepPairTy dty -> DepPairTy <$> tge dty
+  NewtypeTyCon tc  -> NewtypeTyCon <$> tge tc
+  TyVar _ -> substM ty
+  ProjectEltTy _ _ -> substM ty
 
 tge :: (GenericallyTraversableE r e, GenericTraverser r f s)
     => e i -> GenericTraverserM r f s i o (e o)
@@ -140,6 +152,9 @@ instance GenericallyTraversableE CoreIR CorePiType where
 instance IRRep r => GenericallyTraversableE r (Atom r) where
   traverseGenericE = traverseAtom
 
+instance IRRep r => GenericallyTraversableE r (Type r) where
+  traverseGenericE = traverseType
+
 instance IRRep r => GenericallyTraversableE r (Block r) where
   traverseGenericE (Block _ decls result) = do
     buildBlock $ traverseDeclNest decls $ traverseAtom result
@@ -158,10 +173,10 @@ instance IRRep r => GenericallyTraversableE r (BaseMonoid r) where
   traverseGenericE (BaseMonoid x f) = BaseMonoid <$> tge x <*> tge f
 
 instance GenericallyTraversableE r (TC r) where
-  traverseGenericE op = traverseOp op tge tge
+  traverseGenericE op = traverseOp op tge tge tge
 
 instance GenericallyTraversableE r (Con r) where
-  traverseGenericE op = traverseOp op tge tge
+  traverseGenericE op = traverseOp op tge tge tge
 
 instance GenericallyTraversableE r (PrimOp r) where
   traverseGenericE = \case
@@ -179,9 +194,9 @@ instance GenericallyTraversableE r (PrimOp r) where
       Freeze x             -> Freeze <$> tge x
     UnOp op x -> UnOp op <$> tge x
     BinOp op x y -> BinOp op <$> tge x <*> tge y
-    MemOp    op -> MemOp    <$> traverseOp op tge tge
-    VectorOp op -> VectorOp <$> traverseOp op tge tge
-    MiscOp   op -> MiscOp   <$> traverseOp op tge tge
+    MemOp    op -> MemOp    <$> traverseOp op tge tge tge
+    VectorOp op -> VectorOp <$> traverseOp op tge tge tge
+    MiscOp   op -> MiscOp   <$> traverseOp op tge tge tge
 
 instance GenericallyTraversableE r (RefOp r) where
   traverseGenericE = \case

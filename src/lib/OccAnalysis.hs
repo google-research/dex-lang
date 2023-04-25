@@ -233,7 +233,7 @@ instance HasOCC SBlock where
 -- TODO What, actually, is the right thing to do for type annotations?  Do we
 -- want a rule like "we never inline into type annotations", or such?  For
 -- now, traversing with the main analysis seems safe.
-occTy :: SAtom n -> OCCM n (SAtom n)
+occTy :: SType n -> OCCM n (SType n)
 occTy ty = occ accessOnce ty
 
 -- TODO(optimization) Could reuse the free variable caching from dce here too.
@@ -476,6 +476,7 @@ instance HasOCC (EffectRow SimpIR)
 instance HasOCC (EffectRowTail SimpIR)
 instance HasOCC (Effect SimpIR)
 instance HasOCC (IxDict SimpIR)
+instance HasOCC (Type SimpIR)
 instance HasOCC (GenericOpRep const SimpIR) where
 
 instance HasOCC (RepVal SimpIR) where

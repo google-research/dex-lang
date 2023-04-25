@@ -310,6 +310,8 @@ instance Inlinable SAtomName where
 instance Inlinable SAtom where
   inline ctx a = inlineAtom (EmitToAtomCtx ctx) a
 
+instance Inlinable SType
+
 instance Inlinable SBlock where
   inline ctx (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn, Empty) ->
@@ -441,7 +443,7 @@ instance ( Inlinable e1, Inlinable e2, Inlinable e3, Inlinable e4
     Case7 x -> (Case7 <$> inline Stop x) >>= reconstruct ctx
   {-# INLINE inline #-}
 
-instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Atom SimpIR)) where
+instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Type SimpIR)) where
   inline ctx (Abs b body) = do
     s <- getSubst
     babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))

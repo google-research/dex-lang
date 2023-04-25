@@ -310,9 +310,6 @@ transposeAtom atom ct = case atom of
       LinTrivial -> return ()
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
-  TabPi _         -> notTangent
-  DepPairTy _     -> notTangent
-  TC _            -> notTangent
   PtrVar _        -> notTangent
   ProjectElt i' x' -> do
     let (idxs, v) = asNaryProj i' x'

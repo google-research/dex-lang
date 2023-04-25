@@ -175,6 +175,9 @@ instance (IRRep r) => CheckableE r (DestLamExpr r) where
 instance IRRep r => CheckableE r (Atom r) where
   checkE atom = void $ getTypeE atom
 
+instance IRRep r => CheckableE r (Type r) where
+  checkE atom = void $ getTypeE atom
+
 instance IRRep r => HasType r (AtomName r) where
   getTypeE name = do
     name' <- renameM name
@@ -196,35 +199,53 @@ instance IRRep r => HasType r (Atom r) where
       Pi piTy' <- checkTypeE TyKind $ Pi piTy
       checkCoreLam piTy' lam
       return $ Pi piTy'
-    Pi piType -> getTypeE piType
-    TabPi piType -> getTypeE piType
     DepPair l r ty -> do
       ty' <- checkTypeE TyKind ty
       l'  <- checkTypeE (depPairLeftTy ty') l
       rTy <- instantiateDepPairTy ty' l'
       r |: rTy
       return $ DepPairTy ty'
-    DepPairTy ty -> getTypeE ty
     Con con  -> typeCheckPrimCon con
-    TC tyCon -> typeCheckPrimTC  tyCon
     Eff eff  -> checkE eff $> EffKind
     PtrVar v -> renameM v >>= lookupEnv >>= \case
       PtrBinding ty _ -> return $ PtrTy ty
     DictCon dictExpr -> getTypeE dictExpr
-    DictTy (DictType _ className params) -> do
-      ClassDef _ _ _ paramBs _ _ <- renameM className >>= lookupClassDef
-      params' <- mapM renameM params
-      checkArgTys paramBs params'
-      return TyKind
     RepValAtom (RepVal ty _) -> renameM ty
     NewtypeCon con x -> NewtypeTyCon <$> typeCheckNewtypeCon con x
-    NewtypeTyCon t   -> typeCheckNewtypeTyCon t
     SimpInCore x -> getTypeE x
     DictHole _ ty _ -> checkTypeE TyKind ty
     ProjectElt UnwrapNewtype x -> do
       NewtypeTyCon con <- getTypeE x
       snd <$> unwrapNewtypeType con
     ProjectElt (ProjectProduct i) x -> do
+      ty <- getTypeE x
+      case ty of
+        ProdTy tys -> return $ tys !! i
+        DepPairTy t | i == 0 -> return $ depPairLeftTy t
+        DepPairTy t | i == 1 -> do
+          x' <- renameM x
+          xFst <- normalizeProj (ProjectProduct 0) x'
+          instantiateDepPairTy t xFst
+        _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
+    TypeAsAtom ty -> getTypeE ty
+
+instance IRRep r => HasType r (Type r) where
+  getTypeE atom = case atom of
+    Pi piType -> getTypeE piType
+    TabPi piType -> getTypeE piType
+    NewtypeTyCon t   -> typeCheckNewtypeTyCon t
+    TC tyCon -> typeCheckPrimTC  tyCon
+    DepPairTy ty -> getTypeE ty
+    DictTy (DictType _ className params) -> do
+      ClassDef _ _ _ paramBs _ _ <- renameM className >>= lookupClassDef
+      params' <- mapM renameM params
+      checkArgTys paramBs params'
+      return TyKind
+    TyVar v -> getTypeE v
+    ProjectEltTy UnwrapNewtype x -> do
+      NewtypeTyCon con <- getTypeE x
+      snd <$> unwrapNewtypeType con
+    ProjectEltTy (ProjectProduct i) x -> do
       ty <- getTypeE x
       case ty of
         ProdTy tys -> return $ tys !! i
@@ -495,15 +516,14 @@ typeCheckMiscOp effs = \case
     ty <- getTypeE x
     y |: ty
     return ty
-
-  CastOp t@(Var _) _ -> t |: TyKind >> renameM t
+  CastOp t@(TyVar _) _ -> t |: TyKind >> renameM t
   CastOp destTy e -> do
     sourceTy' <- getTypeE e
     destTy |: TyKind
     destTy' <- renameM destTy
     checkValidCast sourceTy' destTy'
     return $ destTy'
-  BitcastOp t@(Var _) _ -> t |: TyKind >> renameM t
+  BitcastOp t@(TyVar _) _ -> t |: TyKind >> renameM t
   BitcastOp destTy e -> do
     sourceTy <- getTypeE e
     case (destTy, sourceTy) of
@@ -985,7 +1005,7 @@ isData ty = liftM isJust $ runCheck do
 
 checkDataLike :: Typer m r => Type CoreIR i -> m i o ()
 checkDataLike ty = case ty of
-  Var _ -> notData
+  TyVar _ -> notData
   TabPi (TabPiType b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy

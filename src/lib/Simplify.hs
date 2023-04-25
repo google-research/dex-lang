@@ -95,15 +95,10 @@ tryAsDataAtom atom = do
       TabLam _ tabLam -> forceTabLam tabLam
       ACase scrut alts resultTy -> forceACase scrut alts resultTy
     Lam _           -> notData
-    DepPairTy _     -> notData
-    Pi _            -> notData
-    NewtypeTyCon _  -> notData
     DictCon _       -> notData
-    DictTy _        -> notData
     Eff _           -> notData
-    TC _            -> notData
-    TabPi _         -> notData
     DictHole _ _ _  -> notData
+    TypeAsAtom _    -> notData
     where
       notData = error $ "Not runtime-representable data: " ++ pprint atom
 
@@ -154,20 +149,9 @@ getRepType ty = go ty where
       go ty'
     Pi _           -> error notDataType
     DictTy _       -> error notDataType
-    DictCon _      -> error notType
-    DictHole _ _ _ -> error notType
-    Eff _          -> error notType
-    Con _          -> error notType
-    PtrVar _       -> error notType
-    DepPair _ _ _  -> error notType
-    ProjectElt _ _ -> error notType
-    NewtypeCon _ _ -> error notType
-    SimpInCore _   -> error notType
-    Lam _          -> error notType
-    Var _ -> error "Shouldn't have type variables in CoreIR IR with SimpIR builder names"
-    where
-      notType     = "Not a type: " ++ pprint ty
-      notDataType = "Not a type of runtime-representable data: " ++ pprint ty
+    TyVar _ -> error "Shouldn't have type variables in CoreIR IR with SimpIR builder names"
+    ProjectEltTy _ _ -> error "Shouldn't have this left"
+    where notDataType = "Not a type of runtime-representable data: " ++ pprint ty
 
 toDataAtom :: Emits n => CAtom n -> SimplifyM i n (SAtom n, Type CoreIR n)
 toDataAtom x = tryAsDataAtom x >>= \case
@@ -186,11 +170,6 @@ toDataAtomIgnoreReconAssumeNoDecls x = do
   case decls of
     Empty -> return result
     _ -> error "unexpected decls"
-
-toDataOrRepType :: Emits n => CAtom n -> SimplifyM i n (SAtom n)
-toDataOrRepType x = getType x >>= \case
-  TyKind -> getRepType x
-  _ -> toDataAtomIgnoreRecon x
 
 withSimplifiedBinders
  :: Nest (Binder CoreIR) o any
@@ -631,21 +610,16 @@ simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
 simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   Var v -> simplifyVar v
   Lam _ -> substM atom
-  Pi _ -> substM atom
-  TabPi _ -> substM atom
-  DepPairTy _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
-  Con con -> Con <$> traverseOp con simplifyAtom (error "unexpected lambda")
-  TC tc   -> TC  <$> traverseOp tc  simplifyAtom (error "unexpected lambda")
+  Con con -> Con <$> traverseOp con substM simplifyAtom (error "unexpected lambda")
   Eff eff -> Eff <$> substM eff
   PtrVar v -> PtrVar <$> substM v
   DictCon d -> (DictCon <$> substM d) >>= cheapNormalize
-  DictTy  d -> DictTy <$> substM d
   DictHole _ _ _ -> error "shouldn't have dict holes past inference"
   NewtypeCon _ _ -> substM atom
-  NewtypeTyCon t -> NewtypeTyCon <$> substM t
   ProjectElt i x -> normalizeProj i =<< simplifyAtom x
   SimpInCore _ -> substM atom
+  TypeAsAtom _ -> substM atom
 
 simplifyVar :: AtomName CoreIR i -> SimplifyM i o (CAtom o)
 simplifyVar v = do
@@ -780,7 +754,10 @@ simplifyGenericOp
   -> SimplifyM i o (CAtom o)
 simplifyGenericOp op = do
   ty <- getTypeSubst op
-  op' <- traverseOp op (simplifyAtom >=> toDataOrRepType) (error "shouldn't have lambda left")
+  op' <- traverseOp op
+           (substM >=> getRepType)
+           (simplifyAtom >=> toDataAtomIgnoreRecon)
+           (error "shouldn't have lambda left")
   result <- liftEnvReaderM (peepholeOp $ toPrimOp op') >>= \case
     Left  a   -> return a
     Right op'' -> emitOp op''
@@ -930,7 +907,7 @@ preludeNothingVal ty = do
 preludeMaybeNewtypeCon :: EnvReader m => CType n -> m n (NewtypeCon n)
 preludeMaybeNewtypeCon ty = do
   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  let params = TyConParams [Explicit] [ty]
+  let params = TyConParams [Explicit] [Type ty]
   return $ UserADTData tyConName params
 
 simplifyBlock :: Emits o => Block CoreIR i -> SimplifyM i o (CAtom o)
@@ -961,7 +938,7 @@ linearizeTopFunNoCache spec@(LinearizationSpec f actives) = do
   updateTransposeRelation fTangent' fTangentT'
   return (fPrimal', fTangent')
 
-tryGetCustomRule :: EnvReader m => TopFunName n -> m n (Maybe (Abstracted CoreIR (ListE CType) n, AtomRules n))
+tryGetCustomRule :: EnvReader m => TopFunName n -> m n (Maybe (Abstracted CoreIR (ListE CAtom) n, AtomRules n))
 tryGetCustomRule f' = do
   ~(TopFunBinding f) <- lookupEnv f'
   case f of
@@ -977,7 +954,7 @@ type Linearized = Abs (Nest SBinder)    -- primal args
                              SLam))     -- tangent function
 
 simplifyCustomLinearization
-  :: Abstracted CoreIR (ListE CType) n -> [Active] -> AtomRules n
+  :: Abstracted CoreIR (ListE CAtom) n -> [Active] -> AtomRules n
   -> SimplifyM i n (PairE SLam SLam n)
 simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
   CustomLinearize nImplicit nExplicit zeros fCustom <- return rule

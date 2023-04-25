@@ -879,7 +879,6 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
             ProjectProduct idx    -> case t' of
               Branch ts -> return $ ts !! idx
               _ -> error "should only be projecting a branch"
-    _ -> error $ "not implemented: " ++ show atom
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
 -- from the dest. This version is not that. It just lifts a dest into an atom of
