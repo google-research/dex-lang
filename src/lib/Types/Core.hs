@@ -1345,7 +1345,6 @@ instance GenericE UserEffectOp where
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-
 instance SinkableE      UserEffectOp
 instance HoistableE     UserEffectOp
 instance RenameE        UserEffectOp

@@ -18,7 +18,7 @@ module CheapReduction
 
 import Control.Applicative
 import Control.Monad.Trans
-import Control.Monad.Writer.Strict
+import Control.Monad.Writer.Strict  hiding (Alt)
 import Control.Monad.State.Strict
 import Data.Foldable (toList)
 import Data.Functor.Identity
@@ -478,8 +478,230 @@ projType i ty x = case ty of
     instantiateDepPairTy t xFst
   _ -> error $ "Can't project type: " ++ pprint ty
 
+-- === traversable terms ===
+
+data TraversalDef m r i o = TraversalDef
+ { handleName :: forall c. (IsAtomName c ~ False, Color c) => Name c i -> m (Name c o)
+ , handleType :: Type r i -> m (Type r o)
+ , handleAtom :: Atom r i -> m (Atom r o)
+ , handleLam  :: LamExpr r i -> m (LamExpr r o)
+ , handlePi   :: PiType  r i -> m (PiType  r o)}
+
+handleBlock :: Monad m => TraversalDef m r i o -> Block r i -> m (Block r o)
+handleBlock f b = do
+  handleLam f (LamExpr Empty b) >>= \case
+    LamExpr Empty b' -> return b'
+    _ -> error "not a block"
+
+handleAlt :: Monad m => TraversalDef m r i o -> Alt r i -> m (Alt r o)
+handleAlt f (Abs b body) = do
+  handleLam f (LamExpr (UnaryNest b) body) >>= \case
+    LamExpr (UnaryNest b') body' -> return $ Abs b' body'
+    _ -> error "not an alt"
+
+class TraversableTerm (e:: E) (r::IR) | e -> r where
+  traverseTerm :: Monad m => TraversalDef m r i o -> e i -> m (e o)
+
+tt :: (TraversableTerm e r, Monad m) => TraversalDef m r i o -> e i -> m (e o)
+tt = traverseTerm
+
+ha :: Monad m => TraversalDef m r i o -> Atom r i -> m (Atom r o)
+ha = handleAtom
+
+traverseOpTerm
+  :: (GenericOp e, Monad m, OpConst e r ~ OpConst e r)
+  => TraversalDef m r i o -> e r i -> m (e r o)
+traverseOpTerm f e = traverseOp e (handleType f) (ha f) (handleLam f)
+
+-- XXX: This doesn't handle the `Var`, `ProjectElt`, `SimpInCore` cases. These
+-- should be handled explicitly beforehand. TODO: split out these cases under a
+-- separate constructor, perhaps even a `hole` paremeter to `Atom` or part of
+-- `IR`.
+traverseAtom :: (IRRep r, Monad m) => TraversalDef m r i o -> Atom r i -> m (Atom r o)
+traverseAtom f = \case
+  Var _          -> error "Not handled generically"
+  SimpInCore _   -> error "Not handled generically"
+  ProjectElt _ _ -> error "Not handled generically"
+  Con con -> Con <$> tt f con
+  PtrVar v -> PtrVar <$> handleName f v
+  DepPair x y t -> do
+    x' <- ha f x
+    y' <- ha f y
+    ~(DepPairTy t') <- handleType f $ DepPairTy t
+    return $ DepPair x' y' t'
+  Lam lam   -> Lam     <$> tt f lam
+  Eff eff   -> Eff     <$> tt f eff
+  DictCon d -> DictCon <$> tt f d
+  NewtypeCon con x -> NewtypeCon <$> tt f con <*> ha f x
+  DictHole ctx ty access -> DictHole ctx <$> handleType f ty <*> pure access
+  TypeAsAtom t -> TypeAsAtom <$> handleType f t
+  RepValAtom repVal -> RepValAtom <$> tt f repVal
+
+-- XXX: This doesn't handle the `TyVar` or `ProjectEltTy` cases. These should be
+-- handled explicitly beforehand.
+traverseType :: (IRRep r, Monad m) => TraversalDef m r i o -> Type r i -> m (Type r o)
+traverseType f = \case
+  TyVar _          -> error "Not handled generically"
+  ProjectEltTy _ _ -> error "Not handled generically"
+  NewtypeTyCon t -> NewtypeTyCon <$> tt f t
+  Pi           t -> Pi           <$> tt f t
+  TabPi        t -> TabPi        <$> tt f t
+  TC           t -> TC           <$> tt f t
+  DepPairTy    t -> DepPairTy    <$> tt f t
+  DictTy       t -> DictTy       <$> tt f t
+
+instance IRRep r => TraversableTerm (Expr r) r where
+  traverseTerm f = \case
+    TopApp v xs -> TopApp <$> handleName f v <*> mapM (ha f) xs
+    TabApp tab xs -> TabApp <$> ha f tab <*> mapM (ha f) xs
+    Case x alts t effs -> Case <$> ha f x <*> mapM (handleAlt f) alts <*> handleType f t <*> tt f effs
+    Atom x -> Atom <$> ha f x
+    TabCon Nothing t xs -> TabCon Nothing <$> handleType f t <*> mapM (ha f) xs
+    TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> ha f d) <*> handleType f t <*> mapM (ha f) xs
+    PrimOp op -> PrimOp <$> tt f op
+    App fAtom xs -> App <$> ha f fAtom <*> mapM (ha f) xs
+    ApplyMethod m i xs -> ApplyMethod <$> ha f m <*> pure i <*> mapM (ha f) xs
+
+instance IRRep r => TraversableTerm (PrimOp r) r where
+  traverseTerm f = \case
+    UnOp     op x   -> UnOp  op <$> ha f x
+    BinOp    op x y -> BinOp op <$> ha f x <*> ha f y
+    MemOp        op -> MemOp    <$> tt f op
+    VectorOp     op -> VectorOp     <$> tt f op
+    MiscOp       op -> MiscOp       <$> tt f op
+    Hof          op -> Hof          <$> tt f op
+    DAMOp        op -> DAMOp        <$> tt f op
+    UserEffectOp op -> UserEffectOp <$> tt f op
+    RefOp r op  -> RefOp <$> ha f r <*> traverseOp op (handleType f) (ha f) (handleLam f)
+
+instance IRRep r => TraversableTerm (Hof r) r where
+  traverseTerm f = \case
+    For ann d lam -> For ann <$> tt f d <*> handleLam f lam
+    RunReader x body -> RunReader <$> ha f x <*> handleLam f body
+    RunWriter dest bm body -> RunWriter <$> mapM (ha f) dest <*> tt f bm <*> handleLam f body
+    RunState  dest s body ->  RunState  <$> mapM (ha f) dest <*> ha f s <*> handleLam f body
+    While          b -> While          <$> handleBlock f b
+    RunIO          b -> RunIO          <$> handleBlock f b
+    RunInit        b -> RunInit        <$> handleBlock f b
+    CatchException b -> CatchException <$> handleBlock f b
+    Linearize      lam x -> Linearize <$> handleLam f lam <*> ha f x
+    Transpose      lam x -> Transpose <$> handleLam f lam <*> ha f x
+
+instance IRRep r => TraversableTerm (BaseMonoid r) r where
+  traverseTerm f (BaseMonoid x lam) = BaseMonoid <$> ha f x <*> handleLam f lam
+
+instance IRRep r => TraversableTerm (DAMOp r) r where
+  traverseTerm f = \case
+    Seq dir d x lam -> Seq dir <$> tt f d <*> ha f x <*> handleLam f lam
+    RememberDest x lam -> RememberDest <$> ha f x <*> handleLam f lam
+    AllocDest t -> AllocDest <$> handleType f t
+    Place x y -> Place  <$> ha f x <*> ha f y
+    Freeze x  -> Freeze <$> ha f x
+
+instance TraversableTerm UserEffectOp CoreIR where
+  traverseTerm f = \case
+    Handle name xs body -> Handle <$> handleName f name <*> mapM (ha f) xs <*> handleBlock f body
+    Resume t x -> Resume <$> handleType f t <*> ha f x
+    Perform x i -> Perform <$> ha f x <*> pure i
+
+instance IRRep r => TraversableTerm (Effect r) r where
+  traverseTerm f = \case
+    RWSEffect rws h    -> RWSEffect rws <$> ha f h
+    ExceptionEffect    -> pure ExceptionEffect
+    IOEffect           -> pure IOEffect
+    UserEffect name    -> UserEffect <$> handleName f name
+    InitEffect         -> pure InitEffect
+
+instance IRRep r => TraversableTerm (EffectRow r) r where
+  traverseTerm f (EffectRow effs tailVar) = do
+    effs' <- eSetFromList <$> mapM (tt f) (eSetToList effs)
+    tailEffRow <- case tailVar of
+      NoTail -> return $ EffectRow mempty NoTail
+      EffectRowTail v -> ha f (Var v) <&> \case
+        Var v' -> EffectRow mempty (EffectRowTail v')
+        Eff r  -> r
+        _ -> error "Not a valid effect substitution"
+    return $ extendEffRow effs' tailEffRow
+
+instance TraversableTerm DictExpr CoreIR where
+  traverseTerm f = \case
+    InstantiatedGiven x xs -> InstantiatedGiven <$> ha f x <*> mapM (ha f) xs
+    SuperclassProj x i     -> SuperclassProj <$> ha f x <*> pure i
+    InstanceDict v xs      -> InstanceDict <$> handleName f v <*> mapM (ha f) xs
+    IxFin x                -> IxFin <$> ha f x
+    DataData t             -> DataData <$> handleType f t
+
+instance TraversableTerm NewtypeCon CoreIR where
+  traverseTerm f = \case
+    UserADTData t params -> UserADTData <$> handleName f t <*> tt f params
+    NatCon -> return NatCon
+    FinCon x -> FinCon <$> ha f x
+
+instance TraversableTerm NewtypeTyCon CoreIR where
+  traverseTerm f = \case
+    Nat -> return Nat
+    Fin x -> Fin <$> ha f x
+    EffectRowKind -> return EffectRowKind
+    UserADTType n v params -> UserADTType n <$> handleName f v <*> tt f params
+
+instance TraversableTerm TyConParams CoreIR where
+  traverseTerm f (TyConParams expls xs) = TyConParams expls <$> mapM (ha f) xs
+
+instance IRRep r => TraversableTerm (IxDict r) r where
+  traverseTerm f = \case
+    IxDictAtom   x -> IxDictAtom   <$> ha f x
+    IxDictRawFin x -> IxDictRawFin <$> ha f x
+    IxDictSpecialized t v xs -> IxDictSpecialized <$> handleType f t <*> handleName f v <*> mapM (ha f) xs
+
+instance TraversableTerm DictType CoreIR where
+  traverseTerm f (DictType n v xs) = DictType n <$> handleName f v <*> mapM (ha f) xs
+
+instance TraversableTerm CoreLamExpr CoreIR where
+  traverseTerm f (CoreLamExpr t lam) = CoreLamExpr <$> tt f t <*> handleLam f lam
+
+instance TraversableTerm CorePiType CoreIR where
+  traverseTerm f (CorePiType app bsExpl eff ty) = do
+    let (expls, bs) = unzipExpls bsExpl
+    PiType bs' eff' ty' <- handlePi f $ PiType bs eff ty
+    let bsExpl' = zipExpls expls bs'
+    return $ CorePiType app bsExpl' eff' ty'
+
+instance IRRep r => TraversableTerm (TabPiType r) r where
+  traverseTerm f (TabPiType (b:>IxType t d) eltTy) = do
+    d' <- tt f d
+    handlePi f (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
+      PiType (UnaryNest (b':>t')) Pure eltTy' -> TabPiType (b':>IxType t' d') eltTy'
+      _ -> error "not a table pi type"
+
+instance IRRep r => TraversableTerm (DepPairType r) r where
+  traverseTerm f (DepPairType expl b ty) = do
+    handlePi f (PiType (UnaryNest b) Pure ty) <&> \case
+      PiType (UnaryNest b') Pure ty' -> DepPairType expl b' ty'
+      _ -> error "not a dependent pair type"
+
+instance TraversableTerm (RepVal SimpIR) SimpIR where
+  traverseTerm f (RepVal ty tree) = RepVal <$> handleType f ty <*> mapM renameIExpr tree
+    where renameIExpr = \case
+            ILit l -> return $ ILit l
+            IVar    v t -> IVar    <$> handleName f v <*> pure t
+            IPtrVar v t -> IPtrVar <$> handleName f v <*> pure t
+
+instance TraversableTerm (Con      r) r where traverseTerm = traverseOpTerm
+instance TraversableTerm (TC       r) r where traverseTerm = traverseOpTerm
+instance TraversableTerm (MiscOp   r) r where traverseTerm = traverseOpTerm
+instance TraversableTerm (VectorOp r) r where traverseTerm = traverseOpTerm
+instance TraversableTerm (MemOp    r) r where traverseTerm = traverseOpTerm
+
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
+
+substTraversal :: (Distinct o, IRRep r) => (Env o, Subst AtomSubstVal i o) -> TraversalDef Identity r i o
+substTraversal env = TraversalDef
+ { handleName = return . substE env
+ , handleType = return . substE env
+ , handleAtom = return . substE env
+ , handleLam  = return . substE env
+ , handlePi   = return . substE env }
 
 instance Color c => SubstE AtomSubstVal (AtomSubstVal c) where
   substE (_, env) (Rename name) = env ! name
@@ -489,23 +711,14 @@ instance SubstV (SubstVal Atom) (SubstVal Atom) where
 
 instance IRRep r => SubstE AtomSubstVal (Atom r) where
   substE es@(env, subst) = \case
-    Var v -> case subst ! v of
+    Var v -> case subst!v of
       Rename v' -> Var v'
       SubstVal x -> x
+    SimpInCore x   -> SimpInCore (substE es x)
     ProjectElt i x -> do
      let x' = substE es x
      runEnvReaderM env $ normalizeProj i x'
-    Con con        -> Con    (substE es con)
-    PtrVar v       -> PtrVar (substE es v)
-    DepPair x y t  -> DepPair (substE es x) (substE es y) (substE es t)
-    Lam lam        -> Lam (substE es lam)
-    Eff  eff       -> Eff (substE es eff)
-    DictCon x      -> DictCon (substE es x)
-    NewtypeCon c x -> NewtypeCon (substE es c) (substE es x)
-    DictHole s t a -> DictHole s (substE es t) a
-    TypeAsAtom t   -> TypeAsAtom (substE es t)
-    SimpInCore x   -> SimpInCore (substE es x)
-    RepValAtom r   -> RepValAtom (substE es r)
+    atom -> runIdentity $ traverseAtom (substTraversal es) atom
 
 instance IRRep r => SubstE AtomSubstVal (Type r) where
   substE es@(env, subst) = \case
@@ -518,12 +731,7 @@ instance IRRep r => SubstE AtomSubstVal (Type r) where
      case runEnvReaderM env $ normalizeProj i x' of
        Type t   -> t
        _ -> error "bad substitution"
-    TC           t -> TC (substE es t)
-    TabPi        t -> TabPi         (substE es t)
-    DepPairTy    t -> DepPairTy     (substE es t)
-    DictTy       t -> DictTy        (substE es t)
-    Pi           t -> Pi            (substE es t)
-    NewtypeTyCon t -> NewtypeTyCon  (substE es t)
+    ty -> runIdentity $ traverseType (substTraversal es) ty
 
 instance SubstE AtomSubstVal SimpInCore
 
