@@ -690,6 +690,14 @@ instance TraversableTerm (RepVal SimpIR) SimpIR where
             IVar    v t -> IVar    <$> handleName f v <*> pure t
             IPtrVar v t -> IPtrVar <$> handleName f v <*> pure t
 
+instance IRRep r => TraversableTerm (DeclBinding r) r where
+  traverseTerm f (DeclBinding ann ty expr) =
+    DeclBinding ann <$> handleType f ty <*> traverseTerm f expr
+
+instance IRRep r => TraversableTerm (EffectAndType r) r where
+  traverseTerm f (EffectAndType eff ty) =
+    EffectAndType <$> traverseTerm f eff <*> handleType f ty
+
 instance TraversableTerm (Con      r) r where traverseTerm = traverseOpTerm
 instance TraversableTerm (TC       r) r where traverseTerm = traverseOpTerm
 instance TraversableTerm (MiscOp   r) r where traverseTerm = traverseOpTerm

@@ -28,7 +28,9 @@ import Name
 import Subst
 import IRVariants
 import Core
-import GenericTraversal
+import GenericTraversal hiding (traverseAtom, traverseType)
+import qualified GenericTraversal as G
+import CheapReduction
 import Builder
 import QueryType
 import Util (iota)
@@ -266,7 +268,7 @@ instance GenericTraverser SimpIR UnitB ULS where
       {-# INLINE withLocalAccounting #-}
 
 emitSubstBlock :: Emits o => SBlock i -> ULM i o (SAtom o)
-emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
+emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ G.traverseAtom ans
 
 -- === Loop invariant code motion ===
 
@@ -302,7 +304,7 @@ instance GenericTraverser SimpIR UnitB LICMS where
   traverseExpr = \case
     PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
       ix' <- substM ix
-      dests' <- traverse traverseAtom dests
+      dests' <- traverse G.traverseAtom dests
       let numCarriesOriginal = length dests'
       Abs hdecls destsAndBody <- traverseBinder b \b' -> do
         -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
@@ -407,13 +409,36 @@ dceDestBlock (DestBlock d b) = liftEnvReaderM $
 
 class HasDCE (e::E) where
   dce :: e n -> DCEM n (e n)
-  default dce :: (GenericE e, HasDCE (RepE e)) => e n -> DCEM n (e n)
-  dce e = confuseGHC >>= \_ -> toE <$> dce (fromE e)
+  default dce :: TraversableTerm e SimpIR => e n -> DCEM n (e n)
+  dce = traverseTerm dceTraversal
 
--- The interesting instances
+dceTraversal :: TraversalDef (DCEM n) SimpIR n n
+dceTraversal = TraversalDef
+ { handleName = dce
+ , handleType = dce
+ , handleAtom = dce
+ , handleLam  = dce
+ , handlePi   = dce }
 
 instance Color c => HasDCE (Name c) where
   dce n = modify (<> FV (freeVarsE n)) $> n
+
+instance HasDCE SAtom where
+  dce = \case
+    Var n -> modify (<> FV (freeVarsE n)) $> Var n
+    ProjectElt i x -> ProjectElt i <$> dce x
+    atom -> traverseAtom dceTraversal atom
+
+instance HasDCE SType where dce = traverseType dceTraversal
+instance HasDCE (PiType SimpIR) where
+  dce (PiType bs eff ty) = do
+    Abs bs' (EffectAndType eff' ty') <- dce (Abs bs (EffectAndType eff ty))
+    return $ PiType bs' eff' ty'
+
+instance HasDCE (LamExpr SimpIR) where
+  dce (LamExpr bs e) = do
+    Abs bs' e' <- dce (Abs bs e)
+    return $ LamExpr bs' e'
 
 instance HasDCE SBlock where
   dce (Block ann decls ans) = case (ann, decls) of
@@ -489,92 +514,13 @@ dceNest decls ans = case decls of
         modify (<>FV (freeVarsB b'))
         return $ Abs (Nest (Let b' decl'') bs'') ans''
 
--- The generic instances
-
-instance HasDCE SExpr
-instance HasDCE (RefOp SimpIR)
-instance HasDCE (BaseMonoid SimpIR)
-instance HasDCE (Hof SimpIR)
-instance HasDCE SAtom
-instance HasDCE SType
-instance HasDCE (LamExpr     SimpIR)
-instance HasDCE (TabPiType   SimpIR)
-instance HasDCE (DepPairType SimpIR)
-instance HasDCE (EffectRowTail SimpIR)
-instance HasDCE (EffectRow     SimpIR)
-instance HasDCE (Effect        SimpIR)
-instance HasDCE (DeclBinding   SimpIR)
-instance HasDCE (DAMOp         SimpIR)
-instance HasDCE (Con           SimpIR)
-instance HasDCE (PrimOp        SimpIR)
-instance HasDCE (MemOp         SimpIR)
-instance HasDCE (MiscOp        SimpIR)
-instance HasDCE (VectorOp      SimpIR)
-instance HasDCE (TC            SimpIR)
-instance HasDCE (IxDict        SimpIR)
-instance HasDCE (GenericOpRep c SimpIR)
-
--- The instances for RepE types
-
-instance (HasDCE e1, HasDCE e2) => HasDCE (PairE e1 e2) where
-  dce (PairE l r) = PairE <$> dce l <*> dce r
-  {-# INLINE dce #-}
-instance (HasDCE e1, HasDCE e2) => HasDCE (EitherE e1 e2) where
-  dce = \case
-    LeftE  l -> LeftE  <$> dce l
-    RightE r -> RightE <$> dce r
-  {-# INLINE dce #-}
-instance ( HasDCE e0, HasDCE e1, HasDCE e2, HasDCE e3
-         , HasDCE e4, HasDCE e5, HasDCE e6, HasDCE e7
-         ) => HasDCE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
-  dce = \case
-    Case0 x0 -> Case0 <$> dce x0
-    Case1 x1 -> Case1 <$> dce x1
-    Case2 x2 -> Case2 <$> dce x2
-    Case3 x3 -> Case3 <$> dce x3
-    Case4 x4 -> Case4 <$> dce x4
-    Case5 x5 -> Case5 <$> dce x5
-    Case6 x6 -> Case6 <$> dce x6
-    Case7 x7 -> Case7 <$> dce x7
-  {-# INLINE dce #-}
 instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasDCE e) => HasDCE (Abs b e) where
   dce a = do
     a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> dce e
     modify (<>FV (freeVarsB b'))
     return a'
   {-# INLINE dce #-}
-instance HasDCE (LiftE a) where
-  dce x = return x
-  {-# INLINE dce #-}
-instance HasDCE VoidE where
-  dce _ = error "impossible"
-  {-# INLINE dce #-}
-instance HasDCE UnitE where
-  dce UnitE = return UnitE
-  {-# INLINE dce #-}
-instance (Traversable f, HasDCE e) => HasDCE (ComposeE f e) where
-  dce (ComposeE xs) = ComposeE <$> traverse dce xs
-  {-# INLINE dce #-}
-instance HasDCE e => HasDCE (ListE e) where
-  dce (ListE xs) = ListE <$> traverse dce xs
-  {-# INLINE dce #-}
-instance HasDCE e => HasDCE (WhenE True e) where
-  dce (WhenE e) = WhenE <$> dce e
-instance HasDCE (WhenE False e) where
-  dce _ = undefined
 
-instance HasDCE (RepVal SimpIR) where
-  dce e = modify (<> FV (freeVarsE e)) $> e
-
-instance HasDCE (WhenCore SimpIR e) where dce = \case
-instance HasDCE e => HasDCE (WhenCore CoreIR e) where
-  dce (WhenIRE e) = WhenIRE <$> dce e
-
-instance HasDCE (WhenSimp CoreIR e) where dce = \case
-instance HasDCE e => HasDCE (WhenSimp SimpIR e) where
-  dce (WhenIRE e) = WhenIRE <$> dce e
-
--- See Note [Confuse GHC] from Simplify.hs
-confuseGHC :: EnvReader m => m n (DistinctEvidence n)
-confuseGHC = getDistinct
-{-# INLINE confuseGHC #-}
+instance HasDCE (EffectRow     SimpIR)
+instance HasDCE (DeclBinding   SimpIR)
+instance HasDCE (EffectAndType SimpIR)

@@ -238,8 +238,6 @@ occTy ty = occ accessOnce ty
 
 instance HasOCC SLam where
   occ a (LamExpr bs body) = do
-    -- The way this and hoistState are written, the pass will crash if any of
-    -- the AccessInfos reference this binder.
     lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
       LamExpr bs' <$> occ (sink a) body'
     countFreeVarsAsOccurrencesB bs'
