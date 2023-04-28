@@ -34,7 +34,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import GHC.Generics (Generic (..))
 
 import Builder
-import CheapReduction
+import CheapReduction  hiding (traverseAtom, traverseType)
 import CheckType
 import Core
 import Err

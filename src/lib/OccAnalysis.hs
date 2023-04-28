@@ -7,12 +7,12 @@
 module OccAnalysis (analyzeOccurrences) where
 
 import Control.Monad.State.Strict
-import Data.Functor
 import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
+import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -210,15 +210,54 @@ unknown _ = return IxAll
 
 class HasOCC (e::E) where
   occ :: Access n -> e n -> OCCM n (e n)
-  default occ :: (GenericE e, HasOCC (RepE e)) => Access n -> e n -> OCCM n (e n)
-  occ a e = confuseGHC >>= \_ -> toE <$> occ a (fromE e)
 
-instance HasOCC (AtomName SimpIR) where
-  occ a n = modify (<> FV (singletonNameMapE n $ AccessInfo One a)) $> n
-  {-# INLINE occ #-}
-instance HasOCC (Name EffectNameC  ) where occ _ n = return n
-instance HasOCC (Name TopFunNameC  ) where occ _ n = return n
-instance HasOCC (Name SpecializedDictNameC) where occ _ n = return n
+occTraversal :: Access n -> TraversalDef (OCCM n) SimpIR n n
+occTraversal access = TraversalDef
+ { handleName = pure
+ , handleType = occ access
+ , handleAtom = occ access
+ , handleLam  = occ access
+ , handlePi   = occ access }
+
+instance HasOCC SAtom where
+  occ a = \case
+    Var n -> do
+      modify (<> FV (singletonNameMapE n $ AccessInfo One a))
+      return $ Var n
+    ProjectElt i x -> ProjectElt i <$> occ a x
+    atom -> traverseAtom (occTraversal a) atom
+
+instance HasOCC SType where
+  occ a ty = traverseType (occTraversal a) ty
+
+-- TODO What, actually, is the right thing to do for type annotations?  Do we
+-- want a rule like "we never inline into type annotations", or such?  For
+-- now, traversing with the main analysis seems safe.
+occTy :: SType n -> OCCM n (SType n)
+occTy ty = occ accessOnce ty
+
+instance HasOCC SLam where
+  occ a (LamExpr bs body) = do
+    -- The way this and hoistState are written, the pass will crash if any of
+    -- the AccessInfos reference this binder.
+    lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
+      LamExpr bs' <$> occ (sink a) body'
+    countFreeVarsAsOccurrencesB bs'
+    return lam
+
+instance HasOCC (PiType SimpIR) where
+  occ _ (PiType bs effs ty) = do
+    -- The way this and hoistState are written, the pass will crash if any of
+    -- the AccessInfos reference this binder.
+    piTy@(PiType bs' _ _) <- refreshAbs (Abs bs (PairE effs ty)) \b (PairE effs' ty') ->
+      -- I (dougalm) am not sure about this. I'm just trying to mimic the old
+      -- behavior when this would go through the `HasOCC PairE` instance.
+      PiType b <$> occ accessOnce effs' <*> occ accessOnce ty'
+    countFreeVarsAsOccurrencesB bs'
+    return piTy
+
+instance HasOCC (EffectRow SimpIR) where
+  occ a = traverseTerm (occTraversal a)
 
 instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
@@ -229,14 +268,6 @@ instance HasOCC SBlock where
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
       return $ Block (BlockAnn ty' effs) decls' ans'
-
--- TODO What, actually, is the right thing to do for type annotations?  Do we
--- want a rule like "we never inline into type annotations", or such?  For
--- now, traversing with the main analysis seems safe.
-occTy :: SType n -> OCCM n (SType n)
-occTy ty = occ accessOnce ty
-
--- TODO(optimization) Could reuse the free variable caching from dce here too.
 
 data ElimResult (n::S) where
   ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
@@ -304,7 +335,7 @@ instance HasOCC (DeclBinding SimpIR) where
     return $ DeclBinding ann ty' expr'
 
 instance HasOCC SExpr where
-  occ a expr = case expr of
+  occ a = \case
     TabApp array ixs -> do
       (a', ixs') <- go a ixs
       array' <- occ a' array
@@ -317,20 +348,17 @@ instance HasOCC SExpr where
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
       return $ Case scrut' alts' ty' effs
-    _ -> generic
+    PrimOp (Hof op) -> PrimOp . Hof <$> occ a op
+    PrimOp (RefOp ref op) -> do
+      ref' <- occ a ref
+      PrimOp . RefOp ref' <$> occ a op
+    expr -> traverseTerm (occTraversal a) expr
     where
-      generic = toE <$> (occ a $ fromE expr)
       go acc [] = return (acc, [])
       go acc (ix:ixs) = do
         (acc', ixs') <- go acc ixs
         (summ, ix') <- occurrenceAndSummary ix
         return (location summ acc', ix':ixs')
-
-instance HasOCC (PrimOp   SimpIR)
-instance HasOCC (MemOp    SimpIR)
-instance HasOCC (VectorOp SimpIR)
-instance HasOCC (MiscOp   SimpIR)
-instance HasOCC (DAMOp    SimpIR)
 
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
@@ -431,15 +459,6 @@ occWithBinder (Abs (b:>ty) body) cont = do
   refreshAbs (Abs (b:>ty') body) cont
 {-# INLINE occWithBinder #-}
 
-instance HasOCC SAtom where
-  occ a atom = toE <$> (occ a $ fromE atom)
-
--- We shouldn't need this instance, because Imp names can't appear in SimpIR,
--- but we need to add some tricks to make GHC realize that.
-instance HasOCC (Name ImpNameC) where occ _ = error "Unexpected ImpName"
-
-instance HasOCC (Name PtrNameC) where occ _ x = return x
-
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
     MExtend (BaseMonoid empty combine) val -> do
@@ -462,90 +481,3 @@ instance HasOCC (RefOp SimpIR) where
     IndexRef i -> IndexRef <$> occ accessOnce i
     ProjRef  i -> return $ ProjRef i
   {-# INLINE occ #-}
-
--- === The generic instances ===
-
-instance HasOCC (Con SimpIR)
-instance HasOCC (TC SimpIR)
-instance HasOCC (LamExpr SimpIR) where
-  occ _ _ = error "Impossible"
-  {-# INLINE occ #-}
-instance HasOCC (TabPiType SimpIR)
-instance HasOCC (DepPairType SimpIR)
-instance HasOCC (EffectRow SimpIR)
-instance HasOCC (EffectRowTail SimpIR)
-instance HasOCC (Effect SimpIR)
-instance HasOCC (IxDict SimpIR)
-instance HasOCC (Type SimpIR)
-instance HasOCC (GenericOpRep const SimpIR) where
-
-instance HasOCC (RepVal SimpIR) where
-  occ _ (RepVal ty rep) = RepVal <$> occTy ty <*> pure rep
-
--- === The instances for RepE types ===
-
--- These are only correct for strict expressions whose effects we do
--- not wish to analyze.  That is, the assumption is that they fully
--- use every variable that occurs in them.
-
-instance (HasOCC e1, HasOCC e2) => HasOCC (PairE e1 e2) where
-  occ _ (PairE l r) = PairE <$> occ accessOnce l <*> occ accessOnce r
-  {-# INLINE occ #-}
-instance (HasOCC e1, HasOCC e2) => HasOCC (EitherE e1 e2) where
-  occ a = \case
-    LeftE  l -> LeftE  <$> occ a l
-    RightE r -> RightE <$> occ a r
-  {-# INLINE occ #-}
-instance ( HasOCC e0, HasOCC e1, HasOCC e2, HasOCC e3
-         , HasOCC e4, HasOCC e5, HasOCC e6, HasOCC e7
-         ) => HasOCC (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
-  occ a = \case
-    Case0 x0 -> Case0 <$> occ a x0
-    Case1 x1 -> Case1 <$> occ a x1
-    Case2 x2 -> Case2 <$> occ a x2
-    Case3 x3 -> Case3 <$> occ a x3
-    Case4 x4 -> Case4 <$> occ a x4
-    Case5 x5 -> Case5 <$> occ a x5
-    Case6 x6 -> Case6 <$> occ a x6
-    Case7 x7 -> Case7 <$> occ a x7
-  {-# INLINE occ #-}
-instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasOCC e)
-  => HasOCC (Abs b e) where
-  occ access a = do
-    -- The way this and hoistState are written, the pass will crash if any of
-    -- the AccessInfos reference this binder.  We should avoid triggering this
-    -- generic instance in any situation where that can happen.
-    a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> occ (sink access) e
-    countFreeVarsAsOccurrencesB b'
-    return a'
-  {-# INLINE occ #-}
-instance HasOCC (LiftE a) where
-  occ _ x = return x
-  {-# INLINE occ #-}
-instance HasOCC VoidE where
-  occ _ _ = error "impossible"
-  {-# INLINE occ #-}
-instance HasOCC UnitE where
-  occ _ UnitE = return UnitE
-  {-# INLINE occ #-}
-instance HasOCC e => HasOCC (ListE e) where
-  occ _ (ListE xs) = ListE <$> traverse (occ accessOnce) xs
-  {-# INLINE occ #-}
-
-instance HasOCC e => HasOCC (WhenE True e) where
-  occ a (WhenE e) = WhenE <$> occ a e
-instance HasOCC (WhenE False e) where
-  occ _ _ = undefined
-
-instance HasOCC (WhenCore SimpIR e) where occ _ = \case
-instance HasOCC e => HasOCC (WhenCore CoreIR e) where
-  occ a (WhenIRE e) = WhenIRE <$> occ a e
-
-instance HasOCC (WhenSimp CoreIR e) where occ _ = \case
-instance HasOCC e => HasOCC (WhenSimp SimpIR e) where
-  occ a (WhenIRE e) = WhenIRE <$> occ a e
-
--- See Note [Confuse GHC] from Simplify.hs
-confuseGHC :: EnvReader m => m n (DistinctEvidence n)
-confuseGHC = getDistinct
-{-# INLINE confuseGHC #-}

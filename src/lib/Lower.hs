@@ -27,7 +27,7 @@ import Core
 import Err
 import Imp
 import GenericTraversal
-import CheapReduction
+import CheapReduction  hiding (traverseAtom, traverseType)
 import IRVariants
 import MTL1
 import Name

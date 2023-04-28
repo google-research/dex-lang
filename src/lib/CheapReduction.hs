@@ -13,7 +13,8 @@ module CheapReduction
   , depPairLeftTy, instantiateTyConDef
   , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
-  , liftSimpFun, makeStructRepVal)
+  , liftSimpFun, makeStructRepVal, TraversalDef (..), TraversableTerm (..)
+  , traverseAtom, traverseType)
   where
 
 import Control.Applicative
@@ -499,6 +500,9 @@ handleAlt f (Abs b body) = do
     LamExpr (UnaryNest b') body' -> return $ Abs b' body'
     _ -> error "not an alt"
 
+-- XXX: We deliberately choose not to give `TraversableTerm` instances to the
+-- types explicitly handled by `TraversalDef` so that we're not tempted to recur
+-- by calling `traverseTerm` rather than the handler.
 class TraversableTerm (e:: E) (r::IR) | e -> r where
   traverseTerm :: Monad m => TraversalDef m r i o -> e i -> m (e o)
 
