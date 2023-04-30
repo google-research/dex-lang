@@ -35,7 +35,7 @@ import PPrint
 import QueryType
 import Types.Core
 import Types.Primitives
-import Util (enumerate)
+import Util (enumerate, foldMapM)
 
 -- === For loop resolution ===
 
@@ -109,6 +109,7 @@ lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
 lowerExpr expr = emitExpr =<< case expr of
   TabCon Nothing ty els -> lowerTabCon Nothing ty els
   PrimOp (Hof (For dir ixDict body)) -> lowerFor Nothing dir ixDict body
+  Case e alts ty _ -> lowerCase Nothing e alts ty
   _ -> visitGeneric expr
 
 lowerBlock :: Emits o => SBlock i -> LowerM i o (SAtom o)
@@ -151,7 +152,6 @@ lowerTabCon maybeDest tabTy elems = do
   dest <- case maybeDest of
     Just  d -> return d
     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
-  destTy <- getType dest
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
     buildBlock $ unsafeFromOrdinal (sink ixTy') $ Var $ sink ord
   -- This is emitting a chain of RememberDest ops to force `dest` to be used
@@ -163,14 +163,34 @@ lowerTabCon maybeDest tabTy elems = do
   let go incoming_dest [] = return incoming_dest
       go incoming_dest ((ord, e):rest) = do
         i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
-               lowerBlock ufoBlock
-        do_one_elt <- buildUnaryLamExpr "dest" destTy \local_dest -> do
+          lowerBlock ufoBlock
+        carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
           idest <- indexRef (Var local_dest) (sink i)
           place (FullDest idest) =<< visitAtom e
           return UnitVal
-        carried_dest <- emitExpr $ PrimOp $ DAMOp $ RememberDest incoming_dest do_one_elt
         go carried_dest rest
   dest' <- go dest (enumerate elems)
+  return $ PrimOp $ DAMOp $ Freeze dest'
+
+lowerCase :: Emits o
+  => Maybe (Dest SimpIR o) -> SAtom i -> [Alt SimpIR i] -> SType i
+  -> LowerM i o (SExpr o)
+lowerCase maybeDest scrut alts resultTy = do
+  resultTy' <- substM resultTy
+  dest <- case maybeDest of
+    Just  d -> return d
+    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest resultTy'
+  scrut' <- visitAtom scrut
+  dest' <- buildRememberDest "case_dest" dest \local_dest -> do
+    alts' <- forM alts \(Abs (b:>ty) body) -> do
+      ty' <- substM ty
+      buildAbs (getNameHint b) ty' \b' ->
+        extendSubst (b @> Rename b') $
+          buildBlock do
+            lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
+    eff' <- foldMapM getEffects alts'
+    void $ emitExpr $ Case (sink scrut') alts' UnitTy eff'
+    return UnitVal
   return $ PrimOp $ DAMOp $ Freeze dest'
 
 -- Destination-passing traversals
@@ -198,6 +218,9 @@ type DestAssignment (i'::S) (o::S) = AtomNameMap SimpIR (ProjDest o) i'
 data ProjDest o
   = FullDest (Dest SimpIR o)
   | ProjDest (NE.NonEmpty Projection) (Dest SimpIR o)  -- dest corresponds to the projection applied to name
+
+instance SinkableE ProjDest where
+  sinkingProofE = todoSinkableProof
 
 lookupDest :: DestAssignment i' o -> SAtomName i' -> Maybe (ProjDest o)
 lookupDest = flip lookupNameMap
@@ -258,6 +281,13 @@ lowerExprWithDest dest expr = case expr of
   PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
     s' <- visitAtom s
     return $ RunState ref' s' body'
+  Case e alts ty _ -> case dest of
+    Nothing -> lowerCase Nothing e alts ty
+    Just (FullDest d) -> lowerCase (Just d) e alts ty
+    Just d -> do
+      ans <- lowerCase Nothing e alts ty >>= emitExprToAtom
+      place d ans
+      return $ Atom ans
   _ -> generic
   where
     tabDest = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
