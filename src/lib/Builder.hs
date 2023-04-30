@@ -635,9 +635,6 @@ makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE makeBlockFromDecls #-}
 
-nullaryAtomicCoreLam :: EnvReader m => CAtom n -> m n (CoreLamExpr n)
-nullaryAtomicCoreLam = undefined
-
 coreLamExpr :: EnvReader m => AppExplicitness
             -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CBlock) n
             -> m n (CoreLamExpr n)
@@ -1457,6 +1454,71 @@ localVars b e = nameSetToList $ nameSetIntersection (toNameSet (toScopeFrag b)) 
 confuseGHCBuilder :: IRRep r => BuilderM r n (DistinctEvidence n)
 confuseGHCBuilder = getDistinct
 {-# INLINE confuseGHCBuilder #-}
+
+-- === Traversal helpers ===
+
+-- These traversals work with `TraversableTerm` but they make more assumptions
+-- about the monad you're in.
+
+type ForallTraversalDef m r = forall i o. TraversalDef (m i o) r i o
+type ExprTraversalDef   m r = forall i o. Expr r i -> m i o (Expr r o)
+type BlockTraversalDef  m r = forall i o. Block r i -> m i o (Block r o)
+
+traverseBlock
+  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> ExprTraversalDef m r
+  -> Block r i -> m i o (Block r o)
+traverseBlock f fExpr (Block _ decls result) = do
+  absToBlockInferringTypes =<< traverseDecls fExpr decls \decls' -> do
+    result' <- handleAtom f result
+    return $ Abs decls' result'
+
+traverseLam
+  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> BlockTraversalDef m r
+  -> LamExpr r i -> m i o (LamExpr r o)
+traverseLam f fBlock (LamExpr bs body) =
+  traverseBinders f bs \bs' -> LamExpr bs' <$> fBlock body
+
+traversePi
+  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
+  => ForallTraversalDef m r -> PiType r i -> m i o (PiType r o)
+traversePi f (PiType bs eff ty) = do
+  traverseBinders f bs \bs' -> do
+    EffectAndType eff' ty' <- traverseTerm f $ EffectAndType eff ty
+    return $ PiType bs' eff' ty'
+
+traverseBinders
+  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> Nest (Binder r) i i'
+  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
+  -> m i o a
+traverseBinders _ Empty cont = getDistinct >>= \Distinct -> cont Empty
+traverseBinders f (Nest (b:>ty) bs) cont = do
+  ty' <- handleType f ty
+  withFreshBinder (getNameHint b) ty' \b' -> do
+    extendRenamer (b@>binderName b') do
+      traverseBinders f bs \bs' ->
+        cont $ Nest b' bs'
+
+traverseDecls
+  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
+  => ExprTraversalDef m r
+  -> Nest (Decl r) i i'
+  -> (forall o'. DExt o o' => Nest (Decl r) o o' -> m i' o' a)
+  -> m i o a
+traverseDecls _ Empty cont = getDistinct >>= \Distinct -> cont Empty
+traverseDecls f (Nest (Let b (DeclBinding ann _ expr)) decls) cont = do
+  expr' <- f expr
+  ty <- getType expr'
+  withFreshBinder (getNameHint b) ty \(b':>_) -> do
+    let decl' = Let b' $ DeclBinding ann ty expr'
+    extendRenamer (b@>binderName b') do
+      traverseDecls f decls \decls' ->
+        cont $ Nest decl' decls'
 
 -- === Helpers for function evaluation over fixed-width types ===
 

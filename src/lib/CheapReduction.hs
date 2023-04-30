@@ -698,6 +698,20 @@ instance IRRep r => TraversableTerm (EffectAndType r) r where
   traverseTerm f (EffectAndType eff ty) =
     EffectAndType <$> traverseTerm f eff <*> handleType f ty
 
+instance TraversableTerm DataConDefs CoreIR where
+  traverseTerm f = \case
+    ADTCons cons -> ADTCons <$> mapM (traverseTerm f) cons
+    StructFields defs -> do
+      let (names, tys) = unzip defs
+      tys' <- mapM (handleType f) tys
+      return $ StructFields $ zip names tys'
+
+instance TraversableTerm DataConDef CoreIR where
+  traverseTerm f (DataConDef sn (Abs bs UnitE) repTy ps) = do
+    PiType bs' _ _  <- handlePi f $ PiType bs Pure UnitTy
+    repTy' <- handleType f repTy
+    return $ DataConDef sn (Abs bs' UnitE) repTy' ps
+
 instance TraversableTerm (Con      r) r where traverseTerm = traverseOpTerm
 instance TraversableTerm (TC       r) r where traverseTerm = traverseOpTerm
 instance TraversableTerm (MiscOp   r) r where traverseTerm = traverseOpTerm

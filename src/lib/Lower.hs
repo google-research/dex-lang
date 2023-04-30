@@ -22,7 +22,7 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Unsafe.Coerce
 
-import Builder
+import Builder  hiding (traverseBlock)
 import Core
 import Err
 import Imp

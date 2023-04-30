@@ -16,7 +16,7 @@ module GenericTraversal
 import Control.Monad
 import Control.Monad.State.Class
 
-import Builder
+import Builder  hiding (traverseBlock)
 import Core
 import Err
 import IRVariants

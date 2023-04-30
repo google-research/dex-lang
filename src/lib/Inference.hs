@@ -19,7 +19,6 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
-import Data.Coerce
 import Data.Either (partitionEithers)
 import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
@@ -34,11 +33,10 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import GHC.Generics (Generic (..))
 
 import Builder
-import CheapReduction  hiding (traverseAtom, traverseType)
+import CheapReduction
 import CheckType
 import Core
 import Err
-import GenericTraversal
 import IRVariants
 import MTL1
 import Name
@@ -2553,18 +2551,17 @@ renameForPrinting e = do
 
 -- === dictionary synthesis ===
 
-synthTopE :: (EnvReader m, Fallible1 m, GenericallyTraversableE CoreIR e)
-              => e n -> m n (e n)
+synthTopE :: (EnvReader m, Fallible1 m, DictSynthTraversable e) => e n -> m n (e n)
 synthTopE block = do
-  (liftExcept =<<) $ liftDictSynthTraverserM $ traverseGenericE block
+  (liftExcept =<<) $ liftDictSynthTraverserM $ dsTraverse block
 {-# SCC synthTopE #-}
 
 synthTyConDef :: (EnvReader m, Fallible1 m) => TyConDef n -> m n (TyConDef n)
 synthTyConDef (TyConDef sn rbs body) = (liftExcept =<<) $ liftDictSynthTraverserM do
   let bs = fmapNest (\(RolePiBinder _ b) -> b) rbs
   let roles = nestToList (\(RolePiBinder role _) -> role) rbs
-  dsTraverseBinders bs \bs' -> do
-    body' <- traverseGenericE body
+  dsTraverseExplBinders bs \bs' -> do
+    body' <- dsTraverse body
     let rbs' = zipWithNest bs' roles \b role -> RolePiBinder role b
     return $ TyConDef sn rbs' body'
 {-# SCC synthTyConDef #-}
@@ -2948,64 +2945,75 @@ liftDictSynthTraverserM
   => DictSynthTraverserM n n a
   -> m n (Except a)
 liftDictSynthTraverserM m = do
-  (ans, errs) <- liftGenericTraverserM (coerce $ Errs []) m
-  return $ case coerce errs of
+  (ans, LiftE errs) <- liftM runHardFail $ liftBuilderT $
+    runStateT1 (runSubstReaderT idSubst m) (LiftE $ Errs [])
+  return $ case errs of
     Errs [] -> Success ans
-    _       -> Failure $ coerce errs
+    _       -> Failure errs
 
-type DictSynthTraverserM = GenericTraverserM CoreIR UnitB DictSynthTraverserS
+type DictSynthTraverserM = SubstReaderT Name (StateT1 (LiftE Errs) (BuilderM CoreIR))
 
-newtype DictSynthTraverserS (n::S) = DictSynthTraverserS Errs
-instance GenericE DictSynthTraverserS where
-  type RepE DictSynthTraverserS = LiftE Errs
-  fromE = LiftE . coerce
-  toE = coerce . fromLiftE
-instance SinkableE DictSynthTraverserS
-instance HoistableState DictSynthTraverserS where
-  hoistState _ _ (DictSynthTraverserS errs) = DictSynthTraverserS errs
+dsTraversal :: TraversalDef (DictSynthTraverserM i o) CoreIR i o
+dsTraversal = TraversalDef
+  { handleName = renameM
+  , handleType = dsTraverse
+  , handleAtom = dsTraverse
+  , handleLam  = traverseLam dsTraversal dsTraverse
+  , handlePi   = traversePi  dsTraversal }
 
-instance GenericTraverser CoreIR UnitB DictSynthTraverserS where
-  traverseAtom atom = case atom of
+class DictSynthTraversable (e::E) where
+  dsTraverse :: e i -> DictSynthTraverserM i o (e o)
+
+instance DictSynthTraversable CAtom where
+  dsTraverse atom = case atom of
     DictHole (AlwaysEqual ctx) ty access -> do
-      ty' <- cheapNormalize =<< traverseType ty
+      ty' <- cheapNormalize =<< dsTraverse ty
       ans <- liftEnvReaderT $ addSrcContext ctx $ trySynthTerm ty' access
       case ans of
-        Failure errs -> put (DictSynthTraverserS errs) >> substM atom
+        Failure errs -> put (LiftE errs) >> renameM atom
         Success d    -> return d
     Lam (CoreLamExpr piTy@(CorePiType _ bsPi _ _) (LamExpr bsLam body)) -> do
-      piTy' <- dsTraversePiTy piTy
+      Pi piTy' <- dsTraverse $ Pi piTy
       let (expls, _) = unzipExpls bsPi
-      lam' <- dsTraverseBinders (zipExpls expls bsLam) \bsLamExpl' -> do
+      lam' <- dsTraverseExplBinders (zipExpls expls bsLam) \bsLamExpl' -> do
         let (_, bsLam') = unzipExpls bsLamExpl'
-        LamExpr bsLam' <$> traverseGenericE body
+        LamExpr bsLam' <$> dsTraverse body
       return $ Lam $ CoreLamExpr piTy' lam'
-    _ -> traverseAtomDefault atom
-  traverseType = \case
-    Pi piTy -> Pi <$> dsTraversePiTy piTy
-    ty -> traverseTypeDefault ty
+    Var _          -> renameM atom
+    SimpInCore _   -> renameM atom
+    ProjectElt _ _ -> renameM atom
+    _ -> traverseAtom dsTraversal atom
 
-dsTraversePiTy :: CorePiType i -> DictSynthTraverserM i o (CorePiType o)
-dsTraversePiTy (CorePiType appExpl bs effs resultTy) =
-  dsTraverseBinders bs \bs' -> do
-    CorePiType appExpl bs' <$> substM effs <*> traverseGenericE resultTy
+instance DictSynthTraversable CType where
+  dsTraverse ty = case ty of
+    Pi (CorePiType appExpl bs effs resultTy) -> Pi <$>
+      dsTraverseExplBinders bs \bs' -> do
+        CorePiType appExpl bs' <$> renameM effs <*> dsTraverse resultTy
+    TyVar _          -> renameM ty
+    ProjectEltTy _ _ -> renameM ty
+    _ -> traverseType dsTraversal ty
 
-dsTraverseBinders
+instance DictSynthTraversable DataConDefs where dsTraverse = traverseTerm dsTraversal
+instance DictSynthTraversable (Block   CoreIR) where
+  dsTraverse = traverseBlock dsTraversal (traverseTerm dsTraversal)
+
+dsTraverseExplBinders
   :: Nest (WithExpl CBinder) i i'
   -> (forall o'. DExt o o' => Nest (WithExpl CBinder) o o' -> DictSynthTraverserM i' o' a)
   -> DictSynthTraverserM i o a
-dsTraverseBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-dsTraverseBinders (Nest (WithExpl expl b) bs) cont = do
-  ty <- traverseGenericE $ binderType b
+dsTraverseExplBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+dsTraverseExplBinders (Nest (WithExpl expl b) bs) cont = do
+  ty <- dsTraverse $ binderType b
   withFreshBinder (getNameHint b) ty \b' -> do
     let v = binderName b'
     extendSynthCandidatesDict expl v $ extendRenamer (b@>v) do
-      dsTraverseBinders bs \bs' -> cont $ Nest (WithExpl expl b') bs'
+      dsTraverseExplBinders bs \bs' -> cont $ Nest (WithExpl expl b') bs'
 
 extendSynthCandidatesDict :: Explicitness -> CAtomName n -> DictSynthTraverserM i n a -> DictSynthTraverserM i n a
 extendSynthCandidatesDict c v cont = do
-  GenericTraverserM $ SubstReaderT $ ReaderT \env -> StateT1 \s -> DoubleBuilderT do
-    extendDoubleInplaceTLocal (extendSynthCandidates c v) $ runDoubleBuilderT' $
-      runStateT1 (runSubstReaderT env $ runGenericTraverserM' cont) s
+  SubstReaderT $ ReaderT \env -> StateT1 \s -> BuilderT do
+    extendInplaceTLocal (extendSynthCandidates c v) $ runBuilderT' $
+      runStateT1 (runSubstReaderT env $ cont) s
 {-# INLINE extendSynthCandidatesDict #-}
 
 -- === Inference-specific builder patterns ===
