@@ -34,7 +34,6 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (forMZipped_)
 
 -- === top-level API ===
 
@@ -62,6 +61,7 @@ class ( Monad2 m, Fallible2 m, SubstReader Name m
       , EnvReader2 m, EnvExtender2 m)
      => Typer (m::MonadKind2) (r::IR) | m -> r where
   affineUsed :: AtomName r o -> m i o ()
+  parallelAffines_ :: [m i o ()] -> m i o ()
 
 newtype TyperT (m::MonadKind) (r::IR) (i::S) (o::S) (a :: *) =
   TyperT { runTyperT' :: SubstReaderT Name (StateT1 (NameMap (AtomNameC r) Int) (EnvReaderT m)) i o a }
@@ -81,18 +81,7 @@ liftTyperT cont =
 {-# INLINE liftTyperT #-}
 
 instance Fallible m => Typer (TyperT m r) r where
-  -- TODO Should be able to use an affine variable in each branch of a `case`,
-  -- but this abstraction can't capture that.  One solution could be to
-  -- - Add an -- `isolated` operation of type
-  --     isolated :: m i o () -> m i o <name-usage-map>
-  --   which doesn't change the state in the monad, but returns the delta that
-  --   the underlying action tried to add.  (Maybe I can even implement this
-  --   generically if the state is a group?)
-  -- - Add a `mergeNameMap :: <name-usage-map> -> m i o ()` operation,
-  --   which would check each key for being used too many times.
-  -- - Then `case` checks each arm in isolation, zips the maps with maximum,
-  --   and then calls `mergeNameMap` on the result.
-  -- I also can't make up my mind whether a `Seq` loop should be allowed to
+  -- I can't make up my mind whether a `Seq` loop should be allowed to
   -- close over a dest from an enclosing scope.  Status quo permits this.
   affineUsed name = TyperT $ do
     affines <- get
@@ -102,6 +91,24 @@ instance Fallible m => Typer (TyperT m r) r where
                 else
                   put $ insertNameMap name (n + 1) affines
       Nothing -> put $ insertNameMap name 1 affines
+  parallelAffines_ actions = TyperT $ do
+    -- This method permits using an affine variable in each branch of a `case`.
+    -- We check each `case` branch in isolation, detecting affine overuse within
+    -- the branch; then we check whether the union of the variables used in the
+    -- branches reuses a variable from outside that it shouldn't.
+    -- This has the down-side of localizing such an error to the case rather
+    -- than to the offending in-branch use, but that can be improved later.
+    affines <- get
+    isolateds <- forM actions \act -> do
+      put mempty
+      runTyperT' act
+      get
+    put affines
+    forM_ (toListNameMap $ unionsWithNameMap max isolateds) \(name, ct) ->
+      case ct of
+        0 -> return ()
+        1 -> runTyperT' $ affineUsed name
+        _ -> error $ "Unexpected multi-used affine name " ++ show name ++ " from case branches."
 
 -- === typeable things ===
 
@@ -721,8 +728,8 @@ checkCase :: (Typer m r, IRRep r) => Atom r i -> [Alt r i] -> Type r o -> Effect
 checkCase scrut alts resultTy effs = do
   scrutTy <- getTypeE scrut
   altsBinderTys <- checkCaseAltsBinderTys scrutTy
-  forMZipped_ alts altsBinderTys \alt bs ->
-    checkAlt resultTy bs effs alt
+  parallelAffines_ $ zipWith (\alt bs ->
+    checkAlt resultTy bs effs alt) alts altsBinderTys
 
 checkCaseAltsBinderTys :: (Fallible1 m, EnvReader m, IRRep r) => Type r n -> m n [Type r n]
 checkCaseAltsBinderTys ty = case ty of

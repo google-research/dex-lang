@@ -25,7 +25,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import Data.Bits
 import Data.Functor ((<&>))
-import Data.Foldable (toList)
+import Data.Foldable (toList, foldl')
 import Data.Maybe (fromJust, catMaybes)
 import Data.Hashable
 import Data.Kind (Type)
@@ -3214,6 +3214,11 @@ unionWithNameMap :: (a -> a -> a) -> NameMap c a n -> NameMap c a n -> NameMap c
 unionWithNameMap f (UnsafeNameMap raw1) (UnsafeNameMap raw2) =
   UnsafeNameMap $ R.unionWith f raw1 raw2
 {-# INLINE unionWithNameMap #-}
+
+unionsWithNameMap :: (Foldable f) => (a -> a -> a) -> f (NameMap c a n) -> NameMap c a n
+unionsWithNameMap func maps =
+  foldl' (unionWithNameMap func) mempty maps
+{-# INLINE unionsWithNameMap #-}
 
 traverseNameMap :: (Applicative f) => (a -> f b)
                  -> NameMap c a n -> f (NameMap c b n)
