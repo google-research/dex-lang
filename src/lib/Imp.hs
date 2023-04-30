@@ -304,8 +304,11 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
   PrimOp op -> toImpOp op
-  Case e alts ty _ -> do
+  Case e alts unitResultTy _ -> do
     e' <- substM e
+    case unitResultTy of
+      UnitTy -> return ()
+      _ -> error $ "Unexpected returning Case in Imp " ++ pprint expr
     case trySelectBranch e' of
       Just (con, arg) -> do
         Abs b body <- return $ alts !! con
@@ -319,12 +322,11 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
         where
           go tag xss = do
             tag' <- fromScalarAtom tag
-            dest <- allocDest =<< substM ty
             emitSwitch tag' (zip xss alts) $
               \(xs, Abs b body) ->
                  extendSubst (b @> SubstVal (sink xs)) $
-                   translateBlock body >>= storeAtom (sink dest)
-            loadAtom dest
+                   void $ translateBlock body
+            return UnitVal
   TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
 
 toImpRefOp :: Emits o

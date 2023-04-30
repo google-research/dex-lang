@@ -864,6 +864,15 @@ emitRunReader hint r body = do
   lam <- buildEffLam hint rTy \h ref -> body h ref
   emitExpr $ PrimOp $ Hof $ RunReader r lam
 
+buildRememberDest :: (Emits n, ScopableBuilder SimpIR m)
+  => NameHint -> SAtom n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => SAtomName l -> m l (SAtom l))
+  -> m n (SAtom n)
+buildRememberDest hint dest cont = do
+  ty <- getType dest
+  doit <- buildUnaryLamExpr hint ty cont
+  emitExpr $ PrimOp $ DAMOp $ RememberDest dest doit
+
 -- === vector space (ish) type class ===
 
 zeroAt :: (Emits n, SBuilder m) => SType n -> m n (SAtom n)
