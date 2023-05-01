@@ -558,7 +558,17 @@ instance IRRep r => TraversableTerm (Expr r) r where
   traverseTerm f = \case
     TopApp v xs -> TopApp <$> handleName f v <*> mapM (ha f) xs
     TabApp tab xs -> TabApp <$> ha f tab <*> mapM (ha f) xs
-    Case x alts t effs -> Case <$> ha f x <*> mapM (handleAlt f) alts <*> handleType f t <*> tt f effs
+    Case x alts t _ -> do
+      x' <- ha f x
+      t' <- handleType f t
+      alts' <- mapM (handleAlt f) alts
+      let effs' = foldMap altEffects alts'
+      return $ Case x' alts' t' effs'
+      where
+        altEffects :: Alt r n -> EffectRow r n
+        altEffects (Abs bs (Block ann _ _)) = case ann of
+          NoBlockAnn -> Pure
+          BlockAnn _ effs -> ignoreHoistFailure $ hoist bs effs
     Atom x -> Atom <$> ha f x
     TabCon Nothing t xs -> TabCon Nothing <$> handleType f t <*> mapM (ha f) xs
     TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> ha f d) <*> handleType f t <*> mapM (ha f) xs

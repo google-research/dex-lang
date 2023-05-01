@@ -1464,6 +1464,21 @@ type ForallTraversalDef m r = forall i o. TraversalDef (m i o) r i o
 type ExprTraversalDef   m r = forall i o. Expr r i -> m i o (Expr r o)
 type BlockTraversalDef  m r = forall i o. Block r i -> m i o (Block r o)
 
+traverseExprs
+  :: (IRRep r, TraversableTerm e r, EnvExtender2 m, SubstReader Name m)
+  => e i -> ExprTraversalDef m r -> m i o (e o)
+traverseExprs e f = traverseTerm (exprTraversal f) e where
+
+exprTraversal
+  :: (IRRep r, EnvExtender2 m, SubstReader Name m)
+  => ExprTraversalDef m r -> ForallTraversalDef m r
+exprTraversal f = TraversalDef
+ { handleName = renameM
+ , handleType = traverseTypeRename (exprTraversal f)
+ , handleAtom = traverseAtomRename (exprTraversal f)
+ , handleLam  = traverseLam (exprTraversal f) (traverseBlock (exprTraversal f) f)
+ , handlePi   = traversePi (exprTraversal f) }
+
 traverseBlock
   :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
   => ForallTraversalDef m r
@@ -1473,6 +1488,25 @@ traverseBlock f fExpr (Block _ decls result) = do
   absToBlockInferringTypes =<< traverseDecls fExpr decls \decls' -> do
     result' <- handleAtom f result
     return $ Abs decls' result'
+
+traverseAtomRename
+  :: (IRRep r, SubstReader Name m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> Atom r i -> m i o (Atom r o)
+traverseAtomRename f = \case
+  Var v          -> Var <$> renameM v
+  SimpInCore x   -> SimpInCore <$> renameM x
+  ProjectElt i x -> ProjectElt i <$> traverseAtomRename f x
+  x -> traverseAtom f x
+
+traverseTypeRename
+  :: (IRRep r, SubstReader Name m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> Type r i -> m i o (Type r o)
+traverseTypeRename f = \case
+  TyVar v          -> TyVar <$> renameM v
+  ProjectEltTy i x -> ProjectEltTy i <$> traverseAtomRename f x
+  x -> traverseType f x
 
 traverseLam
   :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
@@ -1519,6 +1553,79 @@ traverseDecls f (Nest (Let b (DeclBinding ann _ expr)) decls) cont = do
     extendRenamer (b@>binderName b') do
       traverseDecls f decls \decls' ->
         cont $ Nest decl' decls'
+
+-- === traversal helpers that allow emissions ===
+
+type ExprEmitTraversalDef m r = forall i o. Emits o => Expr r i -> m i o (Atom r o)
+
+liftAtomSubstBuilder :: (IRRep r, EnvReader m) => AtomSubstBuilder r n n a -> m n a
+liftAtomSubstBuilder cont = liftBuilder $ runSubstReaderT idSubst cont
+
+type AtomSubstBuilder r = SubstReaderT AtomSubstVal (BuilderM r)
+
+exprEmitTraversal
+  :: (IRRep r, ScopableBuilder2 r m, SubstReader AtomSubstVal m)
+  => ExprEmitTraversalDef m r -> ForallTraversalDef m r
+exprEmitTraversal f = TraversalDef
+ { handleName = substM
+ , handleType = traverseTypeSubst (exprEmitTraversal f)
+ , handleAtom = traverseAtomSubst (exprEmitTraversal f)
+ , handleLam  = traverseLamEmit (exprEmitTraversal f) f
+ , handlePi   = traversePi (exprEmitTraversal f) }
+
+traverseLamEmit
+  :: (IRRep r, SubstReader AtomSubstVal m, ScopableBuilder2 r m)
+  => ForallTraversalDef m r
+  -> ExprEmitTraversalDef m r
+  -> LamExpr r i -> m i o (LamExpr r o)
+traverseLamEmit f fExpr lam =
+  traverseLam f (\b -> buildBlock $ traverseBlockEmit f fExpr b) lam
+
+traverseBlockEmit
+  :: (Emits o, IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> ExprEmitTraversalDef m r
+  -> Block r i -> m i o (Atom r o)
+traverseBlockEmit f fExpr (Block _ decls result) = do
+  traverseDeclsEmit fExpr decls do
+    handleAtom f result
+
+traverseDeclsEmit
+  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m, Emits o)
+  => ExprEmitTraversalDef m r
+  -> Nest (Decl r) i i'
+  -> m i' o a
+  -> m i  o a
+traverseDeclsEmit _ Empty cont = cont
+traverseDeclsEmit f (Nest (Let b (DeclBinding _ _ expr)) decls) cont = do
+  x <- f expr
+  extendSubst (b@>SubstVal x) do
+    traverseDeclsEmit f decls cont
+
+traverseExprsEmit
+  :: (IRRep r, ScopableBuilder2 r m, SubstReader AtomSubstVal m
+     , TraversableTerm e r)
+  => e i -> ExprEmitTraversalDef m r -> m i o (e o)
+traverseExprsEmit e f = traverseTerm (exprEmitTraversal f) e where
+
+traverseAtomSubst
+  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> Atom r i -> m i o (Atom r o)
+traverseAtomSubst f = \case
+  Var v          -> substM $ Var v
+  SimpInCore x   -> SimpInCore <$> substM x
+  ProjectElt i x -> ProjectElt i <$> traverseAtomSubst f x
+  x -> traverseAtom f x
+
+traverseTypeSubst
+  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
+  => ForallTraversalDef m r
+  -> Type r i -> m i o (Type r o)
+traverseTypeSubst f = \case
+  TyVar v          -> substM $ TyVar v
+  ProjectEltTy i x -> ProjectEltTy i <$> traverseAtomSubst f x
+  x -> traverseType f x
 
 -- === Helpers for function evaluation over fixed-width types ===
 

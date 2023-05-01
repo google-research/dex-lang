@@ -22,12 +22,11 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Unsafe.Coerce
 
-import Builder  hiding (traverseBlock)
+import Builder
 import Core
 import Err
 import Imp
-import GenericTraversal
-import CheapReduction  hiding (traverseAtom, traverseType)
+import CheapReduction
 import IRVariants
 import MTL1
 import Name
@@ -36,7 +35,7 @@ import PPrint
 import QueryType
 import Types.Core
 import Types.Primitives
-import Util (foldMapM, enumerate)
+import Util (enumerate)
 
 -- === For loop resolution ===
 
@@ -74,12 +73,12 @@ lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
     return $ DestLamExpr bs' body''
 
 lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
-lowerFullySequentialBlock b = liftM fst $ liftGenericTraverserM LFS do
+lowerFullySequentialBlock b = liftAtomSubstBuilder do
   resultDestTy <- RawRefTy <$> getTypeSubst b
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     DestBlock destBinder <$> buildBlock do
       let dest = Var $ sink $ binderName destBinder
-      traverseBlockWithDest dest b $> UnitVal
+      lowerBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequentialBlock #-}
 
 lowerFullySequentialNoDest :: EnvReader m => SLam n -> m n (SLam n)
@@ -89,37 +88,41 @@ lowerFullySequentialNoDest (LamExpr bs body) = liftEnvReaderM $ do
     return $ LamExpr bs' body''
 
 lowerFullySequentialBlockNoDest :: EnvReader m => SBlock n -> m n (SBlock n)
-lowerFullySequentialBlockNoDest b = liftM fst $ liftGenericTraverserM LFS do
-    buildBlock $ traverseBlock b
+lowerFullySequentialBlockNoDest b = liftAtomSubstBuilder $ buildBlock $ lowerBlock b
 {-# SCC lowerFullySequentialBlockNoDest #-}
 
-data LFS (n::S) = LFS
-type LowerM = GenericTraverserM SimpIR UnitB LFS
-instance SinkableE LFS where
-  sinkingProofE _ LFS = LFS
-instance HoistableState LFS where
-  hoistState _ _ LFS = LFS
-  {-# INLINE hoistState #-}
+type LowerM = AtomSubstBuilder SimpIR
 
--- It would be nice to figure out a way to not have to update the effect
--- annotations manually... The only interesting cases below are really For and TabCon.
-instance GenericTraverser SimpIR UnitB LFS where
-  traverseExpr expr = case expr of
-    TabCon Nothing ty els -> traverseTabCon Nothing ty els
-    PrimOp (Hof (For dir ixDict body)) -> traverseFor Nothing dir ixDict body
-    Case _ _ _ _ -> do
-      Case e alts ty _ <- traverseExprDefault expr
-      eff' <- foldMapM getEffects alts
-      return $ Case e alts ty eff'
-    _ -> traverseExprDefault expr
-  traverseAtom atom = traverseAtomDefault atom
+loweringTraversal :: TraversalDef (LowerM i o) SimpIR i o
+loweringTraversal = exprEmitTraversal lowerExpr
+
+lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
+lowerExpr expr = emitExpr =<< case expr of
+  TabCon Nothing ty els -> lowerTabCon Nothing ty els
+  PrimOp (Hof (For dir ixDict body)) -> lowerFor Nothing dir ixDict body
+  _ -> lowerTermGenerically expr
+
+lowerAtom :: SAtom i -> LowerM i o (SAtom o)
+lowerAtom = traverseAtomSubst loweringTraversal
+
+lowerType :: SType i -> LowerM i o (SType o)
+lowerType = traverseTypeSubst loweringTraversal
+
+lowerBlock :: Emits o => SBlock i -> LowerM i o (SAtom o)
+lowerBlock = traverseBlockEmit loweringTraversal lowerExpr
+
+lowerTermGenerically :: TraversableTerm e SimpIR => e i -> LowerM i o (e o)
+lowerTermGenerically = traverseTerm loweringTraversal
+
+lowerDecls :: Emits o => Nest SDecl i i' -> LowerM i' o a -> LowerM i  o a
+lowerDecls decls cont = traverseDeclsEmit lowerExpr decls cont
 
 type Dest = Atom
 
-traverseFor
+lowerFor
   :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> IxDict SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
-traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
+lowerFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
   ansTy <- getTypeSubst $ Hof $ For dir ixDict $ lam
   ixDict' <- substM ixDict
   ty' <- substM ty
@@ -127,7 +130,7 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
     True -> do
       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
         (i, _) <- fromPair $ Var b'
-        extendSubst (ib @> SubstVal i) $ traverseBlock body $> UnitVal
+        extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
       void $ emitOp $ DAMOp $ Seq dir ixDict' UnitVal body'
       Atom . fromJust <$> singletonTypeVal ansTy
     False -> do
@@ -139,14 +142,14 @@ traverseFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
         (i, destProd) <- fromPair $ Var b'
         dest <- normalizeProj (ProjectProduct 0) destProd
         idest <- emitOp $ RefOp dest $ IndexRef i
-        extendSubst (ib @> SubstVal i) $ traverseBlockWithDest idest body $> UnitVal
+        extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
       let seqHof = PrimOp $ DAMOp $ Seq dir ixDict' initDest body'
       PrimOp . DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
-traverseFor _ _ _ _ = error "expected a unary lambda expression"
+lowerFor _ _ _ _ = error "expected a unary lambda expression"
 
-traverseTabCon :: forall i o. Emits o
+lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
-traverseTabCon maybeDest tabTy elems = do
+lowerTabCon maybeDest tabTy elems = do
   tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
@@ -163,10 +166,10 @@ traverseTabCon maybeDest tabTy elems = do
   let go incoming_dest [] = return incoming_dest
       go incoming_dest ((ord, e):rest) = do
         i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
-          traverseBlock ufoBlock
+               lowerBlock ufoBlock
         do_one_elt <- buildUnaryLamExpr "dest" destTy \local_dest -> do
           idest <- indexRef (Var local_dest) (sink i)
-          place (FullDest idest) =<< traverseAtom e
+          place (FullDest idest) =<< lowerAtom e
           return UnitVal
         carried_dest <- emitExpr $ PrimOp $ DAMOp $ RememberDest incoming_dest do_one_elt
         go carried_dest rest
@@ -187,9 +190,9 @@ traverseTabCon maybeDest tabTy elems = do
 --
 -- The outermost loop will have to allocate the memory for a 2D array. But it would be
 -- a waste if the inner loop kept allocating 20-element blocks only to copy them into
--- that full outermost buffer. Instead, we invoke traverseBlockWithDest on the body
+-- that full outermost buffer. Instead, we invoke lowerBlockWithDest on the body
 -- of the i-loop, which will realize that v has a valid destination. Then,
--- traverseExprWithDest will be called at the for decl and will translate the j-loop
+-- lowerExprWithDest will be called at the for decl and will translate the j-loop
 -- so that it never allocates scratch space for its result, but will put it directly in
 -- the corresponding slice of the full 2D buffer.
 
@@ -217,11 +220,11 @@ decomposeDest dest = \case
     return $ Just $ singletonNameMap v $ ProjDest ps dest
   _ -> return Nothing
 
-traverseBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
-traverseBlockWithDest dest (Block _ decls ans) = do
+lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
+lowerBlockWithDest dest (Block _ decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
-      ans' <- traverseDeclNest decls $ traverseAtom ans
+      ans' <- lowerDecls decls $ lowerAtom ans
       place (FullDest dest) ans'
       return ans'
     Just destMap -> do
@@ -235,7 +238,6 @@ traverseBlockWithDest dest (Block _ decls ans) = do
             place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
           withSubst s' $ substM ans
 
-
 traverseDeclNestWithDestS
   :: forall i i' l o. (Emits o, DistinctBetween l i')
   => DestAssignment i' o -> Subst AtomSubstVal l o -> Nest (Decl SimpIR) l i'
@@ -245,26 +247,26 @@ traverseDeclNestWithDestS destMap s = \case
   Nest (Let b (DeclBinding ann _ expr)) rest -> do
     DistinctBetween <- return $ withExtEvidence rest $ shortenBetween @i' b
     let maybeDest = lookupDest destMap $ sinkBetween $ binderName b
-    expr' <- withSubst s $ traverseExprWithDest maybeDest expr
+    expr' <- withSubst s $ lowerExprWithDest maybeDest expr
     v <- emitDecl (getNameHint b) ann expr'
     traverseDeclNestWithDestS destMap (s <>> (b @> Rename v)) rest
 
-traverseExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
-traverseExprWithDest dest expr = case expr of
-  TabCon Nothing ty els -> traverseTabCon tabDest ty els
-  PrimOp (Hof (For dir ixDict body)) -> traverseFor tabDest dir ixDict body
+lowerExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
+lowerExprWithDest dest expr = case expr of
+  TabCon Nothing ty els -> lowerTabCon tabDest ty els
+  PrimOp (Hof (For dir ixDict body)) -> lowerFor tabDest dir ixDict body
   PrimOp (Hof (RunWriter Nothing m body)) -> traverseRWS body \ref' body' -> do
-    m' <- traverseGenericE m
+    m' <- lowerTermGenerically m
     return $ RunWriter ref' m' body'
   PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
-    s' <- traverseAtom s
+    s' <- lowerAtom s
     return $ RunState ref' s' body'
   _ -> generic
   where
     tabDest = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
 
     generic = do
-      expr' <- traverseExprDefault expr
+      expr' <- lowerTermGenerically expr
       case dest of
         Nothing -> return expr'
         Just d  -> do
@@ -281,13 +283,13 @@ traverseExprWithDest dest expr = case expr of
         Nothing -> generic
         Just (bodyDest, refDest) -> do
           let RefTy _ ty = binderType rb
-          ty' <- traverseGenericE $ ignoreHoistFailure $ hoist hb ty
+          ty' <- lowerType $ ignoreHoistFailure $ hoist hb ty
           liftM (PrimOp . Hof) $ mkHof refDest =<<
             buildEffLam (getNameHint rb) ty' \hb' rb' ->
               extendRenamer (hb@>hb' <.> rb@>rb') do
                 case bodyDest of
-                  Nothing -> traverseBlock body
-                  Just bd -> traverseBlockWithDest (sink bd) body
+                  Nothing -> lowerBlock body
+                  Just bd -> lowerBlockWithDest (sink bd) body
     traverseRWS _ _ = error "Expected a binary lambda expression"
 
     unpackRWSDest = \case
@@ -626,50 +628,38 @@ isDistinctNest nest = case noShadows $ toScopeFrag nest of
   True  -> Just $ fabricateDistinctBetweenEvidence
   False -> Nothing
 
-newtype Word32' (n::S) = Word32' Word32
-                       deriving (Eq, Show)
+-- === computing byte widths ===
 
-toWord32 :: Word32' n -> Word32
-toWord32 (Word32' x) = x
+type CalcWidthM = SubstReaderT Name (StateT1 (LiftE Word32) EnvReaderM)
 
-fromWord32 :: Word32 -> Word32' n
-fromWord32 x = Word32' x
+calcWidthExpr :: SExpr i -> CalcWidthM i o (SExpr o)
+calcWidthExpr expr = case expr of
+  PrimOp (Hof     _) -> fallback
+  PrimOp (DAMOp _  ) -> fallback
+  PrimOp (RefOp _ _) -> fallback
+  PrimOp _ -> do
+    expr' <- renameM expr
+    ty <- getType expr'
+    modify (\(LiftE x) -> LiftE $ min (typeByteWidth ty) x)
+    return expr'
+  _ -> fallback
+  where fallback = traverseExprs expr calcWidthExpr
 
-maxWord32' :: Word32' n
-maxWord32' = Word32' (maxBound :: Word32)
-
-instance Ord (Word32' n) where
-  compare (Word32' x) (Word32' y) = compare x y
-
-instance SinkableE Word32' where
-  sinkingProofE _ (Word32' x) = Word32' x
-instance HoistableState Word32' where
-  hoistState _ _ (Word32' x) = Word32' x
-  {-# INLINE hoistState #-}
-
-instance GenericTraverser SimpIR UnitB Word32' where
-  traverseExpr expr = case expr of
-    PrimOp (Hof   _) -> traverseExprDefault expr
-    PrimOp (DAMOp _) -> traverseExprDefault expr
-    PrimOp (RefOp _ _) -> traverseExprDefault expr
-    PrimOp _ -> do
-      expr' <- substM expr
-      ty <- getType expr'
-      modify (min $ typeByteWidth ty)
-      return expr'
-    _ -> traverseExprDefault expr
-
-typeByteWidth :: SType n -> Word32' n
+typeByteWidth :: SType n -> Word32
 typeByteWidth ty = case ty of
  TC (BaseType bt) -> case bt of
   -- Currently only support vectorization of scalar types (cf. `getVectorType` above):
-  Scalar _ -> fromWord32 . fromInteger . toInteger $ sizeOf bt
-  _ -> maxWord32'
- _ -> maxWord32'
+  Scalar _ -> fromInteger . toInteger $ sizeOf bt
+  _ -> maxWord32
+ _ -> maxWord32
+
+maxWord32 :: Word32
+maxWord32 = maxBound
 
 getNarrowestTypeByteWidth :: (Emits n, EnvReader m) => Expr SimpIR n -> m n Word32
 getNarrowestTypeByteWidth x = do
-  (_, result) <- liftGenericTraverserM maxWord32' (traverseExpr x)
-  if result == maxWord32'
+  (_, LiftE result) <-  liftEnvReaderM $ runStateT1
+    (runSubstReaderT idSubst $ traverseExprs x calcWidthExpr) (LiftE maxWord32)
+  if result == maxWord32
     then return 1
-    else return $ toWord32 result
+    else return result
