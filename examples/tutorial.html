@@ -346,7 +346,7 @@ Right now our table is not so interesting :)</p>
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:html</span> matshow x
 </div><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAAgAAAADCAIAAAAhqtkfAAAAAXNSR0IArs4c6QAAABRJREFUCJljrK+vZ8AGmLCK4pMAAG3RAYMAgeWyAAAAAElFTkSuQmCC"></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Once we have an table, we can use it in new comprehensions. For example,
+</div></div><div class="cell"><div class="prose-block"><p>Once we have a table, we can use it in new comprehensions. For example,
 let's try to add <code>5</code> to each table element. In Python, one might write this as:</p>
 </div></div><div class="cell"><div class="prose-block"><p><code>x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]</code></p>
 </div></div><div class="cell"><div class="prose-block"><p>Dex can do the same, except that the <code>for</code> construct just is the
@@ -394,7 +394,7 @@ remembers the original ranges.</p>
 </div></div><div class="cell"><div class="prose-block"><h2>Typed indexing</h2>
 </div></div><div class="cell"><div class="prose-block"><p>The use of typed indices lets you do really neat things, but
 let's consider how it works. Critically, one cannot
-simply index an table with an integer.</p>
+simply index a table with an integer.</p>
 </div></div><div class="cell"><div class="code-block">r <span class="symbol">=</span> x[2 <span class="symbol">::</span> <span class="type-name">Int</span>]
 </div><div class="err-block">Type error:
 Expected: (Fin 3)
@@ -464,7 +464,7 @@ ranges.</p>
 </div></div><div class="cell"><div class="prose-block"><p>One use case of packing and unpacking table indices is that it allows us to
 change the order of the axes. This is useful for applying functions on tables.</p>
 </div></div><div class="cell"><div class="prose-block"><p>For instance, we saw the <code>mean</code> function above which sums over the first axis
-of an table. We can apply <code>mean</code> to <code>y</code> to produce the mean average over 24
+of a table. We can apply <code>mean</code> to <code>y</code> to produce the mean average over 24
 elements:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> y
 </div><div class="result-block">((Fin 3, Fin 8) =&gt; Float32)</div></div><div class="cell"><div class="code-block">
