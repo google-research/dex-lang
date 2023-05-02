@@ -2946,20 +2946,27 @@ liftDictSynthTraverserM
   -> m n (Except a)
 liftDictSynthTraverserM m = do
   (ans, LiftE errs) <- liftM runHardFail $ liftBuilderT $
-    runStateT1 (runSubstReaderT idSubst m) (LiftE $ Errs [])
+    runStateT1 (runSubstReaderT idSubst $ runDictSynthTraverserM m) (LiftE $ Errs [])
   return $ case errs of
     Errs [] -> Success ans
     _       -> Failure errs
 
-type DictSynthTraverserM = SubstReaderT Name (StateT1 (LiftE Errs) (BuilderM CoreIR))
+newtype DictSynthTraverserM i o a =
+  DictSynthTraverserM
+  { runDictSynthTraverserM ::
+      SubstReaderT Name (StateT1 (LiftE Errs) (BuilderM CoreIR)) i o a}
+  deriving (MonadFail, Fallible, Functor, Applicative, Monad, ScopeReader,
+            EnvReader, EnvExtender, Builder CoreIR, SubstReader Name,
+            ScopableBuilder CoreIR, MonadState (LiftE Errs o))
 
-dsTraversal :: TraversalDef (DictSynthTraverserM i o) CoreIR i o
-dsTraversal = TraversalDef
-  { handleName = renameM
-  , handleType = dsTraverse
-  , handleAtom = dsTraverse
-  , handleLam  = traverseLam dsTraversal dsTraverse
-  , handlePi   = traversePi  dsTraversal }
+instance NonAtomRenamer (DictSynthTraverserM i o) i o where renameN = renameM
+instance Visitor (DictSynthTraverserM i o) CoreIR i o where
+  visitType = dsTraverse
+  visitAtom = dsTraverse
+  visitPi   = visitPiDefault
+  visitLam  = visitLamNoEmits
+instance ExprVisitorNoEmits (DictSynthTraverserM i o) CoreIR i o where
+  visitExprNoEmits = visitGeneric
 
 class DictSynthTraversable (e::E) where
   dsTraverse :: e i -> DictSynthTraverserM i o (e o)
@@ -2982,7 +2989,7 @@ instance DictSynthTraversable CAtom where
     Var _          -> renameM atom
     SimpInCore _   -> renameM atom
     ProjectElt _ _ -> renameM atom
-    _ -> traverseAtom dsTraversal atom
+    _ -> visitAtomPartial atom
 
 instance DictSynthTraversable CType where
   dsTraverse ty = case ty of
@@ -2991,11 +2998,11 @@ instance DictSynthTraversable CType where
         CorePiType appExpl bs' <$> renameM effs <*> dsTraverse resultTy
     TyVar _          -> renameM ty
     ProjectEltTy _ _ -> renameM ty
-    _ -> traverseType dsTraversal ty
+    _ -> visitTypePartial ty
 
-instance DictSynthTraversable DataConDefs where dsTraverse = traverseTerm dsTraversal
-instance DictSynthTraversable (Block   CoreIR) where
-  dsTraverse = traverseBlock dsTraversal (traverseTerm dsTraversal)
+instance DictSynthTraversable DataConDefs where dsTraverse = visitGeneric
+instance DictSynthTraversable (Block CoreIR) where
+  dsTraverse = visitBlockNoEmits
 
 dsTraverseExplBinders
   :: Nest (WithExpl CBinder) i i'
@@ -3010,10 +3017,10 @@ dsTraverseExplBinders (Nest (WithExpl expl b) bs) cont = do
       dsTraverseExplBinders bs \bs' -> cont $ Nest (WithExpl expl b') bs'
 
 extendSynthCandidatesDict :: Explicitness -> CAtomName n -> DictSynthTraverserM i n a -> DictSynthTraverserM i n a
-extendSynthCandidatesDict c v cont = do
+extendSynthCandidatesDict c v cont = DictSynthTraverserM do
   SubstReaderT $ ReaderT \env -> StateT1 \s -> BuilderT do
     extendInplaceTLocal (extendSynthCandidates c v) $ runBuilderT' $
-      runStateT1 (runSubstReaderT env $ cont) s
+      runStateT1 (runSubstReaderT env $ runDictSynthTraverserM $ cont) s
 {-# INLINE extendSynthCandidatesDict #-}
 
 -- === Inference-specific builder patterns ===

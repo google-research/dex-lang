@@ -206,18 +206,32 @@ unknown _ = return IxAll
   --   detect reader, writer, and state effects specially, because the summary
   --   of the reference should already have any necessary `IxAll` in it.)
 
+-- === Visitor for the generic cases (carries Access in the reader) ===
+
+newtype OCCMVisitor n a =
+  OCCMVisitor { runOCCMVisitor' :: ReaderT1 Access OCCM n a }
+  deriving (Functor, Applicative, Monad, MonadReader (Access n))
+
+runOCCMVisitor :: Access n -> OCCMVisitor n a -> OCCM n a
+runOCCMVisitor access cont = runReaderT1 access $ runOCCMVisitor' cont
+
+occGeneric :: VisitGeneric e SimpIR => Access n -> e n -> OCCM n (e n)
+occGeneric access x = runOCCMVisitor access $ visitGeneric x
+
+instance NonAtomRenamer (OCCMVisitor n) n n where renameN = pure
+instance Visitor (OCCMVisitor n) SimpIR n n where
+  visitType = visitViaOcc
+  visitAtom = visitViaOcc
+  visitLam  = visitViaOcc
+  visitPi   = visitViaOcc
+
+visitViaOcc :: HasOCC e => e n -> OCCMVisitor n (e n)
+visitViaOcc x = ask >>= \access -> OCCMVisitor $ lift11 $ occ access x
+
 -- === The actual occurrence analysis ===
 
 class HasOCC (e::E) where
   occ :: Access n -> e n -> OCCM n (e n)
-
-occTraversal :: Access n -> TraversalDef (OCCM n) SimpIR n n
-occTraversal access = TraversalDef
- { handleName = pure
- , handleType = occ access
- , handleAtom = occ access
- , handleLam  = occ access
- , handlePi   = occ access }
 
 instance HasOCC SAtom where
   occ a = \case
@@ -225,10 +239,10 @@ instance HasOCC SAtom where
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       return $ Var n
     ProjectElt i x -> ProjectElt i <$> occ a x
-    atom -> traverseAtom (occTraversal a) atom
+    atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where
-  occ a ty = traverseType (occTraversal a) ty
+  occ a ty = runOCCMVisitor a $ visitTypePartial ty
 
 -- TODO What, actually, is the right thing to do for type annotations?  Do we
 -- want a rule like "we never inline into type annotations", or such?  For
@@ -250,12 +264,9 @@ instance HasOCC (PiType SimpIR) where
     piTy@(PiType bs' _ _) <- refreshAbs (Abs bs (PairE effs ty)) \b (PairE effs' ty') ->
       -- I (dougalm) am not sure about this. I'm just trying to mimic the old
       -- behavior when this would go through the `HasOCC PairE` instance.
-      PiType b <$> occ accessOnce effs' <*> occ accessOnce ty'
+      PiType b <$> occGeneric accessOnce effs' <*> occ accessOnce ty'
     countFreeVarsAsOccurrencesB bs'
     return piTy
-
-instance HasOCC (EffectRow SimpIR) where
-  occ a = traverseTerm (occTraversal a)
 
 instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
@@ -350,7 +361,7 @@ instance HasOCC SExpr where
     PrimOp (RefOp ref op) -> do
       ref' <- occ a ref
       PrimOp . RefOp ref' <$> occ a op
-    expr -> traverseTerm (occTraversal a) expr
+    expr -> occGeneric a expr
     where
       go acc [] = return (acc, [])
       go acc (ix:ixs) = do

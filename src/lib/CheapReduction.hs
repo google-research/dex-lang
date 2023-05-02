@@ -13,14 +13,16 @@ module CheapReduction
   , depPairLeftTy, instantiateTyConDef
   , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
-  , liftSimpFun, makeStructRepVal, TraversalDef (..), TraversableTerm (..)
-  , traverseAtom, traverseType)
+  , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
+  , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
+  , visitBinders, visitPiDefault)
   where
 
 import Control.Applicative
 import Control.Monad.Trans
 import Control.Monad.Writer.Strict  hiding (Alt)
 import Control.Monad.State.Strict
+import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.Functor ((<&>))
@@ -481,87 +483,124 @@ projType i ty x = case ty of
 
 -- === traversable terms ===
 
-data TraversalDef m r i o = TraversalDef
- { handleName :: forall c. (IsAtomName c ~ False, Color c) => Name c i -> m (Name c o)
- , handleType :: Type r i -> m (Type r o)
- , handleAtom :: Atom r i -> m (Atom r o)
- , handleLam  :: LamExpr r i -> m (LamExpr r o)
- , handlePi   :: PiType  r i -> m (PiType  r o)}
+class Monad m => NonAtomRenamer m i o | m -> i, m -> o where
+  renameN :: (IsAtomName c ~ False, Color c) => Name c i -> m (Name c o)
 
-handleBlock :: Monad m => TraversalDef m r i o -> Block r i -> m (Block r o)
-handleBlock f b = do
-  handleLam f (LamExpr Empty b) >>= \case
+class NonAtomRenamer m i o => Visitor m r i o | m -> i, m -> o where
+  visitType :: Type r i -> m (Type r o)
+  visitAtom :: Atom r i -> m (Atom r o)
+  visitLam  :: LamExpr r i -> m (LamExpr r o)
+  visitPi   :: PiType  r i -> m (PiType  r o)
+
+class VisitGeneric (e:: E) (r::IR) | e -> r where
+  visitGeneric :: Visitor m r i o => e i -> m (e o)
+
+type Visitor2 (m::MonadKind2) r = forall i o . Visitor (m i o) r i o
+
+instance VisitGeneric (Atom    r) r where visitGeneric = visitAtom
+instance VisitGeneric (Type    r) r where visitGeneric = visitType
+instance VisitGeneric (LamExpr r) r where visitGeneric = visitLam
+instance VisitGeneric (PiType  r) r where visitGeneric = visitPi
+
+instance VisitGeneric (Block r) r where
+  visitGeneric b = visitGeneric (LamExpr Empty b) >>= \case
     LamExpr Empty b' -> return b'
     _ -> error "not a block"
 
-handleAlt :: Monad m => TraversalDef m r i o -> Alt r i -> m (Alt r o)
-handleAlt f (Abs b body) = do
-  handleLam f (LamExpr (UnaryNest b) body) >>= \case
+visitAlt :: Visitor m r i o => Alt r i -> m (Alt r o)
+visitAlt (Abs b body) = do
+  visitGeneric (LamExpr (UnaryNest b) body) >>= \case
     LamExpr (UnaryNest b') body' -> return $ Abs b' body'
     _ -> error "not an alt"
 
--- XXX: We deliberately choose not to give `TraversableTerm` instances to the
--- types explicitly handled by `TraversalDef` so that we're not tempted to recur
--- by calling `traverseTerm` rather than the handler.
-class TraversableTerm (e:: E) (r::IR) | e -> r where
-  traverseTerm :: Monad m => TraversalDef m r i o -> e i -> m (e o)
-
-tt :: (TraversableTerm e r, Monad m) => TraversalDef m r i o -> e i -> m (e o)
-tt = traverseTerm
-
-ha :: Monad m => TraversalDef m r i o -> Atom r i -> m (Atom r o)
-ha = handleAtom
-
 traverseOpTerm
-  :: (GenericOp e, Monad m, OpConst e r ~ OpConst e r)
-  => TraversalDef m r i o -> e r i -> m (e r o)
-traverseOpTerm f e = traverseOp e (handleType f) (ha f) (handleLam f)
+  :: (GenericOp e, Visitor m r i o, OpConst e r ~ OpConst e r)
+  => e r i -> m (e r o)
+traverseOpTerm e = traverseOp e visitGeneric visitGeneric visitGeneric
+
+visitAtomDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Atom r i -> m i o (Atom r o)
+visitAtomDefault atom = case atom of
+  Var _          -> atomSubstM atom
+  SimpInCore _   -> atomSubstM atom
+  ProjectElt i x -> ProjectElt i <$> visitGeneric x
+  _ -> visitAtomPartial atom
+
+visitTypeDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Type r i -> m i o (Type r o)
+visitTypeDefault = \case
+  TyVar v          -> atomSubstM $ TyVar v
+  ProjectEltTy i x -> ProjectEltTy i <$> visitGeneric x
+  x -> visitTypePartial x
+
+visitPiDefault
+  :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
+  => PiType r i -> m i o (PiType r o)
+visitPiDefault (PiType bs eff ty) = do
+  visitBinders bs \bs' -> do
+    EffectAndType eff' ty' <- visitGeneric $ EffectAndType eff ty
+    return $ PiType bs' eff' ty'
+
+visitBinders
+  :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
+  => Nest (Binder r) i i'
+  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
+  -> m i o a
+visitBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+visitBinders (Nest (b:>ty) bs) cont = do
+  ty' <- visitType ty
+  withFreshBinder (getNameHint b) ty' \b' -> do
+    extendRenamer (b@>binderName b') do
+      visitBinders bs \bs' ->
+        cont $ Nest b' bs'
 
 -- XXX: This doesn't handle the `Var`, `ProjectElt`, `SimpInCore` cases. These
 -- should be handled explicitly beforehand. TODO: split out these cases under a
 -- separate constructor, perhaps even a `hole` paremeter to `Atom` or part of
 -- `IR`.
-traverseAtom :: (IRRep r, Monad m) => TraversalDef m r i o -> Atom r i -> m (Atom r o)
-traverseAtom f = \case
+visitAtomPartial :: (IRRep r, Visitor m r i o) => Atom r i -> m (Atom r o)
+visitAtomPartial = \case
   Var _          -> error "Not handled generically"
   SimpInCore _   -> error "Not handled generically"
   ProjectElt _ _ -> error "Not handled generically"
-  Con con -> Con <$> tt f con
-  PtrVar v -> PtrVar <$> handleName f v
+  Con con -> Con <$> visitGeneric con
+  PtrVar v -> PtrVar <$> renameN v
   DepPair x y t -> do
-    x' <- ha f x
-    y' <- ha f y
-    ~(DepPairTy t') <- handleType f $ DepPairTy t
+    x' <- visitGeneric x
+    y' <- visitGeneric y
+    ~(DepPairTy t') <- visitGeneric $ DepPairTy t
     return $ DepPair x' y' t'
-  Lam lam   -> Lam     <$> tt f lam
-  Eff eff   -> Eff     <$> tt f eff
-  DictCon d -> DictCon <$> tt f d
-  NewtypeCon con x -> NewtypeCon <$> tt f con <*> ha f x
-  DictHole ctx ty access -> DictHole ctx <$> handleType f ty <*> pure access
-  TypeAsAtom t -> TypeAsAtom <$> handleType f t
-  RepValAtom repVal -> RepValAtom <$> tt f repVal
+  Lam lam   -> Lam     <$> visitGeneric lam
+  Eff eff   -> Eff     <$> visitGeneric eff
+  DictCon d -> DictCon <$> visitGeneric d
+  NewtypeCon con x -> NewtypeCon <$> visitGeneric con <*> visitGeneric x
+  DictHole ctx ty access -> DictHole ctx <$> visitGeneric ty <*> pure access
+  TypeAsAtom t -> TypeAsAtom <$> visitGeneric t
+  RepValAtom repVal -> RepValAtom <$> visitGeneric repVal
 
 -- XXX: This doesn't handle the `TyVar` or `ProjectEltTy` cases. These should be
 -- handled explicitly beforehand.
-traverseType :: (IRRep r, Monad m) => TraversalDef m r i o -> Type r i -> m (Type r o)
-traverseType f = \case
+visitTypePartial :: (IRRep r, Visitor m r i o) => Type r i -> m (Type r o)
+visitTypePartial = \case
   TyVar _          -> error "Not handled generically"
   ProjectEltTy _ _ -> error "Not handled generically"
-  NewtypeTyCon t -> NewtypeTyCon <$> tt f t
-  Pi           t -> Pi           <$> tt f t
-  TabPi        t -> TabPi        <$> tt f t
-  TC           t -> TC           <$> tt f t
-  DepPairTy    t -> DepPairTy    <$> tt f t
-  DictTy       t -> DictTy       <$> tt f t
+  NewtypeTyCon t -> NewtypeTyCon <$> visitGeneric t
+  Pi           t -> Pi           <$> visitGeneric t
+  TabPi        t -> TabPi        <$> visitGeneric t
+  TC           t -> TC           <$> visitGeneric t
+  DepPairTy    t -> DepPairTy    <$> visitGeneric t
+  DictTy       t -> DictTy       <$> visitGeneric t
 
-instance IRRep r => TraversableTerm (Expr r) r where
-  traverseTerm f = \case
-    TopApp v xs -> TopApp <$> handleName f v <*> mapM (ha f) xs
-    TabApp tab xs -> TabApp <$> ha f tab <*> mapM (ha f) xs
+instance IRRep r => VisitGeneric (Expr r) r where
+  visitGeneric = \case
+    TopApp v xs -> TopApp <$> renameN v <*> mapM visitGeneric xs
+    TabApp tab xs -> TabApp <$> visitGeneric tab <*> mapM visitGeneric xs
     Case x alts t _ -> do
-      x' <- ha f x
-      t' <- handleType f t
-      alts' <- mapM (handleAlt f) alts
+      x' <- visitGeneric x
+      t' <- visitGeneric t
+      alts' <- mapM visitAlt alts
       let effs' = foldMap altEffects alts'
       return $ Case x' alts' t' effs'
       where
@@ -569,175 +608,182 @@ instance IRRep r => TraversableTerm (Expr r) r where
         altEffects (Abs bs (Block ann _ _)) = case ann of
           NoBlockAnn -> Pure
           BlockAnn _ effs -> ignoreHoistFailure $ hoist bs effs
-    Atom x -> Atom <$> ha f x
-    TabCon Nothing t xs -> TabCon Nothing <$> handleType f t <*> mapM (ha f) xs
-    TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> ha f d) <*> handleType f t <*> mapM (ha f) xs
-    PrimOp op -> PrimOp <$> tt f op
-    App fAtom xs -> App <$> ha f fAtom <*> mapM (ha f) xs
-    ApplyMethod m i xs -> ApplyMethod <$> ha f m <*> pure i <*> mapM (ha f) xs
+    Atom x -> Atom <$> visitGeneric x
+    TabCon Nothing t xs -> TabCon Nothing <$> visitGeneric t <*> mapM visitGeneric xs
+    TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> visitGeneric d) <*> visitGeneric t <*> mapM visitGeneric xs
+    PrimOp op -> PrimOp <$> visitGeneric op
+    App fAtom xs -> App <$> visitGeneric fAtom <*> mapM visitGeneric xs
+    ApplyMethod m i xs -> ApplyMethod <$> visitGeneric m <*> pure i <*> mapM visitGeneric xs
 
-instance IRRep r => TraversableTerm (PrimOp r) r where
-  traverseTerm f = \case
-    UnOp     op x   -> UnOp  op <$> ha f x
-    BinOp    op x y -> BinOp op <$> ha f x <*> ha f y
-    MemOp        op -> MemOp    <$> tt f op
-    VectorOp     op -> VectorOp     <$> tt f op
-    MiscOp       op -> MiscOp       <$> tt f op
-    Hof          op -> Hof          <$> tt f op
-    DAMOp        op -> DAMOp        <$> tt f op
-    UserEffectOp op -> UserEffectOp <$> tt f op
-    RefOp r op  -> RefOp <$> ha f r <*> traverseOp op (handleType f) (ha f) (handleLam f)
+instance IRRep r => VisitGeneric (PrimOp r) r where
+  visitGeneric = \case
+    UnOp     op x   -> UnOp  op <$> visitGeneric x
+    BinOp    op x y -> BinOp op <$> visitGeneric x <*> visitGeneric y
+    MemOp        op -> MemOp    <$> visitGeneric op
+    VectorOp     op -> VectorOp     <$> visitGeneric op
+    MiscOp       op -> MiscOp       <$> visitGeneric op
+    Hof          op -> Hof          <$> visitGeneric op
+    DAMOp        op -> DAMOp        <$> visitGeneric op
+    UserEffectOp op -> UserEffectOp <$> visitGeneric op
+    RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
 
-instance IRRep r => TraversableTerm (Hof r) r where
-  traverseTerm f = \case
-    For ann d lam -> For ann <$> tt f d <*> handleLam f lam
-    RunReader x body -> RunReader <$> ha f x <*> handleLam f body
-    RunWriter dest bm body -> RunWriter <$> mapM (ha f) dest <*> tt f bm <*> handleLam f body
-    RunState  dest s body ->  RunState  <$> mapM (ha f) dest <*> ha f s <*> handleLam f body
-    While          b -> While          <$> handleBlock f b
-    RunIO          b -> RunIO          <$> handleBlock f b
-    RunInit        b -> RunInit        <$> handleBlock f b
-    CatchException b -> CatchException <$> handleBlock f b
-    Linearize      lam x -> Linearize <$> handleLam f lam <*> ha f x
-    Transpose      lam x -> Transpose <$> handleLam f lam <*> ha f x
+instance IRRep r => VisitGeneric (Hof r) r where
+  visitGeneric = \case
+    For ann d lam -> For ann <$> visitGeneric d <*> visitGeneric lam
+    RunReader x body -> RunReader <$> visitGeneric x <*> visitGeneric body
+    RunWriter dest bm body -> RunWriter <$> mapM visitGeneric dest <*> visitGeneric bm <*> visitGeneric body
+    RunState  dest s body ->  RunState  <$> mapM visitGeneric dest <*> visitGeneric s <*> visitGeneric body
+    While          b -> While          <$> visitGeneric b
+    RunIO          b -> RunIO          <$> visitGeneric b
+    RunInit        b -> RunInit        <$> visitGeneric b
+    CatchException b -> CatchException <$> visitGeneric b
+    Linearize      lam x -> Linearize <$> visitGeneric lam <*> visitGeneric x
+    Transpose      lam x -> Transpose <$> visitGeneric lam <*> visitGeneric x
 
-instance IRRep r => TraversableTerm (BaseMonoid r) r where
-  traverseTerm f (BaseMonoid x lam) = BaseMonoid <$> ha f x <*> handleLam f lam
+instance IRRep r => VisitGeneric (BaseMonoid r) r where
+  visitGeneric (BaseMonoid x lam) = BaseMonoid <$> visitGeneric x <*> visitGeneric lam
 
-instance IRRep r => TraversableTerm (DAMOp r) r where
-  traverseTerm f = \case
-    Seq dir d x lam -> Seq dir <$> tt f d <*> ha f x <*> handleLam f lam
-    RememberDest x lam -> RememberDest <$> ha f x <*> handleLam f lam
-    AllocDest t -> AllocDest <$> handleType f t
-    Place x y -> Place  <$> ha f x <*> ha f y
-    Freeze x  -> Freeze <$> ha f x
+instance IRRep r => VisitGeneric (DAMOp r) r where
+  visitGeneric = \case
+    Seq dir d x lam -> Seq dir <$> visitGeneric d <*> visitGeneric x <*> visitGeneric lam
+    RememberDest x lam -> RememberDest <$> visitGeneric x <*> visitGeneric lam
+    AllocDest t -> AllocDest <$> visitGeneric t
+    Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
+    Freeze x  -> Freeze <$> visitGeneric x
 
-instance TraversableTerm UserEffectOp CoreIR where
-  traverseTerm f = \case
-    Handle name xs body -> Handle <$> handleName f name <*> mapM (ha f) xs <*> handleBlock f body
-    Resume t x -> Resume <$> handleType f t <*> ha f x
-    Perform x i -> Perform <$> ha f x <*> pure i
+instance VisitGeneric UserEffectOp CoreIR where
+  visitGeneric = \case
+    Handle name xs body -> Handle <$> renameN name <*> mapM visitGeneric xs <*> visitGeneric body
+    Resume t x -> Resume <$> visitGeneric t <*> visitGeneric x
+    Perform x i -> Perform <$> visitGeneric x <*> pure i
 
-instance IRRep r => TraversableTerm (Effect r) r where
-  traverseTerm f = \case
-    RWSEffect rws h    -> RWSEffect rws <$> ha f h
+instance IRRep r => VisitGeneric (Effect r) r where
+  visitGeneric = \case
+    RWSEffect rws h    -> RWSEffect rws <$> visitGeneric h
     ExceptionEffect    -> pure ExceptionEffect
     IOEffect           -> pure IOEffect
-    UserEffect name    -> UserEffect <$> handleName f name
+    UserEffect name    -> UserEffect <$> renameN name
     InitEffect         -> pure InitEffect
 
-instance IRRep r => TraversableTerm (EffectRow r) r where
-  traverseTerm f (EffectRow effs tailVar) = do
-    effs' <- eSetFromList <$> mapM (tt f) (eSetToList effs)
+instance IRRep r => VisitGeneric (EffectRow r) r where
+  visitGeneric (EffectRow effs tailVar) = do
+    effs' <- eSetFromList <$> mapM visitGeneric (eSetToList effs)
     tailEffRow <- case tailVar of
       NoTail -> return $ EffectRow mempty NoTail
-      EffectRowTail v -> ha f (Var v) <&> \case
+      EffectRowTail v -> visitGeneric (Var v) <&> \case
         Var v' -> EffectRow mempty (EffectRowTail v')
         Eff r  -> r
         _ -> error "Not a valid effect substitution"
     return $ extendEffRow effs' tailEffRow
 
-instance TraversableTerm DictExpr CoreIR where
-  traverseTerm f = \case
-    InstantiatedGiven x xs -> InstantiatedGiven <$> ha f x <*> mapM (ha f) xs
-    SuperclassProj x i     -> SuperclassProj <$> ha f x <*> pure i
-    InstanceDict v xs      -> InstanceDict <$> handleName f v <*> mapM (ha f) xs
-    IxFin x                -> IxFin <$> ha f x
-    DataData t             -> DataData <$> handleType f t
+instance VisitGeneric DictExpr CoreIR where
+  visitGeneric = \case
+    InstantiatedGiven x xs -> InstantiatedGiven <$> visitGeneric x <*> mapM visitGeneric xs
+    SuperclassProj x i     -> SuperclassProj <$> visitGeneric x <*> pure i
+    InstanceDict v xs      -> InstanceDict <$> renameN v <*> mapM visitGeneric xs
+    IxFin x                -> IxFin <$> visitGeneric x
+    DataData t             -> DataData <$> visitGeneric t
 
-instance TraversableTerm NewtypeCon CoreIR where
-  traverseTerm f = \case
-    UserADTData t params -> UserADTData <$> handleName f t <*> tt f params
+instance VisitGeneric NewtypeCon CoreIR where
+  visitGeneric = \case
+    UserADTData t params -> UserADTData <$> renameN t <*> visitGeneric params
     NatCon -> return NatCon
-    FinCon x -> FinCon <$> ha f x
+    FinCon x -> FinCon <$> visitGeneric x
 
-instance TraversableTerm NewtypeTyCon CoreIR where
-  traverseTerm f = \case
+instance VisitGeneric NewtypeTyCon CoreIR where
+  visitGeneric = \case
     Nat -> return Nat
-    Fin x -> Fin <$> ha f x
+    Fin x -> Fin <$> visitGeneric x
     EffectRowKind -> return EffectRowKind
-    UserADTType n v params -> UserADTType n <$> handleName f v <*> tt f params
+    UserADTType n v params -> UserADTType n <$> renameN v <*> visitGeneric params
 
-instance TraversableTerm TyConParams CoreIR where
-  traverseTerm f (TyConParams expls xs) = TyConParams expls <$> mapM (ha f) xs
+instance VisitGeneric TyConParams CoreIR where
+  visitGeneric (TyConParams expls xs) = TyConParams expls <$> mapM visitGeneric xs
 
-instance IRRep r => TraversableTerm (IxDict r) r where
-  traverseTerm f = \case
-    IxDictAtom   x -> IxDictAtom   <$> ha f x
-    IxDictRawFin x -> IxDictRawFin <$> ha f x
-    IxDictSpecialized t v xs -> IxDictSpecialized <$> handleType f t <*> handleName f v <*> mapM (ha f) xs
+instance IRRep r => VisitGeneric (IxDict r) r where
+  visitGeneric = \case
+    IxDictAtom   x -> IxDictAtom   <$> visitGeneric x
+    IxDictRawFin x -> IxDictRawFin <$> visitGeneric x
+    IxDictSpecialized t v xs -> IxDictSpecialized <$> visitGeneric t <*> renameN v <*> mapM visitGeneric xs
 
-instance TraversableTerm DictType CoreIR where
-  traverseTerm f (DictType n v xs) = DictType n <$> handleName f v <*> mapM (ha f) xs
+instance VisitGeneric DictType CoreIR where
+  visitGeneric (DictType n v xs) = DictType n <$> renameN v <*> mapM visitGeneric xs
 
-instance TraversableTerm CoreLamExpr CoreIR where
-  traverseTerm f (CoreLamExpr t lam) = CoreLamExpr <$> tt f t <*> handleLam f lam
+instance VisitGeneric CoreLamExpr CoreIR where
+  visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam
 
-instance TraversableTerm CorePiType CoreIR where
-  traverseTerm f (CorePiType app bsExpl eff ty) = do
+instance VisitGeneric CorePiType CoreIR where
+  visitGeneric (CorePiType app bsExpl eff ty) = do
     let (expls, bs) = unzipExpls bsExpl
-    PiType bs' eff' ty' <- handlePi f $ PiType bs eff ty
+    PiType bs' eff' ty' <- visitGeneric $ PiType bs eff ty
     let bsExpl' = zipExpls expls bs'
     return $ CorePiType app bsExpl' eff' ty'
 
-instance IRRep r => TraversableTerm (TabPiType r) r where
-  traverseTerm f (TabPiType (b:>IxType t d) eltTy) = do
-    d' <- tt f d
-    handlePi f (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
+instance IRRep r => VisitGeneric (TabPiType r) r where
+  visitGeneric (TabPiType (b:>IxType t d) eltTy) = do
+    d' <- visitGeneric d
+    visitGeneric (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
       PiType (UnaryNest (b':>t')) Pure eltTy' -> TabPiType (b':>IxType t' d') eltTy'
       _ -> error "not a table pi type"
 
-instance IRRep r => TraversableTerm (DepPairType r) r where
-  traverseTerm f (DepPairType expl b ty) = do
-    handlePi f (PiType (UnaryNest b) Pure ty) <&> \case
+instance IRRep r => VisitGeneric (DepPairType r) r where
+  visitGeneric (DepPairType expl b ty) = do
+    visitGeneric (PiType (UnaryNest b) Pure ty) <&> \case
       PiType (UnaryNest b') Pure ty' -> DepPairType expl b' ty'
       _ -> error "not a dependent pair type"
 
-instance TraversableTerm (RepVal SimpIR) SimpIR where
-  traverseTerm f (RepVal ty tree) = RepVal <$> handleType f ty <*> mapM renameIExpr tree
+instance VisitGeneric (RepVal SimpIR) SimpIR where
+  visitGeneric (RepVal ty tree) = RepVal <$> visitGeneric ty <*> mapM renameIExpr tree
     where renameIExpr = \case
             ILit l -> return $ ILit l
-            IVar    v t -> IVar    <$> handleName f v <*> pure t
-            IPtrVar v t -> IPtrVar <$> handleName f v <*> pure t
+            IVar    v t -> IVar    <$> renameN v <*> pure t
+            IPtrVar v t -> IPtrVar <$> renameN v <*> pure t
 
-instance IRRep r => TraversableTerm (DeclBinding r) r where
-  traverseTerm f (DeclBinding ann ty expr) =
-    DeclBinding ann <$> handleType f ty <*> traverseTerm f expr
+instance IRRep r => VisitGeneric (DeclBinding r) r where
+  visitGeneric (DeclBinding ann ty expr) =
+    DeclBinding ann <$> visitGeneric ty <*> visitGeneric expr
 
-instance IRRep r => TraversableTerm (EffectAndType r) r where
-  traverseTerm f (EffectAndType eff ty) =
-    EffectAndType <$> traverseTerm f eff <*> handleType f ty
+instance IRRep r => VisitGeneric (EffectAndType r) r where
+  visitGeneric (EffectAndType eff ty) =
+    EffectAndType <$> visitGeneric eff <*> visitGeneric ty
 
-instance TraversableTerm DataConDefs CoreIR where
-  traverseTerm f = \case
-    ADTCons cons -> ADTCons <$> mapM (traverseTerm f) cons
+instance VisitGeneric DataConDefs CoreIR where
+  visitGeneric = \case
+    ADTCons cons -> ADTCons <$> mapM visitGeneric cons
     StructFields defs -> do
       let (names, tys) = unzip defs
-      tys' <- mapM (handleType f) tys
+      tys' <- mapM visitGeneric tys
       return $ StructFields $ zip names tys'
 
-instance TraversableTerm DataConDef CoreIR where
-  traverseTerm f (DataConDef sn (Abs bs UnitE) repTy ps) = do
-    PiType bs' _ _  <- handlePi f $ PiType bs Pure UnitTy
-    repTy' <- handleType f repTy
+instance VisitGeneric DataConDef CoreIR where
+  visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = do
+    PiType bs' _ _  <- visitGeneric $ PiType bs Pure UnitTy
+    repTy' <- visitGeneric repTy
     return $ DataConDef sn (Abs bs' UnitE) repTy' ps
 
-instance TraversableTerm (Con      r) r where traverseTerm = traverseOpTerm
-instance TraversableTerm (TC       r) r where traverseTerm = traverseOpTerm
-instance TraversableTerm (MiscOp   r) r where traverseTerm = traverseOpTerm
-instance TraversableTerm (VectorOp r) r where traverseTerm = traverseOpTerm
-instance TraversableTerm (MemOp    r) r where traverseTerm = traverseOpTerm
+instance VisitGeneric (Con      r) r where visitGeneric = traverseOpTerm
+instance VisitGeneric (TC       r) r where visitGeneric = traverseOpTerm
+instance VisitGeneric (MiscOp   r) r where visitGeneric = traverseOpTerm
+instance VisitGeneric (VectorOp r) r where visitGeneric = traverseOpTerm
+instance VisitGeneric (MemOp    r) r where visitGeneric = traverseOpTerm
 
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
 
-substTraversal :: (Distinct o, IRRep r) => (Env o, Subst AtomSubstVal i o) -> TraversalDef Identity r i o
-substTraversal env = TraversalDef
- { handleName = return . substE env
- , handleType = return . substE env
- , handleAtom = return . substE env
- , handleLam  = return . substE env
- , handlePi   = return . substE env }
+newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst AtomSubstVal i o) a }
+        deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst AtomSubstVal i o))
+
+substV :: (Distinct o, SubstE AtomSubstVal e) => e i -> SubstVisitor i o (e o)
+substV x = ask <&> \env -> substE env x
+
+instance Distinct o => NonAtomRenamer (SubstVisitor i o) i o where
+  renameN = substV
+
+instance (Distinct o, IRRep r) => Visitor (SubstVisitor i o) r i o where
+  visitType = substV
+  visitAtom = substV
+  visitLam  = substV
+  visitPi   = substV
 
 instance Color c => SubstE AtomSubstVal (AtomSubstVal c) where
   substE (_, env) (Rename name) = env ! name
@@ -754,7 +800,7 @@ instance IRRep r => SubstE AtomSubstVal (Atom r) where
     ProjectElt i x -> do
      let x' = substE es x
      runEnvReaderM env $ normalizeProj i x'
-    atom -> runIdentity $ traverseAtom (substTraversal es) atom
+    atom -> runReader (runSubstVisitor $ visitAtomPartial atom) es
 
 instance IRRep r => SubstE AtomSubstVal (Type r) where
   substE es@(env, subst) = \case
@@ -767,7 +813,7 @@ instance IRRep r => SubstE AtomSubstVal (Type r) where
      case runEnvReaderM env $ normalizeProj i x' of
        Type t   -> t
        _ -> error "bad substitution"
-    ty -> runIdentity $ traverseType (substTraversal es) ty
+    ty -> runReader (runSubstVisitor $ visitTypePartial ty) es
 
 instance SubstE AtomSubstVal SimpInCore
 

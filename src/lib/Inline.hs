@@ -254,17 +254,16 @@ data Context (from::E) (to::E) (o::S) where
 class Inlinable (e1::E) where
   inline :: Emits o => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
 
-  default inline :: (TraversableTerm e1 SimpIR, Emits o)
+  default inline :: (VisitGeneric e1 SimpIR, Emits o)
     => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
-  inline ctx e = traverseTerm inlineTraversal e >>= reconstruct ctx
+  inline ctx e = visitGeneric e >>= reconstruct ctx
 
-inlineTraversal :: Emits o => TraversalDef (InlineM i o) SimpIR i o
-inlineTraversal = TraversalDef
- { handleName = substM
- , handleType = inline Stop
- , handleAtom = inline Stop
- , handleLam  = inline Stop
- , handlePi   = inline Stop }
+instance NonAtomRenamer (InlineM i o) i o where renameN = substM
+instance Emits o => Visitor (InlineM i o) SimpIR i o where
+  visitType = inline Stop
+  visitAtom = inline Stop
+  visitLam  = inline Stop
+  visitPi   = inline Stop
 
 inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
 inlineExpr ctx = \case
@@ -272,7 +271,7 @@ inlineExpr ctx = \case
   TabApp tbl ixs -> do
     s <- getSubst
     inlineAtom (TabAppCtx ixs s ctx) tbl
-  expr -> traverseTerm inlineTraversal expr >>= reconstruct ctx
+  expr -> visitGeneric expr >>= reconstruct ctx
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
@@ -281,7 +280,7 @@ inlineAtom ctx = \case
     let (idxs, v) = asNaryProj i x
     ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
     reconstruct ctx $ Atom ans
-  atom -> (Atom <$> traverseAtom inlineTraversal atom) >>= reconstruct ctx
+  atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
 inlineName ctx name =
@@ -306,7 +305,7 @@ instance Inlinable SAtom where
   inline ctx a = inlineAtom (EmitToAtomCtx ctx) a
 
 instance Inlinable SType where
-  inline ctx a = traverseType inlineTraversal a >>= reconstruct ctx
+  inline ctx ty = visitTypePartial ty >>= reconstruct ctx
 
 instance Inlinable SLam where
   inline ctx (LamExpr bs body) = do

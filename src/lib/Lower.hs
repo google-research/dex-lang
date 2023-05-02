@@ -91,31 +91,28 @@ lowerFullySequentialBlockNoDest :: EnvReader m => SBlock n -> m n (SBlock n)
 lowerFullySequentialBlockNoDest b = liftAtomSubstBuilder $ buildBlock $ lowerBlock b
 {-# SCC lowerFullySequentialBlockNoDest #-}
 
-type LowerM = AtomSubstBuilder SimpIR
+data LowerTag
+type LowerM = AtomSubstBuilder LowerTag SimpIR
 
-loweringTraversal :: TraversalDef (LowerM i o) SimpIR i o
-loweringTraversal = exprEmitTraversal lowerExpr
+instance NonAtomRenamer (LowerM i o) i o where renameN = substM
+
+instance ExprVisitorEmits (LowerM i o) SimpIR i o where
+  visitExprEmits = lowerExpr
+
+instance Visitor (LowerM i o) SimpIR i o where
+  visitAtom = visitAtomDefault
+  visitType = visitTypeDefault
+  visitPi   = visitPiDefault
+  visitLam  = visitLamEmits
 
 lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
 lowerExpr expr = emitExpr =<< case expr of
   TabCon Nothing ty els -> lowerTabCon Nothing ty els
   PrimOp (Hof (For dir ixDict body)) -> lowerFor Nothing dir ixDict body
-  _ -> lowerTermGenerically expr
-
-lowerAtom :: SAtom i -> LowerM i o (SAtom o)
-lowerAtom = traverseAtomSubst loweringTraversal
-
-lowerType :: SType i -> LowerM i o (SType o)
-lowerType = traverseTypeSubst loweringTraversal
+  _ -> visitGeneric expr
 
 lowerBlock :: Emits o => SBlock i -> LowerM i o (SAtom o)
-lowerBlock = traverseBlockEmit loweringTraversal lowerExpr
-
-lowerTermGenerically :: TraversableTerm e SimpIR => e i -> LowerM i o (e o)
-lowerTermGenerically = traverseTerm loweringTraversal
-
-lowerDecls :: Emits o => Nest SDecl i i' -> LowerM i' o a -> LowerM i  o a
-lowerDecls decls cont = traverseDeclsEmit lowerExpr decls cont
+lowerBlock = visitBlockEmits
 
 type Dest = Atom
 
@@ -169,7 +166,7 @@ lowerTabCon maybeDest tabTy elems = do
                lowerBlock ufoBlock
         do_one_elt <- buildUnaryLamExpr "dest" destTy \local_dest -> do
           idest <- indexRef (Var local_dest) (sink i)
-          place (FullDest idest) =<< lowerAtom e
+          place (FullDest idest) =<< visitAtom e
           return UnitVal
         carried_dest <- emitExpr $ PrimOp $ DAMOp $ RememberDest incoming_dest do_one_elt
         go carried_dest rest
@@ -224,7 +221,7 @@ lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom 
 lowerBlockWithDest dest (Block _ decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
-      ans' <- lowerDecls decls $ lowerAtom ans
+      ans' <- visitDeclsEmits decls $ visitAtom ans
       place (FullDest dest) ans'
       return ans'
     Just destMap -> do
@@ -256,17 +253,17 @@ lowerExprWithDest dest expr = case expr of
   TabCon Nothing ty els -> lowerTabCon tabDest ty els
   PrimOp (Hof (For dir ixDict body)) -> lowerFor tabDest dir ixDict body
   PrimOp (Hof (RunWriter Nothing m body)) -> traverseRWS body \ref' body' -> do
-    m' <- lowerTermGenerically m
+    m' <- visitGeneric m
     return $ RunWriter ref' m' body'
   PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
-    s' <- lowerAtom s
+    s' <- visitAtom s
     return $ RunState ref' s' body'
   _ -> generic
   where
     tabDest = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
 
     generic = do
-      expr' <- lowerTermGenerically expr
+      expr' <- visitGeneric expr
       case dest of
         Nothing -> return expr'
         Just d  -> do
@@ -283,7 +280,7 @@ lowerExprWithDest dest expr = case expr of
         Nothing -> generic
         Just (bodyDest, refDest) -> do
           let RefTy _ ty = binderType rb
-          ty' <- lowerType $ ignoreHoistFailure $ hoist hb ty
+          ty' <- visitType $ ignoreHoistFailure $ hoist hb ty
           liftM (PrimOp . Hof) $ mkHof refDest =<<
             buildEffLam (getNameHint rb) ty' \hb' rb' ->
               extendRenamer (hb@>hb' <.> rb@>rb') do
@@ -630,20 +627,30 @@ isDistinctNest nest = case noShadows $ toScopeFrag nest of
 
 -- === computing byte widths ===
 
-type CalcWidthM = SubstReaderT Name (StateT1 (LiftE Word32) EnvReaderM)
+newtype CalcWidthM i o a = CalcWidthM {
+  runTypeWidthM :: SubstReaderT Name (StateT1 (LiftE Word32) EnvReaderM) i o a}
+  deriving (Functor, Applicative, Monad, SubstReader Name, EnvExtender,
+            ScopeReader, EnvReader, MonadState (LiftE Word32 o))
 
-calcWidthExpr :: SExpr i -> CalcWidthM i o (SExpr o)
-calcWidthExpr expr = case expr of
-  PrimOp (Hof     _) -> fallback
-  PrimOp (DAMOp _  ) -> fallback
-  PrimOp (RefOp _ _) -> fallback
-  PrimOp _ -> do
-    expr' <- renameM expr
-    ty <- getType expr'
-    modify (\(LiftE x) -> LiftE $ min (typeByteWidth ty) x)
-    return expr'
-  _ -> fallback
-  where fallback = traverseExprs expr calcWidthExpr
+instance NonAtomRenamer (CalcWidthM i o) i o where renameN = renameM
+instance Visitor (CalcWidthM i o) SimpIR i o where
+  visitAtom = visitAtomDefault
+  visitType = visitTypeDefault
+  visitPi   = visitPiDefault
+  visitLam  = visitLamNoEmits
+
+instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
+  visitExprNoEmits expr = case expr of
+    PrimOp (Hof     _) -> fallback
+    PrimOp (DAMOp _  ) -> fallback
+    PrimOp (RefOp _ _) -> fallback
+    PrimOp _ -> do
+      expr' <- renameM expr
+      ty <- getType expr'
+      modify (\(LiftE x) -> LiftE $ min (typeByteWidth ty) x)
+      return expr'
+    _ -> fallback
+    where fallback = visitGeneric expr
 
 typeByteWidth :: SType n -> Word32
 typeByteWidth ty = case ty of
@@ -659,7 +666,7 @@ maxWord32 = maxBound
 getNarrowestTypeByteWidth :: (Emits n, EnvReader m) => Expr SimpIR n -> m n Word32
 getNarrowestTypeByteWidth x = do
   (_, LiftE result) <-  liftEnvReaderM $ runStateT1
-    (runSubstReaderT idSubst $ traverseExprs x calcWidthExpr) (LiftE maxWord32)
+    (runSubstReaderT idSubst $ runTypeWidthM $ visitExprNoEmits x) (LiftE maxWord32)
   if result == maxWord32
     then return 1
     else return result

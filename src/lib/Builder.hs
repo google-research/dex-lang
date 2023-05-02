@@ -1455,177 +1455,80 @@ confuseGHCBuilder :: IRRep r => BuilderM r n (DistinctEvidence n)
 confuseGHCBuilder = getDistinct
 {-# INLINE confuseGHCBuilder #-}
 
--- === Traversal helpers ===
+-- === Non-emitting expression visitor ===
 
--- These traversals work with `TraversableTerm` but they make more assumptions
--- about the monad you're in.
+class Visitor m r i o => ExprVisitorNoEmits m r i o | m -> i, m -> o where
+  visitExprNoEmits :: Expr r i -> m (Expr r o)
 
-type ForallTraversalDef m r = forall i o. TraversalDef (m i o) r i o
-type ExprTraversalDef   m r = forall i o. Expr r i -> m i o (Expr r o)
-type BlockTraversalDef  m r = forall i o. Block r i -> m i o (Block r o)
+type ExprVisitorNoEmits2 m r = forall i o. ExprVisitorNoEmits (m i o) r i o
 
-traverseExprs
-  :: (IRRep r, TraversableTerm e r, EnvExtender2 m, SubstReader Name m)
-  => e i -> ExprTraversalDef m r -> m i o (e o)
-traverseExprs e f = traverseTerm (exprTraversal f) e where
+visitLamNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => LamExpr r i -> m i o (LamExpr r o)
+visitLamNoEmits (LamExpr bs body) =
+  visitBinders bs \bs' -> LamExpr bs' <$> visitBlockNoEmits body
 
-exprTraversal
-  :: (IRRep r, EnvExtender2 m, SubstReader Name m)
-  => ExprTraversalDef m r -> ForallTraversalDef m r
-exprTraversal f = TraversalDef
- { handleName = renameM
- , handleType = traverseTypeRename (exprTraversal f)
- , handleAtom = traverseAtomRename (exprTraversal f)
- , handleLam  = traverseLam (exprTraversal f) (traverseBlock (exprTraversal f) f)
- , handlePi   = traversePi (exprTraversal f) }
+visitBlockNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => Block r i -> m i o (Block r o)
+visitBlockNoEmits (Block _ decls result) =
+  absToBlockInferringTypes =<< visitDeclsNoEmits decls \decls' -> do
+    Abs decls' <$> visitAtom result
 
-traverseBlock
-  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> ExprTraversalDef m r
-  -> Block r i -> m i o (Block r o)
-traverseBlock f fExpr (Block _ decls result) = do
-  absToBlockInferringTypes =<< traverseDecls fExpr decls \decls' -> do
-    result' <- handleAtom f result
-    return $ Abs decls' result'
-
-traverseAtomRename
-  :: (IRRep r, SubstReader Name m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> Atom r i -> m i o (Atom r o)
-traverseAtomRename f = \case
-  Var v          -> Var <$> renameM v
-  SimpInCore x   -> SimpInCore <$> renameM x
-  ProjectElt i x -> ProjectElt i <$> traverseAtomRename f x
-  x -> traverseAtom f x
-
-traverseTypeRename
-  :: (IRRep r, SubstReader Name m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> Type r i -> m i o (Type r o)
-traverseTypeRename f = \case
-  TyVar v          -> TyVar <$> renameM v
-  ProjectEltTy i x -> ProjectEltTy i <$> traverseAtomRename f x
-  x -> traverseType f x
-
-traverseLam
-  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> BlockTraversalDef m r
-  -> LamExpr r i -> m i o (LamExpr r o)
-traverseLam f fBlock (LamExpr bs body) =
-  traverseBinders f bs \bs' -> LamExpr bs' <$> fBlock body
-
-traversePi
-  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
-  => ForallTraversalDef m r -> PiType r i -> m i o (PiType r o)
-traversePi f (PiType bs eff ty) = do
-  traverseBinders f bs \bs' -> do
-    EffectAndType eff' ty' <- traverseTerm f $ EffectAndType eff ty
-    return $ PiType bs' eff' ty'
-
-traverseBinders
-  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> Nest (Binder r) i i'
-  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
-  -> m i o a
-traverseBinders _ Empty cont = getDistinct >>= \Distinct -> cont Empty
-traverseBinders f (Nest (b:>ty) bs) cont = do
-  ty' <- handleType f ty
-  withFreshBinder (getNameHint b) ty' \b' -> do
-    extendRenamer (b@>binderName b') do
-      traverseBinders f bs \bs' ->
-        cont $ Nest b' bs'
-
-traverseDecls
-  :: (IRRep r, FromName v, SubstReader v m, EnvExtender2 m)
-  => ExprTraversalDef m r
-  -> Nest (Decl r) i i'
+visitDeclsNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => Nest (Decl r) i i'
   -> (forall o'. DExt o o' => Nest (Decl r) o o' -> m i' o' a)
   -> m i o a
-traverseDecls _ Empty cont = getDistinct >>= \Distinct -> cont Empty
-traverseDecls f (Nest (Let b (DeclBinding ann _ expr)) decls) cont = do
-  expr' <- f expr
+visitDeclsNoEmits Empty cont = getDistinct >>= \Distinct -> cont Empty
+visitDeclsNoEmits (Nest (Let b (DeclBinding ann _ expr)) decls) cont = do
+  expr' <- visitExprNoEmits expr
   ty <- getType expr'
   withFreshBinder (getNameHint b) ty \(b':>_) -> do
     let decl' = Let b' $ DeclBinding ann ty expr'
     extendRenamer (b@>binderName b') do
-      traverseDecls f decls \decls' ->
+      visitDeclsNoEmits decls \decls' ->
         cont $ Nest decl' decls'
 
--- === traversal helpers that allow emissions ===
+-- === Emitting expression visitor ===
 
-type ExprEmitTraversalDef m r = forall i o. Emits o => Expr r i -> m i o (Atom r o)
+class Visitor m r i o => ExprVisitorEmits m r i o | m -> i, m -> o where
+  visitExprEmits :: Emits o => Expr r i -> m (Atom r o)
 
-liftAtomSubstBuilder :: (IRRep r, EnvReader m) => AtomSubstBuilder r n n a -> m n a
-liftAtomSubstBuilder cont = liftBuilder $ runSubstReaderT idSubst cont
+type ExprVisitorEmits2 m r = forall i o. ExprVisitorEmits (m i o) r i o
 
-type AtomSubstBuilder r = SubstReaderT AtomSubstVal (BuilderM r)
+liftAtomSubstBuilder :: forall tag r m n a. (IRRep r, EnvReader m) => AtomSubstBuilder tag r n n a -> m n a
+liftAtomSubstBuilder cont = liftBuilder $ runSubstReaderT idSubst $ runAtomSubstBuilder cont
 
-exprEmitTraversal
-  :: (IRRep r, ScopableBuilder2 r m, SubstReader AtomSubstVal m)
-  => ExprEmitTraversalDef m r -> ForallTraversalDef m r
-exprEmitTraversal f = TraversalDef
- { handleName = substM
- , handleType = traverseTypeSubst (exprEmitTraversal f)
- , handleAtom = traverseAtomSubst (exprEmitTraversal f)
- , handleLam  = traverseLamEmit (exprEmitTraversal f) f
- , handlePi   = traversePi (exprEmitTraversal f) }
+-- The phantom type `v` is for defining `Visitor` instances. The pattern is to
+-- define a new singleton type, like `data MyTag = MyTag`.
+newtype AtomSubstBuilder v r i o a =
+  AtomSubstBuilder { runAtomSubstBuilder :: SubstReaderT AtomSubstVal (BuilderM r) i o a}
+  deriving (MonadFail, Fallible, Functor, Applicative, Monad, ScopeReader,
+            EnvReader, EnvExtender, Builder r, SubstReader AtomSubstVal,
+            ScopableBuilder r)
 
-traverseLamEmit
-  :: (IRRep r, SubstReader AtomSubstVal m, ScopableBuilder2 r m)
-  => ForallTraversalDef m r
-  -> ExprEmitTraversalDef m r
-  -> LamExpr r i -> m i o (LamExpr r o)
-traverseLamEmit f fExpr lam =
-  traverseLam f (\b -> buildBlock $ traverseBlockEmit f fExpr b) lam
+visitLamEmits
+  :: (ExprVisitorEmits2 m r, IRRep r, SubstReader AtomSubstVal m, ScopableBuilder2 r m)
+  => LamExpr r i -> m i o (LamExpr r o)
+visitLamEmits (LamExpr bs body) = visitBinders bs \bs' -> LamExpr bs' <$>
+  buildBlock (visitBlockEmits body)
 
-traverseBlockEmit
-  :: (Emits o, IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> ExprEmitTraversalDef m r
-  -> Block r i -> m i o (Atom r o)
-traverseBlockEmit f fExpr (Block _ decls result) = do
-  traverseDeclsEmit fExpr decls do
-    handleAtom f result
+visitBlockEmits
+  :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
+  => Block r i -> m i o (Atom r o)
+visitBlockEmits (Block _ decls result) = visitDeclsEmits decls $ visitAtom result
 
-traverseDeclsEmit
-  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m, Emits o)
-  => ExprEmitTraversalDef m r
-  -> Nest (Decl r) i i'
+visitDeclsEmits
+  :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
+  => Nest (Decl r) i i'
   -> m i' o a
   -> m i  o a
-traverseDeclsEmit _ Empty cont = cont
-traverseDeclsEmit f (Nest (Let b (DeclBinding _ _ expr)) decls) cont = do
-  x <- f expr
+visitDeclsEmits Empty cont = cont
+visitDeclsEmits (Nest (Let b (DeclBinding _ _ expr)) decls) cont = do
+  x <- visitExprEmits expr
   extendSubst (b@>SubstVal x) do
-    traverseDeclsEmit f decls cont
-
-traverseExprsEmit
-  :: (IRRep r, ScopableBuilder2 r m, SubstReader AtomSubstVal m
-     , TraversableTerm e r)
-  => e i -> ExprEmitTraversalDef m r -> m i o (e o)
-traverseExprsEmit e f = traverseTerm (exprEmitTraversal f) e where
-
-traverseAtomSubst
-  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> Atom r i -> m i o (Atom r o)
-traverseAtomSubst f = \case
-  Var v          -> substM $ Var v
-  SimpInCore x   -> SimpInCore <$> substM x
-  ProjectElt i x -> ProjectElt i <$> traverseAtomSubst f x
-  x -> traverseAtom f x
-
-traverseTypeSubst
-  :: (IRRep r, SubstReader AtomSubstVal m, EnvExtender2 m)
-  => ForallTraversalDef m r
-  -> Type r i -> m i o (Type r o)
-traverseTypeSubst f = \case
-  TyVar v          -> substM $ TyVar v
-  ProjectEltTy i x -> ProjectEltTy i <$> traverseAtomSubst f x
-  x -> traverseType f x
+    visitDeclsEmits decls cont
 
 -- === Helpers for function evaluation over fixed-width types ===
 
