@@ -635,9 +635,6 @@ makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
   return $ Block (BlockAnn ty' effs') decls result
 {-# INLINE makeBlockFromDecls #-}
 
-nullaryAtomicCoreLam :: EnvReader m => CAtom n -> m n (CoreLamExpr n)
-nullaryAtomicCoreLam = undefined
-
 coreLamExpr :: EnvReader m => AppExplicitness
             -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CBlock) n
             -> m n (CoreLamExpr n)
@@ -1457,6 +1454,81 @@ localVars b e = nameSetToList $ nameSetIntersection (toNameSet (toScopeFrag b)) 
 confuseGHCBuilder :: IRRep r => BuilderM r n (DistinctEvidence n)
 confuseGHCBuilder = getDistinct
 {-# INLINE confuseGHCBuilder #-}
+
+-- === Non-emitting expression visitor ===
+
+class Visitor m r i o => ExprVisitorNoEmits m r i o | m -> i, m -> o where
+  visitExprNoEmits :: Expr r i -> m (Expr r o)
+
+type ExprVisitorNoEmits2 m r = forall i o. ExprVisitorNoEmits (m i o) r i o
+
+visitLamNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => LamExpr r i -> m i o (LamExpr r o)
+visitLamNoEmits (LamExpr bs body) =
+  visitBinders bs \bs' -> LamExpr bs' <$> visitBlockNoEmits body
+
+visitBlockNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => Block r i -> m i o (Block r o)
+visitBlockNoEmits (Block _ decls result) =
+  absToBlockInferringTypes =<< visitDeclsNoEmits decls \decls' -> do
+    Abs decls' <$> visitAtom result
+
+visitDeclsNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => Nest (Decl r) i i'
+  -> (forall o'. DExt o o' => Nest (Decl r) o o' -> m i' o' a)
+  -> m i o a
+visitDeclsNoEmits Empty cont = getDistinct >>= \Distinct -> cont Empty
+visitDeclsNoEmits (Nest (Let b (DeclBinding ann _ expr)) decls) cont = do
+  expr' <- visitExprNoEmits expr
+  ty <- getType expr'
+  withFreshBinder (getNameHint b) ty \(b':>_) -> do
+    let decl' = Let b' $ DeclBinding ann ty expr'
+    extendRenamer (b@>binderName b') do
+      visitDeclsNoEmits decls \decls' ->
+        cont $ Nest decl' decls'
+
+-- === Emitting expression visitor ===
+
+class Visitor m r i o => ExprVisitorEmits m r i o | m -> i, m -> o where
+  visitExprEmits :: Emits o => Expr r i -> m (Atom r o)
+
+type ExprVisitorEmits2 m r = forall i o. ExprVisitorEmits (m i o) r i o
+
+liftAtomSubstBuilder :: forall tag r m n a. (IRRep r, EnvReader m) => AtomSubstBuilder tag r n n a -> m n a
+liftAtomSubstBuilder cont = liftBuilder $ runSubstReaderT idSubst $ runAtomSubstBuilder cont
+
+-- The phantom type `v` is for defining `Visitor` instances. The pattern is to
+-- define a new singleton type, like `data MyTag = MyTag`.
+newtype AtomSubstBuilder v r i o a =
+  AtomSubstBuilder { runAtomSubstBuilder :: SubstReaderT AtomSubstVal (BuilderM r) i o a}
+  deriving (MonadFail, Fallible, Functor, Applicative, Monad, ScopeReader,
+            EnvReader, EnvExtender, Builder r, SubstReader AtomSubstVal,
+            ScopableBuilder r)
+
+visitLamEmits
+  :: (ExprVisitorEmits2 m r, IRRep r, SubstReader AtomSubstVal m, ScopableBuilder2 r m)
+  => LamExpr r i -> m i o (LamExpr r o)
+visitLamEmits (LamExpr bs body) = visitBinders bs \bs' -> LamExpr bs' <$>
+  buildBlock (visitBlockEmits body)
+
+visitBlockEmits
+  :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
+  => Block r i -> m i o (Atom r o)
+visitBlockEmits (Block _ decls result) = visitDeclsEmits decls $ visitAtom result
+
+visitDeclsEmits
+  :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
+  => Nest (Decl r) i i'
+  -> m i' o a
+  -> m i  o a
+visitDeclsEmits Empty cont = cont
+visitDeclsEmits (Nest (Let b (DeclBinding _ _ expr)) decls) cont = do
+  x <- visitExprEmits expr
+  extendSubst (b@>SubstVal x) do
+    visitDeclsEmits decls cont
 
 -- === Helpers for function evaluation over fixed-width types ===
 

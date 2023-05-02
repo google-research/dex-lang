@@ -28,10 +28,11 @@ import Name
 import Subst
 import IRVariants
 import Core
-import GenericTraversal
+import CheapReduction
 import Builder
 import QueryType
 import Util (iota)
+import Err
 
 optimize :: EnvReader m => SLam n -> m n (SLam n)
 optimize = dceTop     -- Clean up user code
@@ -214,72 +215,107 @@ unrollLoops :: EnvReader m => SLam n -> m n (SLam n)
 unrollLoops = liftLamExpr unrollLoopsBlock
 
 unrollLoopsBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-unrollLoopsBlock b = liftM fst $ liftGenericTraverserM (ULS 0) $ traverseGenericE b
+unrollLoopsBlock b = liftM fst $
+  liftBuilder $ runStateT1 (runSubstReaderT idSubst (runULM $ ulBlock b)) (ULS 0)
 
 newtype ULS n = ULS Int deriving Show
-type ULM = GenericTraverserM SimpIR UnitB ULS
+newtype ULM i o a = ULM { runULM :: SubstReaderT AtomSubstVal (StateT1 ULS (BuilderM SimpIR)) i o a}
+  deriving (MonadFail, Fallible, Functor, Applicative, Monad, ScopeReader,
+            EnvReader, EnvExtender, Builder SimpIR, SubstReader AtomSubstVal,
+            ScopableBuilder SimpIR, MonadState (ULS o))
+
 instance SinkableE ULS where
   sinkingProofE _ (ULS c) = ULS c
 instance HoistableState ULS where
   hoistState _ _ (ULS c) = (ULS c)
   {-# INLINE hoistState #-}
 
--- TODO: Refine the cost accounting so that operations that will become
--- constant-foldable after inlining don't count towards it.
-instance GenericTraverser SimpIR UnitB ULS where
-  traverseInlineExpr expr = case expr of
-    PrimOp (Hof (For Fwd ixDict body)) ->
-      case ixDict of
-        IxDictRawFin (IdxRepVal n) -> do
-          (body', bodyCost) <- withLocalAccounting $ traverseGenericE body
-          -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
-          case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
-            True -> case body' of
-              UnaryLamExpr b' block' -> do
-                vals <- dropSubst $ forM (iota n) \i -> do
-                  extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
-                inc $ fromIntegral n  -- To account for the TabCon we emit below
-                getLamExprType body' >>= \case
-                  PiType (UnaryNest (tb:>_)) _ valTy -> do
-                    let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
-                    let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
-                    return $ Right $ TabCon Nothing tabTy vals
-                  _ -> error "Expected `for` body to have a Pi type"
-              _ -> error "Expected `for` body to be a lambda expression"
-            False -> do
-              inc bodyCost
-              ixDict' <- traverseGenericE ixDict
-              return $ Right $ PrimOp $ Hof $ For Fwd ixDict' body'
-        _ -> nothingSpecial
-    -- Avoid unrolling loops with large table literals
-    TabCon _ _ els -> inc (length els) >> nothingSpecial
-    _ -> nothingSpecial
-    where
-      inc i = modify \(ULS n) -> ULS (n + i)
-      nothingSpecial = inc 1 >> (traverseExprDefault expr >>= liftEnvReaderM . peepholeExpr)
-      unrollBlowupThreshold = 12
-      withLocalAccounting m = do
-        oldCost <- get
-        ans <- put (ULS 0) *> m
-        ULS newCost <- get
-        put oldCost $> (ans, newCost)
-      {-# INLINE withLocalAccounting #-}
+instance NonAtomRenamer (ULM i o) i o where renameN = substM
+instance Visitor (ULM i o) SimpIR i o where
+  visitAtom = visitAtomDefault
+  visitType = visitTypeDefault
+  visitPi   = visitPiDefault
+  visitLam  = visitLamEmits
+instance ExprVisitorEmits (ULM i o) SimpIR i o where
+  visitExprEmits = ulExpr
+
+ulBlock :: SBlock i -> ULM i o (SBlock o)
+ulBlock b = buildBlock $ visitBlockEmits b
 
 emitSubstBlock :: Emits o => SBlock i -> ULM i o (SAtom o)
-emitSubstBlock (Block _ decls ans) = traverseDeclNest decls $ traverseAtom ans
+emitSubstBlock (Block _ decls ans) = visitDeclsEmits decls $ visitAtom ans
+
+-- TODO: Refine the cost accounting so that operations that will become
+-- constant-foldable after inlining don't count towards it.
+ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
+ulExpr expr = case expr of
+  PrimOp (Hof (For Fwd ixDict body)) ->
+    case ixDict of
+      IxDictRawFin (IdxRepVal n) -> do
+        (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
+        -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
+        case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
+          True -> case body' of
+            UnaryLamExpr b' block' -> do
+              vals <- dropSubst $ forM (iota n) \i -> do
+                extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
+              inc $ fromIntegral n  -- To account for the TabCon we emit below
+              getLamExprType body' >>= \case
+                PiType (UnaryNest (tb:>_)) _ valTy -> do
+                  let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
+                  let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
+                  emitExpr $ TabCon Nothing tabTy vals
+                _ -> error "Expected `for` body to have a Pi type"
+            _ -> error "Expected `for` body to be a lambda expression"
+          False -> do
+            inc bodyCost
+            ixDict' <- visitGeneric ixDict
+            emitExpr $ PrimOp $ Hof $ For Fwd ixDict' body'
+      _ -> nothingSpecial
+  -- Avoid unrolling loops with large table literals
+  TabCon _ _ els -> inc (length els) >> nothingSpecial
+  _ -> nothingSpecial
+  where
+    inc i = modify \(ULS n) -> ULS (n + i)
+    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr) >>= \case
+      Left x -> return x
+      Right e -> emitExpr e
+    unrollBlowupThreshold = 12
+    withLocalAccounting m = do
+      oldCost <- get
+      ans <- put (ULS 0) *> m
+      ULS newCost <- get
+      put oldCost $> (ans, newCost)
+    {-# INLINE withLocalAccounting #-}
 
 -- === Loop invariant code motion ===
 
+data LICMTag
+type LICMM = AtomSubstBuilder LICMTag SimpIR
+
+liftLICMM :: EnvReader m => LICMM n n a -> m n a
+liftLICMM cont = liftAtomSubstBuilder cont
+
+instance NonAtomRenamer (LICMM i o) i o where renameN = substM
+instance Visitor (LICMM i o) SimpIR i o where
+  visitAtom = visitAtomDefault
+  visitType = visitTypeDefault
+  visitPi   = visitPiDefault
+  visitLam  = visitLamEmits
+
+instance ExprVisitorEmits (LICMM i o) SimpIR i o where
+  visitExprEmits = licmExpr
+
 hoistLoopInvariantBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-hoistLoopInvariantBlock body = liftM fst $ liftGenericTraverserM LICMS $ traverseGenericE body
+hoistLoopInvariantBlock body = liftLICMM $ buildBlock $ visitBlockEmits body
 {-# SCC hoistLoopInvariantBlock #-}
 
 hoistLoopInvariantDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
-hoistLoopInvariantDestBlock (DestBlock (db:>dTy) body) =
-  liftM fst $ liftGenericTraverserM LICMS do
-    dTy' <- traverseGenericE dTy
+hoistLoopInvariantDestBlock (DestBlock (db:>dTy) body) = do
+  liftAtomSubstBuilder @LICMTag do
+    dTy' <- visitType dTy
     (Abs db' body') <- buildAbs (getNameHint db) dTy' \v ->
-      extendRenamer (db@>v) $ traverseGenericE body
+      extendRenamer (db@>v) $ buildBlock $ visitBlockEmits body
     return $ DestBlock db' body'
 {-# SCC hoistLoopInvariantDestBlock #-}
 
@@ -292,52 +328,46 @@ hoistLoopInvariantDest (DestLamExpr bs body) = liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' ->
     DestLamExpr bs' <$> hoistLoopInvariantDestBlock body'
 
-data LICMS (n::S) = LICMS
-instance SinkableE LICMS where
-  sinkingProofE _ LICMS = LICMS
-instance HoistableState LICMS where
-  hoistState _ _ LICMS = LICMS
-
-instance GenericTraverser SimpIR UnitB LICMS where
-  traverseExpr = \case
-    PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
-      ix' <- substM ix
-      dests' <- traverse traverseAtom dests
-      let numCarriesOriginal = length dests'
-      Abs hdecls destsAndBody <- traverseBinder b \b' -> do
-        -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
-        Block _ decls ans <- traverseGenericE body
-        -- Now, we process the decls and decide which ones to hoist.
-        liftEnvReaderM $ runSubstReaderT idSubst $
-            seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-      PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
-      -- Append the destinations of hoisted Allocs as loop carried values.
-      let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
-      carryTy <- getType dests''
-      lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
-      extraDestsTyped <- forM extraDests \d -> (d,) <$> getType d
-      Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
-      body' <- withFreshBinder noHint lbTy \lb' -> do
-        (oldIx, allCarries) <- fromPair $ Var $ binderName lb'
-        (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
-        let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
-        let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-        block <- applySubst s bodyAbs >>= makeBlockFromDecls
-        return $ UnaryLamExpr lb' block
-      return $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
-    PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
-      ix' <- substM ix
-      Abs hdecls destsAndBody <- traverseBinder b \b' -> do
-        Block _ decls ans <- traverseGenericE body
-        liftEnvReaderM $ runSubstReaderT idSubst $
-            seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-      PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
-      ixTy <- substM $ binderType b
-      body' <- withFreshBinder noHint ixTy \i -> do
-        block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
-        return $ UnaryLamExpr i block
-      return $ PrimOp $ Hof $ For dir ix' body'
-    expr -> traverseExprDefault expr
+licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
+licmExpr = \case
+  PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+    ix' <- substM ix
+    dests' <- mapM visitAtom dests
+    let numCarriesOriginal = length dests'
+    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+      -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
+      Block _ decls ans <- buildBlock $ visitBlockEmits body
+      -- Now, we process the decls and decide which ones to hoist.
+      liftEnvReaderM $ runSubstReaderT idSubst $
+          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+    PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
+    -- Append the destinations of hoisted Allocs as loop carried values.
+    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
+    carryTy <- getType dests''
+    lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
+    extraDestsTyped <- forM extraDests \d -> (d,) <$> getType d
+    Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+    body' <- withFreshBinder noHint lbTy \lb' -> do
+      (oldIx, allCarries) <- fromPair $ Var $ binderName lb'
+      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+      let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+      let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
+      block <- applySubst s bodyAbs >>= makeBlockFromDecls
+      return $ UnaryLamExpr lb' block
+    emitExpr $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
+  PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
+    ix' <- substM ix
+    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+      Block _ decls ans <- buildBlock $ visitBlockEmits body
+      liftEnvReaderM $ runSubstReaderT idSubst $
+          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+    PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+    ixTy <- substM $ binderType b
+    body' <- withFreshBinder noHint ixTy \i -> do
+      block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
+      return $ UnaryLamExpr i block
+    emitExpr $ PrimOp $ Hof $ For dir ix' body'
+  expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]         -- hoisted dests
@@ -385,7 +415,9 @@ instance HoistableState FV where
   hoistState _ b (FV ns) = FV $ hoistFilterNameSet b ns
   {-# INLINE hoistState #-}
 
-type DCEM = StateT1 FV EnvReaderM
+newtype DCEM n a = DCEM { runDCEM :: StateT1 FV EnvReaderM n a }
+  deriving ( Functor, Applicative, Monad, EnvReader, ScopeReader
+           , MonadState (FV n), EnvExtender)
 
 dceTop :: EnvReader m => SLam n -> m n (SLam n)
 dceTop = liftLamExpr dceBlock
@@ -397,7 +429,7 @@ dceTopDest (DestLamExpr bs body) = liftEnvReaderM $
 {-# INLINE dceTopDest #-}
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-dceBlock b = liftEnvReaderM $ evalStateT1 (dce b) mempty
+dceBlock b = liftEnvReaderM $ evalStateT1 (runDCEM $ dce b) mempty
 {-# SCC dceBlock #-}
 
 dceDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
@@ -407,13 +439,35 @@ dceDestBlock (DestBlock d b) = liftEnvReaderM $
 
 class HasDCE (e::E) where
   dce :: e n -> DCEM n (e n)
-  default dce :: (GenericE e, HasDCE (RepE e)) => e n -> DCEM n (e n)
-  dce e = confuseGHC >>= \_ -> toE <$> dce (fromE e)
+  default dce :: VisitGeneric e SimpIR => e n -> DCEM n (e n)
+  dce = visitGeneric
 
--- The interesting instances
+instance NonAtomRenamer (DCEM o) o o where renameN = dce
+instance Visitor (DCEM o) SimpIR o o where
+  visitType = dce
+  visitAtom = dce
+  visitLam  = dce
+  visitPi   = dce
 
 instance Color c => HasDCE (Name c) where
   dce n = modify (<> FV (freeVarsE n)) $> n
+
+instance HasDCE SAtom where
+  dce = \case
+    Var n -> modify (<> FV (freeVarsE n)) $> Var n
+    ProjectElt i x -> ProjectElt i <$> dce x
+    atom -> visitAtomPartial atom
+
+instance HasDCE SType where dce = visitTypePartial
+instance HasDCE (PiType SimpIR) where
+  dce (PiType bs eff ty) = do
+    Abs bs' (EffectAndType eff' ty') <- dce (Abs bs (EffectAndType eff ty))
+    return $ PiType bs' eff' ty'
+
+instance HasDCE (LamExpr SimpIR) where
+  dce (LamExpr bs e) = do
+    Abs bs' e' <- dce (Abs bs e)
+    return $ LamExpr bs' e'
 
 instance HasDCE SBlock where
   dce (Block ann decls ans) = case (ann, decls) of
@@ -452,7 +506,7 @@ wrapWithCachedFVs e = do
 #endif
   case fvsAreCorrect of
     True -> return $ UnsafeCachedFVs fvs e
-    False -> error "Free variables were computed incorrectly."
+    False -> error $ "Free variables were computed incorrectly."
 
 hoistUsingCachedFVs :: (BindsNames b, HoistableE e) => b n l -> e l -> DCEM l (HoistExcept (e n))
 hoistUsingCachedFVs b e = do
@@ -489,92 +543,13 @@ dceNest decls ans = case decls of
         modify (<>FV (freeVarsB b'))
         return $ Abs (Nest (Let b' decl'') bs'') ans''
 
--- The generic instances
-
-instance HasDCE SExpr
-instance HasDCE (RefOp SimpIR)
-instance HasDCE (BaseMonoid SimpIR)
-instance HasDCE (Hof SimpIR)
-instance HasDCE SAtom
-instance HasDCE SType
-instance HasDCE (LamExpr     SimpIR)
-instance HasDCE (TabPiType   SimpIR)
-instance HasDCE (DepPairType SimpIR)
-instance HasDCE (EffectRowTail SimpIR)
-instance HasDCE (EffectRow     SimpIR)
-instance HasDCE (Effect        SimpIR)
-instance HasDCE (DeclBinding   SimpIR)
-instance HasDCE (DAMOp         SimpIR)
-instance HasDCE (Con           SimpIR)
-instance HasDCE (PrimOp        SimpIR)
-instance HasDCE (MemOp         SimpIR)
-instance HasDCE (MiscOp        SimpIR)
-instance HasDCE (VectorOp      SimpIR)
-instance HasDCE (TC            SimpIR)
-instance HasDCE (IxDict        SimpIR)
-instance HasDCE (GenericOpRep c SimpIR)
-
--- The instances for RepE types
-
-instance (HasDCE e1, HasDCE e2) => HasDCE (PairE e1 e2) where
-  dce (PairE l r) = PairE <$> dce l <*> dce r
-  {-# INLINE dce #-}
-instance (HasDCE e1, HasDCE e2) => HasDCE (EitherE e1 e2) where
-  dce = \case
-    LeftE  l -> LeftE  <$> dce l
-    RightE r -> RightE <$> dce r
-  {-# INLINE dce #-}
-instance ( HasDCE e0, HasDCE e1, HasDCE e2, HasDCE e3
-         , HasDCE e4, HasDCE e5, HasDCE e6, HasDCE e7
-         ) => HasDCE (EitherE8 e0 e1 e2 e3 e4 e5 e6 e7) where
-  dce = \case
-    Case0 x0 -> Case0 <$> dce x0
-    Case1 x1 -> Case1 <$> dce x1
-    Case2 x2 -> Case2 <$> dce x2
-    Case3 x3 -> Case3 <$> dce x3
-    Case4 x4 -> Case4 <$> dce x4
-    Case5 x5 -> Case5 <$> dce x5
-    Case6 x6 -> Case6 <$> dce x6
-    Case7 x7 -> Case7 <$> dce x7
-  {-# INLINE dce #-}
 instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasDCE e) => HasDCE (Abs b e) where
   dce a = do
     a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> dce e
     modify (<>FV (freeVarsB b'))
     return a'
   {-# INLINE dce #-}
-instance HasDCE (LiftE a) where
-  dce x = return x
-  {-# INLINE dce #-}
-instance HasDCE VoidE where
-  dce _ = error "impossible"
-  {-# INLINE dce #-}
-instance HasDCE UnitE where
-  dce UnitE = return UnitE
-  {-# INLINE dce #-}
-instance (Traversable f, HasDCE e) => HasDCE (ComposeE f e) where
-  dce (ComposeE xs) = ComposeE <$> traverse dce xs
-  {-# INLINE dce #-}
-instance HasDCE e => HasDCE (ListE e) where
-  dce (ListE xs) = ListE <$> traverse dce xs
-  {-# INLINE dce #-}
-instance HasDCE e => HasDCE (WhenE True e) where
-  dce (WhenE e) = WhenE <$> dce e
-instance HasDCE (WhenE False e) where
-  dce _ = undefined
 
-instance HasDCE (RepVal SimpIR) where
-  dce e = modify (<> FV (freeVarsE e)) $> e
-
-instance HasDCE (WhenCore SimpIR e) where dce = \case
-instance HasDCE e => HasDCE (WhenCore CoreIR e) where
-  dce (WhenIRE e) = WhenIRE <$> dce e
-
-instance HasDCE (WhenSimp CoreIR e) where dce = \case
-instance HasDCE e => HasDCE (WhenSimp SimpIR e) where
-  dce (WhenIRE e) = WhenIRE <$> dce e
-
--- See Note [Confuse GHC] from Simplify.hs
-confuseGHC :: EnvReader m => m n (DistinctEvidence n)
-confuseGHC = getDistinct
-{-# INLINE confuseGHC #-}
+instance HasDCE (EffectRow     SimpIR)
+instance HasDCE (DeclBinding   SimpIR)
+instance HasDCE (EffectAndType SimpIR)

@@ -893,6 +893,9 @@ deriving instance IRRep r => Show (EffectRowTail r n)
 deriving instance IRRep r => Eq   (EffectRowTail r n)
 deriving via WrapE (EffectRowTail r) n instance IRRep r => Generic (EffectRowTail r n)
 
+data EffectAndType (r::IR) (n::S) = EffectAndType (EffectRow r n) (Type r n)
+     deriving (Generic, Show)
+
 deriving instance IRRep r => Show (EffectRow r n)
 
 pattern Pure :: IRRep r => EffectRow r n
@@ -2512,6 +2515,19 @@ instance IRRep r => HoistableE     (EffectRowTail r)
 instance IRRep r => RenameE        (EffectRowTail r)
 instance IRRep r => AlphaEqE       (EffectRowTail r)
 instance IRRep r => AlphaHashableE (EffectRowTail r)
+
+instance IRRep r => GenericE (EffectAndType r) where
+  type RepE (EffectAndType r) = PairE (EffectRow r) (Type r)
+  fromE (EffectAndType eff ty) = eff `PairE` ty
+  {-# INLINE fromE #-}
+  toE   (eff `PairE` ty) = EffectAndType eff ty
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (EffectAndType r)
+instance IRRep r => HoistableE     (EffectAndType r)
+instance IRRep r => RenameE        (EffectAndType r)
+instance IRRep r => AlphaEqE       (EffectAndType r)
+instance IRRep r => AlphaHashableE (EffectAndType r)
 
 instance IRRep r => BindsAtMostOneName (Decl r) (AtomNameC r) where
   Let b _ @> x = b @> x

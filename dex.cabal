@@ -55,7 +55,6 @@ library
                      , Core
                      , Err
                      , Export
-                     , GenericTraversal
                      , Generalize
                      , Imp
                      , ImpToLLVM
