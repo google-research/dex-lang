@@ -56,7 +56,7 @@ def multiclass_logreg_jaxopt(X, y):
     params, state = update(params, state)
   run_time = time.time()
 
-  return compile_time - start_time, run_time - compile_time, state.error, state.iter_num
+  return compile_time - start_time, run_time - compile_time, state.error, state.iter_num, state.value
 
 
 def main(argv):
@@ -71,11 +71,12 @@ def main(argv):
   with open('examples/bfgs.dx', 'r') as f:
     m = dex.Module(f.read())
     # TODO pass max iter, etc.
-    dex_bfgs = djax.primitive(m.multiclass_logreg)
+    dex_bfgs = djax.primitive(m.multiclass_fin)
 
     # time_s, loops = bench_python(lambda : dex_bfgs(X, y))
     # print(f"> Run time: {time_s} s \t(based on {loops} runs)")
-    dex_bfgs(jnp.array(X), jnp.array(y), FLAGS.n_classes)
+    out = dex_bfgs(jnp.array(X), jnp.array(y), FLAGS.n_classes)
+    print(f"> Dex results: {out}")
     
     # # This runs
     # dex_run_bfgs = djax.primitive(m.run_logreg)

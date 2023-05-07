@@ -166,12 +166,16 @@ def multiclass_logistic_loss {n m d} [Ix m] (xs: n=>d=>Float) (ys: n=>Nat) (w: (
   logits = for i. for j. logits.i.j - logit_at_label.i
   logsumexp $ for i. logsumexp logits.i
 
+-- May need to convert Nat to int
 def multiclass_logreg {n d} (xs:n=>d=>Float) (ys:n=>Nat) (num_classes:Nat) : Float =
   m = Fin num_classes
   w0 = for i:(d & m). 0.
   ob_fun = multiclass_logistic_loss xs ys
-  res = bfgs_minimize ob_fun w0 eye (zoom_line_search 20) 0.001 100
+  res = bfgs_minimize ob_fun w0 eye (zoom_line_search 500) 0.001 100
   get_at #fval res
+
+def multiclass_fin {n d} (xs:(Fin n)=>(Fin d)=>Float) (ys:(Fin n)=>Int) (num_classes:Int) : Float =
+  multiclass_logreg xs (for i. i32_to_n ys.i) (i32_to_n num_classes)
 
 N = Fin 10
 D = Fin 5
