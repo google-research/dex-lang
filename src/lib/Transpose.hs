@@ -15,7 +15,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Err
 import Imp
 import IRVariants
@@ -30,12 +29,13 @@ import Util (enumerate)
 transpose
   :: (MonadFail1 m, Builder SimpIR m, Emits n)
   => LamExpr SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
-transpose lam ct = liftEmitBuilder $ runTransposeM do
-  UnaryLamExpr b body <- sinkM lam
-  withAccumulator (binderType b) \refSubstVal ->
-    extendSubst (b @> refSubstVal) $
-      transposeBlock body (sink ct)
-{-# SCC transpose #-}
+transpose lam ct = undefined
+-- transpose lam ct = liftEmitBuilder $ runTransposeM do
+--   UnaryLamExpr b body <- sinkM lam
+--   withAccumulator (binderType b) \refSubstVal ->
+--     extendSubst (b @> refSubstVal) $
+--       transposeBlock body (sink ct)
+-- {-# SCC transpose #-}
 
 runTransposeM :: TransposeM n n a -> BuilderM SimpIR n a
 runTransposeM cont = runReaderT1 (ListE []) $ runSubstReaderT idSubst $ cont
@@ -43,31 +43,33 @@ runTransposeM cont = runReaderT1 (ListE []) $ runSubstReaderT idSubst $ cont
 transposeTopFun
   :: (MonadFail1 m, EnvReader m)
   => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
-transposeTopFun lam = liftBuilder $ runTransposeM do
-  (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
-  refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
-    outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
-    withFreshBinder "ct" outTy' \bCT -> do
-      let ct = Var $ binderName bCT
-      body' <- buildBlock do
-        inTy <- substNonlin $ binderType bLin
-        withAccumulator inTy \refSubstVal ->
-          extendSubst (bLin @> refSubstVal) $
-            transposeBlock body (sink ct)
-      return $ LamExpr (bsNonlin' >>> UnaryNest bCT) body'
+transposeTopFun lam = undefined
+-- transposeTopFun lam = liftBuilder $ runTransposeM do
+--   (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
+--   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
+--     outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
+--     withFreshBinder "ct" outTy' \bCT -> do
+--       let ct = Var $ binderName bCT
+--       body' <- buildBlock do
+--         inTy <- substNonlin $ binderType bLin
+--         withAccumulator inTy \refSubstVal ->
+--           extendSubst (bLin @> refSubstVal) $
+--             transposeBlock body (sink ct)
+--       return $ LamExpr (bsNonlin' >>> UnaryNest bCT) body'
 
 unpackLinearLamExpr
   :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
   -> m n ( Abs (Nest SBinder) (Abs SBinder SBlock) n
          , Abs (Nest SBinder) SType n)
-unpackLinearLamExpr lam@(LamExpr bs body) = do
-  let numNonlin = nestLength bs - 1
-  PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
-  PiType bsTy _ resultTy <- getLamExprType lam
-  PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
-  let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
-  return ( Abs bsNonlin $ Abs bLin body
-         , Abs bsNonlinTy resultTy')
+unpackLinearLamExpr lam@(LamExpr bs body) = undefined
+-- unpackLinearLamExpr lam@(LamExpr bs body) = do
+--   let numNonlin = nestLength bs - 1
+--   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
+--   PiType bsTy _ resultTy <- getLamExprType lam
+--   PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
+--   let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
+--   return ( Abs bsNonlin $ Abs bLin body
+--          , Abs bsNonlinTy resultTy')
 
 -- === transposition monad ===
 
@@ -212,15 +214,6 @@ transposeExpr expr ct = case expr of
             refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      ProjectElt i' x' -> do
-        let (idxs, v) = asNaryProj i' x'
-        lookupSubstM v >>= \case
-          RenameNonlin _ -> error "an error, probably"
-          LinRef ref -> do
-            ref' <- getNaryProjRef (toList idxs) ref
-            refProj <- naryIndexRef ref' (toList is')
-            emitCTToRef refProj ct
-          LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
   Case e alts _ _ -> do
@@ -236,11 +229,19 @@ transposeExpr expr ct = case expr of
             transposeBlock body (sink ct)
           return UnitVal
   TabCon _ ty es -> do
-    TabTy b _ <- return ty
-    idxTy <- substNonlin $ binderAnn b
+    TabPi tabPi <- return ty
+    idxTy <- substNonlin $ getIxType tabPi
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
+  ProjectElt i' x' -> undefined -- this might be a bad one...
+    -- let (idxs, v) = asNaryProj i' x'
+    -- lookupSubstM v >>= \case
+    --   RenameNonlin _ -> error "an error, probably"
+    --   LinRef ref -> do
+    --     ref' <- getNaryProjRef (toList idxs) ref
+    --     emitCTToRef ref' ct
+    --   LinTrivial -> return ()
 
 transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
@@ -311,52 +312,45 @@ transposeAtom atom ct = case atom of
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
   PtrVar _        -> notTangent
-  ProjectElt i' x' -> do
-    let (idxs, v) = asNaryProj i' x'
-    lookupSubstM v >>= \case
-      RenameNonlin _ -> error "an error, probably"
-      LinRef ref -> do
-        ref' <- getNaryProjRef (toList idxs) ref
-        emitCTToRef ref' ct
-      LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
-transposeHof hof ct = case hof of
-  For ann d lam -> do
-    UnaryLamExpr b  body <- return lam
-    ixTy <- ixTyFromDict =<< substNonlin d
-    void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
-      ctElt <- tabApp (sink ct) (Var i)
-      extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
-      return UnitVal
-  RunState Nothing s (BinaryLamExpr hB refB body) -> do
-    (ctBody, ctState) <- fromPair ct
-    (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
-      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
-        extendLinRegions h $
-          transposeBlock body (sink ctBody)
-      return UnitVal
-    transposeAtom s cts
-  RunReader r (BinaryLamExpr hB refB body) -> do
-    accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
-    baseMonoid <- tangentBaseMonoidFor accumTy
-    (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
-      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
-        extendLinRegions h $
-          transposeBlock body (sink ct)
-      return UnitVal
-    transposeAtom r ct'
-  RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
-    -- TODO: check we have the 0/+ monoid
-    (ctBody, ctEff) <- fromPair ct
-    void $ emitRunReader noHint ctEff \h ref -> do
-      extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
-        extendLinRegions h $
-          transposeBlock body (sink ctBody)
-      return UnitVal
-  _ -> notImplemented
+transposeHof hof ct = undefined
+-- transposeHof hof ct = case hof of
+--   For ann d lam -> do
+--     UnaryLamExpr b  body <- return lam
+--     ixTy <- ixTyFromDict =<< substNonlin d
+--     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
+--       ctElt <- tabApp (sink ct) (Var i)
+--       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
+--       return UnitVal
+--   RunState Nothing s (BinaryLamExpr hB refB body) -> do
+--     (ctBody, ctState) <- fromPair ct
+--     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
+--       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+--         extendLinRegions h $
+--           transposeBlock body (sink ctBody)
+--       return UnitVal
+--     transposeAtom s cts
+--   RunReader r (BinaryLamExpr hB refB body) -> do
+--     accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
+--     baseMonoid <- tangentBaseMonoidFor accumTy
+--     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
+--       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+--         extendLinRegions h $
+--           transposeBlock body (sink ct)
+--       return UnitVal
+--     transposeAtom r ct'
+--   RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
+--     -- TODO: check we have the 0/+ monoid
+--     (ctBody, ctEff) <- fromPair ct
+--     void $ emitRunReader noHint ctEff \h ref -> do
+--       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
+--         extendLinRegions h $
+--           transposeBlock body (sink ctBody)
+--       return UnitVal
+--   _ -> notImplemented
 
 transposeCon :: Emits o => Con SimpIR i -> SAtom o -> TransposeM i o ()
 transposeCon con ct = case con of
@@ -364,7 +358,7 @@ transposeCon con ct = case con of
   ProdCon []        -> return ()
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
-      getProj i ct >>= transposeAtom x
+      projectProd i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

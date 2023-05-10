@@ -49,7 +49,6 @@ import CheckType (checkTypesM)
 #endif
 import Core
 import ConcreteSyntax
-import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -277,7 +276,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize =<< getType val
+      ty <- getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
@@ -327,7 +326,7 @@ evalSourceBlock' mname block = case sbContents block of
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
+      ty <- sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -516,10 +515,11 @@ isLogInfo out = case out of
   _ -> False
 
 evalUType :: (Topper m, Mut n) => UType VoidS -> m n (CType n)
-evalUType ty = do
-  logTop $ PassInfo Parse $ pprint ty
-  renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
-  checkPass TypePass $ checkTopUType renamed
+evalUType ty = undefined
+-- evalUType ty = do
+--   logTop $ PassInfo Parse $ pprint ty
+--   renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
+--   checkPass TypePass $ checkTopUType renamed
 
 evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
 evalUExpr expr = do
@@ -619,29 +619,30 @@ evalDictSpecializations ds = do
 
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
-execUDecl mname decl = do
-  logTop $ PassInfo Parse $ pprint decl
-  Abs renamedDecl sourceMap <-
-    logPass RenamePass $ renameSourceNamesTopUDecl mname decl
-  inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
-  case inferenceResult of
-    UDeclResultBindName ann block (Abs b sm) -> do
-      result <- evalBlock block
-      case ann of
-        NoInlineLet -> do
-          fTy <- getType result
-          f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
-          applyRename (b@>f) sm >>= emitSourceMap
-        _ -> do
-          v <- emitTopLet (getNameHint b) ann (Atom result)
-          applyRename (b@>v) sm >>= emitSourceMap
-    UDeclResultBindPattern hint block (Abs bs sm) -> do
-      result <- evalBlock block
-      xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>vs) sm >>= emitSourceMap
-    UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
-{-# SCC execUDecl #-}
+execUDecl mname decl = undefined
+-- execUDecl mname decl = do
+--   logTop $ PassInfo Parse $ pprint decl
+--   Abs renamedDecl sourceMap <-
+--     logPass RenamePass $ renameSourceNamesTopUDecl mname decl
+--   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
+--   case inferenceResult of
+--     UDeclResultBindName ann block (Abs b sm) -> do
+--       result <- evalBlock block
+--       case ann of
+--         NoInlineLet -> do
+--           fTy <- getType result
+--           f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
+--           applyRename (b@>f) sm >>= emitSourceMap
+--         _ -> do
+--           v <- emitTopLet (getNameHint b) ann result
+--           applyRename (b@>v) sm >>= emitSourceMap
+--     UDeclResultBindPattern hint block (Abs bs sm) -> do
+--       result <- evalBlock block
+--       xs <- unpackTelescope bs result
+--       vs <- forM xs \x -> emitTopLet hint PlainLet x
+--       applyRename (bs@@>vs) sm >>= emitSourceMap
+--     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
+-- {-# SCC execUDecl #-}
 
 compileTopLevelFun :: (Topper m, Mut n)
   => CallingConvention -> SLam n -> m n (ImpFunction n)

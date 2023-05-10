@@ -17,7 +17,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Imp
 import IRVariants
 import MTL1
@@ -152,17 +151,18 @@ liftTangentM :: TangentArgs o -> TangentM o a -> PrimalM i o a
 liftTangentM args m = liftSubstReaderT $ lift11 $ runReaderT1 args m
 
 isTrivialForAD :: SExpr o -> PrimalM i o Bool
-isTrivialForAD expr = do
-  trivialTy  <- presentAnd isSingletonType <$> (maybeTangentType =<< getType expr)
-  hasActiveEffs <- getEffects expr >>= \case
-                     Pure -> return False
-                     -- TODO: Be more precise here, such as checking
-                     -- whether the effects are themselves active.
-                     _ -> return True
-  hasActiveVars <- isActive expr
-  return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
-    where presentAnd :: (a -> Bool) -> Maybe a -> Bool
-          presentAnd = any
+isTrivialForAD expr = undefined
+-- isTrivialForAD expr = do
+--   trivialTy  <- presentAnd isSingletonType <$> (maybeTangentType =<< getType expr)
+--   hasActiveEffs <- getEffects expr >>= \case
+--                      Pure -> return False
+--                      -- TODO: Be more precise here, such as checking
+--                      -- whether the effects are themselves active.
+--                      _ -> return True
+--   hasActiveVars <- isActive expr
+--   return $ not hasActiveEffs && (trivialTy || not hasActiveVars)
+--     where presentAnd :: (a -> Bool) -> Maybe a -> Bool
+--           presentAnd = any
 
 isActive :: HoistableE e => e o -> PrimalM i o Bool
 isActive e = do
@@ -177,7 +177,8 @@ tangentFunAsLambda
   -> PrimalM i o (SLam o)
 tangentFunAsLambda cont = do
   ActivePrimals primalVars _ <- getActivePrimals
-  tangentTys <- getTangentArgTys primalVars
+  Abs bs UnitE <- getTangentArgTys primalVars
+  let tangentTys = EmptyAbs $ fmapNest (\b -> BD b Empty) bs
   buildLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
@@ -277,10 +278,11 @@ linearizeBlockDefuncGeneral locals block = do
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinLam :: Emits o => SLam i -> SubstReaderT AtomSubstVal TangentM i o (Atom SimpIR o)
-applyLinLam (LamExpr bs body) = do
-  TangentArgs args <- liftSubstReaderT $ getTangentArgs
-  extendSubst (bs @@> (Rename <$> args)) do
-    substM body >>= emitBlock
+applyLinLam (LamExpr bs body) = undefined
+-- applyLinLam (LamExpr bs body) = do
+--   TangentArgs args <- liftSubstReaderT $ getTangentArgs
+--   extendSubst (bs @@> (Rename <$> args)) do
+--     substM body >>= emitBlock
 
 -- === actual linearization passs ===
 
@@ -290,38 +292,40 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
 linearizeLam :: SLam n -> [Active] -> DoubleBuilder SimpIR n (SLam n, SLam n)
-linearizeLam (LamExpr bs body) actives = runPrimalMInit do
-  refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = nestToNames bs'
-    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
-      True  -> return $ Just v
-      False -> return $ Nothing
-    (body', linLamAbs) <-extendActivePrimalss activeVs do
-      linearizeBlockDefuncGeneral emptyOutFrag body
-    let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
-    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderName bResidual
-      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
-      withFreshBinder "t" tangentTy \bTangent -> do
-        tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderName bTangent
-          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> bsTangent @@> map (SubstVal . sink) ts
-          emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
-    return (primalFun, tangentFun)
+linearizeLam (LamExpr bs body) actives = undefined
+-- linearizeLam (LamExpr bs body) actives = runPrimalMInit do
+--   refreshBinders bs \bs' frag -> extendSubst frag do
+--     let allPrimals = nestToNames bs'
+--     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+--       True  -> return $ Just v
+--       False -> return $ Nothing
+--     (body', linLamAbs) <-extendActivePrimalss activeVs do
+--       linearizeBlockDefuncGeneral emptyOutFrag body
+--     let primalFun = LamExpr bs' body'
+--     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
+--     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+--       xs <- unpackTelescope bsRecon $ Var $ binderName bResidual
+--       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+--       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+--       withFreshBinder "t" tangentTy \bTangent -> do
+--         tangentBody' <- buildBlock do
+--           ts <- getUnpacked $ Var $ sink $ binderName bTangent
+--           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+--                         <.> bsTangent @@> map (SubstVal . sink) ts
+--           emitBlock =<< applySubst substFrag tangentBody
+--         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
+--     return (primalFun, tangentFun)
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
-linearizeLambdaApp (UnaryLamExpr b body) x = do
-  vp <- emit $ Atom x
-  extendActiveSubst b vp do
-    WithTangent primalResult tangentAction <- linearizeBlock body
-    tanFun <- tangentFunAsLambda tangentAction
-    return (primalResult, tanFun)
-linearizeLambdaApp _ _ = error "not implemented"
+linearizeLambdaApp (UnaryLamExpr b body) x = undefined
+-- linearizeLambdaApp (UnaryLamExpr b body) x = do
+--   vp <- emit $ Atom x
+--   extendActiveSubst b vp do
+--     WithTangent primalResult tangentAction <- linearizeBlock body
+--     tanFun <- tangentFunAsLambda tangentAction
+--     return (primalResult, tanFun)
+-- linearizeLambdaApp _ _ = error "not implemented"
 
 linearizeAtom :: Emits o => Atom SimpIR i -> LinM i o SAtom SAtom
 linearizeAtom atom = case atom of
@@ -333,12 +337,6 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   PtrVar _        -> emitZeroT
-  ProjectElt i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
@@ -359,12 +357,14 @@ linearizeDecls (Nest (Let b (DeclBinding ann _ expr)) rest) cont = do
       extendSubst (b@>v) $ linearizeDecls rest cont
     False -> do
       WithTangent p tf <- linearizeExpr expr
-      v <- emitDecl (getNameHint b) ann (Atom p)
+      ty <- getType p
+      v <- emitDecl (getNameHint b) $ DeclBinding ann ty (Atom p)
       extendActiveSubst b v do
         WithTangent pRest tfRest <- linearizeDecls rest cont
         return $ WithTangent pRest do
           t <- tf
-          vt <- emitDecl (getNameHint b) ann (Atom t)
+          tty <- getType t
+          vt <- emitDecl (getNameHint b) $ DeclBinding ann tty (Atom t)
           extendTangentArgs vt $
             tfRest
 
@@ -427,6 +427,12 @@ linearizeExpr expr = case expr of
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon Nothing (sink ty') xs'
+  ProjectElt i x -> do
+    WithTangent x' tx <- linearizeAtom x
+    xi <- getProj i x'
+    return $ WithTangent xi do
+      t <- tx
+      getProj i t
 
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
@@ -584,30 +590,30 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof SimpIR i -> LinM i o SAtom SAtom
 linearizeHof hof = case hof of
-  For d ixDict lam -> do
-    UnaryLamExpr (ib:>ixTy) body <- return lam
-    ixDict' <- renameM ixDict
-    ixTy'   <- renameM ixTy
-    let ixTyDict = IxType ixTy' ixDict'
-    (lam', Abs ib' linLam) <- withFreshBinder noHint ixTy' \ib' -> do
-      (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
-      return (UnaryLamExpr ib' block', Abs ib' linLam)
-    primalsAux <- emitExpr $ PrimOp $ Hof $ For d ixDict' lam'
-    case linLam of
-      TrivialRecon linLam' ->
-        return $ WithTangent primalsAux do
-          Abs ib'' linLam'' <- sinkM (Abs ib' linLam')
-          withSubstReaderT $ buildFor noHint d (sink ixTyDict) \i' -> do
-            extendSubst (ib''@>Rename i') $ applyLinLam linLam''
-      ReconWithData reconAbs -> do
-        primals <- buildMap primalsAux getFst
-        return $ WithTangent primals do
-          Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
-          withSubstReaderT $ buildFor noHint d (sink ixTyDict) \i' -> do
-            extendSubst (ib''@> Rename i') do
-              residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
-              extendSubst (bs @@> (SubstVal <$> residuals')) $
-                applyLinLam linLam'
+  -- For d ixDict lam -> do
+  --   UnaryLamExpr (ib:>ixTy) body <- return lam
+  --   ixDict' <- renameM ixDict
+  --   ixTy'   <- renameM ixTy
+  --   let ixTyDict = IxType ixTy' ixDict'
+  --   (lam', Abs ib' linLam) <- withFreshBinder noHint ixTy' \ib' -> do
+  --     (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
+  --     return (UnaryLamExpr ib' block', Abs ib' linLam)
+  --   primalsAux <- emitExpr $ PrimOp $ Hof $ For d ixDict' lam'
+  --   case linLam of
+  --     TrivialRecon linLam' ->
+  --       return $ WithTangent primalsAux do
+  --         Abs ib'' linLam'' <- sinkM (Abs ib' linLam')
+  --         withSubstReaderT $ buildFor noHint d (sink ixTyDict) \i' -> do
+  --           extendSubst (ib''@>Rename i') $ applyLinLam linLam''
+  --     ReconWithData reconAbs -> do
+  --       primals <- buildMap primalsAux getFst
+  --       return $ WithTangent primals do
+  --         Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
+  --         withSubstReaderT $ buildFor noHint d (sink ixTyDict) \i' -> do
+  --           extendSubst (ib''@> Rename i') do
+  --             residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
+  --             extendSubst (bs @@> (SubstVal <$> residuals')) $
+  --               applyLinLam linLam'
   RunReader r lam -> do
     WithTangent r' rLin <- linearizeAtom r
     (lam', recon) <- linearizeEffectFun Reader lam
@@ -657,22 +663,23 @@ linearizeHof hof = case hof of
   _ -> error $ "not implemented: " ++ pprint hof
 
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
-linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  withFreshBinder noHint (TC HeapType) \h -> do
-    bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
-    withFreshBinder noHint bTy \b -> do
-      let ref = binderName b
-      hVar <- sinkM $ binderName h
-      (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
-        -- TODO: maybe we should check whether we need to extend the active effects
-        extendActiveEffs (RWSEffect rws (Var hVar)) do
-          linearizeBlockDefunc body
-      -- TODO: this assumes that references aren't returned. Our type system
-      -- ensures that such references can never be *used* once the effect runner
-      -- returns, but technically it's legal to return them.
-      let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr h b body', linLam')
-linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
+linearizeEffectFun rws (BinaryLamExpr hB refB body) = undefined
+-- linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
+--   withFreshBinder noHint (TC HeapType) \h -> do
+--     bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
+--     withFreshBinder noHint bTy \b -> do
+--       let ref = binderName b
+--       hVar <- sinkM $ binderName h
+--       (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
+--         -- TODO: maybe we should check whether we need to extend the active effects
+--         extendActiveEffs (RWSEffect rws (Var hVar)) do
+--           linearizeBlockDefunc body
+--       -- TODO: this assumes that references aren't returned. Our type system
+--       -- ensures that such references can never be *used* once the effect runner
+--       -- returns, but technically it's legal to return them.
+--       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
+--       return (BinaryLamExpr h b body', linLam')
+-- linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))

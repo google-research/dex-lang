@@ -41,7 +41,7 @@ simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
         simplifyEqns eqns do
           outs <- (map fst) <$> mapM simplifyAtom outvars
           return $ Con $ ProdCon $ outs
-      return $ LamExpr (invarsB >>> constvarsB) body
+      return $ LamExpr (fmapNest (\b -> BD b Empty) (invarsB >>> constvarsB)) body
 
 simplifyJBinders
   :: Nest JBinder i i'

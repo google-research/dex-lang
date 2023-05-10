@@ -159,14 +159,16 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
-  prettyPrec (Atom x) = prettyPrec x
-  prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TopApp f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
-  prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
-  prettyPrec (PrimOp op) = prettyPrec op
-  prettyPrec (ApplyMethod d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec = \case
+    App f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TopApp f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TabApp f xs -> atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+    Case e alts _ effs -> prettyPrecCase "case" e alts effs
+    TabCon _ _ es -> atPrec ArgPrec $ list $ pApp <$> es
+    PrimOp op -> prettyPrec op
+    ApplyMethod d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+    ProjectElt idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+    SynthDict _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -204,29 +206,30 @@ instance IRRep r => Pretty (Decl r n l) where
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
-  pretty (PiType bs effs resultTy) =
-    (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+  pretty (PiType bs effs resultTy) = undefined
+    -- (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
-  prettyPrec (LamExpr bs body) =
-    atPrec LowestPrec $ prettyLam (p bs <> ".") body
+  prettyPrec (LamExpr bs body) = undefined
+    -- atPrec LowestPrec $ prettyLam (p bs <> ".") body
 
 instance IRRep r => Pretty (DestLamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DestLamExpr r n) where
-  prettyPrec (DestLamExpr bs body) =
-    atPrec LowestPrec $ prettyLam (p bs <> ".") body
+  prettyPrec (DestLamExpr bs body) = undefined
+    -- atPrec LowestPrec $ prettyLam (p bs <> ".") body
 
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
-instance Pretty (DictExpr n) where
-  pretty d = case d of
-    InstanceDict name args -> "Instance" <+> p name <+> p args
-    InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
-    SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
-    IxFin n -> "Ix (Fin" <+> p n <> ")"
-    DataData a -> "Data " <+> p a
+instance Pretty (DictCon n) where
+  pretty d = undefined
+  -- pretty d = case d of
+  --   InstanceDict name args -> "Instance" <+> p name <+> p args
+  --   InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
+  --   SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
+  --   IxFin n -> "Ix (Fin" <+> p n <> ")"
+  --   DataData a -> "Data " <+> p a
 
 instance IRRep r => Pretty (IxDict r n) where
   pretty = \case
@@ -240,8 +243,8 @@ instance Pretty (DictType n) where
 
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
-  prettyPrec (DepPairType _ b rhs) =
-    atPrec ArgPrec $ align $ group $ parensSep (spaceIfColinear <> "&> ") [p b, p rhs]
+  prettyPrec (DepPairType _ b rhs) = undefined
+    -- atPrec ArgPrec $ align $ group $ parensSep (spaceIfColinear <> "&> ") [p b, p rhs]
 
 instance Pretty (EffectOpType n) where
   pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
@@ -261,11 +264,8 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar v -> atPrec ArgPrec $ p v
     DictCon d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
-    DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
     TypeAsAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
@@ -278,8 +278,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -307,12 +305,12 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl bs eff resultTy) =
-    prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
-    where
-      prettyEff = case eff of
-        Pure -> space
-        _    -> space <> pretty eff <> space
+  pretty (CorePiType appExpl bs eff resultTy) = undefined
+    -- prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
+    -- where
+    --   prettyEff = case eff of
+    --     Pure -> space
+    --     _    -> space <> pretty eff <> space
 
 prettyBindersWithExpl :: forall b n l ann. PrettyB b
   => Nest (WithExpl b) n l -> Doc ann
@@ -335,17 +333,18 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType (b :> IxType ty dict) body) = let
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
-    prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
-        then parens $ p b <> ":" <> prettyTy
-        else prettyTy
-        where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
-    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+  pretty t = undefined
+  -- pretty (TabPiType (b :> IxType ty dict) body) = let
+  --   prettyBody = case body of
+  --     Pi subpi -> pretty subpi
+  --     _ -> pLowest body
+  --   prettyBinder = case dict of
+  --     IxDictRawFin n -> if binderName b `isFreeIn` body
+  --       then parens $ p b <> ":" <> prettyTy
+  --       else prettyTy
+  --       where prettyTy = "RawFin" <+> p n
+  --     _ -> prettyBinderHelper (b:>ty) body
+  --   in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
@@ -464,6 +463,9 @@ instance Pretty (DataConDefs n) where
 
 instance Pretty (RolePiBinder n l) where
   pretty (RolePiBinder _ b) = pretty b
+
+instance Pretty (BinderAndDecls r n l) where
+  pretty (BD b _) = undefined -- pretty b
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name _ repTy _) =
@@ -988,13 +990,13 @@ instance IRRep r => PrettyPrec (Hof r n) where
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
   prettyPrec op = atPrec LowestPrec case op of
-    Seq ann d c lamExpr -> case lamExpr of
-      UnaryLamExpr b body -> do
-        let rawFinPretty = case d of
-              IxDictRawFin n -> parens $ "RawFin" <+> p n
-              _ -> mempty
-        "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
-      _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
+    -- Seq ann d c lamExpr -> case lamExpr of
+    --   UnaryLamExpr b body -> do
+    --     let rawFinPretty = case d of
+    --           IxDictRawFin n -> parens $ "RawFin" <+> p n
+    --           _ -> mempty
+    --     "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+    --   _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
     RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
     Place r v -> pApp r <+> "r:=" <+> pApp v
     Freeze r  -> "freeze" <+> pApp r

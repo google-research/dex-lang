@@ -201,6 +201,9 @@ instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) w
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann'))
     where ann' = withExtEvidence b $ sink ann
 
+instance IRRep r => BindsEnv (BinderAndDecls r) where
+  toEnvFrag (BD b ds) = toEnvFrag (PairB b ds)
+
 instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonDepNest r ann) where
   toEnvFrag (NonDepNest topBs topAnns) = toEnvFrag $ zipNest topBs topAnns
     where
@@ -423,7 +426,7 @@ nonDepPiType :: EnvReader m
              => [CType n] -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
 nonDepPiType argTys eff resultTy = do
   Abs bs (PairE eff' resultTy') <- typesAsBinderNest argTys (PairE eff resultTy)
-  let bs' = fmapNest (WithExpl Explicit) bs
+  let bs' = fmapNest (\b -> WithExpl Explicit $ BD b Empty) bs
   return $ CorePiType ExplicitApp bs' eff' resultTy'
 
 typesAsBinderNest
@@ -440,9 +443,9 @@ typesAsBinderNest types body =
         return $ Abs (Nest b bs) body'
 
 nonDepTabPiType :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (TabPiType r n)
-nonDepTabPiType argTy resultTy =
+nonDepTabPiType (IxType argTy d) resultTy =
   toConstAbs resultTy >>= \case
-    Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
+    Abs b resultTy' -> return $ TabPiType d (BD (b:>argTy) Empty) resultTy'
 
 (==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
 a ==> b = TabPi <$> nonDepTabPiType a b

@@ -15,7 +15,6 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
@@ -78,23 +77,22 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
     void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
   NewtypeTyCon tc -> case tc of
-    Fin _ -> rec $ unwrapNewtype atom
+    Fin _ -> rec =<< unwrapNewtype atom
     Nat -> do
-      let n = unwrapNewtype atom
+      n <- unwrapNewtype atom
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+      charTab <- getNaryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
@@ -102,7 +100,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       def <- lookupTyCon defName
       conDefs <- instantiateTyConDef def params
       case conDefs of
-        ADTCons [con] -> showDataCon con $ unwrapNewtype atom
+        ADTCons [con] -> showDataCon con =<< unwrapNewtype atom
         ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
           showDataCon (sink $ cons !! i) arg
           return UnitVal
@@ -113,15 +111,16 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
               rec =<< projectStruct i atom
       where
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
-        showDataCon (DataConDef sn _ _ projss) arg = do
-          case projss of
-            [] -> emitLit sn
-            _ -> parens do
-              emitLit (sn ++ " ")
-              sepBy " " $ projss <&> \projs ->
-                -- we use `init` to strip off the `UnwrapCompoundNewtype` since
-                -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+        showDataCon (DataConDef sn _ _ projss) arg = undefined -- handle n-ary proj by using builder helpers and confirming there were no decls emitted?
+        -- showDataCon (DataConDef sn _ _ projss) arg = do
+        --   case projss of
+        --     [] -> emitLit sn
+        --     _ -> parens do
+        --       emitLit (sn ++ " ")
+        --       sepBy " " $ projss <&> \projs ->
+        --         -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+        --         -- we're already under the case alternative
+        --         rec =<< getNaryProj (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
@@ -161,19 +160,20 @@ withBuffer
   :: Emits n
   => (forall l . (Emits l, DExt n l) => CAtom l -> BuilderM CoreIR l ())
   -> BuilderM CoreIR n (CAtom n)
-withBuffer cont = do
-  lam <- withFreshBinder "h" (TC HeapType) \h -> do
-    bufTy <- bufferTy (Var $ binderName h)
-    withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
-      body <- buildBlock do
-        cont $ sink $ Var $ binderName b
-        return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
-      let piTy = CorePiType ExplicitApp piBinders eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
-      return $ Lam $ CoreLamExpr piTy lam
-  applyPreludeFunction "with_stack_internal" [lam]
+withBuffer cont = undefined
+-- withBuffer cont = do
+--   lam <- withFreshBinder "h" (TC HeapType) \h -> do
+--     bufTy <- bufferTy (Var $ binderName h)
+--     withFreshBinder "buf" bufTy \b -> do
+--       let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
+--       body <- buildBlock do
+--         cont $ sink $ Var $ binderName b
+--         return UnitVal
+--       let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
+--       let piTy = CorePiType ExplicitApp piBinders eff UnitTy
+--       let lam = LamExpr (BinaryNest h b) body
+--       return $ Lam $ CoreLamExpr piTy lam
+--   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do
@@ -184,8 +184,8 @@ bufferTy h = do
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
   RefTy h _ <- getType buf
-  TabTy (_:>ixTy) _ <- getType tab
-  n <- applyIxMethodCore Size ixTy []
+  TabPi tabTy <- getType tab
+  n <- applyIxMethodCore Size (getIxType tabTy) []
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
@@ -231,7 +231,8 @@ forEachTabElt
   -> (forall l. (Emits l, DExt n l) => CAtom l -> CAtom l -> m l ())
   -> m n ()
 forEachTabElt tab cont = do
-  TabTy (_:>ixTy) _ <- getType tab
+  TabTy d (BD (_:>argTy) _) _ <- getType tab
+  let ixTy = IxType argTy d
   void $ buildFor "i" Fwd ixTy \i -> do
     x <- tabApp (sink tab) (Var i)
     i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]

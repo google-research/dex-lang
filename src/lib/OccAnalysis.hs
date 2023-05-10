@@ -12,7 +12,6 @@ import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
-import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -21,6 +20,7 @@ import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
 import QueryType
+import Visit
 
 -- === External API ===
 
@@ -238,7 +238,6 @@ instance HasOCC SAtom where
     Var n -> do
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       return $ Var n
-    ProjectElt i x -> ProjectElt i <$> occ a x
     atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where
@@ -394,13 +393,14 @@ occurrenceAndSummary atom = do
 
 instance HasOCC (Hof SimpIR) where
   occ a hof = case hof of
-    For ann ixDict (UnaryLamExpr b body) -> do
-      ixDict' <- inlinedLater ixDict
-      occWithBinder (Abs b body) \b' body' -> do
-        extend b' (Occ.Var $ binderName b') do
-          (body'', bodyFV) <- isolated (occ accessOnce body')
-          modify (<> abstractFor b' bodyFV)
-          return $ For ann ixDict' (UnaryLamExpr b' body'')
+    For ann ixDict (UnaryLamExpr b body) -> undefined
+    -- For ann ixDict (UnaryLamExpr b body) -> do
+    --   ixDict' <- inlinedLater ixDict
+    --   occWithBinder (Abs b body) \b' body' -> do
+    --     extend b' (Occ.Var $ binderName b') do
+    --       (body'', bodyFV) <- isolated (occ accessOnce body')
+    --       modify (<> abstractFor b' bodyFV)
+    --       return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> do
       (body', bodyFV) <- isolated (occ accessOnce body)
@@ -450,12 +450,13 @@ instance HasOCC (Hof SimpIR) where
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
-oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
-  occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
-    extend b' (sink ix) do
-      LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
-      return $ LamExpr (Nest b' bs') body'
-oneShot _ _ _ = error "zip error"
+oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = undefined
+-- oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
+--   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
+--     extend b' (sink ix) do
+--       LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
+--       return $ LamExpr (Nest b' bs') body'
+-- oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
 occWithBinder

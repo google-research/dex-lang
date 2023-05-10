@@ -30,31 +30,32 @@ generalizeIxDict dict = liftGeneralizerM do
 -- {-# INLINE generalizeIxDict #-}
 
 generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
-generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
-  PairE (CorePiType _ bs _ _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
-  ListE <$> go bs argsTop'
-  where
-    go :: Nest (WithExpl CBinder) i i' -> [Atom CoreIR n]
-       -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Nest (WithExpl expl b) bs) (arg:args) = do
-      ty' <- substM $ binderType b
-      arg' <- case (ty', expl) of
-        (TyKind, _) -> liftSubstReaderT case arg of
-          Type t -> Type <$> generalizeType t
-          _ -> error "not a type"
-        (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
-        _ -> isData ty' >>= \case
-          True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
-          False -> do
-            -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-            -- non-type, non-dict arguments (e.g. a function). We just don't
-            -- generalize in that case.
-            return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go bs args
-      return $ arg' : args''
-    go Empty [] = return []
-    go _ _ = error "zip error"
-{-# INLINE generalizeArgs #-}
+generalizeArgs fTy argsTop = undefined
+-- generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
+--   PairE (CorePiType _ bs _ _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
+--   ListE <$> go bs argsTop'
+--   where
+--     go :: Nest (WithExpl CBinder) i i' -> [Atom CoreIR n]
+--        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
+--     go (Nest (WithExpl expl b) bs) (arg:args) = do
+--       ty' <- substM $ binderType b
+--       arg' <- case (ty', expl) of
+--         (TyKind, _) -> liftSubstReaderT case arg of
+--           Type t -> Type <$> generalizeType t
+--           _ -> error "not a type"
+--         (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
+--         _ -> isData ty' >>= \case
+--           True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
+--           False -> do
+--             -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+--             -- non-type, non-dict arguments (e.g. a function). We just don't
+--             -- generalize in that case.
+--             return arg
+--       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
+--       return $ arg' : args''
+--     go Empty [] = return []
+--     go _ _ = error "zip error"
+-- {-# INLINE generalizeArgs #-}
 
 -- === generalizer monad plumbing ===
 
@@ -128,13 +129,13 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
-  TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
-    iTy' <- f' TypeParam TyKind iTy
-    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
-    d'   <- f DictParam dictTy d
-    withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
-      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
-      return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
+  -- TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
+  --   iTy' <- f' TypeParam TyKind iTy
+  --   dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
+  --   d'   <- f DictParam dictTy d
+  --   withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
+  --     resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
+  --     return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
   TabPi t -> return $ TabPi t
   TC tc -> TC <$> case tc of
@@ -166,20 +167,21 @@ traverseRoleBinders
   :: forall m n n'. EnvReader m
   => (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
   ->  RolePiBinders n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
-traverseRoleBinders f allBinders allParams =
-  runSubstReaderT idSubst $ go allBinders allParams
-  where
-    go :: forall i i'. RolePiBinders i i' -> [Atom CoreIR n]
-       -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
-    go Empty [] = return []
-    go (Nest (RolePiBinder role b) bs) (param:params) = do
-      ty' <- substM $ binderType b
-      Distinct <- getDistinct
-      param' <- liftSubstReaderT $ f role ty' param
-      params'' <- extendSubst (b@>SubstVal param') $ go bs params
-      return $ param' : params''
-    go _ _ = error "zip error"
-{-# INLINE traverseRoleBinders #-}
+traverseRoleBinders f allBinders allParams = undefined
+-- traverseRoleBinders f allBinders allParams =
+--   runSubstReaderT idSubst $ go allBinders allParams
+--   where
+--     go :: forall i i'. RolePiBinders i i' -> [Atom CoreIR n]
+--        -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
+--     go Empty [] = return []
+--     go (Nest (RolePiBinder role b) bs) (param:params) = do
+--       ty' <- substM $ binderType b
+--       Distinct <- getDistinct
+--       param' <- liftSubstReaderT $ f role ty' param
+--       params'' <- extendSubst (b@>SubstVal param') $ go bs params
+--       return $ param' : params''
+--     go _ _ = error "zip error"
+-- {-# INLINE traverseRoleBinders #-}
 
 getDataDefRoleBinders :: EnvReader m => TyConName n -> m n (Abs RolePiBinders UnitE n)
 getDataDefRoleBinders def = do

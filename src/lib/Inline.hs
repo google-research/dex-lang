@@ -11,13 +11,13 @@ import Data.List.NonEmpty qualified as NE
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Name
 import Subst
 import Occurrence hiding (Var)
 import Types.Core
 import Types.Primitives
+import Visit
 
 -- === External API ===
 
@@ -82,10 +82,14 @@ inlineDecls decls cont = do
   withSubst s cont
 {-# INLINE inlineDecls #-}
 
+inlineBetaReduce :: Emits o => Nest (BinderAndDecls SimpIR) i i' -> [SAtom o] -> InlineM i' o a -> InlineM i o a
+inlineBetaReduce = undefined
+{-# INLINE inlineBetaReduce #-}
+
 inlineDeclsSubst :: Emits o => Nest SDecl i i' -> InlineM i o (Subst InlineSubstVal i' o)
 inlineDeclsSubst = \case
   Empty -> getSubst
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding ann ty expr)) rest -> do
     if preInlineUnconditionally ann then do
       s <- getSubst
       extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
@@ -118,7 +122,8 @@ inlineDeclsSubst = \case
         extendSubst (b @> substVal) $ inlineDeclsSubst rest
       else do
         -- expr' can't be Atom (Var x) here
-        name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
+        ty' <- visitGeneric ty
+        name' <- emitDecl (getNameHint b) $ DeclBinding (dropOccInfo ann) ty' expr'
         extendSubst (b @> Rename name') do
           -- TODO For now, this inliner does not do any conditional inlining.
           -- In order to do it, we would need to augment the environment at this
@@ -276,10 +281,6 @@ inlineExpr ctx = \case
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt i x -> do
-    let (idxs, v) = asNaryProj i x
-    ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
-    reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
@@ -309,8 +310,20 @@ instance Inlinable SType where
 
 instance Inlinable SLam where
   inline ctx (LamExpr bs body) = do
-    reconstruct ctx =<< withBinders bs \bs' -> do
+    reconstruct ctx =<< withBindersAndDecls bs \bs' -> do
       LamExpr bs' <$> (buildScopedAssumeNoDecls $ inline Stop body)
+
+instance Inlinable (PiType SimpIR) where
+  inline ctx (PiType bs effs ty)  =
+    reconstruct ctx =<< withBindersAndDecls bs \bs' -> do
+      EffectAndType effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffectAndType effs ty)
+      return $ PiType bs' effs' ty'
+
+withBindersAndDecls
+  :: Nest (BinderAndDecls SimpIR) i i'
+  -> (forall o'. DExt o o' => Nest (BinderAndDecls SimpIR) o o' -> InlineM i' o' a)
+  -> InlineM i o a
+withBindersAndDecls _ _ = undefined
 
 withBinders
   :: Nest SBinder i i'
@@ -322,12 +335,6 @@ withBinders (Nest (b:>ty) bs) cont = do
   withFreshBinder (getNameHint b) ty' \b' ->
     extendRenamer (b@>binderName b') do
       withBinders bs \bs' -> cont $ Nest b' bs'
-
-instance Inlinable (PiType SimpIR) where
-  inline ctx (PiType bs effs ty)  =
-    reconstruct ctx =<< withBinders bs \bs' -> do
-      EffectAndType effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffectAndType effs ty)
-      return $ PiType bs' effs' ty'
 
 instance Inlinable SBlock where
   inline ctx (Block ann decls ans) = case (ann, decls) of
@@ -379,26 +386,26 @@ reconstructTabApp ctx expr ixs =
       -- iterate"; have not tried `EmitToAtomCtx`.
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
       s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref'
-      dropSubst $ extendSubst moreSubst do
-        -- Decision here.  These decls have already been processed by the
-        -- inliner once, so their occurrence information is stale (and should
-        -- have been erased).  Do we rerun occurrence analysis, or just complete
-        -- the pass without inlining any of them?
-        -- - Con rerunning: Slower
-        -- - Con completing: No detection of erroneous lack of occurrence info
-        -- For now went with "completing"; to detect erroneous lack of
-        -- occurrence info, change the relevant PlainLet cases above.
-        --
-        -- There's also a missed opportunity here to do more inlining in one
-        -- pass: we lost the occurrence information of the bindings, so we lost
-        -- the ability to inline them into the result, so in the common case
-        -- that the result is a variable reference, we will find ourselves
-        -- emitting a rename, _which will inhibit downstream inlining_ because a
-        -- rename is not indexable.
-        inlineDecls decls do
-          let ctx' = TabAppCtx ixsRest s ctx
-          inlineAtom ctx' result
+      dropSubst $
+        inlineBetaReduce bs (Var <$> ixsPref') $
+          -- Decision here.  These decls have already been processed by the
+          -- inliner once, so their occurrence information is stale (and should
+          -- have been erased).  Do we rerun occurrence analysis, or just complete
+          -- the pass without inlining any of them?
+          -- - Con rerunning: Slower
+          -- - Con completing: No detection of erroneous lack of occurrence info
+          -- For now went with "completing"; to detect erroneous lack of
+          -- occurrence info, change the relevant PlainLet cases above.
+          --
+          -- There's also a missed opportunity here to do more inlining in one
+          -- pass: we lost the occurrence information of the bindings, so we lost
+          -- the ability to inline them into the result, so in the common case
+          -- that the result is a variable reference, we will find ourselves
+          -- emitting a rename, _which will inhibit downstream inlining_ because a
+          -- rename is not indexable.
+          inlineDecls decls do
+            let ctx' = TabAppCtx ixsRest s ctx
+            inlineAtom ctx' result
     Nothing -> do
       array' <- emitExprToAtom expr
       ixs' <- mapM (inline Stop) ixs

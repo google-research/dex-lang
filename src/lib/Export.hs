@@ -98,20 +98,22 @@ liftExportSigM = liftExcept . runFallibleM . runEnvReaderT emptyOutMap
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
-corePiToExportSig cc (CorePiType _ tbs effs resultTy) = do
-    case effs of
-      Pure -> return ()
-      _    -> throw TypeErr "Only pure functions can be exported"
-    goArgs cc Empty [] tbs resultTy
+corePiToExportSig cc (CorePiType _ tbs effs resultTy) = undefined
+-- corePiToExportSig cc (CorePiType _ tbs effs resultTy) = do
+--     case effs of
+--       Pure -> return ()
+--       _    -> throw TypeErr "Only pure functions can be exported"
+--     goArgs cc Empty [] tbs resultTy
 
 simpPiToExportSig :: CallingConvention
   -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
-simpPiToExportSig cc (PiType bs effs resultTy) = do
-  case effs of
-    Pure -> return ()
-    _    -> throw TypeErr "Only pure functions can be exported"
-  bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
-  goArgs cc Empty [] bs' resultTy
+simpPiToExportSig cc (PiType bs effs resultTy) = undefined
+-- simpPiToExportSig cc (PiType bs effs resultTy) = do
+--   case effs of
+--     Pure -> return ()
+--     _    -> throw TypeErr "Only pure functions can be exported"
+--   bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
+--   goArgs cc Empty [] bs' resultTy
 
 goArgs :: (IRRep r)
   => CallingConvention
@@ -156,11 +158,11 @@ toExportType :: IRRep r => Type r i -> ExportSigM r i o (ExportType o)
 toExportType ty = case ty of
   BaseTy (Scalar sbt) -> return $ ScalarType sbt
   NewtypeTyCon Nat    -> return $ ScalarType IdxRepScalarBaseTy
-  TabTy  _ _          -> parseTabTy ty >>= \case
-    Nothing  -> unsupported
-    Just ety -> return ety
-  _ -> unsupported
-  where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+  -- TabTy  _ _          -> parseTabTy ty >>= \case
+  --   Nothing  -> unsupported
+  --   Just ety -> return ety
+  -- _ -> unsupported
+  -- where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 {-# INLINE toExportType #-}
 
 parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
@@ -171,25 +173,25 @@ parseTabTy = go []
     go shape = \case
       BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy  (b:>ixty) a -> do
-        maybeN <- case ixty of
-          (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
-          (IxType _ (IxDictRawFin n)) -> return $ Just n
-          _ -> return Nothing
-        maybeDim <- case maybeN of
-          Just (Var v)    -> do
-            s <- getSubst
-            let (Rename v') = s ! v
-            return $ Just (ExportDimVar v')
-          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
-          Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
-          _        -> return Nothing
-        case maybeDim of
-          Just dim -> case hoist b a of
-            HoistSuccess a' -> go (shape ++ [dim]) a'
-            HoistFailure _  -> return Nothing
-          Nothing -> return Nothing
-      _ -> return Nothing
+      -- TabTy  (b:>ixty) a -> do
+      --   maybeN <- case ixty of
+      --     (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
+      --     (IxType _ (IxDictRawFin n)) -> return $ Just n
+      --     _ -> return Nothing
+      --   maybeDim <- case maybeN of
+      --     Just (Var v)    -> do
+      --       s <- getSubst
+      --       let (Rename v') = s ! v
+      --       return $ Just (ExportDimVar v')
+      --     Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+      --     Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
+      --     _        -> return Nothing
+      --   case maybeDim of
+      --     Just dim -> case hoist b a of
+      --       HoistSuccess a' -> go (shape ++ [dim]) a'
+      --       HoistFailure _  -> return Nothing
+      --     Nothing -> return Nothing
+      -- _ -> return Nothing
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 
