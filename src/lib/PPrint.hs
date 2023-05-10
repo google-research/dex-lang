@@ -532,8 +532,6 @@ prettyRolePiBinders = undefined
 instance Pretty (InstanceDef n) where
   pretty (InstanceDef className bs params _) =
     "Instance" <+> p className <+> prettyRolePiBinders bs <+> p params
-  pretty (DerivingDef className instanceTy wrappedDict) =
-    "Deriving Instance" <+> p className <+> parens (p instanceTy) <+> parens (p wrappedDict)
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 

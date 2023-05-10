@@ -382,12 +382,6 @@ data InstanceDef (n::S) where
     ->   [CType n2]          -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
-  DerivingDef
-    :: ClassName n1
-    -> CorePiType n1  -- (closed) instance type, with binders
-    -> CAtom n1       -- dictionary for the type we are deriving from
-    -> InstanceDef n1
-
 
 data InstanceBody (n::S) =
   InstanceBody
@@ -1730,17 +1724,10 @@ deriving instance Show (ClassDef n)
 deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
 instance GenericE InstanceDef where
-  type RepE InstanceDef = EitherE
-    (ClassName `PairE` Abs RolePiBinders (ListE CType `PairE` InstanceBody))
-    (ClassName `PairE` CorePiType `PairE` CAtom)
-  fromE (InstanceDef name bs params body) =
-    LeftE $ name `PairE` Abs bs (ListE params `PairE` body)
-  fromE (DerivingDef name instanceTy wrappedDict) =
-    RightE $ name `PairE` instanceTy `PairE` wrappedDict
-  toE (LeftE (name `PairE` Abs bs (ListE params `PairE` body))) =
-    InstanceDef name bs params body
-  toE (RightE (name `PairE` instanceTy `PairE` wrappedDict)) =
-    DerivingDef name instanceTy wrappedDict
+  type RepE InstanceDef =
+    ClassName `PairE` Abs RolePiBinders (ListE CType `PairE` InstanceBody)
+  fromE (InstanceDef name bs params body) = name `PairE` Abs bs (ListE params `PairE` body)
+  toE (name `PairE` Abs bs (ListE params `PairE` body)) = InstanceDef name bs params body
 
 instance SinkableE InstanceDef
 instance HoistableE  InstanceDef

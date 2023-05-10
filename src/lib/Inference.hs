@@ -212,7 +212,6 @@ getInstanceType (InstanceDef className bs params _) = liftEnvReaderM do
     let dTy = DictTy $ DictType classSourceName className' params'
     let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
     return $ CorePiType ImplicitApp bs'' Pure dTy
-getInstanceType (DerivingDef _ instanceTy _) = return instanceTy
 
 -- ==== cleaner attempt, with builder == --
 
@@ -1729,16 +1728,13 @@ buildSortedCase scrut alts resultTy = do
 -- TODO: cache this with the instance def (requires a recursive binding)
 instanceFun :: EnvReader m => InstanceName n -> AppExplicitness -> m n (CAtom n)
 instanceFun instanceName expl = do
-  instanceDef <- lookupInstanceDef instanceName
-  case instanceDef of
-    InstanceDef _ bs _ _ -> do
-      ab <- liftEnvReaderM $ refreshAbs (Abs bs UnitE) \bs' UnitE -> do
-        let args = map Var $ nestToNames bs'
-        let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
-        let result = DictCon $ InstanceDict (sink instanceName) args
-        return $ Abs bs'' (PairE Pure (AtomicBlock result))
-      Lam <$> coreLamExpr expl ab
-    _ -> error "should not occur"
+  InstanceDef _ bs _ _ <- lookupInstanceDef instanceName
+  ab <- liftEnvReaderM $ refreshAbs (Abs bs UnitE) \bs' UnitE -> do
+    let args = map Var $ nestToNames bs'
+    let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
+    let result = DictCon $ InstanceDict (sink instanceName) args
+    return $ Abs bs'' (PairE Pure (AtomicBlock result))
+  Lam <$> coreLamExpr expl ab
 
 checkMaybeAnnExpr :: EmitsBoth o
   => NameHint -> Maybe (UType i) -> UExpr i -> InfererM i o (CAtom o)
@@ -2846,14 +2842,11 @@ synthInstanceDefAndAddSynthCandidate def@(InstanceDef className bs params (Insta
   addInstanceSynthCandidate className instanceName
   synthInstanceDefRec instanceName def
   return instanceName
-synthInstanceDefAndAddSynthCandidate (DerivingDef _ _ _) = error "should not occur"
 
 emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
 emitInstanceDef instanceDef@(InstanceDef className _ _ _) = do
   ty <- getInstanceType instanceDef
   emitBinding (getNameHint className) $ InstanceBinding instanceDef ty
-emitInstanceDef instanceDef@(DerivingDef className instanceTy _) = do
-  emitBinding (getNameHint className) $ InstanceBinding instanceDef instanceTy
 
 type InstanceDefAbsBodyT =
       ((ListE CType) `PairE` (ListE CAtom) `PairE` (ListE CAtom) `PairE` (ListE CAtom))
@@ -2892,7 +2885,6 @@ synthInstanceDefRec instanceName (InstanceDef className bs params (InstanceBody 
               return (def, ab')
       updateInstanceDef iname def
       recur ab' cname iname
-synthInstanceDefRec _ (DerivingDef _ _ _ ) = error "should not occur"
 
 synthInstanceDef
   :: (EnvReader m, Fallible1 m) => InstanceDef n -> m n (InstanceDef n)
@@ -2904,7 +2896,6 @@ synthInstanceDef (InstanceDef className bs params body) = do
          flip runReaderT (Distinct, env') $ runEnvReaderT' do
            methods' <- mapM synthTopE methods
            return $ InstanceDef className bs' params' $ InstanceBody superclasses methods'
-synthInstanceDef (DerivingDef _ _ _) = error "should not occur"
 
 -- main entrypoint to dictionary synthesizer
 trySynthTerm :: (Fallible1 m, EnvReader m) => CType n -> RequiredMethodAccess -> m n (SynthAtom n)
@@ -3068,16 +3059,13 @@ withGivenBinders (Abs bsTop e) contTop =
 
 isMethodAccessAllowedBy :: EnvReader m =>  RequiredMethodAccess -> InstanceName n -> m n Bool
 isMethodAccessAllowedBy access instanceName = do
-  instanceDef <- lookupInstanceDef instanceName
-  case instanceDef of
-    InstanceDef className _ _ (InstanceBody _ methods) -> do
-      let numInstanceMethods = length methods
-      ClassDef _ _ _ _ _ methodTys <- lookupClassDef className
-      let numClassMethods = length methodTys
-      case access of
-        Full                  -> return $ numClassMethods == numInstanceMethods
-        Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
-    _ -> error "should not occur"
+  InstanceDef className _ _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+  let numInstanceMethods = length methods
+  ClassDef _ _ _ _ _ methodTys <- lookupClassDef className
+  let numClassMethods = length methodTys
+  case access of
+    Full                  -> return $ numClassMethods == numInstanceMethods
+    Partial numReqMethods -> return $ numReqMethods   <= numInstanceMethods
 
 synthDictFromGiven :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromGiven targetTy = do
