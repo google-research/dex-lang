@@ -1,12 +1,33 @@
 
 data MyInt = MyIntCon(Int)
-
-deriving instance Show(MyInt)
-
 x: MyInt = MyIntCon 42
 
-%passes synth
+deriving instance Show(MyInt)
 show x
+
+deriving instance Add(MyInt)
+x + x
+zero + x
+x + zero
+
+z : MyInt = zero
+z
+z + x
+x + z
+
+
+data MyList(a) = MyListCon(List(a))
+deriving instance Monoid(MyList(a)) given (a|Data)
+
+l : MyList(Word8) = MyListCon (AsList 2 ['a', 'b'])
+l <> l
+mempty <> l
+l <> mempty
+
+e : MyList(Word8) = mempty
+e
+e <> l
+l <> e
 
 
 data MyEither(a: Type, b: Type) =
@@ -19,10 +40,17 @@ instance Show(MyEither(a, b)) given (a|Show, b|Show)
     MyRight(z') -> show z'
 
 data MyMy(a:Type, b:Type) = MyMyCons(MyEither(a, b))
+u : MyMy Nat Float32 = MyMyCons(MyRight 23.14)
 
 deriving instance Show(MyMy(c, d)) given (c|Show, d|Show)
+show u
 
-y : MyMy Nat Float32 = MyMyCons(MyRight 23.14)
+data MyMy'(a:Type, b:Type) = MyMyCons'(MyEither(a, b))
+v : MyMy' Nat Nat = MyMyCons'(MyLeft 42)
 
-%passes synth
-show y
+deriving instance Show(MyMy'(c, c)) given (c|Show)
+show v
+
+w : MyMy' Nat Float32 = MyMyCons'(MyLeft 42)
+-- Type error: no instance for `Show(MyMy'(a, b))`, with `a = Nat` and `b = Float32`.
+show w

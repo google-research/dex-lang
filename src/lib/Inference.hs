@@ -168,17 +168,13 @@ inferTopUDecl (UDerivingInstance className instanceBs params) result = do
       case newTy' of
         NewtypeTyCon (UserADTType _ tcName tcParams) -> do
           -- Forward isomorphism:
-          Abs fwdB fwdBody <- buildAbs noHint wrappedTy' \x -> do
-            let block = AtomicBlock $ NewtypeCon (sink $ UserADTData tcName tcParams) (Var x)
-            return $ (Pure @CoreIR) `PairE` block
-          fwd <- coreLamExpr ExplicitApp $ Abs (Nest (WithExpl Explicit fwdB) Empty) fwdBody
+          fwdAbs <- buildAbs noHint wrappedTy' \x ->
+            return $ NewtypeCon (sink $ UserADTData tcName tcParams) (Var x)
           -- Backward isomorphism:
-          Abs bwdB bwdBody <- buildAbs noHint newTy' \x -> do
-            let block = AtomicBlock $ ProjectElt UnwrapNewtype (Var x)
-            return $ (Pure @CoreIR) `PairE` block
-          bwd <- coreLamExpr ExplicitApp $ Abs (Nest (WithExpl Explicit bwdB) Empty) bwdBody
+          bwdAbs <- buildAbs noHint newTy' \x ->
+            return $ ProjectElt UnwrapNewtype (Var x)
           -- Bundled up isomorphisms:
-          let iso = Iso wrappedTy' newTy' (Lam fwd) (Lam bwd)
+          let iso = Iso wrappedTy' newTy' fwdAbs bwdAbs
           -- Convert methods with the constructed isomorphism between `wrappedTy'` and `newTy'`:
           methods'' <- liftBuilder $ mapM (convertMethodAtom iso) methods'
           return $ InstanceDef className' bs [newTy'] $ InstanceBody scs' methods''
@@ -217,12 +213,12 @@ getInstanceType (InstanceDef className bs params _) = liftEnvReaderM do
 
 data Iso n = Iso { inType :: CType n
                  , outType :: CType n
-                 , fwd :: CAtom n  -- single-argument function that implements forward isomorphism
-                 , bwd :: CAtom n  -- single-argument function that implements backward isomorphism
+                 , fwd :: Abs CBinder CAtom n  -- single-argument abstraction that implements forward isomorphism
+                 , bwd :: Abs CBinder CAtom n  -- single-argument abstraction that implements backward isomorphism
                  }
 
 instance GenericE Iso where
-  type RepE Iso = (CType `PairE` CType `PairE` CAtom `PairE` CAtom)
+  type RepE Iso = (CType `PairE` CType `PairE` (Abs CBinder CAtom) `PairE` (Abs CBinder CAtom))
   fromE (Iso inType outType fwd bwd) = inType `PairE` outType `PairE` fwd `PairE` bwd
   {-# INLINE fromE #-}
   toE (inType `PairE` outType `PairE` fwd `PairE` bwd) = Iso inType outType fwd bwd
@@ -271,31 +267,6 @@ convertBinders iso (Abs (Nest (WithExpl expl (b:>bTy)) rest) x) = do
       Abs rest' x' <- convertBinders (sink iso) ab
       return $ Abs (Nest (WithExpl expl' (b':>bTy'')) rest') x'
 
-convertAtom :: (EnvExtender m, ScopableBuilder CoreIR m)
-         => Iso i
-         -> CAtom i ->  m i (CAtom i)
-convertAtom iso atom = do
-  ty <- getType atom
-  isTyEqualToInType <- alphaEq (inType iso) ty
-  if isTyEqualToInType
-    then do
-      lamExpr <- buildCoreLam (CorePiType ExplicitApp Empty Pure (outType iso)) \[] -> do
-        emitExpr $ App (sink $ fwd iso) [sink atom]
-      -- TODO: Do not return a lambda here (since the lambda here takes zero parameters).
-      -- (We use `buildCoreLam` here because it brings a dictionary for class `Emits` into scope.)
-      return $ Lam lamExpr
-    else case ty of
-      Pi (CorePiType expl bs effs bodyTy) -> do
-        (Abs bs' (effs' `PairE` bodyTy')) <- convertBinders iso (Abs bs (effs `PairE` bodyTy))
-        lamExpr <- buildCoreLam (CorePiType expl bs' effs' bodyTy') \binderNames -> do
-          let args = map Var binderNames
-          args' <- mapM (convertAtom (sink $ invert iso)) args
-          atom' <- emitExpr $ App (sink atom) args'
-          atom'' <- convertAtom (sink iso) atom'
-          emitExpr $ Atom atom''
-        return $ Lam lamExpr
-      _ -> return atom
-
 convertMethodAtom :: (EnvExtender m, ScopableBuilder CoreIR m)
          => Iso i
          -> CAtom i ->  m i (CAtom i)
@@ -303,14 +274,18 @@ convertMethodAtom iso atom = do
   ty <- getType atom
   isTyEqualToInType <- alphaEq (inType iso) ty
   if isTyEqualToInType
-    then do
-      -- TODO: Avoid the fabrication of `Emits` evidence!
-      Emits <- fabricateEmitsEvidenceM
-      let expr = App (fwd iso) [atom]
-      name <- emitDecl noHint PlainLet expr
-      return $ Var name
+    then applyAbs (fwd iso) (SubstVal atom)
     else case ty of
-      Pi (CorePiType _ Empty _ _) -> return atom
+      Pi (CorePiType _ Empty _ _) -> case atom of
+        Lam (CoreLamExpr _ (LamExpr Empty block)) -> case block of
+          Block _ decls ans -> do
+            Pi cty@(CorePiType _ Empty effs bodyTy) <- convertType iso ty
+            block' <- refreshAbs (Abs decls ans) \decls' ans' -> do
+              let ann' = BlockAnn bodyTy effs
+              ans'' <- convertMethodAtom (sink iso) ans'
+              return $ Block ann' decls' ans''
+            return $ Lam $ CoreLamExpr cty (LamExpr Empty block')
+        _ -> error "should not occur"
       Pi (CorePiType expl bs effs bodyTy) -> do
         Abs bs' (effs' `PairE` bodyTy') <- convertBinders iso (Abs bs (effs `PairE` bodyTy))
         lamExpr <- buildCoreLam (CorePiType expl bs' effs' bodyTy') \binderNames -> do
