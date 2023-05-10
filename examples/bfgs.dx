@@ -169,8 +169,8 @@ def multiclass_logistic_loss(xs: n=>d=>Float, ys: n=>Nat, w: (d, m)=>Float) -> F
   w_arr = for i:d. for j:m. w[(i, j)]
   logits = xs ** w_arr
   logit_at_label = for i. logits[i, ys[i]@_]
-  logits = for i. for j. logits[i, j] - logit_at_label[i]
-  logsumexp $ for i. logsumexp logits[i]
+  per_example_loss = for i. logsumexp logits[i] - logit_at_label[i]
+  sum(per_example_loss)
 
 def multiclass_logreg(
   xs:n=>d=>Float,
@@ -179,7 +179,7 @@ def multiclass_logreg(
   m = Fin num_classes
   w0 = for i:(d, m). 0.
   ob_fun = \v. multiclass_logistic_loss xs ys v
-  res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search 500 f) 0.001 100
+  res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search 500 f) 0.001 1
   res.fval
 
 def multiclass_fin(
