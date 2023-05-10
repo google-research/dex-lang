@@ -49,7 +49,6 @@ import Types.Core
 import Types.Primitives
 import Types.Source
 import Util
-import Debug.Trace (traceM)
 
 -- === Top-level interface ===
 
@@ -121,7 +120,13 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
     _ -> error "impossible"
 inferTopUDecl (UDerivingInstance className instanceBs params) result = do
   let (InternalName _ className') = className
-  ab :: Abs RolePiBinders (CType `PairE` DictType `PairE` CType `PairE` DictType) n <- liftInfererM $ solveLocal do
+  -- Extract the following:
+  --   1) type parameter (`newTy`) for this instance,
+  --   2) the underlying type (`wrappedTy`) that is wrapped by `newTy`,
+  --   3) the dictionary type for `wrappedTy`.
+  -- All of 1-3 are valid under the binders `instanceBs`. Hence we create an
+  -- abstraction wohse body consists of the triple 2), 3), 1).
+  ab :: Abs RolePiBinders (CType `PairE` DictType `PairE` CType) n <- liftInfererM $ solveLocal do
     withRoleUBinders instanceBs \_ -> do
       ClassDef classSourceName _ _ paramBinders _ _ <- lookupClassDef (sink className')
       params' <- checkInstanceParams paramBinders params
@@ -134,8 +139,7 @@ inferTopUDecl (UDerivingInstance className instanceBs params) result = do
                 TyConDef _ conBs [DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _] -> do
                   wrappedTy' <- applySubst (conBs @@> map SubstVal tcParams) wrappedTy
                   let wrappedDictTy = DictType classSourceName (sink className') [wrappedTy']
-                  let dictTy = DictType classSourceName (sink className') [newTy]
-                  return $ wrappedTy' `PairE` wrappedDictTy `PairE` param `PairE` dictTy
+                  return (wrappedTy' `PairE` wrappedDictTy `PairE` newTy)
                 TyConDef _ _ dataCons ->
                   throw TypeErr $ "User-defined ADT " ++ pprint newTy ++
                                   " does not have excatly one (data) constructor " ++
@@ -144,83 +148,42 @@ inferTopUDecl (UDerivingInstance className instanceBs params) result = do
             _ -> throw TypeErr $ "Parameter " ++ pprint param ++ " not a user-defined ADT"
         _ -> throw TypeErr $ "More than one parameter when deriving instance of class " ++ pprint className ++
                              "\nparameters: " ++ pprint params'
-  Abs bs (wrappedTy `PairE` wrappedDictTy `PairE` ty `PairE` dictTy) <- return ab
-
-  traceM $ pprint ty
-  traceM $ pprint wrappedTy
-
-  -- _ <- case bs of
-  --   Empty -> do
-  --     let closedWrappedDictTy = Pi $ CorePiType ImplicitApp Empty Pure (DictTy wrappedDictTy)
-  --     synthWrappedDict <- trySynthTerm closedWrappedDictTy Full
-  --     Lam (CoreLamExpr _ (LamExpr Empty (Block _ Empty ((DictCon (InstanceDict inst iparams)))))) <- return synthWrappedDict
-  --     InstanceDef _ binders [cparam] (InstanceBody _ methods) <- lookupInstanceDef inst
-  --     cparam' <- applySubst (binders @@> map SubstVal iparams) cparam
-  --     m <- applySubst (binders @@> map SubstVal iparams) (methods !! 0)
-  --     traceM $ pprint m
-  --     return ()
-  --   _ -> return ()
-
-
-
-  -- traceM $ show synthWrappedDict
-  -- Lam (CoreLamExpr _ (LamExpr bs (Block _ Empty ((DictCon instDict))))) <- return synthWrappedDict
-  -- _ <- refreshAbs (Abs bs instDict) \bs' (InstanceDict inst params) -> liftInfererM $ do
-  --   InstanceDef _ _ _ _ <- lookupInstanceDef inst
-  --   undefined
-
-  x <- liftInfererM $ withFreshBinders [TC TypeKind, TC TypeKind, TC TypeKind]
-  -- x <- liftInfererM $ withFreshBinders [TC TypeKind, TC TypeKind, TC TypeKind]
-    \btys [a, b, c] -> do
-      let va = Var a
-      let vb = Var b
-      let vc = Var c
-      aToATy <- withFreshBinders [va] \ba _ -> do
-        return $ Pi $ CorePiType ExplicitApp (addExpls Explicit ba) Pure (sink va)
-      piTy <- withFreshBinders [aToATy, aToATy] \bs _ -> do
-        return $ Pi $ CorePiType ExplicitApp (addExpls Explicit bs) Pure (sink va)
-      fwdPiTy <- withFreshBinders [va] \ba _ -> do
-        return $ Pi $ CorePiType ExplicitApp (addExpls Explicit ba) Pure (sink vb)
-      bwdPiTy <- withFreshBinders [vb] \bb _ -> do
-        return $ Pi $ CorePiType ExplicitApp (addExpls Explicit bb) Pure (sink va)
-
-      ab <- withFreshBinders [fwdPiTy, bwdPiTy, piTy] \bts [fwdF, bwdF, arg] -> do
-        let iso = Iso (sink va)
-                      (sink vb)
-                      (Var fwdF)
-                      (Var bwdF)
-
-        traceM $ pprint iso
-
-        traceM $ pprint piTy
-        -- arg' <- convertType iso (sink piTy)
-        arg' <- liftBuilder $ convertAtom iso (Var arg)
-        traceM $ pprint arg'
-        -- atom' <- withFreshBinders [Pi piTy] \bf [f] -> do
-        --   atom' <- convertAtom' (sink iso) (Var f) (Pi $ sink piTy)
-
-        --   traceM $ pprint atom'
-        --   return $ Abs bf atom'
-
-        -- ab <- withFreshBinders [sink va, sink vc] \bs _ -> do
-        --   return $ Abs (addExpls Explicit bs) ((sink va) `PairE` Pure)
-
-        -- _ <- withFreshBinders [Pi piTy] \_ [f] -> do
-        --   convert (sink iso) (AtomE $ Var f) (sink ab)
-        return $ Abs bts arg'
-      return $ Abs btys ab
-
-  traceM $ pprint ty
-  traceM $ pprint wrappedTy
-
-  traceM $ pprint x
-
-
-  let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs
-  let closedWrappedDictTy = Pi $ CorePiType ImplicitApp bs'' Pure (DictTy wrappedDictTy)
+  Abs roleBinders (wrappedTy `PairE` wrappedDictTy `PairE` newTy) <- return ab
+  -- Synthesize the dictionary for `wrappedTy` (after closing over `rolerBinders`):
+  let binders = fmapNest (\(RolePiBinder _ b) -> b) roleBinders
+  let closedWrappedDictTy = Pi $ CorePiType ImplicitApp binders Pure (DictTy wrappedDictTy)
   synthWrappedDict <- trySynthTerm closedWrappedDictTy Full
-  let closedDictTy = CorePiType ImplicitApp bs'' Pure (DictTy dictTy)
-  instanceName <- emitInstanceDef (DerivingDef className' closedDictTy synthWrappedDict)
+  -- Extract (superclasses and) methods from the synthesized dictionary for `wrappedTy`:
+  Lam (CoreLamExpr _ (LamExpr binders' (AtomicBlock dict))) <- return synthWrappedDict
+  Abs _ (ListE scs `PairE` ListE methods) <- liftExceptEnvReaderM $
+    refreshAbs (Abs binders' dict) \bs dict' -> do
+      DictCon (InstanceDict wrappedInstName wrappedInstParams) <- return dict'
+      InstanceDef _ wrappedBinders _ body <- lookupInstanceDef wrappedInstName
+      InstanceBody scs methods <- applySubst (wrappedBinders @@> map SubstVal wrappedInstParams) body
+      return $ Abs bs (ListE scs `PairE` ListE methods)
+  -- TODO: Avoid the `unsafeCoerceE`.
+  let ab' = Abs roleBinders $ (unsafeCoerceE (ListE scs `PairE` ListE methods)) `PairE` wrappedTy `PairE` newTy
+  def <- liftEnvReaderM $ refreshAbs ab' \bs body -> do
+      let ListE scs' `PairE` ListE methods' `PairE` wrappedTy' `PairE` newTy' = body
+      case newTy' of
+        NewtypeTyCon (UserADTType _ tcName tcParams) -> do
+          -- Forward isomorphism:
+          Abs fwdB fwdBody <- buildAbs noHint wrappedTy' \x -> do
+            let block = AtomicBlock $ NewtypeCon (sink $ UserADTData tcName tcParams) (Var x)
+            return $ (Pure @CoreIR) `PairE` block
+          fwd <- coreLamExpr ExplicitApp $ Abs (Nest (WithExpl Explicit fwdB) Empty) fwdBody
+          -- Backward isomorphism:
+          Abs bwdB bwdBody <- buildAbs noHint newTy' \x -> do
+            let block = AtomicBlock $ ProjectElt UnwrapNewtype (Var x)
+            return $ (Pure @CoreIR) `PairE` block
+          bwd <- coreLamExpr ExplicitApp $ Abs (Nest (WithExpl Explicit bwdB) Empty) bwdBody
+          -- Bundled up isomorphisms:
+          let iso = Iso wrappedTy' newTy' (Lam fwd) (Lam bwd)
+          -- Convert methods with the constructed isomorphism between `wrappedTy'` and `newTy'`:
+          methods'' <- liftBuilder $ mapM (convertMethodAtom iso) methods'
+          return $ InstanceDef className' bs [newTy'] $ InstanceBody scs' methods''
+        _ -> error "internal error"
+  instanceName <- emitInstanceDef def
   addInstanceSynthCandidate className' instanceName
   UDeclResultDone <$> return result
 inferTopUDecl (ULet letAnn p tyAnn rhs) result = case p of
@@ -266,7 +229,9 @@ instance GenericE Iso where
   toE (inType `PairE` outType `PairE` fwd `PairE` bwd) = Iso inType outType fwd bwd
   {-# INLINE toE #-}
 
+instance HoistableE Iso
 instance SinkableE Iso
+instance RenameE Iso
 
 instance Show (Iso n) where
   show (Iso inType outType _ _) = "Iso " ++ pprint inType ++ " -> " ++ pprint outType
@@ -327,29 +292,37 @@ convertAtom iso atom = do
           let args = map Var binderNames
           args' <- mapM (convertAtom (sink $ invert iso)) args
           atom' <- emitExpr $ App (sink atom) args'
-          emitExpr $ App (sink $ fwd iso) [atom']
+          atom'' <- convertAtom (sink iso) atom'
+          emitExpr $ Atom atom''
         return $ Lam lamExpr
       _ -> return atom
 
--- (Abs A:Type v#1:Type v#2:Type
---   (Abs
---     v#3:(A -> B)
---     v#4:(B -> A)
---     v#5:((A -> A, A -> A) -> A)
---     ((v#6:(B -> B) v#7:(B -> B).
---         v#8:A =
---           v#5 ((v#8:A.
---                   v#9:B = v#6 ((v#3 v#8 : B))
---                   v#10:A = v#4 v#9
---                   v#10))
---               ((v#8:A.
---                   v#9:B = v#7 ((v#3 v#8 : B))
---                   v#10:A = v#4 v#9
---                   v#10))
---         v#9:B = v#3 v#8
---         v#9))
---   )
--- )
+convertMethodAtom :: (EnvExtender m, ScopableBuilder CoreIR m)
+         => Iso i
+         -> CAtom i ->  m i (CAtom i)
+convertMethodAtom iso atom = do
+  ty <- getType atom
+  isTyEqualToInType <- alphaEq (inType iso) ty
+  if isTyEqualToInType
+    then do
+      -- TODO: Avoid the fabrication of `Emits` evidence!
+      Emits <- fabricateEmitsEvidenceM
+      let expr = App (fwd iso) [atom]
+      name <- emitDecl noHint PlainLet expr
+      return $ Var name
+    else case ty of
+      Pi (CorePiType _ Empty _ _) -> return atom
+      Pi (CorePiType expl bs effs bodyTy) -> do
+        Abs bs' (effs' `PairE` bodyTy') <- convertBinders iso (Abs bs (effs `PairE` bodyTy))
+        lamExpr <- buildCoreLam (CorePiType expl bs' effs' bodyTy') \binderNames -> do
+          let args = map Var binderNames
+          args' <- mapM (convertMethodAtom (sink $ invert iso)) args
+          atom' <- emitExpr $ App (sink atom) args'
+          atom'' <- convertMethodAtom (sink iso) atom'
+          emitExpr $ Atom atom''
+        return $ Lam lamExpr
+      _ -> return atom
+
 -- === Inferer interface ===
 
 class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m )
