@@ -242,7 +242,6 @@ instance IRRep r => Pretty (IxType r n) where
 instance Pretty (DictExpr n) where
   pretty d = case d of
     InstanceDict name args -> "Instance" <+> p name <+> p args
-    NewtypeDict dictTy dictExpr -> "NewtypeDict" <+> parens (p dictTy) <+> parens (p dictExpr)
     InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
     SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
     IxFin n -> "Ix (Fin" <+> p n <> ")"

@@ -240,7 +240,6 @@ instance CheaplyReducibleE CoreIR DictExpr CAtom where
     InstanceDict _ _ -> justSubst
     IxFin _          -> justSubst
     DataData ty      -> DictCon . DataData <$> cheapReduceE ty
-    NewtypeDict _ _  -> justSubst
     where justSubst = DictCon <$> substM d
 
 instance CheaplyReducibleE CoreIR TyConParams TyConParams where

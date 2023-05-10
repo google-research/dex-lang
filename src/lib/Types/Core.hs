@@ -403,7 +403,6 @@ data DictExpr (n::S) =
  | SuperclassProj (CAtom n) Int  -- (could instantiate here too, but we don't need it for now)
    -- We use NonEmpty because givens without args can be represented using `Var`.
  | InstanceDict (InstanceName n) [CAtom n]
- | NewtypeDict (DictType n) (DictExpr n)
    -- Special case for `Ix (Fin n)`  (TODO: a more general mechanism for built-in classes and instances)
  | IxFin (CAtom n)
    -- Special case for `Data <something that is actually data>`
@@ -1777,13 +1776,12 @@ instance RenameE        DictType
 
 instance GenericE DictExpr where
   type RepE DictExpr =
-    EitherE6
+    EitherE5
  {- InstanceDict -}      (PairE InstanceName (ListE CAtom))
  {- InstantiatedGiven -} (PairE CAtom (ListE CAtom))
  {- SuperclassProj -}    (PairE CAtom (LiftE Int))
  {- IxFin -}             CAtom
  {- DataData -}          CType
- {- NewtypeDict -}       (PairE DictType DictExpr)
  -- Note that making the last type recursive, i.e. with `RepE DictExpr` instead
  -- of just `DictExpr` leads to the following compiler error:
  --
@@ -1797,14 +1795,12 @@ instance GenericE DictExpr where
     SuperclassProj x i -> Case2 (PairE x (LiftE i))
     IxFin x            -> Case3 x
     DataData ty        -> Case4 ty
-    NewtypeDict dictTy dictExpr -> Case5 (PairE dictTy dictExpr)
   toE d = case d of
     Case0 (PairE v (ListE args)) -> InstanceDict v args
     Case1 (PairE given (ListE args)) -> InstantiatedGiven given args
     Case2 (PairE x (LiftE i)) -> SuperclassProj x i
     Case3 x  -> IxFin x
     Case4 ty -> DataData ty
-    Case5 (PairE dictTy dictExpr) -> NewtypeDict dictTy dictExpr
     _ -> error "impossible"
 
 instance SinkableE      DictExpr

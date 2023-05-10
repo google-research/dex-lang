@@ -191,7 +191,6 @@ instance GenericallyTraversableE CoreIR DictExpr where
     SuperclassProj subclass i -> SuperclassProj <$> tge subclass <*> pure i
     IxFin n     -> IxFin <$> tge n
     DataData ty -> DataData <$> tge ty
-    NewtypeDict ty wrappedDict -> NewtypeDict <$> tge ty <*> tge wrappedDict
 
 instance GenericallyTraversableE r (IxDict r) where
   traverseGenericE = \case

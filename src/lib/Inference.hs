@@ -2819,9 +2819,6 @@ generalizeDictRec dict = do
     InstantiatedGiven _ _ -> notSimplifiedDict
     SuperclassProj _ _    -> notSimplifiedDict
     DataData ty           -> DataData <$> Var <$> freshInferenceName ty
-    NewtypeDict ty wrappedDict -> do
-      DictCon wrappedDict' <- generalizeDictRec (DictCon wrappedDict )
-      return $ NewtypeDict ty wrappedDict'
     where notSimplifiedDict = error $ "Not a simplified dict: " ++ pprint dict
 
 generalizeInstanceArgs :: EmitsInf n => RolePiBinders n l -> [CAtom n] -> SolverM n [CAtom n]
@@ -3104,14 +3101,6 @@ synthDictFromInstance targetTy@(DictType _ targetClass _) = do
       InstanceBinding (InstanceDef _ _ _ _) (CorePiType _ bs _ (DictTy candidateTy)) -> do
         args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
         return $ DictCon $ InstanceDict candidate args
-      InstanceBinding (DerivingDef _ _ synthDict) (CorePiType _ bs _ (DictTy candidateTy)) -> do
-        args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
-        dictTy <- applySubst (bs @@> map SubstVal args) candidateTy
-        case synthDict of
-          Lam (CoreLamExpr _ (LamExpr dictBs (AtomicBlock (DictCon dict)))) -> do
-            dict' <- applySubst (dictBs @@> map SubstVal args) dict
-            return $ DictCon $ NewtypeDict dictTy dict'
-          _ -> error "should not occur"
       _ -> error "should not occur"
 
 instantiateSynthArgs :: DictType n -> SynthPiType n -> SyntherM n [CAtom n]
