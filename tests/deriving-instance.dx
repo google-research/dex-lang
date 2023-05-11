@@ -16,6 +16,35 @@ z + x
 x + z
 
 
+deriving instance Eq(MyInt)
+x == x
+z == x
+x == z
+
+x /= x
+z /= x
+x /= z
+
+
+-- Test that automatic derivation works when deriving from an instance that was
+-- itself automatically derived.
+data MyInt' = MyIntCon'(MyInt)
+x': MyInt' = MyIntCon' x
+
+deriving instance Show(MyInt')
+show x'
+
+deriving instance Add(MyInt')
+x' + x'
+zero + x'
+x' + zero
+
+z' : MyInt' = zero
+z'
+z' + x'
+x' + z'
+
+
 data MyList(a) = MyListCon(List(a))
 deriving instance Monoid(MyList(a)) given (a|Data)
 
@@ -39,11 +68,13 @@ instance Show(MyEither(a, b)) given (a|Show, b|Show)
     MyLeft(y') -> show y'
     MyRight(z') -> show z'
 
+
 data MyMy(a:Type, b:Type) = MyMyCons(MyEither(a, b))
 u : MyMy Nat Float32 = MyMyCons(MyRight 23.14)
 
 deriving instance Show(MyMy(c, d)) given (c|Show, d|Show)
 show u
+
 
 data MyMy'(a:Type, b:Type) = MyMyCons'(MyEither(a, b))
 v : MyMy' Nat Nat = MyMyCons'(MyLeft 42)
