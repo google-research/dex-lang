@@ -24,8 +24,9 @@ tightest-binding to loosest-binding.
 
 | Symbol(s)             | Default Meaning                          | Associativity |
 |-----------------------|------------------------------------------|---------------|
-| . !                   | indexing, reference slicing              | Left          |
-| juxtaposition (space) | function application                     | Left          |
+| .                     | field reference                          | Left          |
+| !                     | reference slicing                        | Left          |
+| juxtaposition (space) | function argument extension              | Left          |
 | unary + -             | negation, integer literals               | Prefix        |
 | backquoted functions  | infix application of binary functions    | Left          |
 | other                 | user-defined operators                   | Left          |
@@ -45,27 +46,19 @@ tightest-binding to loosest-binding.
 | unary .. ..<          | indices up to                            | Prefix        |
 | unary .. >..          | indices from                             | Postfix       |
 | =>                    | array type arrow                         | Right         |
-| -> ?-> ?=> --o        | function type arrows                     | Right         |
+| -> ->>                | function type arrows                     | Right         |
 | >>>                   | forward function composition             | Left          |
 | <<<                   | reverse function composition             | Left          |
-| &>>                   | forward isomorphism composition          | Left          |
-| <<&                   | reverse isomorphism composition          | Left          |
-| binary @              | infix from_ordinal                       | Left          |
-| unary @               | computed field name                      | Prefix        |
-| unary @...            | computed name for multiple fields        | Prefix        |
-| ...                   | name for multiple fields                 | Prefix        |
-| \|>                   | reverse function application             | Left          |
-| $                     | loose-binding function application       | Right         |
+| @                     | infix from_ordinal                       | Left          |
 | ::                    | infix "has type" on values               | None          |
+| $                     | loose-binding function arg extension     | Right         |
+| \|                    | left function arg extension              | Left          |
 | := +=                 | assignment, accumulation                 | None          |
 | :                     | "has type" with a binder on the left     | Right         |
-| =                     | let binding, field assignment            | Left          |
-| ?                     | separator for labeled rows               | Left          |
-| ,                     | separator for tuples, records, others    | Right         |
 | ,>                    | separator for dependent pairs            | Right         |
-| &                     | separator for record types               | Right         |
 | &>                    | separator for dependent pair types       | Right         |
-| \|                    | separator for variants and variant types | Left          |
+| =                     | let binding, named arguments             | Left          |
+| ,                     | separator for tuples, records, others    | Right         |
 |-----------------------|------------------------------------------|---------------|
 
 Why this particular precedence table?  The general guiding principle is to
@@ -130,9 +123,7 @@ Specifially, we want the following things:
   - The array arrow `=>` is tighter than the function arrows because we
     often want arrays in function types but not so much vice versa.
 
-  - The function arrows (`->`, `--o`, `?->`, and `?=>`) follow.  They are all at
-    the same precedence so they can chain to form functions with intermixed
-    implicit, explicit, class, and linear arguments.
+  - The function arrows (`->`, `->>`) follow.
 
   - The colon is looser than the arrows, to make it easier to annotate binders
     with function types.
@@ -141,89 +132,46 @@ Specifially, we want the following things:
       with simply-typed arguments, but we decided against that on the grounds
       that explicit dependent types are rarer than binders annotated with
       function or array types.
-      
+
 5. With that core, we move on to universal operators that interact almost everything
 
-  - Juxtaposition as function application is tighter than all the above because
-    functions can compute arguments to those operators
+  - Juxtaposition as function argument extension is tighter than all the above
+    because functions can compute arguments to those operators
 
-  - However, we make array indexing and reference slicing tighter than function
-    composition because they make function arguments very often, and we like
-    punning x.i as a name (in this case, for the array element)
+  - However, we make reference slicing tighter than function argument extenion
+    because they make function arguments very often, and we like punning x[i] as
+    a name (in this case, for the array element)
 
-  - Dollar `$` as function application is looser than all the above because the
-    above can compute arguments to functions
+  - Dollar `$` as function argument extension is looser than all the above
+    because the above can compute arguments to functions
 
-  - Reverse function application `|>` is just one level tighter
-    than dollar, because
-      `value |> unary |> unary |> binary $ value`
-    sort of makes sense, and the left pipe should compute the first,
-    not second, argument to the binary function
+  - Pipe `|` as function argument extension on the left is one level looser than
+    `$` for the same reason
 
   - The assignment `:=` and accumulation `+=` operators are statement-like in
     that they return unit, so cannot be usefully nested.  Thus, they are even
-    looser than dollar, so that dollar can be used to compute the RHS.
+    looser than dollar, so that dollar can be used to compute the RHS
 
   - Binary atsign `@` is sugar for `from_ordinal` taking the number on the left
-    and the type on the right, and producing an index.
-    
-    - If we make it looser than indexing, then it will have to be
-      parenthesized as a direct argument to indexing anyway, and we
-      might as well make it very loose so it doesn't force parens
-      on any type and arithmetic computations
+    and the type on the right, and producing an index.  We make `@` loose
+    because indexing is bracketed anyway
+
     - However, it feels weird to have @ be looser than number
       arithmetic because it seems to want to change the
       interpretation of one thing, rather than a computation for
       things
-    - On the other hand, maybe it is reasonable for it to be looser
-      than type arithmetic, so we can write `4 @ Fin 2 & Fin 3`
-    - An alternative would be to make `@` tighter than indexing, so
-      that `xs.5@_` works.  However, because indexing is tighter than
-      application, there's no way for `xs.5@Fin 7` to work without parens
-      somewhere.
-    - If we make `@` loose, we should probably write it with surrounding
-      spaces.
     - Also, this decision doesn't matter very much, because binary `@` is not a
       very common operator anyway.
 
-  - Atsign `@` is also used in the curly brace syntaxes as a prefix
-    to a field label that makes that field name evaluated instead
-    of taken literally.  In this capacity, the only requirement is
-    that it bind tighter than the separator between the label and
-    the value, namely, `:` or `=`.
-
-  - At-ellipsis `@...` is used in such syntaxes as a prefix to
-    denote that the field label refers to multiple fields.
-
-  - Type arithmetic (`&`, `|`)
-
-    - `&` should be tighter than `|` for the same reason as `&&` and `||`
-
-    - One might argue that these should be tighter than function arrows because
-      we want to return or consume tuples or pairs more than we want to form
-      pairs of functions.
-
-    - However, they are also used as separators for record and variant types,
-      where they want to be looser than `:` because `:` is used as a
-      sub-separator separating the field name from its type.  Also, records and
-      variants are already grouped by curlies, so there is no pressure to make
-      their separators tight.
-
-    - We choose that the latter use dominates, with the down side that pairs and
-      `Either` types must always be enclosed in parens.  But that's fine; the
-      parens serve as a pun reminding the user that a pair is just a binary
-      record with anonymous fields.
-
   - The dependent pair operators `,>` and `&>` are little-used as of this
-    writing, so we arbitrarily dump them next to their non-dependent pair
-    variants `,` and `&`, discussed below.
+    writing, so we arbitrarily make them loose.
 
   - The double colon `::` type-annotates an arbitrary expression without
     otherwise changing its meaning.  Since it can go anywhere, we make it looser
-    than all expression operators, except `|>` and `$`.  The exception supports
+    than all expression operators, except `|` and `$`.  The exception supports
     the common concept that `$` breaks up formulas completely (by being the
     loosest expression-like operator).
-    
+
   - We make backquoted functions and user-defined operators bind tightly by
     default, but for no particularly good reason.  They are currently rare in
     Dex, so it doesn't really matter.
@@ -233,11 +181,8 @@ Specifially, we want the following things:
   - Function composition `>>>` and `<<<` are logically the same precedence, but
     we don't want them to chain with each other, because that's just confusing,
     so we arbitrarily make `>>>` tighter than `<<<`.  They should be tighter
-    than `$` and `|>` and looser than juxtaposition but don't interact with
+    than `$` and `|` and looser than juxtaposition but don't interact with
     anything else; so we arbitrarily make them loose.
-
-  - The same logic applies to the isomorphism composition operators `&>>` and
-    `<<&`.  We arbitrarily make them slightly looser than the function versions.
 
   - The monoid combine operator `<>` can technically act like `*`, `+`, `&&`,
     `||`, `>>>`, or `<<<` depending on the monoid, but we assume that in
@@ -251,38 +196,22 @@ Specifially, we want the following things:
 7. Dex also has a class of "operators" whose groups are not expressions, but
    which have precedence so they can be treated uniformly by the operator
    precedence stage of parsing.
-   
+
   - Equals `=` is used to separate the binder from the body in a `let` or a
-    `def`, and as the label separator for record and variant data.  In both
+    `def`, and as the label separator for named function arguments.  In both
     capacities, it's reasonable to make it an operator that's looser than
-    everything except the separators `&`, `,`, `|`, and `?`.  Notably, `=` is
-    looser than `:`, `$`, and `|>`, which moderately often interact with it.
+    everything except the separator `,`.  Notably, `=` is looser than `:`, `$`,
+    and `|`, which moderately often interact with it.
 
   - Colon `:` is used in several places as "the object on the left as the type
-    on the right".  It also serves as a label separator for record and variant
-    types.  For all of these, it's reasonable to make it very loose.  But it is
-    tighter than `=`, because it can be used to type-annotated the binder being
+    on the right".  For this, it's reasonable to make it very loose.  But it is
+    tighter than `=`, because it can be used to type-annotate the binder being
     assigned.
 
-  - Ampersand `&` and pipe `|` separate fields of record and variant types,
-    respectively.  They should be looser than `:`.
-
-  - Comma `,` and pipe `|` separate fields of records and variant data,
-    respectively.  For this use case, they should be looser than `=`.
-
-  - Comma `,` is also used to separate fields in tuple constructors, def class
-    argument lists, and in effect rows.  In all three cases, it's already
-    externally grouped, so can be very low precedence.
-
-  - Pipe `|` should be looser than comma `,`, because `|` is used to separate
-    the remainder of an effect row.
-
-  - Question mark `?` separates fields in labeled rows.  It should be looser
-    than `:`, but tighter than `,` and `|`.
-
-  - Ellipsis `...` marks remainder groups in almost all of the above.  We make
-    it a unary prefix operator that's tighter than the separators comma `,`,
-    ampersand `&`, pipe `|`, and question mark `?`, but looser than expressions.
+  - Comma `,` separates entries in lists: fields in tuple constructors, function
+    argument lists, both at definitions and applications, and effect rows.  In
+    all these cases, it's already externally grouped, so can be very low
+    precedence.
 
 8. We arbitrarily make user-defined operators tight, but looser than unary `-`
    and `+`, because the latter are often part of numeric literals.

@@ -7,23 +7,20 @@
 module RuntimePrint (showAny) where
 
 import Control.Monad.Reader
-import Data.Foldable (fold, toList)
 import Data.Functor
-import qualified Data.Map.Strict as M
 
 import Builder
 import Core
 import Err
 import IRVariants
 import MTL1
-import LabeledItems
 import Name
 import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
 import QueryType
-import Util (restructure)
+import Util (enumerate)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
@@ -81,6 +78,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
+  ProjectEltTy _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -93,33 +91,26 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
-    StaticRecordTyCon tys -> do
-      xs <- getUnpacked $ unwrapNewtype atom
-      let LabeledItems row = restructure xs tys
-      braces $ sepBy ", " $ fold $ M.toAscList row <&> \(k, vs) ->
-        toList vs <&> \v -> do
-          emitLit (pprint k <> " = ")
-          rec v
-    RecordTyCon _   -> unexpectedPolymorphism
-    LabelCon _       -> notAType
-    LabelType        -> printAsConstant
-    LabeledRowKindTC -> printAsConstant
-    LabeledRowCon _  -> notAType
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (TyConParams [Explicit] [Word8Ty]) -> do
+    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
       charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
-    UserADTType _ defName params -> do
+    UserADTType tySourceName defName params -> do
       def <- lookupTyCon defName
-      cons <- instantiateTyConDef def params
-      case cons of
-        [con] -> showDataCon con $ unwrapNewtype atom
-        _ -> void $ buildCase atom UnitTy \i arg -> do
+      conDefs <- instantiateTyConDef def params
+      case conDefs of
+        ADTCons [con] -> showDataCon con $ unwrapNewtype atom
+        ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
           showDataCon (sink $ cons !! i) arg
           return UnitVal
+        StructFields fields -> do
+          emitLit tySourceName
+          parens do
+            sepBy ", " $ (enumerate fields) <&> \(i, _) ->
+              rec =<< projectStruct i atom
       where
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
         showDataCon (DataConDef sn _ _ projss) arg = do
@@ -131,23 +122,13 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
                 rec =<< normalizeNaryProj (init projs) arg
-  DictHole _ _ _ -> error "shouldn't have DictHole past inference"
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
-  ProjectElt _ _ -> notAType
-  Lam _        -> notAType
-  DictCon _    -> notAType
-  Con _        -> notAType
-  Eff _        -> notAType
-  PtrVar _     -> notAType
-  DepPair _ _  _ -> notAType
-  NewtypeCon _ _ -> notAType
-  Var _ -> error $ "unexpected type variable: " ++ pprint atomTy
-  SimpInCore _ -> error "Don't expect to print SimpInCore"
+  TyVar _ -> error $ "unexpected type variable: " ++ pprint atomTy
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
@@ -160,22 +141,11 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
     printAsConstant :: Print n
     printAsConstant = emitLit $ pprint atom
 
-    notAType :: Print n
-    notAType = error $ "Error querying type of: " ++ pprint atom
-
-    unexpectedPolymorphism :: Print n
-    unexpectedPolymorphism = do
-      emitLit ("Warning: unexpected polymorphism in evaluated term"
-              ++ pprint atom)
-
 parens :: Emits n => Print n -> Print n
 parens x = emitCharLit '(' >> x >> emitCharLit ')'
 
 brackets :: Emits n => Print n -> Print n
 brackets x = emitCharLit '[' >> x >> emitCharLit ']'
-
-braces :: Emits n => Print n -> Print n
-braces x = emitCharLit '{' >> x >> emitCharLit '}'
 
 sepBy :: forall n. Emits n => String -> [Print n] -> Print n
 sepBy s xsTop = rec xsTop where
@@ -244,7 +214,7 @@ applyPreludeFunction name args = do
   naryApp f args
 
 strType :: EnvReader m => m n (CType n)
-strType = constructPreludeType "List" $ TyConParams [Explicit] [CharRepTy]
+strType = constructPreludeType "List" $ TyConParams [Explicit] [Type CharRepTy]
 
 constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do

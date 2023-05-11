@@ -66,7 +66,7 @@ struct AllButFirst(n|NonEmpty) =
 instance Ix(AllButFirst n) given (n|Ix|NonEmpty)
   def size'() = unsafe_nat_diff (size n) 1
   def ordinal(i) = ordinal i.val
-  def unsafe_from_ordinal(o) = AllButFirst.new $ unsafe_from_ordinal o
+  def unsafe_from_ordinal(o) = AllButFirst $ unsafe_from_ordinal o
 
 instance Subset(AllButFirst a, a) given (a|NonEmpty)
   def inject'(x) = unsafe_from_ordinal ((ordinal x) + 1)

@@ -8,7 +8,6 @@
 Type = %TyKind()
 Heap = %HeapType()
 Effects = %EffKind()
-Fields = %LabeledRowKind()
 
 Int64 = %Int64()
 Int32 = %Int32()
@@ -20,8 +19,6 @@ Word32 = %Word32()
 Word64 = %Word64()
 Byte = Word8
 Char = Byte
-
-Label = %Label()
 
 RawPtr : Type = %Word8Ptr()
 
@@ -334,7 +331,7 @@ def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   rep_to_nat %isub(x', y')
 
 -- `(i..)` parses as `RangeFrom _ i`
--- TODO: need to a way to indicate `.new` as private
+-- TODO: need to a way to indicate constructor as private
 struct RangeFrom(q:Type, i:q) = val : Nat
 
 -- `(i<..)` parses as `RangeFromExc _ i`
@@ -349,22 +346,22 @@ struct RangeToExc(q:Type, i:q) = val : Nat
 instance Ix(RangeFrom q i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i)
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeFrom.new(j)
+  def unsafe_from_ordinal(j) = RangeFrom(j)
 
 instance Ix(RangeFromExc q i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i + 1)
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeFromExc.new(j)
+  def unsafe_from_ordinal(j) = RangeFromExc(j)
 
 instance Ix(RangeTo q i) given (q|Ix, i:q)
   def size'() = ordinal i + 1
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeTo.new(j)
+  def unsafe_from_ordinal(j) = RangeTo(j)
 
 instance Ix(RangeToExc q i) given (q|Ix, i:q)
   def size'() = ordinal i
   def ordinal(j) = j.val
-  def unsafe_from_ordinal(j) = RangeToExc.new(j)
+  def unsafe_from_ordinal(j) = RangeToExc(j)
 
 instance Ix(())
   def size'() = 1
@@ -411,12 +408,9 @@ instance Mul(n=>a) given (a|Mul, n|Ix)
 
 '## Basic polymorphic functions and types
 
-def fst(pair:(a, b)) -> a given (a, b) =
-  (x, _) = pair
-  x
-def snd(pair:(a, b)) -> b given (a, b) =
-  (_, y) = pair
-  y
+def fst(pair:(a, b)) -> a given (a, b) = pair.0
+def snd(pair:(a, b)) -> b given (a, b) = pair.1
+
 def swap(pair:(a, b)) -> (b, a) given (a, b) =
   (x, y) = pair
   (y, x)
@@ -452,6 +446,15 @@ instance Ix((a, b, c)) given (a|Ix, b|Ix, c|Ix)
     (i, (j, k)) = unsafe_from_ordinal o
     (i, j, k)
 
+instance Ix((a, b, c, d)) given (a|Ix, b|Ix, c|Ix, d|Ix)
+  def size'() = size a * size b * size c * size d
+  def ordinal(tup) =
+    (i, j, k, m) = tup
+    ordinal((i,(j,(k,m))))
+  def unsafe_from_ordinal(o) =
+    (i, (j, (k, m))) = unsafe_from_ordinal o
+    (i, j, k, m)
+
 '## Vector spaces
 
 interface VSpace(a|Add|Sub)
@@ -469,8 +472,8 @@ instance VSpace(n=>a) given (a|VSpace, n|Ix)
 
 instance VSpace((a, b)) given (a|VSpace, b|VSpace)
   def (.*)(s, pair) =
-    (a, b) = pair
-    (s .* a, s .* b)
+    (x, y) = pair
+    (s .* x, s .* y)
 
 instance VSpace((i:n) => (..i) => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
@@ -596,7 +599,7 @@ struct Post(segment:Type) =
 instance Ix(Post segment) given (segment|Ix)
   def size'() = size segment + 1
   def ordinal(i) = i.val
-  def unsafe_from_ordinal(i) = Post.new(i)
+  def unsafe_from_ordinal(i) = Post(i)
 
 def left_post(i:n) -> Post n given (n|Ix) =
   unsafe_from_ordinal(n=Post n, ordinal i)
@@ -674,8 +677,8 @@ def (+=)(ref:Ref h w, x:w) -> {Accum h} ()
   %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y), x)
 
 def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h) = %indexRef(ref, i)
-def fst_ref(ref: Ref h (a,b)) -> Ref h a given (a|Data, b, h) = %fstRef(ref)
-def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b|Data, h) = %sndRef(ref)
+def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b, a|Data, h) = ref.0
+def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b|Data, h) = ref.1
 
 def run_reader(
     init:r,
@@ -979,7 +982,7 @@ instance Subset(a, c) given (a, b, c) (Subset(a, b), Subset(b, c))
   def unsafe_project'(x) = unsafe_project $ unsafe_project(to=b, x)
 
 def unsafe_project_rangefrom(j:q) -> RangeFrom(q, i) given (q|Ix, i:q) =
-  RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
+  RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
   def inject'(j) =
@@ -989,8 +992,8 @@ instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' < i'
       then Nothing
-      else Just $ RangeFrom.new $ unsafe_nat_diff(j', i')
-  def unsafe_project'(j) = RangeFrom.new unsafe_nat_diff(ordinal j, ordinal i)
+      else Just $ RangeFrom $ unsafe_nat_diff(j', i')
+  def unsafe_project'(j) = RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
 instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal $ j.val + ordinal i + 1
@@ -999,9 +1002,9 @@ instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' <= i'
       then Nothing
-      else Just $ RangeFromExc.new unsafe_nat_diff(j', i' + 1)
+      else Just $ RangeFromExc unsafe_nat_diff(j', i' + 1)
   def unsafe_project'(j) =
-    RangeFromExc.new unsafe_nat_diff(ordinal j, ordinal i + 1)
+    RangeFromExc unsafe_nat_diff(ordinal j, ordinal i + 1)
 
 instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1010,8 +1013,8 @@ instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' > i'
       then Nothing
-      else Just $ RangeTo.new j'
-  def unsafe_project'(j) = RangeTo.new (ordinal j)
+      else Just $ RangeTo j'
+  def unsafe_project'(j) = RangeTo (ordinal j)
 
 instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1020,8 +1023,8 @@ instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
     i' = ordinal i
     if j' >= i'
       then Nothing
-      else Just $ RangeToExc.new j'
-  def unsafe_project'(j) = RangeToExc.new (ordinal j)
+      else Just $ RangeToExc j'
+  def unsafe_project'(j) = RangeToExc (ordinal j)
 
 instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
@@ -1030,8 +1033,8 @@ instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
     i' = ordinal i
     if j' >= i'
       then Nothing
-      else Just $ RangeToExc.new j'
-  def unsafe_project'(j) = RangeToExc.new (ordinal j)
+      else Just $ RangeToExc j'
+  def unsafe_project'(j) = RangeToExc (ordinal j)
 
 '## Elementary/Special Functions
 This is more or less the standard [LibM fare](https://en.wikipedia.org/wiki/C_mathematical_functions).
@@ -1125,7 +1128,7 @@ instance Floating(Float32)
 struct Ptr(a:Type) =
   val : RawPtr
 
-def cast_ptr(ptr: Ptr a) -> Ptr b given (a, b) = Ptr.new(ptr.val)
+def cast_ptr(ptr: Ptr a) -> Ptr b given (a, b) = Ptr(ptr.val)
 
 interface Storable(a|Data)
   store : (Ptr a, a) -> {IO} ()
@@ -1153,26 +1156,26 @@ instance Storable(Float32)
   def storage_size() = 4
 
 instance Storable(Nat)
-  def store(ptr, x) = store(Ptr.new(ptr.val), nat_to_rep x)
-  def load(ptr) = rep_to_nat $ load(Ptr.new(ptr.val))
+  def store(ptr, x) = store(Ptr(ptr.val), nat_to_rep x)
+  def load(ptr) = rep_to_nat $ load(Ptr(ptr.val))
   def storage_size() = storage_size(a=NatRep)
 
 instance Storable(Ptr a) given (a)
   def store(ptr, x) = %ptrStore(internal_cast(to=%PtrPtr(), ptr.val), x.val)
-  def load(ptr) = Ptr.new(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
+  def load(ptr) = Ptr(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
   def storage_size() = 8  -- TODO: something more portable?
 
 -- TODO: Storable instances for other types
 
 def malloc(n:Nat) -> {IO} (Ptr a) given (a|Storable)  =
   numBytes = storage_size(a=a) * n
-  Ptr.new(%alloc(nat_to_rep numBytes))
+  Ptr(%alloc(nat_to_rep numBytes))
 
 def free(ptr:Ptr a) -> {IO} () given (a) = %free(ptr.val)
 
 def (+>>)(ptr:Ptr a, i:Nat) -> Ptr a given (a|Storable) =
   i' = nat_to_rep $ i * storage_size(a=a)
-  Ptr.new(%ptrOffset(ptr.val, i'))
+  Ptr(%ptrOffset(ptr.val, i'))
 
 -- TODO: consider making a Storable instance for tables instead
 def store_table(ptr: Ptr a, tab:n=>a) -> {IO} () given (a|Storable, n|Ix) =
@@ -1223,6 +1226,8 @@ def fanout(x:a) -> n=>a given (n|Ix, a) = for i. x
 def sq(x:a) -> a given (a|Mul) = x * x
 def abs(x:a) -> a given (a|Sub|Ord) = select(x > zero, x, zero - x)
 def mod(x:a, y:a) -> a given (a|Add|Integral) = rem(y + rem(x, y), y)
+def (>>>)(f:(a) -> b, g:(b) -> c) -> (a) -> c given (a, b, c) = \x. g(f(x))
+def (<<<)(f:(b) -> c, g:(a) -> b) -> (a) -> c given (a, b, c) = \x. f(g(x))
 
 '## Table Operations
 
@@ -1447,7 +1452,7 @@ def with_dynamic_buffer(action: (DynBuffer a) -> {IO} b) -> {IO} b given (a|Stor
   store(maxSizePtr, initMaxSize)
   bufferPtr <- with_alloc 1
   store(bufferPtr, malloc initMaxSize)
-  result = action $ DynBuffer.new(sizePtr, maxSizePtr, bufferPtr)
+  result = action $ DynBuffer(sizePtr, maxSizePtr, bufferPtr)
   free $ load bufferPtr
   result
 
@@ -1503,7 +1508,7 @@ def with_c_string(
     action: (CString) -> {IO} a
     ) -> {IO} a given (a) =
   AsList(n, s') = s <> "\NUL"
-  with_table_ptr s' \ptr. action $ CString.new(ptr.val)
+  with_table_ptr s' \ptr. action CString(ptr.val)
 
 '### Show interface
 For things that can be shown.
@@ -1523,14 +1528,14 @@ foreign "showInt32" showInt32 : (Int32) -> {IO} (Word32, RawPtr)
 instance Show(Int32)
   def show(x) = unsafe_io \.
     (n, ptr) = showInt32 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 foreign "showInt64" showInt64 : (Int64) -> {IO} (Word32, RawPtr)
 
 instance Show(Int64)
   def show(x) = unsafe_io \.
     (n, ptr) = showInt64 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 instance Show(Nat)
   def show(x) = show $ n_to_i64 x
@@ -1540,32 +1545,32 @@ foreign "showFloat32" showFloat32 : (Float32) -> {IO} (Word32, RawPtr)
 instance Show(Float32)
   def show(x) = unsafe_io \.
     (n, ptr) = showFloat32 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 foreign "showFloat64" showFloat64 : (Float64) -> {IO} (Word32, RawPtr)
 
 instance Show(Float64)
   def show(x) = unsafe_io \.
     (n, ptr) = showFloat64 x
-    string_from_char_ptr(n, Ptr.new ptr)
+    string_from_char_ptr(n, Ptr ptr)
 
 instance Show(())
   def show(_) = "()"
 
 instance Show((a, b)) given (a|Show, b|Show)
-  def show(x) =
-    (a, b) = x
-    "(" <> show a <> ", " <> show b <> ")"
+  def show(tup) =
+    (x, y) = tup
+    "(" <> show x <> ", " <> show y <> ")"
 
 instance Show((a, b, c)) given (a|Show, b|Show, c|Show)
-  def show(x) =
-    (a, b, c) = x
-    "(" <> show a <> ", " <> show b <> ", " <> show c <> ")"
+  def show(tup) =
+    (x, y, z) = tup
+    "(" <> show x <> ", " <> show y <> ", " <> show z <> ")"
 
 instance Show((a, b, c, d)) given (a|Show, b|Show, c|Show, d|Show)
-  def show(x) =
-    (a, b, c, d) = x
-    "(" <> show a <> ", " <> show b <> ", " <> show c <> ", " <> show d <> ")"
+  def show(tup) =
+    (x, y, z, w) = tup
+    "(" <> show x <> ", " <> show y <> ", " <> show z <> ", " <> show w <> ")"
 
 '### Parse interface
 For types that can be parsed from a `String`.
@@ -1623,7 +1628,7 @@ def is_null_raw_ptr(ptr:RawPtr) -> Bool =
 def from_nullable_raw_ptr(ptr:RawPtr) -> Maybe (Ptr a) given (a) =
   if is_null_raw_ptr ptr
     then Nothing
-    else Just $ Ptr.new ptr
+    else Just $ Ptr ptr
 
 def c_string_ptr(s:CString) -> Maybe (Ptr Char) = from_nullable_raw_ptr s.ptr
 
@@ -1648,7 +1653,7 @@ def fopen(path:String, mode:StreamMode) -> {IO} (Stream mode) =
     WriteMode -> "w"
   with_c_string path \cPath.
     with_c_string modeStr \cMode.
-      Stream.new $ fopenFFI(cPath.ptr, cMode.ptr)
+      Stream $ fopenFFI(cPath.ptr, cMode.ptr)
 
 def fclose(stream:Stream mode) -> {IO} () given (mode) =
   fcloseFFI stream.ptr
@@ -1721,7 +1726,7 @@ foreign "getenv" getenvFFI : (RawPtr) -> {IO} RawPtr
 
 def get_env(name:String) -> {IO} Maybe String =
   cStr <- with_c_string name
-  getenvFFI cStr.ptr | CString.new | from_c_string
+  getenvFFI cStr.ptr | CString | from_c_string
 
 def check_env(name:String) -> {IO} Bool =
   is_just $ get_env name
@@ -1744,7 +1749,7 @@ def fread(stream:Stream ReadMode) -> {IO} String =
 '### Print
 
 def get_output_stream() -> {IO} Stream WriteMode =
-  Stream.new $ %outputStream()
+  Stream $ %outputStream()
 
 @noinline
 def print(s:String) -> {IO} () =
@@ -1763,7 +1768,7 @@ def shell_out(command:String) -> {IO} String =
   modeStr = "r"
   with_c_string command \command'.
     with_c_string modeStr \modeStr'.
-      pipe = Stream.new $ popenFFI(command'.ptr, modeStr'.ptr)
+      pipe = Stream $ popenFFI(command'.ptr, modeStr'.ptr)
       fread pipe
 
 '## Partial functions
@@ -1819,7 +1824,7 @@ def new_temp_file() -> {IO} FilePath =
   s <- with_c_string "/tmp/dex-XXXXXX"
   fd = mkstempFFI s.ptr
   closeFFI fd
-  string_from_char_ptr(15, (Ptr.new s.ptr))
+  string_from_char_ptr(15, (Ptr s.ptr))
 
 def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a) =
   tmpFile = new_temp_file()
@@ -2272,9 +2277,9 @@ def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
   (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
     for i. case xs[i] of
       Just(_) ->
-        ix = get $ fst_ref ref
-        (snd_ref ref) ! (unsafe_from_ordinal ix) := Just i
-        fst_ref ref := ix + 1
+        ix = get ref.0
+        ref.1 ! (unsafe_from_ordinal ix) := Just i
+        ref.0 := ix + 1
       Nothing -> ()
   to_list $ for i:(Fin num_res).
     case res_inds[unsafe_from_ordinal $ ordinal i] of
@@ -2429,61 +2434,63 @@ instance NonEmpty(a=>b) given (a|Ix, b|NonEmpty)
 '### stack
 -- TODO: replace `DynBuffer` with this?
 
-def Stack(h:Heap, a|Data) = Ref(h, (Nat, List a))
+struct Stack(h:Heap, a|Data) =
+  size_ref : Ref h Nat
+  buf_ref  : Ref h (List a)
 
-def stack_size(stack:Stack(h, a)) -> {State h} Nat given (h, a) = get $ fst_ref stack
+  def size() -> {State h} Nat = get self.size_ref
 
-def unsafe_get_stack_buffer(stack:Stack(h, a)) -> {State h} (Ref(h, Fin 0 => a)) given (h, a|Data) =
-  get $ snd_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), snd_ref stack)
+  def unsafe_get_buffer() -> {State h} (Ref(h, Fin 0 => a)) =
+    get $ snd_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), self.buf_ref)
 
-def stack_buf_size(stack:Stack(h, a)) -> {State h} Nat given (h, a|Data) =
-  get $ fst_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), snd_ref stack)
+  def buf_size() -> {State h} Nat =
+    get $ fst_ref $ unsafe_coerce(to=Ref h (Nat, Ref h (Fin 0 => a)), self.buf_ref)
 
-def ensure_size_at_least(stack:Stack(h, a), req_size:Nat) -> {State h} () given (h, a|Data) =
-  if req_size > stack_buf_size stack then
-    -- TODO: maybe this should use integer arithmetic?
-    new_buf_size = f_to_n $ 2.0 `pow` (ceil $ log2 $ n_to_f req_size)
-    buf = unsafe_get_stack_buffer stack
-    logical_size = stack_size stack
-    cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
-    snd_ref stack := to_list for i:(Fin new_buf_size).
-      case to_ix(n=Fin logical_size, ordinal i) of
-        Just(i') -> cur_data[i']
-        Nothing  -> uninitialized_value()
+  def ensure_size_at_least(req_size:Nat) -> {State h} () =
+    if req_size > self.buf_size() then
+      -- TODO: maybe this should use integer arithmetic?
+      new_buf_size = f_to_n $ 2.0 `pow` (ceil $ log2 $ n_to_f req_size)
+      buf = self.unsafe_get_buffer()
+      logical_size = self.size()
+      cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
+      self.buf_ref := to_list for i:(Fin new_buf_size).
+        case to_ix(n=Fin logical_size, ordinal i) of
+          Just(i') -> cur_data[i']
+          Nothing  -> uninitialized_value()
 
-def read_stack(stack:Stack(h, a)) -> {State h} (List a) given (h, a|Data) =
-  n = stack_size stack
-  buf = unsafe_coerce(to=Ref(h, Fin n => a), unsafe_get_stack_buffer stack)
-  AsList(n, get buf)
+  def read() -> {State h} (List a) =
+    n = self.size()
+    buf = unsafe_coerce(to=Ref(h, Fin n => a), self.unsafe_get_buffer())
+    AsList(n, get buf)
 
-@noinline
-def stack_push(stack:Stack(h, a), x:a) -> {State h} () given (a|Data, h) =
-  n_old = stack_size stack
-  n_new = n_old + 1
-  ensure_size_at_least(stack, n_new)
-  buf = unsafe_get_stack_buffer stack
-  buf ! (unsafe_from_ordinal n_old) := x
-  fst_ref stack := n_new
+  @noinline
+  def push(x:a) -> {State h} () =
+    n_old = self.size()
+    n_new = n_old + 1
+    self.ensure_size_at_least(n_new)
+    buf = self.unsafe_get_buffer()
+    buf ! (unsafe_from_ordinal n_old) := x
+    self.size_ref := n_new
 
-@noinline
-def stack_extend(stack:Stack(h, a), x:n=>a) -> {State h} () given (a|Data, n|Ix, h) =
-  n_old = stack_size stack
-  n_new = n_old + size n
-  ensure_size_at_least(stack, n_new)
-  buf = unsafe_get_stack_buffer stack
-  buf_slice = unsafe_coerce(to=Ref(h,n=>a), buf ! (unsafe_from_ordinal n_old))
-  buf_slice := x
-  fst_ref stack := n_new
+  @noinline
+  def extend(x:n=>a) -> {State h} () given (n|Ix) =
+    n_old = self.size()
+    n_new = n_old + size n
+    self.ensure_size_at_least(n_new)
+    buf = self.unsafe_get_buffer()
+    buf_slice = unsafe_coerce(to=Ref(h,n=>a), buf ! (unsafe_from_ordinal n_old))
+    buf_slice := x
+    self.size_ref := n_new
 
-def stack_pop(stack:Stack(h, a)) -> {State h} Maybe a given (a|Data, h) =
-  n_old = stack_size stack
-  case n_old == 0 of
-    True -> Nothing
-    False ->
-      n_new = unsafe_nat_diff(n_old, 1)
-      buf = unsafe_get_stack_buffer stack
-      fst_ref stack := n_new
-      Just $ get buf!(unsafe_from_ordinal n_new)
+  def pop() -> {State h} Maybe a =
+    n_old = self.size()
+    case n_old == 0 of
+      True -> Nothing
+      False ->
+        n_new = unsafe_nat_diff(n_old, 1)
+        buf = self.unsafe_get_buffer()
+        self.size_ref := n_new
+        Just $ get buf!(unsafe_from_ordinal n_new)
 
 stack_init_size = 16
 def with_stack(
@@ -2491,18 +2498,18 @@ def with_stack(
     action:(given (h:Heap), Stack(h, a)) -> {State h|eff} r
     ) -> {|eff} r  given (eff, r) =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value()
-  with_state (0, init_stack) \ref . action ref
+  with_state (0, init_stack) \ref . action(Stack(ref.0, ref.1))
 
 def stack_extend_internal(stack:Stack(h, Char), x:Fin n=>Char) -> {State h} () given (n, h) =
-  stack_extend(stack, x)
+  stack.extend(x)
 
 def stack_push_internal(stack:Stack(h, Char), x:Char) -> {State h} () given (h) =
-  stack_push(stack, x)
+  stack.push(x)
 
 def with_stack_internal(f:(given (h:Heap), Stack(h, Char)) -> {State h} ()) -> List Char =
   with_stack Char \stack.
     f stack
-    read_stack stack
+    stack.read()
 
 def show_any(x:a) -> String given (a) = unsafe_coerce(to=String, %showAny(x))
 
@@ -2533,7 +2540,7 @@ struct FullTileIx(n|Ix, tile_size:Nat, tile_ix:Nat) =
 instance Ix(FullTileIx(n, tile_size, tile_ix)) given (n|Ix, tile_size:Nat, tile_ix:Nat)
   def size'() = tile_size
   def ordinal(i)  = ordinal i.unwrap
-  def unsafe_from_ordinal(i) =FullTileIx.new $ unsafe_from_ordinal i
+  def unsafe_from_ordinal(i) = FullTileIx $ unsafe_from_ordinal i
 
 instance Subset(FullTileIx(n, tile_size, tile_ix), n) given (n|Ix, tile_size:Nat, tile_ix:Nat)
   def inject'(i) = unsafe_from_ordinal $ tile_size * tile_ix + ordinal i.unwrap
@@ -2549,7 +2556,7 @@ struct CodaIx(n|Ix, coda_offset:Nat, coda_size:Nat) =
 instance Ix(CodaIx(n, coda_offset, coda_size)) given (n|Ix, coda_offset:Nat, coda_size:Nat)
   def size'() = coda_size
   def ordinal(i) = ordinal i.unwrap
-  def unsafe_from_ordinal(i) = CodaIx.new $ unsafe_from_ordinal i
+  def unsafe_from_ordinal(i) = CodaIx $ unsafe_from_ordinal i
 
 instance Subset(CodaIx(n, coda_offset, coda_size), n) given (n|Ix, coda_offset:Nat, coda_size:Nat)
   def inject'(i) = unsafe_from_ordinal $ coda_offset + ordinal i.unwrap
@@ -2569,8 +2576,7 @@ def tile(
     body (FullTileIx(n, tile_size, tile_ix'))
   body (CodaIx(n, coda_offset, coda_size))
 
--- matmul. Better symbol to use? `@`?
-def (**)(
+def tiled_matmul(
     x: l=>m=>Float,
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
@@ -2589,6 +2595,14 @@ def (**)(
               for_ m_offset:m_set.
                 m_ix = inject m_offset
                 result!l_ix!n_ix += x[l_ix,m_ix] * y[m_ix,n_ix]
+
+-- matmul. Better symbol to use? `@`?
+def (**)(
+    x: l=>m=>Float,
+    y: m=>n=>Float
+    ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
+  -- TODO(https://github.com/google-research/dex-lang/issues/1212) Replace with tiled_matmul.
+  tiled_matmul(x, y)
 
 def (**.)(mat: n=>m=>Float, v: m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
   for i. vdot(mat[i], v)

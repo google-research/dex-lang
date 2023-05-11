@@ -93,29 +93,29 @@ def set_intersect(
 
 -- TODO Implicit arguments to data definitions
 -- (Probably `a` should be implicit)
-struct Element(a|Ord, set:(Set a)) =
+struct Element(set:(Set a)) given (a|Ord) =
   val: Nat
 
 -- TODO The set argument could be implicit (inferred from the Element
 -- type), but maybe it's easier to read if it's explicit.
-def member(x:a, set:(Set a)) -> Maybe (Element a set) given (a|Ord) =
+def member(x:a, set:(Set a)) -> Maybe (Element set) given (a|Ord) =
   UnsafeAsSet(_, elts) = set
   case search_sorted elts x of
-    Just n -> Just $ Element.new (ordinal n)
+    Just n -> Just $ Element(ordinal n)
     Nothing -> Nothing
 
-def value(x:Element a set) -> a given (a|Ord, set:Set a) =
+def value(x:Element set) -> a given (a|Ord, set:Set a) =
   UnsafeAsSet(_, elts) = set
   elts[unsafe_from_ordinal x.val]
 
-instance Ix(Element a set) given (a|Ord, set:Set a)
+instance Ix(Element set) given (a|Ord, set:Set a)
   def size'() = set_size set
   def ordinal(n) = n.val
-  def unsafe_from_ordinal(n) = Element.new(n)
+  def unsafe_from_ordinal(n) = Element(n)
 
-instance Eq(Element a set) given (a|Ord, set:Set a)
+instance Eq(Element set) given (a|Ord, set:Set a)
   def (==)(ix1, ix2) = ordinal ix1 == ordinal ix2
 
-instance Ord(Element a set) given (a|Ord, set:Set a)
+instance Ord(Element set) given (a|Ord, set:Set a)
   def (<)(ix1, ix2) = ordinal ix1 < ordinal ix2
   def (>)(ix1, ix2) = ordinal ix1 > ordinal ix2

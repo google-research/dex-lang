@@ -55,7 +55,7 @@ traverseNames
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- flip R.traverseWithKey vs \rawName (SubstItem d c _) ->
+  m <- flip R.traverseWithKey (fromNameSet vs) \rawName (SubstItem d c _) ->
     interpretColor c \(ColorProxy :: ColorProxy c) -> do
       v' <- f (UnsafeMakeName rawName :: Name c i)
       return $ SubstItem d c (unsafeCoerceVC v')
@@ -126,13 +126,19 @@ substM :: (SubstReader v m, EnvReader2 m, SinkableE e, SubstE v e, FromName v)
        => e i -> m i o (e o)
 substM e = do
   subst <- getSubst
+  substM' subst e
+{-# INLINE substM #-}
+
+substM' :: (EnvReader m, SinkableE e, SubstE v e, FromName v)
+       => Subst v i o -> e i -> m o (e o)
+substM' subst e = do
   case tryApplyIdentitySubst subst e of
     Just e' -> return $ e'
     Nothing -> do
       env <- unsafeGetEnv
       Distinct <- getDistinct
       return $ fmapNames env (subst!) e
-{-# INLINE substM #-}
+{-# INLINE substM' #-}
 
 fromConstAbs :: (BindsNames b, HoistableE e) => Abs b e n -> HoistExcept (e n)
 fromConstAbs (Abs b e) = hoist b e
@@ -250,6 +256,27 @@ instance (Color c, IsAtomName c ~ False) => SubstE (SubstVal atom) (Name c) wher
 instance FromName (SubstVal atom) where
   fromName = Rename
   {-# INLINE fromName #-}
+
+class ToSubstVal (v::V) (atom::IR->E) where
+  toSubstVal :: v c n -> SubstVal atom c n
+
+instance ToSubstVal (Name::V) (atom::IR->E) where
+  toSubstVal = Rename
+
+instance ToSubstVal (SubstVal atom) atom where
+  toSubstVal = id
+
+type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Atom)
+
+atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE AtomSubstVal e)
+           => e i -> m i o (e o)
+atomSubstM e = do
+  subst <- getSubst
+  let subst' = asAtomSubstValSubst subst
+  substM' subst' e
+
+asAtomSubstValSubst :: ToSubstVal v Atom => Subst v i o -> Subst AtomSubstVal i o
+asAtomSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
 
 -- === SubstReaderT transformer ===
 

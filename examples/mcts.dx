@@ -247,7 +247,7 @@ between 1 and 2 to add to the current sum, starting at 0. Whoever reaches 21 win
 Count21State = Nat
 Count21Move = Nat
 Count21 : Game Count21State Count21Move =
-   (Game.new (\sum:Count21State. to_list [1,2])
+   (Game (\sum:Count21State. to_list [1,2])
              (\sum. sum == 21)
              (\sum:Count21State move. sum + move)
              (\sum. sum >= 21))

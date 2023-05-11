@@ -25,14 +25,6 @@ x = ['a', 'b']
    [x[i], x[j]]
 > [[0x61, 0x61], [0x61, 0x62], [0x62, 0x61], [0x62, 0x62]]
 
--- 'Records and variants
-
--- :p {a=1, b=2}
--- > {a = 1, b = 2}
-
--- :p {a="1234", b=[1, 2, 3]}
--- > {a = "1234", b = [1, 2, 3]}
-
 'Values without a pretty-printer
 
 :p Int

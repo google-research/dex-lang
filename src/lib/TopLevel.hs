@@ -219,7 +219,7 @@ ensureModuleLoaded moduleSourceName = do
   depsRequired <- findDepsTransitively moduleSourceName
   forM_ depsRequired \md -> do
     evaluated <- evalPartiallyParsedUModuleCached md
-    bindModule (umppName md) evaluated
+    updateTopEnv $ UpdateLoadedModules (umppName md) evaluated
 {-# SCC ensureModuleLoaded #-}
 
 evalSourceBlock
@@ -247,7 +247,7 @@ evalSourceBlock'
 evalSourceBlock' mname block = case sbContents block of
   TopDecl decl -> parseDecl decl >>= execUDecl mname
   Command cmd expr' -> do
-   expr <- parseBlock expr'
+   expr <- parseExpr expr'
    case cmd of
     -- TODO: we should filter the top-level emissions we produce in this path
     -- we want cache entries but we don't want dead names.
@@ -321,7 +321,7 @@ evalSourceBlock' mname block = case sbContents block of
               [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
               , "but it has type:" , "" , pprint implTy]
           Success () -> return ()
-        emitAtomRules fname' $ CustomLinearize nimplicit nexplicit zeros impl
+        updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
       Just _ -> throw TypeErr
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
@@ -364,7 +364,9 @@ runEnvQuery query = do
             UMethodVar   v' -> pprint <$> lookupEnv v'
             UEffectVar   v' -> pprint <$> lookupEnv v'
             UEffectOpVar v' -> pprint <$> lookupEnv v'
-            UHandlerVar  v' -> pprint <$> lookupEnv v'
+            UPunVar v' -> do
+              val <- lookupEnv v'
+              return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
           logTop $ TextOut $ "Binding:\n" ++ info
 
 filterLogs :: SourceBlock -> Result -> Result
@@ -410,7 +412,7 @@ parseUModuleDepsCached name file = do
     Just (cachedReq, result) | cachedReq == req -> return result
     _ -> do
       let result = parseUModuleDeps name file
-      extendCache $ mempty { parsedDeps = M.singleton name (req, result) }
+      updateTopEnv $ ExtendCache $ mempty { parsedDeps = M.singleton name (req, result) }
       return result
 
 evalPartiallyParsedUModuleCached
@@ -435,7 +437,7 @@ evalPartiallyParsedUModuleCached md@(UModulePartialParse name deps source) = do
         _ -> do
           liftIO $ hPutStrLn stderr $ "Compiling " ++ pprint name
           result <- evalPartiallyParsedUModule md
-          extendCache $ mempty {
+          updateTopEnv $ ExtendCache $ mempty {
             moduleEvaluations = M.singleton name (req, result) }
           return result
 
@@ -452,13 +454,10 @@ evalPartiallyParsedUModule partiallyParsed = do
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
-  Abs topFrag UnitE <-
-    localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
-  TopEnvFrag envFrag moduleEnvFrag <- return topFrag
-  ModuleEnv (ImportStatus directDeps transDeps) sm scs <-
-    return $ fragLocalModuleEnv moduleEnvFrag
-  let fragToReEmit = TopEnvFrag envFrag $ moduleEnvFrag {
-        fragLocalModuleEnv = mempty }
+  Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
+  TopEnvFrag envFrag moduleEnvFrag otherUpdates <- return topFrag
+  ModuleEnv (ImportStatus directDeps transDeps) sm scs <- return moduleEnvFrag
+  let fragToReEmit = TopEnvFrag envFrag mempty otherUpdates
   let evaluatedModule = Module name directDeps transDeps sm scs
   emitEnv $ Abs fragToReEmit evaluatedModule
 
@@ -582,6 +581,13 @@ loweredOptimizations lowered = do
     logFiltered l VectPass $ return [TextOut $ pprint errs]
     checkPass VectPass $ return vo
 
+loweredOptimizationsNoDest :: Topper m => SLam n -> m n (SLam n)
+loweredOptimizationsNoDest lowered = do
+  lopt <- whenOpt lowered $ checkPass LowerOptPass .
+    (dceTop >=> hoistLoopInvariant)
+  -- TODO Add a NoDest entry point for vectorization and add it here
+  return lopt
+
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
 evalSpecializations fs = do
   fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
@@ -591,14 +597,28 @@ evalSpecializations fs = do
     -- Prevents infinite loop in case compiling `v` ends up requiring `v`
     -- (even without recursion in Dex itself this is possible via the
     -- specialization cache)
-    updateTopFunStatus f Running
+    updateTopEnv $ UpdateTopFunEvalStatus f Running
     imp <- compileTopLevelFun StandardCC simp
     objName <- toCFunction (getNameHint f) imp >>= emitObjFile
     void $ loadObject objName
-    updateTopFunStatus f (Finished $ TopFunLowerings objName)
+    updateTopEnv $ UpdateTopFunEvalStatus f (Finished $ TopFunLowerings objName)
+
+evalDictSpecializations :: (Topper m, Mut n) => [SpecDictName n] -> m n ()
+evalDictSpecializations ds = do
+  -- TODO Do we have to do these in order, like evalSpecializations, or are they
+  -- independent enough not to need it?
+  -- TODO Do we need to gate the status of these, too?
+  forM_ ds \dName -> do
+    SpecializedDict _ (Just fs) <- lookupSpecDict dName
+    fs' <- forM fs \lam -> do
+      opt <- simpOptimizations lam
+      lowered <- checkPass LowerPass $ lowerFullySequentialNoDest opt
+      loweredOptimizationsNoDest lowered
+    updateTopEnv $ LowerDictSpecialization dName fs'
+  return ()
 
 execUDecl
-  :: (Topper m, Mut n) => ModuleSourceName -> UDecl VoidS VoidS -> m n ()
+  :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
   logTop $ PassInfo Parse $ pprint decl
   Abs renamedDecl sourceMap <-
@@ -644,7 +664,7 @@ loadObject fname =
     Just p -> return p
     Nothing -> do
       f <- lookupFunObjCode fname >>= loadObjectContent
-      extendLoadedObjects fname f
+      updateTopEnv $ UpdateLoadedObjects fname f
       return f
 
 loadObjectContent :: (Topper m, Mut n) => CFunction n -> m n NativeFunction
@@ -718,7 +738,7 @@ withCompileTime m = do
   (Result outs err, t) <- measureSeconds m
   return $ Result (outs ++ [TotalTime t]) err
 
-checkPass :: (Topper m, Pretty (e n), CheckableE e)
+checkPass :: (Topper m, Pretty (e n), CheckableE r e)
           => PassName -> m n (e n) -> m n (e n)
 checkPass name cont = do
   result <- logPass name do
@@ -847,17 +867,13 @@ fromSerializedEnv (SerializedEnv defs rules cache) = do
 
 toSerializedEnv :: MonadIO m => TopStateEx -> m TopSerializedStateEx
 toSerializedEnv (TopStateEx (Env (TopEnv (RecSubst defs) (CustomRules rules) cache _ _) _) _) = do
-  collectGarbage (RecSubstFrag defs) ruleFreeVars cache
-    \defsFrag'@(RecSubstFrag defs') cache' -> do
+  collectGarbage (RecSubstFrag defs) (PairE (CustomRules rules) cache)
+    \defsFrag'@(RecSubstFrag defs') (PairE (CustomRules rules') cache') -> do
       let liveNames = toNameSet $ toScopeFrag defsFrag'
-      let rules' = unsafeCoerceE $ CustomRules
-           $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules
+      let rules'' = CustomRules
+           $ M.filterWithKey (\k _ -> k `isInNameSet` liveNames) rules'
       defs'' <- snapshotPtrs (RecSubst defs')
-      return $ TopSerializedStateEx $ SerializedEnv defs'' rules' cache'
-  where
-    ruleFreeVars v = case M.lookup v rules of
-      Nothing -> mempty
-      Just r  -> freeVarsE r
+      return $ TopSerializedStateEx $ SerializedEnv defs'' rules'' cache'
 
 getCacheDir :: MonadIO m => m FilePath
 getCacheDir = liftIO $ getXdgDirectory XdgCache "dex"
@@ -905,9 +921,10 @@ instance Topper TopperM
 instance TopBuilder TopperM where
   emitBinding = emitBindingDefault
   emitEnv (Abs frag result) = do
-    result' `PairE` ListE names <- TopperM $ emitEnv $
-      Abs frag $ result `PairE` ListE (boundNamesList frag)
-    evalSpecializations names
+    result' `PairE` ListE fNames `PairE` ListE dictNames <- TopperM $ emitEnv $
+      Abs frag $ result `PairE` ListE (boundNamesList frag) `PairE` ListE (boundNamesList frag)
+    evalSpecializations fNames
+    evalDictSpecializations dictNames
     return result'
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont

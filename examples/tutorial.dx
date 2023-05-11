@@ -52,7 +52,7 @@ import plot
 :html matshow x
 > <html output>
 
-' Once we have an table, we can use it in new comprehensions. For example,
+' Once we have a table, we can use it in new comprehensions. For example,
   let's try to add `5` to each table element. In Python, one might write this as:
 
 ' ```x5 = [[x[i][j] + 5.0 for j in range(width)] for i in range(height)]```
@@ -120,7 +120,7 @@ mean(y)
 
 ' The use of typed indices lets you do really neat things, but
   let's consider how it works. Critically, one cannot
-  simply index an table with an integer.
+  simply index a table with an integer.
 
 r = x[2 :: Int]
 > Type error:
@@ -212,7 +212,7 @@ for pair:(Fin 2, Fin 3). ordinal(pair)
   change the order of the axes. This is useful for applying functions on tables.
 
 ' For instance, we saw the `mean` function above which sums over the first axis
-  of an table. We can apply `mean` to `y` to produce the mean average over 24
+  of a table. We can apply `mean` to `y` to produce the mean average over 24
   elements:
 
 :t y
@@ -704,6 +704,5 @@ nShoes
 
 ' * Randomness and Keys
   * Laziness of For Comprehensions
-  * Records and Variant Types
   * File IO
   * Effects Beyond State

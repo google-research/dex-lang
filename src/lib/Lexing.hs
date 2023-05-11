@@ -23,7 +23,6 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
 
 import Err
-import LabeledItems
 import Types.Primitives
 
 data ParseCtx = ParseCtx
@@ -63,10 +62,6 @@ nextChar = do
   return $ T.head i
 {-# INLINE nextChar #-}
 
-lowerName  :: Lexer SourceName
-lowerName = label "lower-case name" $ lexeme $
-  checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
-
 anyCaseName  :: Lexer SourceName
 anyCaseName = label "name" $ lexeme $
   checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
@@ -84,7 +79,7 @@ checkNotKeyword p = try $ do
 
 data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | DataKW | StructKW | InterfaceKW
-             | InstanceKW | GivenKW | SatisfyingKW | DerivingKW
+             | InstanceKW | GivenKW | WithKW | SatisfyingKW | DerivingKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
@@ -109,6 +104,7 @@ keyWordToken = \case
   InstanceKW      -> "instance"
   NamedInstanceKW -> "named-instance"
   GivenKW         -> "given"
+  WithKW          -> "with"
   SatisfyingKW    -> "satisfying"
   DerivingKW      -> "deriving"
   DoKW            -> "do"
@@ -133,10 +129,6 @@ keyWordSet = HS.fromList keyWordStrs
 
 keyWordStrs :: [String]
 keyWordStrs = map keyWordToken [DefKW .. PassKW]
-
-fieldLabel :: Lexer Label
-fieldLabel = label "field label" $ lexeme $
-  checkNotKeyword $ (:) <$> (lowerChar <|> upperChar) <*> many nameTailChar
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar
@@ -163,8 +155,8 @@ doubleLit = lexeme $
 knownSymStrs :: HS.HashSet String
 knownSymStrs = HS.fromList
   [ ".", ":", "::", "!", "=", "-", "+", "||", "&&"
-  , "$", "&", "&>", "|", ",", ",>", "<-", "+=", ":="
-  , "->", "->>", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>", "<<&", "&>>"
+  , "$", "&>", "|", ",", ",>", "<-", "+=", ":="
+  , "->", "->>", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>"
   , "..", "<..", "..<", "..<", "<..<", "?", "#", "##", "#?", "#&", "#|", "@"]
 
 -- string must be in `knownSymStrs`
@@ -299,7 +291,7 @@ withIndent p = do
   nextLine
   indent <- T.length <$> takeWhileP (Just "space") (==' ')
   when (indent <= 0) empty
-  pLocal (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ p
+  pLocal (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ mayNotBreak p
 {-# INLINE withIndent #-}
 
 pLocal :: (ParseCtx -> ParseCtx) -> Parser a -> Parser a

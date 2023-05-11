@@ -47,7 +47,7 @@ instance HasDeterminant(ScalarMap)
   def determinant'(a) = a.val
   transposeType = Float
   def transpose'(x) = x
-  identity' = ScalarMap.new(1.0)
+  identity' = ScalarMap(1.0)
 
 instance LinearEndo(ScalarMap, v) given (v|Mul|VSpace)
   def apply(a, b)  = a.val .* b
@@ -55,7 +55,7 @@ instance LinearEndo(ScalarMap, v) given (v|Mul|VSpace)
   def solve'(a, b) = b / a.val
 
 instance Arbitrary(ScalarMap)
-  def arb(k) = ScalarMap.new $ arb k
+  def arb(k) = ScalarMap $ arb k
 
 
 '### Diagonal maps
@@ -66,7 +66,7 @@ instance HasDeterminant(DiagMap n) given (n|Ix)
   def determinant'(x) = prod x.val
   transposeType = n=>Float
   def transpose'(x) = x
-  identity' = DiagMap.new one
+  identity' = DiagMap one
 
 instance LinearEndo(DiagMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def apply(x, y)  = for i. x.val[i] .* y[i]
@@ -74,7 +74,7 @@ instance LinearEndo(DiagMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def solve'(a, b) = for i. b[i] / a.val[i]
 
 instance Arbitrary(DiagMap n) given (n|Ix)
-  def arb(k) = DiagMap.new $ arb k
+  def arb(k) = DiagMap $ arb k
 
 
 '### Full-rank matrices.
@@ -100,7 +100,7 @@ instance HasDeterminant(LowerTriMap n) given (n|Ix)
   def determinant'(x) = prod $ lower_tri_diag x.val
   transposeType = UpperTriMat n Float
   def transpose'(_) = error "Can't transpose to different types yet."
-  identity' = LowerTriMap.new for i j. select (ordinal i == ordinal j) one zero
+  identity' = LowerTriMap for i j. select (ordinal i == ordinal j) one zero
 
 instance LinearEndo(LowerTriMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def apply(x, y)  = for i. sum for j. x.val[i, j] .* y[inject j]
@@ -108,7 +108,7 @@ instance LinearEndo(LowerTriMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def solve'(x, y) = forward_substitute x.val y
 
 instance Arbitrary(LowerTriMap n) given (n|Ix)
-  def arb(k) = LowerTriMap.new $ arb k
+  def arb(k) = LowerTriMap $ arb k
 
 
 '### Upper-triangular maps
@@ -119,7 +119,7 @@ instance HasDeterminant(UpperTriMap n) given (n|Ix)
   def determinant'(x) = prod $ upper_tri_diag x.val
   transposeType = LowerTriMat n Float
   def transpose'(_) = error "Can't transpose to different types yet."
-  identity' = UpperTriMap.new for i j. select (0 == ordinal j) one zero
+  identity' = UpperTriMap for i j. select (0 == ordinal j) one zero
 
 instance LinearEndo(UpperTriMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def apply(x, y)  = for i. sum for j. x.val[i, j] .* y[inject j]
@@ -127,7 +127,7 @@ instance LinearEndo(UpperTriMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def solve'(x, y) = backward_substitute x.val y
 
 instance Arbitrary(UpperTriMap n) given (n|Ix)
-  def arb(k) = UpperTriMap.new $ arb k
+  def arb(k) = UpperTriMap $ arb k
 
 
 '### Skew-symmetric maps
@@ -141,7 +141,7 @@ instance HasDeterminant(SkewSymmetricMap n) given (n|Ix)
       dense_rep = skew_symmetric_prod a.val eye
       determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
   transposeType = (i:n)=>(..<i)=>Float  -- 
-  def transpose'(x) = SkewSymmetricMap.new (-x.val)
+  def transpose'(x) = SkewSymmetricMap (-x.val)
   identity' = error "Skew symmetric matrices can't represent the identity map."
 
 instance LinearEndo(SkewSymmetricMap n, n=>v) given (n|Ix, v|Mul|VSpace)
@@ -152,7 +152,7 @@ instance LinearEndo(SkewSymmetricMap n, n=>v) given (n|Ix, v|Mul|VSpace)
     solve dense_rep y
 
 instance Arbitrary(SkewSymmetricMap n) given (n|Ix)
-  def arb(k) = SkewSymmetricMap.new $ arb k
+  def arb(k) = SkewSymmetricMap $ arb k
 
 
 -- Todo: Sparse matrices. Need hashmaps for these to be practical.
@@ -177,7 +177,7 @@ def multivariate_gaussian_sample(mean:v, covroot:m, key:Key)
   noise = randNormal key
   mean + apply covroot noise
 
-:t multivariate_gaussian_sample 1.0 (ScalarMap.new 2.0) (new_key 0)
+:t multivariate_gaussian_sample 1.0 (ScalarMap 2.0) (new_key 0)
 > Float32
 
 '### Generic log pdf of a multivariate Gaussian
@@ -274,7 +274,7 @@ sizen = Fin 2000
 span = 10.0
 xs = linspace sizen (-span) span
 integral = 2.0 * span * mean for i.
-  exp $ gaussian_log_pdf (-0.1) (ScalarMap.new 0.07) xs[i]
+  exp $ gaussian_log_pdf (-0.1) (ScalarMap 0.07) xs[i]
 integral ~~ 1.0
 > True
 

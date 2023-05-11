@@ -297,7 +297,7 @@ instance ExtOutMap Env UnitB where
 -- === Monadic helpers ===
 
 lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
-lookupEnv v = withEnv $ flip lookupEnvPure v
+lookupEnv v = withEnv $ flip lookupEnvPure v . topEnv
 {-# INLINE lookupEnv #-}
 
 lookupAtomName :: (IRRep r, EnvReader m) => AtomName r n -> m n (AtomBinding r n)
@@ -317,12 +317,19 @@ lookupModule :: EnvReader m => ModuleName n -> m n (Module n)
 lookupModule name = lookupEnv name >>= \case ModuleBinding m -> return m
 {-# INLINE lookupModule #-}
 
+lookupSpecDict :: EnvReader m => SpecDictName n -> m n (SpecializedDictDef n)
+lookupSpecDict name = lookupEnv name >>=
+  \case SpecializedDictBinding m -> return m
+{-# INLINE lookupSpecDict #-}
+
 lookupFunObjCode :: EnvReader m => FunObjCodeName n -> m n (CFunction n)
 lookupFunObjCode name = lookupEnv name >>= \case FunObjCodeBinding cFun -> return cFun
 {-# INLINE lookupFunObjCode #-}
 
 lookupTyCon :: EnvReader m => TyConName n -> m n (TyConDef n)
-lookupTyCon name = lookupEnv name >>= \case TyConBinding x _ -> return x
+lookupTyCon name = lookupEnv name >>= \case
+  TyConBinding (Just x) _ -> return x
+  TyConBinding Nothing  _ -> error "TyCon not yet defined"
 {-# INLINE lookupTyCon #-}
 
 lookupDataCon :: EnvReader m => Name DataConNameC n -> m n (TyConName n, Int)
@@ -338,10 +345,6 @@ lookupClassDef name = lookupEnv name >>= \case ClassBinding x -> return x
 lookupInstanceDef :: EnvReader m => InstanceName n -> m n (InstanceDef n)
 lookupInstanceDef name = lookupEnv name >>= \case InstanceBinding x _ -> return x
 {-# INLINE lookupInstanceDef #-}
-
-lookupInstanceBinding :: EnvReader m => InstanceName n -> m n (Binding InstanceNameC n)
-lookupInstanceBinding name = lookupEnv name >>= \case binding@(InstanceBinding _ _) -> return binding
-{-# INLINE lookupInstanceBinding #-}
 
 lookupInstanceTy :: EnvReader m => InstanceName n -> m n (CorePiType n)
 lookupInstanceTy name = lookupEnv name >>= \case InstanceBinding _ ty -> return ty
@@ -501,7 +504,7 @@ fromNaryTabLamExact exactDepth lam = do
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
-  Hof (For _ _ (UnaryLamExpr b body)) ->
+  PrimOp (Hof (For _ _ (UnaryLamExpr b body))) ->
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do

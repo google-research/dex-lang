@@ -55,7 +55,6 @@ library
                      , Core
                      , Err
                      , Export
-                     , GenericTraversal
                      , Generalize
                      , Imp
                      , ImpToLLVM
@@ -69,7 +68,6 @@ library
                      , LLVM.Compile
                      , LLVM.CUDA
                      , LLVM.Shims
-                     , LabeledItems
                      , Lexing
                      , Linearize
                      , Logging
@@ -93,6 +91,7 @@ library
                      , Types.Imp
                      , Types.Misc
                      , Types.Primitives
+                     , Types.OpNames
                      , Types.Source
                      , QueryType
                      , Util

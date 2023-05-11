@@ -9,11 +9,13 @@
 module IRVariants
   ( IR (..), IRPredicate (..), Sat, Sat'
   , CoreToSimpIR, InferenceIR, IRRep (..), IRProxy (..), interpretIR
-  , IRsEqual (..), eqIRRep) where
+  , IRsEqual (..), eqIRRep, WhenIR (..)) where
 
-import GHC.Exts (Constraint)
 import GHC.Generics (Generic (..))
 import Data.Store
+import Data.Hashable
+import Data.Store.Internal
+import Data.Kind
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
@@ -75,3 +77,19 @@ eqIRRep = if r1Rep == r2Rep
  else Nothing
  where r1Rep = getIRRep @r1; r2Rep = getIRRep @r2
 {-# INLINE eqIRRep #-}
+
+data WhenIR (r::IR) (r'::IR) (a::Type) where
+  WhenIR :: a -> WhenIR r r a
+
+instance (IRRep r, IRRep r', Store e) => Store (WhenIR r r' e) where
+  size = VarSize \(WhenIR e) -> getSize e
+  peek = case eqIRRep @r @r' of
+    Just IRsEqual -> WhenIR <$> peek
+    Nothing -> error "impossible"
+  poke (WhenIR e) = poke e
+
+instance Hashable a => Hashable (WhenIR r r' a) where
+  hashWithSalt salt (WhenIR a) = hashWithSalt salt a
+
+deriving instance Show a => Show (WhenIR r r' a)
+deriving instance Eq a => Eq (WhenIR r r' a)

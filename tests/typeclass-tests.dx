@@ -221,3 +221,9 @@ data_id [4, 5, 6]
 
 data_id (the (n:Nat &> (Fin n) => Nat) (3 ,> [5, 6, 7]))
 > (3 ,> [5, 6, 7])
+
+----------------- Lambda function taking class arguments -----------------
+
+:t \(given (a|Ix, b|Ix) (Subset a b)) (xs:a=>Float). xs[0@_]
+> ({a:Type}[d:(Ix a)]{b:Type}[d.1:(Ix b),v#0:(Subset a b)](xs:(a
+>                                                              => Float32)) -> Float32)

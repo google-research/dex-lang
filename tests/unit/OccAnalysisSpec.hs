@@ -12,7 +12,7 @@ import Data.Text
 import Test.Hspec
 
 import ConcreteSyntax (parseUModule)
-import AbstractSyntax (parseBlock)
+import AbstractSyntax (parseExpr)
 import Err
 import Inference (inferTopUExpr, synthTopE)
 import Name
@@ -35,7 +35,7 @@ sourceTextToBlocks source = do
 sourceBlockToBlock :: (Topper m, Mut n) => SourceBlock -> m n (Maybe (SBlock n))
 sourceBlockToBlock block = case sbContents block of
   Misc (ImportModule moduleName)  -> importModule moduleName >> return Nothing
-  Command (EvalExpr (Printed _)) expr -> Just <$> (parseBlock expr >>= uExprToBlock)
+  Command (EvalExpr (Printed _)) expr -> Just <$> (parseExpr expr >>= uExprToBlock)
   UnParseable _ s -> throw ParseErr s
   _ -> error $ "Unexpected SourceBlock " ++ pprint block ++ " in unit tests"
 
@@ -50,7 +50,7 @@ uExprToBlock expr = do
 findRunIOAnnotation :: SBlock n -> LetAnn
 findRunIOAnnotation (Block _ decls _) = go decls where
   go :: Nest SDecl n l -> LetAnn
-  go (Nest (Let _ (DeclBinding ann _ (Hof (RunIO _)))) _) = ann
+  go (Nest (Let _ (DeclBinding ann _ (PrimOp (Hof (RunIO _))))) _) = ann
   go (Nest _ rest) = go rest
   go Empty = error "RunIO not found"
 

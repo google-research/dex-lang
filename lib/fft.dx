@@ -69,7 +69,7 @@ def power_of_2_fft(
 
           -- Read one element from the last buffer, scaled.
           angle = dir_const * (n_to_f $ mod (ordinal j) ipow2) / n_to_f ipow2
-          v = (get xRef!right_read_ix) * (Complex.new (cos angle) (sin angle))
+          v = (get xRef!right_read_ix) * (Complex (cos angle) (sin angle))
 
           -- Add and subtract it to the relevant places in the new buffer.
           bufRef!left_write_ix  += (get (xRef!left_read_ix)) + v
@@ -109,8 +109,8 @@ def convolve_complex(
   slice padded_conv 0 (Either n m)
 
 def convolve(u:n=>Float, v:m=>Float) -> (Either n m =>Float) given (n|Ix, m|Ix) =
-  u' = for i. Complex.new u[i] 0.0
-  v' = for i. Complex.new v[i] 0.0
+  u' = for i. Complex u[i] 0.0
+  v' = for i. Complex v[i] 0.0
   ans = convolve_complex u' v'
   for i. ans[i].re
 
@@ -118,10 +118,10 @@ def bluestein(x: n=>Complex) -> n=>Complex given (n|Ix) =
   -- Bluestein's algorithm.
   -- Converts the general FFT into a convolution,
   -- which is then solved with calls to a power-of-2 FFT.
-  im = Complex.new 0.0 1.0
+  im = Complex 0.0 1.0
   wks = for i.
     i_squared = n_to_f $ sq $ ordinal i
-    exp $ (-im) * (Complex.new (pi * i_squared / (n_to_f (size n))) 0.0)
+    exp $ (-im) * (Complex (pi * i_squared / (n_to_f (size n))) 0.0)
 
   AsList(_, tailTable) = tail wks 1
   back_and_forth = odd_sized_palindrome (head wks) tailTable
@@ -155,8 +155,8 @@ def ifft(xs: n=>Complex) -> n=>Complex given (n|Ix) =
       unscaled_fft = fft (for i. complex_conj xs[i])
       for i. (complex_conj unscaled_fft[i]) / (n_to_f (size n))
 
-def  fft_real(x: n=>Float) -> n=>Complex given (n|Ix) =  fft for i. Complex.new x[i] 0.0
-def ifft_real(x: n=>Float) -> n=>Complex given (n|Ix) = ifft for i. Complex.new x[i] 0.0
+def  fft_real(x: n=>Float) -> n=>Complex given (n|Ix) =  fft for i. Complex x[i] 0.0
+def ifft_real(x: n=>Float) -> n=>Complex given (n|Ix) = ifft for i. Complex x[i] 0.0
 
 def fft2(x: n=>m=>Complex) -> n=>m=>Complex given (n|Ix, m|Ix) =
   x'      = for i. fft x[i]
@@ -166,5 +166,5 @@ def ifft2(x: n=>m=>Complex) -> n=>m=>Complex given (n|Ix, m|Ix) =
   x'      = for i. ifft x[i]
   transpose for i. ifft (transpose x')[i]
 
-def  fft2_real(x: n=>m=>Float) -> n=>m=>Complex given (n|Ix, m|Ix) =  fft2 for i j. Complex.new x[i,j] 0.0
-def ifft2_real(x: n=>m=>Float) -> n=>m=>Complex given (n|Ix, m|Ix) = ifft2 for i j. Complex.new x[i,j] 0.0
+def  fft2_real(x: n=>m=>Float) -> n=>m=>Complex given (n|Ix, m|Ix) =  fft2 for i j. Complex x[i,j] 0.0
+def ifft2_real(x: n=>m=>Float) -> n=>m=>Complex given (n|Ix, m|Ix) = ifft2 for i j. Complex x[i,j] 0.0

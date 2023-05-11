@@ -18,13 +18,14 @@ import Core
 import Name
 import Optimize
 import Runtime
+import IRVariants
 import TopLevel
 import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
 
-castOp :: ScalarBaseType -> (SAtom n) -> PrimOp (SAtom n)
+castOp :: ScalarBaseType -> (SAtom n) -> PrimOp SimpIR n
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
 
 castLam :: EnvExtender m => ScalarBaseType -> ScalarBaseType -> m n (SLam n)
@@ -85,7 +86,7 @@ spec = do
                   ++ show fromTy ++ " to " ++ show toTy)
           $ forAll (arbLitVal fromTy)
           $ \lit -> constant_folding_and_runtime_casts_agree llvmFunc toTy lit
-    llvmFunc <- runIO $ fst <$> runTopperM cfg init_env
+    llvm_w32_f32 <- runIO $ fst <$> runTopperM cfg init_env
       (compile Word32Type Float32Type)
     it "agrees with runtime on rounding mode" $
       -- These values are chosen to tickle the difference between different
@@ -114,4 +115,12 @@ spec = do
             , Word32Lit 0x300000D
             , Word32Lit 0x300000E
             ] \val ->
-                constant_folding_and_runtime_casts_agree llvmFunc Float32Type val
+                constant_folding_and_runtime_casts_agree llvm_w32_f32 Float32Type val
+    llvm_w64_f64 <- runIO $ fst <$> runTopperM cfg init_env
+      (compile Word64Type Float64Type)
+    it "rounds to nearest even" $
+      -- This particular literal was found by QuickCheck as a counter-example
+      -- where a previous version of `foldCast.fixUlp` did not round to nearest
+      -- even correctly.
+      constant_folding_and_runtime_casts_agree llvm_w64_f64 Float64Type $
+        Word64Lit 10633092062366456832

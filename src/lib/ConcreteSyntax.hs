@@ -9,12 +9,12 @@ module ConcreteSyntax (
   keyWordStrs, showPrimName,
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
-  pattern ExprBlock,
   pattern Binary, pattern Prefix, pattern Postfix, pattern Identifier) where
 
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
 import Data.Char
+import Data.Either
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map qualified as M
@@ -33,6 +33,7 @@ import Name
 import Types.Core
 import Types.Source
 import Types.Primitives
+import qualified Types.OpNames as P
 import Util
 
 -- TODO: implement this more efficiently rather than just parsing the whole
@@ -85,10 +86,6 @@ interp_operator = \case
   "="   -> CSEqual
   name  -> EvalBinOp $ "(" <> name <> ")"
 
-pattern ExprBlock :: Group -> CSBlock
-pattern ExprBlock g <- (CSBlock [WithSrc _ (CExpr g)]) where
-  ExprBlock g = CSBlock [WithSrc Nothing (CExpr g)]
-
 pattern Binary :: Bin' -> Group -> Group -> Group
 pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
   Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc Nothing op) lhs rhs
@@ -137,7 +134,7 @@ declareForeign :: Parser SourceBlock'
 declareForeign = do
   keyWord ForeignKW
   foreignName <- strLit
-  b <- lowerName
+  b <- anyName
   void $ label "type annotation" $ sym ":"
   ty <- cGroup
   eol
@@ -187,14 +184,23 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM TopDecl (dataDef <* eolf)
-  <|> liftM TopDecl (structDef <* eolf)
-  <|> liftM TopDecl (topInstanceDecl <* eolf)
-  <|> liftM TopDecl (interfaceDef <* eolf)
-  <|> liftM TopDecl (effectDef <* eolf)
+  <|> liftM TopDecl topDecl
   <|> topLetOrExpr <* eolf
   <|> hidden (some eol >> return (Misc EmptyLines))
   <|> hidden (sc >> eol >> return (Misc CommentLine))
+
+topDecl :: Parser CTopDecl
+topDecl = withSrc $ topDecl' <* eolf
+
+topDecl' :: Parser CTopDecl'
+topDecl' =
+      dataDef
+  <|> structDef
+  <|> interfaceDef
+  <|> (CInstanceDecl <$> instanceDef True)
+  <|> (CInstanceDecl <$> instanceDef False)
+  <|> (CDerivingDecl <$> derivingDef)
+  <|> effectDef
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
@@ -229,38 +235,52 @@ explicitCommand = do
     "html"    -> return $ EvalExpr RenderHtml
     "export"  -> ExportFun <$> nameString
     _ -> fail $ "unrecognized command: " ++ show cmdName
-  e <- cBlock <* eolf
+  b <- cBlock <* eolf
+  e <- case b of
+    ExprBlock e -> return e
+    IndentedBlock decls -> return $ WithSrc Nothing $ CDo $ IndentedBlock decls
   return $ case (e, cmd) of
-    (ExprBlock (WithSrc _ (CIdentifier v)), GetType) -> Misc $ GetNameType v
+    (WithSrc _ (CIdentifier v), GetType) -> Misc $ GetNameType v
     _ -> Command cmd e
 
-structDef :: Parser CTopDecl
-structDef = withSrc do
+type CDefBody = ([(SourceName, Group)], [(LetAnn, CDef)])
+structDef :: Parser CTopDecl'
+structDef = do
   keyWord StructKW
   tyName <- anyName
-  params <- typeParams
-  fields <- onePerLine nameAndType
-  return $ CStruct tyName params fields
+  (params, givens) <- typeParams
+  (fields, defs) <- oneLiner <|> multiLiner
+  return $ CStruct tyName params givens fields defs
+  where
+    oneLiner :: Parser CDefBody
+    oneLiner = do
+      field <- nameAndType
+      return ([field], [])
 
-dataDef :: Parser CTopDecl
-dataDef = withSrc do
+    multiLiner :: Parser CDefBody
+    multiLiner = partitionEithers <$> onePerLine do
+      (    (Left  <$> nameAndType)
+       <|> (Right <$> funDefLetWithAnn))
+
+funDefLetWithAnn :: Parser (LetAnn, CDef)
+funDefLetWithAnn = do
+  ann <- noInline <|> return PlainLet
+  def <- funDefLet
+  return (ann, def)
+
+dataDef :: Parser CTopDecl'
+dataDef = do
   keyWord DataKW
   tyName <- anyName
-  params <- typeParams
+  (params, givens) <- typeParams
   dataCons <- onePerLine do
     dataConName <- anyName
     dataConArgs <- optExplicitParams
     return (dataConName, dataConArgs)
-  return $ CData tyName params dataCons
+  return $ CData tyName params givens dataCons
 
-topInstanceDecl :: Parser CTopDecl
-topInstanceDecl = withSrc $ liftM (CSDecl PlainLet) $
-      (CInstanceDecl <$> instanceDef True)
-  <|> (CInstanceDecl <$> instanceDef False)
-  <|> (CDerivingDecl <$> derivingDef)
-
-interfaceDef :: Parser CTopDecl
-interfaceDef = withSrc do
+interfaceDef :: Parser CTopDecl'
+interfaceDef = do
   keyWord InterfaceKW
   className <- anyName
   params <- explicitParams
@@ -272,8 +292,8 @@ interfaceDef = withSrc do
       return (methodName, ty)
   return $ CInterface className params methodDecls
 
-effectDef :: Parser CTopDecl
-effectDef = withSrc do
+effectDef :: Parser CTopDecl'
+effectDef = do
   keyWord EffectKW
   effName <- anyName
   sigs <- opSigList
@@ -303,43 +323,34 @@ topLetOrExpr :: Parser SourceBlock'
 topLetOrExpr = withSrc topLet >>= \case
   WithSrc _ (CSDecl ann (CExpr e)) -> do
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-    return $ Command (EvalExpr (Printed Nothing)) (ExprBlock e)
+    return $ Command (EvalExpr (Printed Nothing)) e
   d -> return $ TopDecl d
 
 topLet :: Parser CTopDecl'
 topLet = do
-  lAnn <- (char '@' >> letAnnStr <* (eol <|> sc)) <|> return PlainLet
+  lAnn <- noInline <|> return PlainLet
   decl <- cDecl
   return $ CSDecl lAnn decl
-  where
-    letAnnStr :: Parser LetAnn
-    letAnnStr = (string "noinline"   $> NoInlineLet)
+
+noInline :: Parser LetAnn
+noInline = (char '@' >> string "noinline"   $> NoInlineLet) <* nextLine
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
-             <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
+             <|> (withIndent $ p `sepBy1` try nextLine)
 {-# INLINE onePerLine #-}
 
 -- === Groups ===
 
--- Parse a block, which could also just be a group
 cBlock :: Parser CSBlock
-cBlock = cBlock' >>= \case
-  Left blk -> return blk
-  Right ex -> return $ ExprBlock ex
+cBlock = indentedBlock <|> ExprBlock <$> cGroup
 
--- Parse a block or a group but tell me which (i.e., whether it was indented or not)
-cBlock' :: Parser (Either CSBlock Group)
-cBlock' = Left <$> realBlock <|> Right <$> cGroup where
-
-realBlock :: Parser CSBlock
-realBlock = withIndent $
-  CSBlock <$> (mayNotBreak $ withSrc cDecl `sepBy1` (semicolon <|> try nextLine))
+indentedBlock :: Parser CSBlock
+indentedBlock = withIndent $
+  IndentedBlock <$> (withSrc cDecl `sepBy1` (semicolon <|> try nextLine))
 
 cDecl :: Parser CSDecl'
-cDecl =   (CInstanceDecl <$> instanceDef True)
-      <|> (CDerivingDecl <$> derivingDef)
-      <|> (CDefDecl <$> funDefLet)
+cDecl =   (CDefDecl <$> funDefLet)
       <|> simpleLet
       <|> (keyWord PassKW >> return CPass)
 
@@ -364,7 +375,7 @@ instanceDef isNamed = do
   className <- anyName
   args <- argList
   givens <- optional givenClause
-  methods <- realBlock
+  methods <- withIndent $ withSrc cDecl `sepBy1` try nextLine
   return $ CInstanceDef className args givens methods optNameAndArgs
 
 derivingDef :: Parser CDerivingDef
@@ -413,10 +424,13 @@ immediateParens :: Parser a -> Parser a
 immediateParens p = bracketed immediateLParen rParen p
 
 -- Putting `sym =` inside the cases gives better errors.
-typeParams :: Parser ExplicitParams
+typeParams :: Parser (ExplicitParams, Maybe GivenClause)
 typeParams =
-      (explicitParams <* sym "=")
-  <|> (return []      <* sym "=")
+      (explicitParamsAndGivens <* sym "=")
+  <|> (return ([], Nothing)    <* sym "=")
+
+explicitParamsAndGivens :: Parser (ExplicitParams, Maybe GivenClause)
+explicitParamsAndGivens = (,) <$> explicitParams <*> optional givenClause
 
 optExplicitParams :: Parser ExplicitParams
 optExplicitParams = label "optional parameter list" $
@@ -435,6 +449,9 @@ givenClause :: Parser GivenClause
 givenClause = keyWord GivenKW >> do
   (,) <$> parens (commaSep cGroup)
       <*> optional (parens (commaSep cGroup))
+
+withClause :: Parser WithClause
+withClause = keyWord WithKW >> parens (commaSep cGroup)
 
 arrowOptEffs :: Parser (Maybe CEffs)
 arrowOptEffs = sym "->" >> optional cEffs
@@ -557,25 +574,25 @@ cIf = mayNotBreak do
 thenSameLine :: Parser (CSBlock, Maybe CSBlock)
 thenSameLine = do
   keyWord ThenKW
-  cBlock' >>= \case
-    (Left blk) -> do
+  cBlock >>= \case
+    IndentedBlock blk -> do
       let msg = ("No `else` may follow same-line `then` and indented consequent"
                   ++ "; indent and align both `then` and `else`, or write the "
                   ++ "whole `if` on one line.")
       mayBreak $ noElse msg
-      return (blk, Nothing)
-    (Right ex) -> do
+      return (IndentedBlock blk, Nothing)
+    ExprBlock ex -> do
       alt <- optional
         $ (keyWord ElseKW >> cBlock)
-          <|> (lookAhead (try $ withIndent (mayNotBreak $ keyWord ElseKW))
-               >> withIndent (mayNotBreak $ keyWord ElseKW >> cBlock))
+          <|> (lookAhead (try $ withIndent (keyWord ElseKW))
+               >> withIndent (keyWord ElseKW >> cBlock))
       return (ExprBlock ex, alt)
 
 thenNewLine :: Parser (CSBlock, Maybe CSBlock)
-thenNewLine = withIndent $ mayNotBreak $ do
+thenNewLine = withIndent $ do
   keyWord ThenKW
-  cBlock' >>= \case
-    (Left blk) -> do
+  cBlock >>= \case
+    IndentedBlock blk -> do
       alt <- do
         -- With `mayNotBreak`, this just forbids inline else
         noElse ("Same-line `else` may not follow indented consequent;"
@@ -583,8 +600,8 @@ thenNewLine = withIndent $ mayNotBreak $ do
         optional $ do
           try $ nextLine >> keyWord ElseKW
           cBlock
-      return (blk, alt)
-    (Right ex) -> do
+      return (IndentedBlock blk, alt)
+    ExprBlock ex -> do
       void $ optional $ try nextLine
       alt <- optional $ keyWord ElseKW >> cBlock
       return (ExprBlock ex, alt)
@@ -609,7 +626,6 @@ leafGroup = do
       '('  ->  (CIdentifier <$> symName)
            <|> cParens
       '['  -> cBrackets
-      '{'  -> cBraces
       '\"' -> CString <$> strLit
       '\'' -> CChar <$> charLit
       '%'  -> do
@@ -632,7 +648,10 @@ leafGroup = do
   postfixGroup = noGap >>
         ((JuxtaposeNoSpace,) <$> withSrc cParens)
     <|> ((JuxtaposeNoSpace,) <$> withSrc cBrackets)
-    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cIdentifier))
+    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cFieldName))
+
+cFieldName :: Parser Group'
+cFieldName = cIdentifier <|> (CNat <$> natLit)
 
 cIdentifier :: Parser Group'
 cIdentifier = CIdentifier <$> anyName
@@ -642,9 +661,6 @@ cParens = CParens <$> parens (commaSep cParenGroup)
 
 cBrackets :: Parser Group'
 cBrackets = CBrackets <$> brackets (commaSep cGroup)
-
-cBraces :: Parser Group'
-cBraces = CBrackets <$> braces (commaSep cGroup)
 
 -- A `PrecTable` is enough information to (i) remove or replace
 -- operators for special contexts, and (ii) build the input structure
@@ -684,21 +700,17 @@ ops =
   , [arrow, symOpR "->>"]
   , [symOpL ">>>"]
   , [symOpL "<<<"]
-  , [symOpL "&>>"]
-  , [symOpL "<<&"]
   , [symOpL   "@"]
-  , [unOpPre  "@"]
-  , [unOpPre "@..."]
-  , [unOpPre "..."]
   , [symOpN  "::"]
   , [symOpR   "$"]
+  , [symOpL   "|"]
   , [symOpN  "+=", symOpN  ":="]
   -- Associate right so the mistaken utterance foo : i:Fin 4 => (..i)
   -- groups as a bad pi type rather than a bad binder
   , [symOpR   ":"]
-  , [symOpL   "|"]
   , [symOpR  ",>"]
   , [symOpR  "&>"]
+  , [withClausePostfix]
   , [symOpL   "="]
   ] where
   other = ("other", anySymOp)
@@ -754,6 +766,13 @@ unOp f s = do
 binApp :: Bin' -> SrcPos -> Group -> Group -> Group
 binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
   where f' = WithSrc (Just pos) f
+
+withClausePostfix :: (SourceName, Expr.Operator Parser Group)
+withClausePostfix = ("with", op)
+  where
+    op = Expr.Postfix do
+      rhs <- withClause
+      return \lhs -> WithSrc Nothing $ CWith lhs rhs  -- TODO: source info
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
@@ -818,7 +837,7 @@ primNames = M.fromList
   , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
   , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
   , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  , ("TyKind"    , UPrimTC $ TypeKind)
+  , ("TyKind"    , UPrimTC $ P.TypeKind)
   , ("Float64"   , baseTy $ Scalar Float64Type)
   , ("Float32"   , baseTy $ Scalar Float32Type)
   , ("Int64"     , baseTy $ Scalar Int64Type)
@@ -834,44 +853,39 @@ primNames = M.fromList
   , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("Nat"           , UNat)
   , ("Fin"           , UFin)
-  , ("Label"         , ULabelType)
   , ("EffKind"       , UEffectRowKind)
-  , ("LabeledRowKind", ULabeledRowKind)
   , ("NatCon"        , UNatCon)
-  , ("Ref"       , UPrimTC $ RefType () ())
-  , ("HeapType"  , UPrimTC $ HeapType)
-  , ("fstRef"     , UProjRef 0)
-  , ("sndRef"     , UProjRef 1)
+  , ("Ref"       , UPrimTC $ P.RefType)
+  , ("HeapType"  , UPrimTC $ P.HeapType)
   , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ IOAlloc (Scalar Word8Type) ())
-  , ("free"     , memOp $ IOFree ())
-  , ("ptrOffset", memOp $ PtrOffset () ())
-  , ("ptrLoad"  , memOp $ PtrLoad ())
-  , ("ptrStore" , memOp $ PtrStore () ())
-  , ("throwError"    , miscOp $ ThrowError ())
-  , ("throwException", miscOp $ ThrowException ())
-  , ("dataConTag"    , miscOp $ SumTag ())
-  , ("toEnum"        , miscOp $ ToEnum () ())
-  , ("outputStream"  , miscOp $ OutputStream)
-  , ("cast"          , miscOp $ CastOp () ())
-  , ("bitcast"       , miscOp $ BitcastOp () ())
-  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce () ())
-  , ("garbageVal"    , miscOp $ GarbageVal ())
-  , ("select"        , miscOp $ Select () () ())
-  , ("showAny"       , miscOp $ ShowAny ())
-  , ("showScalar"    , miscOp $ ShowScalar ())
+  , ("alloc"    , memOp $ P.IOAlloc)
+  , ("free"     , memOp $ P.IOFree)
+  , ("ptrOffset", memOp $ P.PtrOffset)
+  , ("ptrLoad"  , memOp $ P.PtrLoad)
+  , ("ptrStore" , memOp $ P.PtrStore)
+  , ("throwError"    , miscOp $ P.ThrowError)
+  , ("throwException", miscOp $ P.ThrowException)
+  , ("dataConTag"    , miscOp $ P.SumTag)
+  , ("toEnum"        , miscOp $ P.ToEnum)
+  , ("outputStream"  , miscOp $ P.OutputStream)
+  , ("cast"          , miscOp $ P.CastOp)
+  , ("bitcast"       , miscOp $ P.BitcastOp)
+  , ("unsafeCoerce"  , miscOp $ P.UnsafeCoerce)
+  , ("garbageVal"    , miscOp $ P.GarbageVal)
+  , ("select"        , miscOp $ P.Select)
+  , ("showAny"       , miscOp $ P.ShowAny)
+  , ("showScalar"    , miscOp $ P.ShowScalar)
   , ("projNewtype" , UProjNewtype)
   , ("applyMethod0" , UApplyMethod 0)
   , ("applyMethod1" , UApplyMethod 1)
   , ("applyMethod2" , UApplyMethod 2)
-  , ("pair"         , UPrimCon $ ProdCon [(), ()])
   , ("explicitApply", UExplicitApply)
   , ("monoLit", UMonoLiteral)
   ]
   where
-    binary op = UPrimOp $ BinOp op () ()
-    baseTy b = UPrimTC $ BaseType b
-    memOp op = UPrimOp $ MemOp op
-    unary  op = UPrimOp $ UnOp  op ()
+    binary op = UBinOp op
+    baseTy b  = UBaseType b
+    memOp op  = UMemOp op
+    unary  op = UUnOp  op
     ptrTy  ty = PtrType (CPU, ty)
-    miscOp op = UPrimOp $ MiscOp op
+    miscOp op = UMiscOp op

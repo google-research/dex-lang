@@ -62,6 +62,7 @@ import Name
 import PPrint ()
 import Types.Primitives
 import Types.Source
+import qualified Types.OpNames as P
 import Util
 
 -- === Converting concrete syntax to abstract syntax ===
@@ -69,10 +70,10 @@ import Util
 parseExpr :: Fallible m => Group -> m (UExpr VoidS)
 parseExpr e = liftSyntaxM $ expr e
 
-parseDecl :: Fallible m => CTopDecl -> m (UDecl VoidS VoidS)
+parseDecl :: Fallible m => CTopDecl -> m (UTopDecl VoidS VoidS)
 parseDecl d = liftSyntaxM $ topDecl d
 
-parseBlock :: Fallible m => CSBlock -> m (UExpr VoidS)
+parseBlock :: Fallible m => CSBlock -> m (UBlock VoidS)
 parseBlock b = liftSyntaxM $ block b
 
 liftSyntaxM :: Fallible m => SyntaxM a -> m a
@@ -93,7 +94,7 @@ checkSourceBlockParses = \case
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
     void $ expr e
   TopDecl d -> void $ topDecl d
-  Command _ b -> void $ block b
+  Command _ b -> void $ expr b
   DeclareForeign _ _ ty -> void $ expr ty
   DeclareCustomLinearization _ _ body -> void $ expr body
   Misc _ -> return ()
@@ -103,51 +104,53 @@ checkSourceBlockParses = \case
 
 type SyntaxM = FallibleM
 
-topDecl :: CTopDecl -> SyntaxM (UDecl VoidS VoidS)
+topDecl :: CTopDecl -> SyntaxM (UTopDecl VoidS VoidS)
 topDecl = dropSrc topDecl' where
-  topDecl' (CSDecl ann d) = decl ann (WithSrc Nothing d)
-  topDecl' (CData name tyConParams constructors) = do
+  topDecl' (CSDecl ann d) = ULocalDecl <$> decl ann (WithSrc Nothing d)
+  topDecl' (CData name tyConParams givens constructors) = do
     tyConParams' <- aExplicitParams tyConParams
+    givens' <- toNest <$> fromMaybeM givens [] aGivens
     constructors' <- forM constructors \(v, ps) -> do
       ps' <- toNest <$> mapM tyOptBinder ps
       return (v, ps')
     return $ UDataDefDecl
-      (UDataDef name tyConParams' $
+      (UDataDef name (givens' >>> tyConParams') $
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
-  topDecl' (CStruct name params fields) = do
+  topDecl' (CStruct name params givens fields defs) = do
     params' <- aExplicitParams params
+    givens' <- toNest <$> fromMaybeM givens [] aGivens
     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
-    return $ UStructDecl (UStructDef name params' fields') (fromString name)
+    methods <- forM defs \(ann, d) -> do
+      (methodName, lam) <- aDef d
+      return (ann, methodName, Abs (UBindSource "self") lam)
+    return $ UStructDecl (fromString name) (UStructDef name (givens' >>> params') fields' methods)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
       ty' <- expr ty
       return (fromString methodName, ty')
     return $ UInterface params' methodTys (fromString name) (toNest methodNames)
+  topDecl' (CInstanceDecl def) = aInstanceDef def
+  topDecl' (CDerivingDecl def) = aDerivingDef def
   topDecl' (CEffectDecl _ _) = error "not implemented"
   topDecl' (CHandlerDecl _ _ _ _ _ _) = error "not implemented"
 
-uExprAsDecl :: UExpr VoidS -> UDecl VoidS VoidS
-uExprAsDecl e = ULet PlainLet (nsB UPatIgnore) Nothing e
-
 decl :: LetAnn -> CSDecl -> SyntaxM (UDecl VoidS VoidS)
-decl ann = dropSrc \case
-  CLet binder body -> do
+decl ann = propagateSrcB \case
+  CLet binder rhs -> do
     (p, ty) <- patOptAnn binder
-    ULet ann p ty <$> block body
+    ULet ann p ty <$> asExpr <$> block rhs
   CBind _ _ -> throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ ULet ann (fromString name) Nothing (ns $ ULam lam)
-  CExpr g -> uExprAsDecl <$> expr g
-  CInstanceDecl def -> aInstanceDef def
-  CDerivingDecl def -> aDerivingDef def
+  CExpr g -> UExprDecl <$> expr g
   CPass -> return UPass
 
-aInstanceDef :: CInstanceDef -> SyntaxM (UDecl VoidS VoidS)
-aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParams) = do
+aInstanceDef :: CInstanceDef -> SyntaxM (UTopDecl VoidS VoidS)
+aInstanceDef (CInstanceDef clName args givens methods instNameAndParams) = do
   let clName' = fromString clName
   args' <- mapM expr args
   givens' <- toNest <$> fromMaybeM givens [] aGivens
@@ -162,7 +165,7 @@ aInstanceDef (CInstanceDef clName args givens (CSBlock methods) instNameAndParam
           return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
 
-aDerivingDef :: CDerivingDef -> SyntaxM (UDecl VoidS VoidS)
+aDerivingDef :: CDerivingDef -> SyntaxM (UTopDecl VoidS VoidS)
 aDerivingDef (CDerivingDef clName args givens) = do
   let clName' = fromString clName
   args' <- mapM expr args
@@ -254,7 +257,6 @@ pat = propagateSrcB pat' where
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatDepPair $ PairB lhs' rhs'
-  pat' (CBraces   gs) = UPatRecord <$> fieldRowPatList CSEqual gs
   pat' (CBrackets gs) = UPatTable . toNest <$> (mapM pat gs)
   -- TODO: use Python-style trailing comma (like `(x,y,)`) for singleton tuples
   pat' (CParens [g]) = dropSrcB <$> casePat g
@@ -275,31 +277,6 @@ pat = propagateSrcB pat' where
       WithSrc _ (CParens gs) -> UPatCon (fromString name) . toNest <$> mapM pat gs
       _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
   pat' _ = throw SyntaxErr "Illegal pattern"
-
-fieldRowPatList :: Bin' -> [Group] -> SyntaxM (UFieldRowPat VoidS VoidS)
-fieldRowPatList bind groups = go groups UEmptyRowPat where
-  go [] rest = return rest
-  go (g:gs) rest = case g of
-    Binary binder lhs rhs | binder == bind -> do
-      header <- case lhs of
-        (Prefix "@..." field) -> UDynFieldsPat . fromString <$>
-          identifier "record pattern dynamic remainder name" field
-        (Prefix "@"    field) -> UDynFieldPat . fromString <$>
-          identifier "record pattern dynamic field name" field
-        field -> UStaticFieldPat <$> identifier "record pattern field" field
-      rhs' <- pat rhs
-      header rhs' <$> go gs rest
-    Prefix "..." field -> case gs of
-      [] -> case field of
-        (WithSrc _ CEmpty) -> return $ URemFieldsPat UIgnore
-        (WithSrc _ CHole) -> return $ URemFieldsPat UIgnore
-        name -> URemFieldsPat . fromString
-          <$> identifier "record pattern remainder name" name
-      _ -> throw SyntaxErr "Ellipsis-pattern must be last"
-    WithSrc _ (CParens [g']) -> go (g':gs) rest
-    field@(WithSrc src _) -> do
-      field' <- identifier "record pattern field pun" field
-      UStaticFieldPat (fromString field') (WithSrcB src $ fromString field') <$> go gs rest
 
 data ParamStyle
  = TypeParam  -- binder optional, used in pi types
@@ -382,19 +359,32 @@ aMethod (WithSrc src d) = Just . WithSrcE src <$> addSrcContext src case d of
     return $ UMethodDef (fromString name) rhs'
   _ -> throw SyntaxErr "Unexpected method definition. Expected `def` or `x = ...`."
 
-block :: CSBlock -> SyntaxM (UExpr VoidS)
-block (CSBlock []) = throw SyntaxErr "Block must end in expression"
-block (ExprBlock g) = expr g
-block (CSBlock ((WithSrc pos (CBind b rhs)):ds)) = do
+asExpr :: UBlock VoidS -> UExpr VoidS
+asExpr (WithSrcE src b) = case b of
+  UBlock Empty e -> e
+  _ -> WithSrcE src $ UDo $ WithSrcE src b
+
+block :: CSBlock -> SyntaxM (UBlock VoidS)
+block (ExprBlock g) = WithSrcE Nothing . UBlock Empty <$> expr g
+block (IndentedBlock decls) = do
+  (decls', result) <- blockDecls decls
+  return $ WithSrcE Nothing $ UBlock decls' result
+
+blockDecls :: [CSDecl] -> SyntaxM (Nest UDecl VoidS VoidS, UExpr VoidS)
+blockDecls [] = error "shouldn't have empty list of decls"
+blockDecls [WithSrc src d] = addSrcContext src case d of
+  CExpr g -> (Empty,) <$> expr g
+  _ -> throw SyntaxErr "Block must end in expression"
+blockDecls (WithSrc pos (CBind b rhs):ds) = do
   WithExpl _ b' <- generalBinder DataParam Explicit b
-  rhs' <- block rhs
-  body <- block $ CSBlock ds
+  rhs' <- asExpr <$> block rhs
+  body <- block $ IndentedBlock ds
   let lam = ULam $ ULamExpr (UnaryNest (WithExpl Explicit b')) ExplicitApp Nothing Nothing body
-  return $ WithSrcE pos $ extendAppRight rhs' (ns lam)
-block (CSBlock (d@(WithSrc pos _):ds)) = do
+  return (Empty, WithSrcE pos $ extendAppRight rhs' (ns lam))
+blockDecls (d:ds) = do
   d' <- decl PlainLet d
-  e' <- block $ CSBlock ds
-  return $ WithSrcE pos $ UDecl $ UDeclExpr d' e'
+  (ds', e) <- blockDecls ds
+  return (Nest d' ds', e)
 
 -- === Concrete to abstract syntax of expressions ===
 
@@ -411,13 +401,11 @@ expr = propagateSrcE expr' where
   expr' (CChar char)        = return $ charExpr char
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
-  expr' (CLabel prefix str) = return $ labelExpr prefix str
   expr' (CParens [g])       = dropSrcE <$> expr g
   expr' (CParens gs) = UPrim UTuple <$> mapM expr gs
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   expr' (CBrackets gs) = UTabCon <$> mapM expr gs
-  expr' (CBraces _) = throw SyntaxErr $ "Unexpected effects"
   expr' (CGivens _) = throw SyntaxErr $ "Unexpected `given` clause"
   expr' (CArrow lhs effs rhs) = do
     case lhs of
@@ -427,7 +415,7 @@ expr = propagateSrcE expr' where
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
       _ -> throw SyntaxErr "Argument types should be in parentheses"
-  expr' (CDo b) = dropSrcE <$> block b
+  expr' (CDo b) = UDo <$> block b
   -- Binders (e.g., in pi types) should not hit this case
   expr' (CBin (WithSrc opSrc op) lhs rhs) =
     case op of
@@ -447,14 +435,16 @@ expr = propagateSrcE expr' where
       Dot -> do
         lhs' <- expr lhs
         WithSrc src rhs' <- return rhs
-        addSrcContext src $ case rhs' of
-          CIdentifier name -> return $ UFieldAccess lhs' (WithSrc src name)
-          _ -> throw SyntaxErr "Field must be a name"
+        name <- addSrcContext src $ case rhs' of
+          CIdentifier name -> return $ FieldName name
+          CNat i           -> return $ FieldNum $ fromIntegral i
+          _ -> throw SyntaxErr "Field must be a name or an integer"
+        return $ UFieldAccess lhs' (WithSrc src name)
       DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
       EvalBinOp s -> evalOp s
       DepAmpersand  -> do
         lhs' <- tyOptPat lhs
-        UDepPairTy . (UDepPairType lhs') <$> expr rhs
+        UDepPairTy . (UDepPairType ExplicitDepPair lhs') <$> expr rhs
       DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
       CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
@@ -512,7 +502,7 @@ expr = propagateSrcE expr' where
     -- TODO: Can we fetch the source position from the error context, to feed into `buildFor`?
     e <- buildFor (0, 0) dir <$> mapM binderOptTy indices <*> block body
     if trailingUnit
-      then return $ UDecl $ UDeclExpr (ULet PlainLet (nsB UPatIgnore) Nothing e) $ ns $ unitExpr
+      then return $ UDo $ ns $ UBlock (UnaryNest (nsB $ UExprDecl e)) (ns unitExpr)
       else return $ dropSrcE e
   expr' (CCase scrut alts) = UCase <$> (expr scrut) <*> mapM alternative alts
     where alternative (match, body) = UAlt <$> casePat match <*> block body
@@ -520,28 +510,34 @@ expr = propagateSrcE expr' where
     p' <- expr p
     c' <- block c
     a' <- case a of
-      Nothing -> return $ ns $ unitExpr
+      Nothing -> return $ ns $ UBlock Empty $ ns unitExpr
       (Just alternative) -> block alternative
     return $ UCase p'
       [ UAlt (nsB $ UPatCon "True"  Empty) c'
       , UAlt (nsB $ UPatCon "False" Empty) a']
+  expr' (CWith lhs rhs) = do
+    ty <- expr lhs
+    case rhs of
+      [b] -> do
+        b' <- binderOptTy b
+        return $ UDepPairTy $ UDepPairType ImplicitDepPair b' ty
+      _ -> error "n-ary dependent pairs not implemented"
 
 charExpr :: Char -> (UExpr' VoidS)
-charExpr c = UPrim (UPrimCon $ Lit $ Word8Lit $ fromIntegral $ fromEnum c) []
+charExpr c = ULit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: UExpr' VoidS
-unitExpr = UPrim (UPrimCon $ ProdCon []) []
-
-labelExpr :: LabelPrefix -> String -> UExpr' VoidS
-labelExpr PlainLabel str = ULabel str
+unitExpr = UPrim (UCon $ P.ProdCon) []
 
 -- === Builders ===
 
 -- TODO Does this generalize?  Swap list for Nest?
-buildFor :: SrcPos -> Direction -> [UOptAnnBinder VoidS VoidS] -> UExpr VoidS -> UExpr VoidS
+buildFor :: SrcPos -> Direction -> [UOptAnnBinder VoidS VoidS] -> UBlock VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
-  [] -> body
-  b:bs -> WithSrcE (Just pos) $ UFor dir $ UForExpr b $ buildFor pos dir bs body
+  [] -> error "should have nonempty list of binder"
+  [b] -> WithSrcE (Just pos) $ UFor dir $ UForExpr b body
+  b:bs -> WithSrcE (Just pos) $ UFor dir $ UForExpr b $
+    ns $ UBlock Empty $ buildFor pos dir bs body
 
 -- === Helpers ===
 

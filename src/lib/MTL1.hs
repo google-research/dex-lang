@@ -221,6 +221,10 @@ instance HoistableState UnitE where
   hoistState _ _ UnitE = UnitE
   {-# INLINE hoistState #-}
 
+instance HoistableState (NameMap c a) where
+  hoistState _ b m = hoistFilterNameMap b m
+  {-# INLINE hoistState #-}
+
 -------------------- ScopedT1 --------------------
 
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =

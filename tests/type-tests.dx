@@ -614,11 +614,11 @@ interface I(param:Type)
 
 instance I(A, extraneous) given (extraneous)
   m = todo
-> Type error:Wrong number of arugments provided. Expected 1 but got 2
+> Type error:Wrong number of positional arguments provided. Expected 1 but got 2
 
 instance I()
   m = todo
-> Type error:Wrong number of arugments provided. Expected 1 but got 0
+> Type error:Wrong number of positional arguments provided. Expected 1 but got 0
 
 -- This example shows that constraints that we learn from the body of a function
 -- can be used outside the function.
@@ -681,3 +681,22 @@ instance I()
                   -- of `u1` because it goes out of scope before `a` does.
   1
 > 1
+
+def my_id(x:a) -> a given (a, b) = x
+> Type error:Couldn't infer type of unannotated binder b
+
+def my_id2(x:a) -> a given (a, b:Type) = x
+
+:p my_id2 1.0
+> Type error:Couldn't infer implicit argument b of my_id2
+>
+> :p my_id2 1.0
+>    ^^^^^^^^^^
+
+def returns_dep_pair(n:Nat) -> (Fin new => Nat with (new:Nat)) =
+  n2 = n + n
+  for i:(Fin n2). ordinal i
+
+xs = returns_dep_pair 4
+:p sum xs
+> 28

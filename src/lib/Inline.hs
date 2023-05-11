@@ -6,7 +6,6 @@
 
 module Inline (inlineBindings) where
 
-import Data.Functor
 import Data.List.NonEmpty qualified as NE
 
 import Builder
@@ -14,7 +13,6 @@ import Core
 import Err
 import CheapReduction
 import IRVariants
-import LabeledItems
 import Name
 import Subst
 import Occurrence hiding (Var)
@@ -217,7 +215,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (Hof (For _ _ (UnaryLamExpr _ body))) = 1 + ixDepthBlock body
+    ixDepthExpr (PrimOp (Hof (For _ _ (UnaryLamExpr _ body)))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
     ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
@@ -252,13 +250,20 @@ data Context (from::E) (to::E) (o::S) where
             -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
   EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
-  RepWrap :: GenericE e1 => Context e1 e2 o -> Context (RepE e1) e2 o
 
 class Inlinable (e1::E) where
   inline :: Emits o => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
-  default inline :: (GenericE e1, Inlinable (RepE e1), Emits o)
+
+  default inline :: (VisitGeneric e1 SimpIR, Emits o)
     => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
-  inline ctx e = confuseGHC >>= \_ -> inline (RepWrap ctx) (fromE e)
+  inline ctx e = visitGeneric e >>= reconstruct ctx
+
+instance NonAtomRenamer (InlineM i o) i o where renameN = substM
+instance Emits o => Visitor (InlineM i o) SimpIR i o where
+  visitType = inline Stop
+  visitAtom = inline Stop
+  visitLam  = inline Stop
+  visitPi   = inline Stop
 
 inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
 inlineExpr ctx = \case
@@ -266,7 +271,7 @@ inlineExpr ctx = \case
   TabApp tbl ixs -> do
     s <- getSubst
     inlineAtom (TabAppCtx ixs s ctx) tbl
-  expr -> (inline Stop (fromE expr) <&> toE) >>= reconstruct ctx
+  expr -> visitGeneric expr >>= reconstruct ctx
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
@@ -275,7 +280,7 @@ inlineAtom ctx = \case
     let (idxs, v) = asNaryProj i x
     ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
     reconstruct ctx $ Atom ans
-  atom -> (inline Stop (fromE atom) <&> Atom . toE) >>= reconstruct ctx
+  atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
 inlineName ctx name =
@@ -293,23 +298,36 @@ inlineName ctx name =
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
-instance Inlinable (RefOp SimpIR) where
-  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
-instance Inlinable (Hof SimpIR) where
-  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
-instance Inlinable (BaseMonoid SimpIR) where
-  inline ctx e = (inline Stop (fromE e) <&> toE) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
 instance Inlinable SAtomName where
   inline ctx a = inlineName (EmitToAtomCtx $ EmitToNameCtx ctx) a
 
 instance Inlinable SAtom where
   inline ctx a = inlineAtom (EmitToAtomCtx ctx) a
+
+instance Inlinable SType where
+  inline ctx ty = visitTypePartial ty >>= reconstruct ctx
+
+instance Inlinable SLam where
+  inline ctx (LamExpr bs body) = do
+    reconstruct ctx =<< withBinders bs \bs' -> do
+      LamExpr bs' <$> (buildScopedAssumeNoDecls $ inline Stop body)
+
+withBinders
+  :: Nest SBinder i i'
+  -> (forall o'. DExt o o' => Nest SBinder o o' -> InlineM i' o' a)
+  -> InlineM i o a
+withBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+withBinders (Nest (b:>ty) bs) cont = do
+  ty' <- buildScopedAssumeNoDecls $ inline Stop ty
+  withFreshBinder (getNameHint b) ty' \b' ->
+    extendRenamer (b@>binderName b') do
+      withBinders bs \bs' -> cont $ Nest b' bs'
+
+instance Inlinable (PiType SimpIR) where
+  inline ctx (PiType bs effs ty)  =
+    reconstruct ctx =<< withBinders bs \bs' -> do
+      EffectAndType effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffectAndType effs ty)
+      return $ PiType bs' effs' ty'
 
 instance Inlinable SBlock where
   inline ctx (Block ann decls ans) = case (ann, decls) of
@@ -330,7 +348,6 @@ reconstruct ctx e = case ctx of
   TabAppCtx ixs s ctx' -> withSubst s $ reconstructTabApp ctx' e ixs
   EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
   EmitToNameCtx ctx' -> emit (Atom e) >>= reconstruct ctx'
-  RepWrap ctx' -> reconstruct ctx' $ toE e
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
@@ -387,145 +404,5 @@ reconstructTabApp ctx expr ixs =
       ixs' <- mapM (inline Stop) ixs
       reconstruct ctx $ TabApp array' ixs'
 
--- === The generic instances ===
-
-instance Inlinable (Name PtrNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name EffectNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name HandlerNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name SpecializedDictNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-instance Inlinable (Name TopFunNameC) where
-  inline ctx n = substM n >>= reconstruct ctx
-
-instance Inlinable e => Inlinable (ComposeE PrimOp e) where
-  inline ctx (ComposeE op) =
-    (ComposeE <$> traverse (inline Stop) op) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE (PrimCon SimpIR) e) where
-  inline ctx (ComposeE con) =
-    (ComposeE <$> traverse (inline Stop) con) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE (PrimTC SimpIR) e) where
-  inline ctx (ComposeE tc) =
-    (ComposeE <$> traverse (inline Stop) tc) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ComposeE LabeledItems e) where
-  inline ctx (ComposeE items) =
-    (ComposeE <$> traverse (inline Stop) items) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
-instance (Inlinable e1, Inlinable e2) => Inlinable (ExtLabeledItemsE e1 e2)
-instance Inlinable (LamExpr SimpIR)
-instance Inlinable (TabPiType SimpIR)
-instance Inlinable (DepPairType SimpIR)
-instance Inlinable (EffectRowTail SimpIR)
 instance Inlinable (EffectRow SimpIR)
-instance Inlinable (Effect   SimpIR)
-instance Inlinable (DAMOp SimpIR)
-instance Inlinable (IxDict SimpIR)
-
-instance Inlinable (RepVal SimpIR) where
-  inline ctx (RepVal ty rep) =
-    (RepVal <$> inline Stop ty <*> mapM substMAssumingRenameOnly rep) >>= reconstruct ctx
-
-instance (Inlinable e1, Inlinable e2) => Inlinable (PairE e1 e2) where
-  inline ctx (PairE l r) =
-    (PairE <$> inline Stop l <*> inline Stop r) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance (Inlinable e1, Inlinable e2) => Inlinable (EitherE e1 e2) where
-  inline ctx = \case
-    LeftE  l -> (LeftE  <$> inline Stop l) >>= reconstruct ctx
-    RightE r -> (RightE <$> inline Stop r) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance ( Inlinable e1, Inlinable e2, Inlinable e3, Inlinable e4
-         , Inlinable e5, Inlinable e6, Inlinable e7, Inlinable e8
-         ) => Inlinable (EitherE8 e1 e2 e3 e4 e5 e6 e7 e8) where
-  inline ctx = \case
-    Case0 x -> (Case0 <$> inline Stop x) >>= reconstruct ctx
-    Case1 x -> (Case1 <$> inline Stop x) >>= reconstruct ctx
-    Case2 x -> (Case2 <$> inline Stop x) >>= reconstruct ctx
-    Case3 x -> (Case3 <$> inline Stop x) >>= reconstruct ctx
-    Case4 x -> (Case4 <$> inline Stop x) >>= reconstruct ctx
-    Case5 x -> (Case5 <$> inline Stop x) >>= reconstruct ctx
-    Case6 x -> (Case6 <$> inline Stop x) >>= reconstruct ctx
-    Case7 x -> (Case7 <$> inline Stop x) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
-instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Atom SimpIR)) where
-  inline ctx (Abs b body) = do
-    s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
-    abs' <- refreshAbs babs \b' frag ->
-      extendSubst frag $ do
-        Abs b' <$> (buildScopedAssumeNoDecls $ inline Stop body)
-    reconstruct ctx abs'
-
-instance (RenameB b, BindsEnv b) => Inlinable (Abs b (Block SimpIR)) where
-  inline ctx (Abs b body) = do
-    s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
-    abs' <- refreshAbs babs \b' frag ->
-      extendSubst frag $ do
-        Abs b' <$> (buildBlock $ (inline Stop body >>= emitBlock))
-    reconstruct ctx abs'
-
-asRenameSubst :: Subst InlineSubstVal i o -> Subst Name i o
-asRenameSubst s = newSubst $ assumingRenameOnly s where
-  assumingRenameOnly :: Color c => Subst InlineSubstVal i o -> Name c i -> Name c o
-  assumingRenameOnly subst n = case subst ! n of
-    Rename n' -> n'
-    SubstVal v -> error $ "Unexpected non-rename substitution "
-      ++ "maps " ++ (show n) ++ " to " ++ (show v)
-
-substMAssumingRenameOnly :: (SinkableE e, RenameE e) => e i -> InlineM i o (e o)
-substMAssumingRenameOnly e = do
-  s <- getSubst
-  runSubstReaderT (asRenameSubst s) $ renameM e
-
-instance (RenameB b, BindsEnv b)
-  => Inlinable (Abs b (PairE (EffectRow SimpIR) (Atom SimpIR))) where
-  inline ctx (Abs b body) = do
-    s <- getSubst
-    babs <- runSubstReaderT (asRenameSubst s) $ renameM (Abs b (idSubstFrag b))
-    abs' <- refreshAbs babs \b' frag ->
-      extendSubst frag $ do
-        Abs b' <$> (buildScopedAssumeNoDecls $ inline Stop body)
-    reconstruct ctx abs'
-
-instance Inlinable (LiftE a) where
-  inline ctx (LiftE a) = reconstruct ctx (LiftE a)
-  {-# INLINE inline #-}
-instance Inlinable VoidE where
-  inline _ _ = error "impossible"
-  {-# INLINE inline #-}
-instance Inlinable UnitE where
-  inline ctx UnitE = reconstruct ctx UnitE
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (ListE e) where
-  inline ctx (ListE items) =
-    (ListE <$> traverse (inline Stop) items) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable e => Inlinable (WhenE True e) where
-  inline ctx (WhenE e) = (WhenE <$> inline Stop e) >>= reconstruct ctx
-  {-# INLINE inline #-}
-instance Inlinable (WhenE False e) where
-  inline _ _ = error "Unreachable"
-  {-# INLINE inline #-}
-
-instance Inlinable (WhenCore SimpIR e) where inline _ = \case
-instance Inlinable e => Inlinable (WhenCore CoreIR e) where
-  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
-instance Inlinable (WhenSimp CoreIR e) where inline _ = \case
-instance Inlinable e => Inlinable (WhenSimp SimpIR e) where
-  inline ctx (WhenIRE e) = (WhenIRE <$> inline Stop e) >>= reconstruct ctx
-  {-# INLINE inline #-}
-
--- See Note [Confuse GHC] from Simplify.hs
-confuseGHC :: EnvReader m => m n (DistinctEvidence n)
-confuseGHC = getDistinct
-{-# INLINE confuseGHC #-}
+instance Inlinable (EffectAndType SimpIR)

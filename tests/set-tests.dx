@@ -52,7 +52,7 @@ emptyset = to_set ([]::(Fin 0)=>String)
 
 names2 = to_set ["Bob", "Alice", "Charlie", "Alice"]
 
-Person = (Element String names2)
+Person : Type = Element names2
 
 :p size Person
 > 3
@@ -73,8 +73,8 @@ roundTrip2 = for i:Person.
 
 setix : Person = from_just $ member "Bob" names2
 :p setix
-> (Element.new 1)
+> Element(1)
 
 setix2 : Person = from_just $ member "Charlie" names2
 :p setix2
-> (Element.new 2)
+> Element(2)

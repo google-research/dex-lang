@@ -24,16 +24,16 @@ Color : Type = Fin 3 => Float
 
 def apply_scale(s:Scale a, x:a) -> Maybe Float given (a) = s.mapping x
 
-unit_type_scale : Scale(()) = Scale.new (\_. Just 0.0) (AsList _ [Singleton 0.0])
+unit_type_scale : Scale(()) = Scale (\_. Just 0.0) (AsList _ [Singleton 0.0])
 
 def project_unit_interval(x:Float) -> Maybe Float =
   case x >= 0.0 && x <= 1.0 of
     True  -> Just x
     False -> Nothing
 
-unit_interval_scale : Scale Float = Scale.new (project_unit_interval) (AsList _ [Interval 0.0 1.0])
+unit_interval_scale : Scale Float = Scale (project_unit_interval) (AsList _ [Interval 0.0 1.0])
 
-def map_scale(s:Scale a, f: (b) -> a) -> Scale b given (a, b) = Scale.new (\x. s.mapping (f x)) s.range
+def map_scale(s:Scale a, f: (b) -> a) -> Scale b given (a, b) = Scale (\x. s.mapping (f x)) s.range
 
 def float_scale(xmin:Float, xmax:Float) -> Scale Float =
   map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
@@ -71,13 +71,13 @@ def plot_to_diagram(plot:Plot n a b c) -> Diagram given (a, b, c, n|Ix) =
   boundingBox <> points
 
 def show_plot(plot:Plot n a b c) -> String given (a, b, c, n|Ix) =
-  render_svg (plot_to_diagram plot) (Point.new 0.0 0.0, Point.new 1.0 1.0)
+  render_svg (plot_to_diagram plot) (Point 0.0 0.0, Point 1.0 1.0)
 
 def blank_data() ->> ScaledData n () given (n|Ix) =
-  ScaledData.new unit_type_scale (for i. ())
+  ScaledData unit_type_scale (for i. ())
 
 def blank_plot() ->> Plot n () () () given (n|Ix) =
-  Plot.new blank_data blank_data blank_data
+  Plot blank_data blank_data blank_data
 
 -- -- TODO: generalize beyond Float with a type class for auto scaling
 def auto_scale(xs:n=>Float) -> ScaledData n Float given (n|Ix) =
@@ -86,17 +86,17 @@ def auto_scale(xs:n=>Float) -> ScaledData n Float given (n|Ix) =
   -- Add 10% padding away from the plot area
   space = (max - min) * 0.05
   padding = maximum [space, max * 0.001, 0.000001]
-  ScaledData.new (float_scale (min - padding) (max + padding)) xs
+  ScaledData (float_scale (min - padding) (max + padding)) xs
 
 def set_x_data(plot:Plot n a b c, xs:ScaledData n new) -> Plot n new b c given (n|Ix, a, b, c, new) =
   -- We can't use `setAt` here because we're changing the type
-  Plot.new xs plot.ys plot.cs
+  Plot xs plot.ys plot.cs
 
 def set_y_data(plot:Plot n a b c, ys:ScaledData n new) -> Plot n a new c given (n|Ix, a, b, c, new) =
-  Plot.new plot.xs ys plot.cs
+  Plot plot.xs ys plot.cs
 
 def set_c_data(plot:Plot n a b c, cs:ScaledData n new) -> Plot n a b new given (n|Ix, a, b, c, new) =
-  Plot.new plot.xs plot.ys cs
+  Plot plot.xs plot.ys cs
 
 def xy_plot(xs:n=>Float, ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
   blank_plot |

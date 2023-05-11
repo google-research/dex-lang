@@ -3,7 +3,7 @@ import linalg
 -- Check that the optimized matmul gives the same answers as the naive one
 amat = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
 
-:p amat ** amat ~~ naive_matmul amat amat
+:p tiled_matmul(amat, amat) ~~ naive_matmul amat amat
 > True
 
 -- Check that the inverse of the inverse is identity.
@@ -41,7 +41,7 @@ snd(linearize (\x. snd $ sign_and_log_determinant [[x]]) 1.0)(2.0)
 
 -- Check that we can differentiate through LU decomposition
 -- This is a regression test for Issue #848.
-grad (\x. snd $ pivotize [[x]]) 1.0
+grad (\x. (pivotize [[x]]).sign) 1.0
 > 0.
 
 grad (\x. snd $ sign_and_log_determinant [[x]]) 2.0

@@ -43,10 +43,10 @@ def particleFilter(
       summarize p_resampled
 
 def normalDistn(mean: Float, var: Float) -> Distribution Float =
-  Distribution.new( \k. (randn k) * (sqrt var) + mean
+  Distribution( \k. (randn k) * (sqrt var) + mean
                   , \v. -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var))
 
-gaussModel : Model Float Float = Model.new(
+gaussModel : Model Float Float = Model(
   normalDistn 0.1 0.1,
   \s. normalDistn s 1.0,
   \s. normalDistn s 1.0)
