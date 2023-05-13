@@ -43,7 +43,7 @@ optimize = dceTop     -- Clean up user code
 
 -- === Peephole optimizations ===
 
-peepholeOp :: PrimOp SimpIR o -> EnvReaderM o (Either (SAtom o) (PrimOp SimpIR o))
+peepholeOp :: PrimOp SimpIR o -> EnvReaderM o (SExpr o)
 peepholeOp op = case op of
   MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case foldCast sTy l of
     Just l' -> lit l'
@@ -72,14 +72,14 @@ peepholeOp op = case op of
     return $ lit $ Word8Lit $ lv .|. rv
   BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
     return $ lit $ Word8Lit $ lv .&. rv
-  MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> Left <$> case ty of
-    SumTy cases -> return $ SumVal cases (fromIntegral tag) UnitVal
+  MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> case ty of
+    SumTy cases -> return $ Atom $ SumVal cases (fromIntegral tag) UnitVal
     _ -> error "Ill typed ToEnum?"
-  MiscOp (SumTag (SumVal _ tag _))                   -> return $ lit $ Word8Lit $ fromIntegral tag
+  MiscOp (SumTag (SumVal _ tag _)) -> return $ lit $ Word8Lit $ fromIntegral tag
   _ -> return noop
   where
-    noop = Right op
-    lit = Left . Con . Lit
+    noop = PrimOp op
+    lit = Atom . Con . Lit
 
     cmp :: Ord a => CmpOp -> a -> a -> Bool
     cmp = \case
@@ -188,9 +188,9 @@ foldCast sTy l = case sTy of
         compare (0 - countTrailingZeros (round @b @a a))
                 (0 - countTrailingZeros (round @b @a b))
 
-peepholeExpr :: SExpr o -> EnvReaderM o (Either (SAtom o) (SExpr o))
+peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
 peepholeExpr expr = case expr of
-  PrimOp op -> fmap PrimOp <$> peepholeOp op
+  PrimOp op -> peepholeOp op
   TabApp (Var t) [IdxRepVal ord] ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding ann _ (TabCon Nothing tabTy elems))
@@ -199,12 +199,12 @@ peepholeExpr expr = case expr of
         -- For example, it might be coming from an unsafe_from_ordinal that is
         -- under a case branch that would be dead for all invalid indices.
         if 0 <= ord && fromIntegral ord < length elems
-          then Left $ elems !! fromIntegral ord
-          else Right expr
-      _ -> Right expr
+          then Atom $ elems !! fromIntegral ord
+          else expr
+      _ -> expr
   -- TODO: Apply a function to literals when it has a cheap body?
   -- Think, partial evaluation of threefry.
-  _ -> return $ Right expr
+  _ -> return expr
   where isFinTabTy = \case
           TabPi (TabPiType (_:>(IxType _ (IxDictRawFin _))) _) -> True
           _ -> False
@@ -277,9 +277,8 @@ ulExpr expr = case expr of
   _ -> nothingSpecial
   where
     inc i = modify \(ULS n) -> ULS (n + i)
-    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr) >>= \case
-      Left x -> return x
-      Right e -> emitExpr e
+    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr)
+                     >>= emitExprToAtom
     unrollBlowupThreshold = 12
     withLocalAccounting m = do
       oldCost <- get
