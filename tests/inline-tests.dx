@@ -106,3 +106,23 @@ def id'(x:Nat) -> Nat = x
 -- CHECK: case
 -- CHECK: === inline ===
 -- CHECK-NOT: case
+
+-- CHECK-LABEL: Inlining carries out the case-of-case optimization
+"Inlining carries out the case-of-case optimization"
+
+-- Before inlining there are two cases, but attempting to inline `x`
+-- reveals a case-of-case opprtunity, which in turn exposes
+-- case-of-known-constructor in each branch, leading to just one case
+-- in the end.
+%passes inline
+:pp
+  x = if id'(3) > 2
+        then Just 4
+        else Nothing
+  case x of
+    Just a -> a * a
+    Nothing -> 0
+-- CHECK: === inline ===
+-- CHECK: case
+-- CHECK-NOT: case
+-- CHECK: === inline ===

@@ -420,20 +420,35 @@ reconstructTabApp ctx expr ixs =
 reconstructCase :: Emits o
   => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
   -> InlineM i o (e o)
-reconstructCase ctx scrutExpr alts resultTy effs = do
-  -- TODO Opportunity here to inspect `scrutExpr` and perform case-of-case
-  -- optimization
-  scrut <- emitExprToAtom scrutExpr
-  case trySelectBranch scrut of
-    Just (i, val) -> do
-      Abs b body <- return $ alts !! i
-      extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
-        inlineBlockEmits ctx body
-    Nothing -> do
-      alts' <- mapM visitAlt alts
+reconstructCase ctx scrutExpr alts resultTy effs =
+  case scrutExpr of
+    Case sscrut salts _ _ -> do
+      -- Perform case-of-case optimization
+      -- TODO Add join points to reduce code duplication (and repeated inlining)
+      -- of the arms of the outer case
       resultTy' <- inline Stop resultTy
-      effs' <- inline Stop effs
-      reconstruct ctx $ Case scrut alts' resultTy' effs'
+      reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
+        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
+        buildCase ans (sink resultTy') \j jval -> do
+          Abs b body <- return $ alts !! j
+          extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
+            inlineBlockEmits Stop body >>= emitExprToAtom)
+    _ -> do
+      -- Attempt case-of-known-constructor optimization
+      -- I can't use `buildCase` here because I want to propagate the incoming
+      -- context `ctx` into the selected alternative if the optimization fires,
+      -- but leave it around the whole reconstructed `Case` if it doesn't.
+      scrut <- emitExprToAtom scrutExpr
+      case trySelectBranch scrut of
+        Just (i, val) -> do
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
+            inlineBlockEmits ctx body
+        Nothing -> do
+          alts' <- mapM visitAlt alts
+          resultTy' <- inline Stop resultTy
+          effs' <- inline Stop effs
+          reconstruct ctx $ Case scrut alts' resultTy' effs'
 
 instance Inlinable (EffectRow SimpIR)
 instance Inlinable (EffectAndType SimpIR)
