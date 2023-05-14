@@ -425,6 +425,7 @@ type SAtom  = Atom SimpIR
 type SType  = Type SimpIR
 type SExpr  = Expr SimpIR
 type SBlock = Block SimpIR
+type SAlt   = Alt   SimpIR
 type SDecl  = Decl  SimpIR
 type SDecls = Decls SimpIR
 type SAtomName  = AtomName SimpIR

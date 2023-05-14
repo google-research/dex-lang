@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( optimize, peepholeOp
+  ( optimize, peepholeOp, peepholeExpr
   , hoistLoopInvariant, hoistLoopInvariantDest
   , dceTop, dceTopDest
   , foldCast ) where

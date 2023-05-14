@@ -87,3 +87,22 @@ def id'(x:Nat) -> Nat = x
   sum (for i:(Fin 2) j:(..i). ordinal j)[ix]
 -- CHECK: 1
 -- CHECK-NOT: Compiler bug
+
+-- CHECK-LABEL: Inlining simplifies case-of-known-constructor
+"Inlining simplifies case-of-known-constructor"
+
+-- Inlining xs exposes a case-of-known-constructor opportunity here;
+-- the first inlining pass doesn't take it (yet) because it's
+-- conservative about inlining `i` into the body of `xs`, but the
+-- second pass does.
+%passes inline
+:pp
+  xs = for i:(Either (Fin 3) (Fin 4)).
+    case i of
+      Left k -> 1
+      Right k -> 2
+  for j:(Fin 3). xs[Left j]
+-- CHECK: === inline ===
+-- CHECK: case
+-- CHECK: === inline ===
+-- CHECK-NOT: case
