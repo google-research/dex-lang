@@ -2,58 +2,41 @@
 from absl import app
 from absl import flags
 
-import jax
 from jax import numpy as jnp
 import jaxopt
 import dex
 from dex.interop import jax as djax
-import numpy as onp
 from sklearn import datasets
 
 import time
-import timeit
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_integer("maxiter", default=30, help="Max # of iterations.")
-flags.DEFINE_integer("n_samples", default=10000, help="Number of samples.")
-flags.DEFINE_integer("n_features", default=200, help="Number of features.")
+flags.DEFINE_integer("maxls", default=15, help="Max # of linesearch iterations.")
+flags.DEFINE_float("tol", default=1e-3, help="Tolerance of the stopping criterion.")
+flags.DEFINE_integer("n_samples", default=1000, help="Number of samples.")
+flags.DEFINE_integer("n_features", default=20, help="Number of features.")
 flags.DEFINE_integer("n_classes", default=5, help="Number of classes.")
 flags.DEFINE_string("task", "binary_logreg", "Task to benchmark.")
 
-
-def bench_python(f, loops=None):
-  """Return average runtime of `f` in seconds and number of iterations used."""
-  if loops is None:
-    f()
-    s = time.perf_counter()
-    f()
-    e = time.perf_counter()
-    duration = e - s
-    loops = max(4, int(2 / duration)) # aim for 2s
-  return (timeit.timeit(f, number=loops, globals=globals()) / loops, loops)
 
 def multiclass_logreg_jaxopt(X, y):
   data = (X, y)
   fun = jaxopt.objective.multiclass_logreg
   init = jnp.zeros((X.shape[1], FLAGS.n_classes))
-  bfgs = jaxopt.BFGS(fun=fun, linesearch='zoom')
-  state = bfgs.init_state(init, data=data)
-  params = init
-
-  def cond_fn(state):
-    return (state.error > bfgs.tol) & (state.iter_num < bfgs.maxiter)
-
-  @jax.jit
-  def update(params, state):
-    return bfgs.update(params, state, data=data)
+  bfgs = jaxopt.BFGS(
+    fun=fun, 
+    linesearch='zoom',
+    maxiter=FLAGS.maxiter,
+    maxls=FLAGS.maxls,
+    tol=FLAGS.tol)
 
   start_time = time.time()
-  params, state = update(params, state)
+  _ = bfgs.run(init_params=init, data=data)
   compile_time = time.time()
 
-  while cond_fn(state):
-    params, state = update(params, state)
+  _, state = bfgs.run(init_params=init, data=data)
   run_time = time.time()
 
   return compile_time - start_time, run_time - compile_time, state.error, state.iter_num, state.value
@@ -65,22 +48,24 @@ def main(argv):
                                       n_classes=FLAGS.n_classes,
                                       n_informative=FLAGS.n_classes,
                                       random_state=0)
-  jaxopt_results = multiclass_logreg_jaxopt(X, y)
-  print(f"> Jaxopt results: {jaxopt_results}")
+  time_incl_jit, time_excl_jit, _, _, dex_value = multiclass_logreg_jaxopt(X, y)
+  print(f"> Jaxopt results:\n   Time incl JIT: {time_incl_jit}\n"
+        f"   Time excl JIT: {time_excl_jit}\n   Loss function value: {dex_value}")
 
   with open('examples/bfgs.dx', 'r') as f:
     m = dex.Module(f.read())
-    # TODO pass max iter, etc.
     dex_bfgs = djax.primitive(m.multiclass_fin)
 
-    # time_s, loops = bench_python(lambda : dex_bfgs(X, y))
-    # print(f"> Run time: {time_s} s \t(based on {loops} runs)")
-    out = dex_bfgs(jnp.array(X), jnp.array(y), FLAGS.n_classes)
-    print(f"> Dex results: {out}")
-    
-    # # This runs
-    # dex_run_bfgs = djax.primitive(m.run_logreg)
-    # dex_run_bfgs(0)
+    start_time = time.time()
+    dex_value = dex_bfgs(
+      jnp.array(X), 
+      jnp.array(y), 
+      FLAGS.n_classes,
+      FLAGS.maxiter,
+      FLAGS.maxls,
+      FLAGS.tol)
+    print(f"> Dex results:\n   Total time: {time.time() - start_time}\n"
+          f"   Loss function value: {dex_value}")
 
 
 if __name__ == '__main__':

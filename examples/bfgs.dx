@@ -170,23 +170,29 @@ def multiclass_logistic_loss(xs: n=>d=>Float, ys: n=>Nat, w: (d, m)=>Float) -> F
   logits = xs ** w_arr
   logit_at_label = for i. logits[i, ys[i]@_]
   per_example_loss = for i. logsumexp logits[i] - logit_at_label[i]
-  sum(per_example_loss)
+  mean(per_example_loss)
 
 def multiclass_logreg(
   xs:n=>d=>Float,
   ys:n=>Nat,
-  num_classes:Nat) -> Float given (n|Ix, d|Ix)=
+  num_classes:Nat,
+  maxiter:Nat,
+  maxls:Nat,
+  tol:Float) -> Float given (n|Ix, d|Ix)=
   m = Fin num_classes
   w0 = for i:(d, m). 0.
   ob_fun = \v. multiclass_logistic_loss xs ys v
-  res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search 500 f) 0.001 1
+  res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search maxls f) tol maxiter 
   res.fval
 
 def multiclass_fin(
   xs:(Fin n)=>(Fin d)=>Float,
   ys:(Fin n)=>Int,
-  num_classes:Int) -> Float given (n, d) =
-  multiclass_logreg xs (for i. i32_to_n ys[i]) (i32_to_n num_classes)
+  num_classes:Int,
+  maxiter:Int,
+  maxls:Int,
+  tol:Float) -> Float given (n, d) =
+  multiclass_logreg xs (for i. i32_to_n ys[i]) (i32_to_n num_classes) (i32_to_n maxiter) (i32_to_n maxls) tol
 
 N = Fin 10
 D = Fin 5
@@ -194,7 +200,7 @@ D = Fin 5
 def run_logreg(x:Int) -> Float =
   xs:N=>D=>Float = for i:N. for j:D. rand (ixkey (new_key 0) (i, j))
   ys:N=>Nat = [0, 1, 2, 0, 1, 2, 0, 1, 2, 0]
-  multiclass_logreg xs ys 3
+  multiclass_logreg xs ys 3 100 15 0.001
 
 %bench "log reg"
 run_logreg 0
