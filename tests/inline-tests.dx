@@ -103,8 +103,10 @@ def id'(x:Nat) -> Nat = x
       Right k -> 2
   for j:(Fin 3). xs[Left j]
 -- CHECK: === inline ===
+-- CHECK: for
 -- CHECK: case
 -- CHECK: === inline ===
+-- CHECK: for
 -- CHECK-NOT: case
 
 -- CHECK-LABEL: Inlining carries out the case-of-case optimization
