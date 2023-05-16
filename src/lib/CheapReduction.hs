@@ -15,7 +15,7 @@ module CheapReduction
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault)
+  , visitBinders, visitPiDefault, visitAlt)
   where
 
 import Control.Applicative

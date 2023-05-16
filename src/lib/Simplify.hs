@@ -758,9 +758,7 @@ simplifyGenericOp op = do
            (substM >=> getRepType)
            (simplifyAtom >=> toDataAtomIgnoreRecon)
            (error "shouldn't have lambda left")
-  result <- liftEnvReaderM (peepholeOp $ toPrimOp op') >>= \case
-    Left  a   -> return a
-    Right op'' -> emitOp op''
+  result <- liftEnvReaderM (peepholeOp $ toPrimOp op') >>= emitExprToAtom
   liftSimpAtom ty result
 {-# INLINE simplifyGenericOp #-}
 

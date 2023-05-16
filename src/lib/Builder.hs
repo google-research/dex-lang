@@ -768,15 +768,15 @@ injectAltResult sumTys con (Abs b body) = liftBuilder do
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
-buildCase :: (Emits n, ScopableBuilder r m)
-          => Atom r n -> Type r n
-          -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
-          -> m n (Atom r n)
-buildCase scrut resultTy indexedAltBody = do
+buildCase' :: (Emits n, ScopableBuilder r m)
+  => Atom r n -> Type r n
+  -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
+  -> m n (Expr r n)
+buildCase' scrut resultTy indexedAltBody = do
   case trySelectBranch scrut of
     Just (i, arg) -> do
       Distinct <- getDistinct
-      indexedAltBody i $ sink arg
+      Atom <$> indexedAltBody i (sink arg)
     Nothing -> do
       scrutTy <- getType scrut
       altBinderTys <- caseAltsBinderTys scrutTy
@@ -786,7 +786,13 @@ buildCase scrut resultTy indexedAltBody = do
           eff <- getEffects blk
           return $ blk `PairE` eff
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
-      emitExpr $ Case scrut alts resultTy $ mconcat effs
+      return $ Case scrut alts resultTy $ mconcat effs
+
+buildCase :: (Emits n, ScopableBuilder r m)
+  => Atom r n -> Type r n
+  -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
+  -> m n (Atom r n)
+buildCase s r b = emitExprToAtom =<< buildCase' s r b
 
 buildEffLam
   :: ScopableBuilder r m
