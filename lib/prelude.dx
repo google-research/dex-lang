@@ -2576,6 +2576,7 @@ def tile(
     body (FullTileIx(n, tile_size, tile_ix'))
   body (CodaIx(n, coda_offset, coda_size))
 
+@noinline
 def tiled_matmul(
     x: l=>m=>Float,
     y: m=>n=>Float
@@ -2601,8 +2602,17 @@ def (**)(
     x: l=>m=>Float,
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
-  -- TODO(https://github.com/google-research/dex-lang/issues/1212) Replace with tiled_matmul.
   tiled_matmul(x, y)
+
+def matmul_linearization(
+    x: l=>m=>Float,
+    y: m=>n=>Float
+    ) -> _ given (l|Ix, m|Ix, n|Ix) =
+  def lin(xt: l=>m=>Float, yt: m=>n=>Float) -> _ =
+    x ** yt + xt ** y
+  (x ** y, lin)
+
+custom-linearization tiled_matmul matmul_linearization
 
 def (**.)(mat: n=>m=>Float, v: m=>Float) -> (n=>Float) given (n|Ix, m|Ix) =
   for i. vdot(mat[i], v)
