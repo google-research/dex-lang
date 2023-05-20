@@ -18,11 +18,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-latest]
         include:
-          - os: ubuntu-20.04
-            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip
-            path_extension: /usr/lib/llvm-12/bin
+          - os: ubuntu-latest
+            install_deps: |
+              curl https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+              sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-15 main"
+              sudo apt-get update
+              sudo apt-get -y install clang-15 llvm-15-dev llvm-15-tools
+              sudo apt-get -y install pkg-config wget gzip wamerican
+            path_extension: /usr/lib/llvm-15/bin
 
     steps:
     - name: Checkout the repository
@@ -58,4 +63,4 @@ jobs:
       run: pip install -e $GITHUB_WORKSPACE/python
 
     - name: Run tests
-      run: pytest python/tests
+      run: pytest python/tests -v

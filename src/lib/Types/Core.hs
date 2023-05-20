@@ -27,6 +27,7 @@ import Data.Word
 import Data.Maybe (fromJust)
 import Data.Functor
 import Data.Hashable
+import qualified Data.Kind as K
 import Data.Text.Prettyprint.Doc  hiding (nest)
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
@@ -258,11 +259,11 @@ instance IsPrimOp PrimOp where
   toPrimOp x = x
 
 class GenericOp (e::IR->E) where
-  type OpConst e (r::IR) :: *
+  type OpConst e (r::IR) :: K.Type
   fromOp :: e r n -> GenericOpRep (OpConst e r) r n
   toOp   :: GenericOpRep (OpConst e r) r n -> Maybe (e r n)
 
-data GenericOpRep (const :: *) (r::IR) (n::S) =
+data GenericOpRep (const::K.Type) (r::IR) (n::S) =
   GenericOpRep const [Type r n] [Atom r n] [LamExpr r n]
   deriving (Show, Generic)
 
@@ -1890,7 +1891,7 @@ instance (IRRep r, HoistableE ann) => HoistableB (NonDepNest r ann)
 instance (IRRep r, RenameE ann, SinkableE ann) => RenameB (NonDepNest r ann)
 instance (IRRep r, AlphaEqE       ann) => AlphaEqB       (NonDepNest r ann)
 instance (IRRep r, AlphaHashableE ann) => AlphaHashableB (NonDepNest r ann)
-deriving instance (Show (ann n)) => IRRep r => Show (NonDepNest r ann n l)
+deriving instance (Show (ann n), IRRep r) => Show (NonDepNest r ann n l)
 
 instance GenericB RolePiBinder where
   type RepB RolePiBinder = PairB (LiftB (LiftE ParamRole)) (WithExpl CBinder)

@@ -6,6 +6,7 @@
 
 module JAX.Rename (liftRenameM, renameClosedJaxpr, renameJaxpr) where
 
+import Data.Kind
 import Data.Map qualified as M
 
 import Core
@@ -13,7 +14,7 @@ import IRVariants
 import JAX.Concrete
 import Name
 
-newtype RenamerM (n::S) (a:: *) =
+newtype RenamerM (n::S) (a::Type) =
   RenamerM { runRenamerM :: OutReaderT SourceMap (ScopeReaderM) n a }
   deriving ( Functor, Applicative, Monad
            , ScopeReader, ScopeExtender)

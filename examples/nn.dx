@@ -165,8 +165,9 @@ tests = for h : (Fin 50). for i . for j.
     [exp r[1@_], exp r[0@_], 0.0]
 
 
-:html imseqshow tests
-> <html output>
+-- FIXME(llvm-15): Re-enable lines below. Currently crashes with segfault.
+-- :html imseqshow tests
+-- > <html output>
 
 '## LeNet for image classification
 

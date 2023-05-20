@@ -200,11 +200,11 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     initializeOutputStream streamFDOperand
     argOperands <- forM (zip [0..] argTys) \(i, ty) ->
-      gep i64 argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load (scalarTy ty)
+      gep hostVoidp argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load (scalarTy ty)
     when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     forM_ (zip [0..] results) \(i, x) ->
-      gep i64 resultPtrOperand (i64Lit i) >>= castLPtr (typeOf x) >>= flip store x
+      gep hostVoidp resultPtrOperand (i64Lit i) >>= castLPtr (typeOf x) >>= flip store x
     mainFun <- makeFunction fName
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
@@ -481,6 +481,7 @@ compileInstr instr = case instr of
                  Scalar Word64Type -> False
                  Scalar Float64Type -> True
                  Scalar Float32Type -> True
+                 Scalar _ -> error "Unknown scalar type"
                  Vector _ ty' -> signed (Scalar ty')
                  PtrType _ -> False
                int_to_float = if signed (getIType ix) then L.SIToFP else L.UIToFP
@@ -1305,10 +1306,10 @@ allocSizeFun :: ExternFunSpec
 allocSizeFun = ExternFunSpec "dex_allocation_size" i64 [L.NoAlias] [] [hostPtrTy i8]
 
 memcpyFun :: ExternFunSpec
-memcpyFun = ExternFunSpec "llvm.memcpy.p0i8.p0i8.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
+memcpyFun = ExternFunSpec "llvm.memcpy.p0.p0.i64" L.VoidType [] [] [hostVoidp, hostVoidp, i64, i1]
 
 memsetFun :: ExternFunSpec
-memsetFun = ExternFunSpec "llvm.memset.p0i8.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
+memsetFun = ExternFunSpec "llvm.memset.p0.i64" L.VoidType [] [] [hostVoidp, i8, i64, i1]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [hostPtrTy i8]

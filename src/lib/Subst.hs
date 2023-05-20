@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import qualified Data.Kind as K
 
 import Name
 import IRVariants
@@ -30,7 +31,7 @@ class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v whe
    withSubst :: Subst v i' o -> m i' o a -> m i o a
 
 lookupSubstM :: (Color c, SubstReader v m) => Name c i -> m i o (v c o)
-lookupSubstM name = (!name) <$> getSubst
+lookupSubstM name = (flip (!) name) <$> getSubst
 
 dropSubst :: (SubstReader v m, FromName v) => m o o a -> m i o a
 dropSubst cont = withSubst idSubst cont
@@ -280,7 +281,7 @@ asAtomSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
 
 -- === SubstReaderT transformer ===
 
-newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
+newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a::K.Type) =
   SubstReaderT { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
 
 instance (forall n. Functor (m n)) => Functor (SubstReaderT v m i o) where
@@ -296,8 +297,6 @@ instance Monad1 m => Applicative (SubstReaderT v m i o) where
   {-# INLINE (<*>) #-}
 
 instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
-  return = SubstReaderT . return
-  {-# INLINE return #-}
   (SubstReaderT m) >>= f = SubstReaderT (m >>= (runSubstReaderT' . f))
   {-# INLINE (>>=) #-}
 

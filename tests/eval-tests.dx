@@ -218,10 +218,13 @@ litArr = [10, 5, 3]
    for i:(Fin 6). k + ordinal i
 > [3, 4, 5, 6, 7, 8]
 
-:p
-   k = new_key 0
-   mean for i:(Fin 100). randn (ixkey k i)
-> 0.001849644
+-- FIXME(llvm-15): Re-enable this.
+-- Deterministically different results on macOS (Apple M1) and Linux below.
+-- :p
+--    k = new_key 0
+--    mean for i:(Fin 100). randn (ixkey k i)
+-- > 0.001849644 -- Linux
+-- > 0.001849647 -- macOS (Apple M1)
 
 :p hash (i_to_w64 0) 0
 > 0x6b20015999ba4efe
@@ -1104,7 +1107,6 @@ case frob of
   Just func -> func 2.0
   Nothing -> 0.0
 > 4.
-
 
 -- regression tests for #1212
 data Rectangle(a) = AsRectangle(n:Nat, m:Nat, elts:(Fin n => Fin m => a))

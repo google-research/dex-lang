@@ -18,14 +18,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-20.04, macos-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: macos-latest
-            install_deps: brew install llvm@12 pkg-config wget gzip coreutils
-            path_extension: $(brew --prefix llvm@12)/bin
-          - os: ubuntu-20.04
-            install_deps: sudo apt-get install llvm-12-tools llvm-12-dev pkg-config wget gzip wamerican
-            path_extension: /usr/lib/llvm-12/bin
+            install_deps: |
+              brew install llvm@15 pkg-config wget gzip coreutils
+              mkdir -p $HOME/.local/bin
+              ln -s $(brew --prefix llvm@15)/bin/llvm-config $HOME/.local/bin/
+              ln -s $(brew --prefix llvm@15)/bin/clang++ $HOME/.local/bin/
+              ln -s $(brew --prefix llvm@15)/bin/FileCheck $HOME/.local/bin/
+              echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+          - os: ubuntu-latest
+            install_deps: |
+              curl https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+              sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-15 main"
+              sudo apt-get update
+              sudo apt-get -y install clang-15 llvm-15-dev llvm-15-tools
+              sudo apt-get -y install pkg-config wget gzip wamerican
+              echo "/usr/lib/llvm-15/bin" >> $GITHUB_PATH
 
     steps:
     - name: Checkout the repository
@@ -36,7 +47,7 @@ jobs:
       with:
         path: |
           ~/.stack
-          ~/.ghcup/ghc/8.10.7
+          ~/.ghcup/ghc/9.2.7
           $GITHUB_WORKSPACE/.stack-work
           $GITHUB_WORKSPACE/.stack-work-test
           $GITHUB_WORKSPACE/examples/t10k-images-idx3-ubyte
@@ -48,8 +59,7 @@ jobs:
     - name: Install system dependencies
       run: |
         ${{ matrix.install_deps }}
-        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 8.10.7; fi
-        echo "${{ matrix.path_extension }}" >> $GITHUB_PATH
+        if [[ "$OSTYPE" == "darwin"* ]]; then ghcup install ghc 9.2.7; fi
 
     # This step is a workaround.
     # See issue for context: https://github.com/actions/cache/issues/445

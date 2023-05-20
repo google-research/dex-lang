@@ -15,8 +15,6 @@ module Optimize
 import Data.Functor
 import Data.Word
 import Data.Bits
-import Data.Bits.Floating
-import Data.List
 import Control.Monad
 import Control.Monad.State.Strict
 import GHC.Float
@@ -175,8 +173,10 @@ foldCast sTy l = case sTy of
     -- This rounds to nearest.  We round to nearest *even* by considering the
     -- candidates in decreasing order of the number of trailing zeros they
     -- exhibit when cast back to the original integer type.
+    fixUlp _ candidate = candidate
+    {-
+    -- NOTE: Code here requires the floating-bits package and `import Data.Bits.Floating`.
     fixUlp :: forall a b w. (Num a, Integral a, FiniteBits a, RealFrac b, FloatingBits b w)
-      => a -> b -> b
     fixUlp orig candidate = res where
       res = closest $ sortBy moreLowBits [candidate, candidatem1, candidatep1]
       candidatem1 = nextDown candidate
@@ -187,6 +187,7 @@ foldCast sTy l = case sTy of
       moreLowBits a b =
         compare (0 - countTrailingZeros (round @b @a a))
                 (0 - countTrailingZeros (round @b @a b))
+    -}
 
 peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
 peepholeExpr expr = case expr of

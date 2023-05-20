@@ -28,8 +28,6 @@ import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
 import System.IO.Unsafe
 
-import Control.Monad
-
 import Logging
 import PPrint ()
 import Paths_dex  (getDataFileName)
@@ -107,6 +105,9 @@ standardCompilationPipeline opt logger exports tm m = do
   {-# SCC runPasses  #-} runDefaultPasses opt tm m
   {-# SCC showOptimizedLLVM #-} logPass LLVMOpt $ showModule m
   {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
+#ifdef DEX_DEBUG
+  {-# SCC verifyLLVM #-} L.verify m
+#endif
   where
     logPass :: PassName -> IO String -> IO ()
     logPass passName cont = logFiltered logger passName $ cont >>= \s -> return [PassInfo passName s]

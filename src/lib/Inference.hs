@@ -20,12 +20,13 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.Reader
 import Data.Either (partitionEithers)
-import Data.Foldable (toList, asum)
+import Data.Foldable (toList)
 import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust, fromMaybe, catMaybes)
 import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
 import Data.Word
+import qualified Data.Kind as K
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -393,7 +394,7 @@ extendOutMapWithConstraints env us ss (Constraints allCs) = case tryUnsnoc allCs
     let ss''' = SolverSubst $ ss'' <> s
     (env'', us'', ss''')
 
-newtype InfererM (i::S) (o::S) (a:: *) = InfererM
+newtype InfererM (i::S) (o::S) (a::K.Type) = InfererM
   { runInfererM' :: SubstReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
   deriving (Functor, Applicative, Monad, MonadFail,
             ScopeReader, Fallible, Catchable, CtxReader, SubstReader Name)
@@ -2224,7 +2225,7 @@ instance ExtOutMap InfOutMap SolverOutFrag where
   extendOutMap infOutMap outFrag =
     extendOutMap infOutMap $ liftSolverOutFrag outFrag
 
-newtype SolverM (n::S) (a:: *) =
+newtype SolverM (n::S) (a::K.Type) =
   SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
             ScopeReader, Fallible, CtxReader)
@@ -2713,7 +2714,7 @@ class (Alternative1 m, Searcher1 m, EnvReader m, EnvExtender m)
   getGivens :: m n (Givens n)
   withGivens :: Givens n -> m n a -> m n a
 
-newtype SyntherM (n::S) (a:: *) = SyntherM
+newtype SyntherM (n::S) (a::K.Type) = SyntherM
   { runSyntherM' :: OutReaderT Givens (EnvReaderT []) n a }
   deriving ( Functor, Applicative, Monad, EnvReader, EnvExtender
            , ScopeReader, MonadFail

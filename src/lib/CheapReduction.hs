@@ -26,7 +26,8 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.Functor ((<&>))
-import qualified Data.List.NonEmpty    as NE
+import qualified Data.Kind as K
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Subst
@@ -81,7 +82,7 @@ cheapNormalize a = cheapReduce a >>= \case
 
 -- === internal ===
 
-newtype CheapReducerM (r::IR) (i :: S) (o :: S) (a :: *) =
+newtype CheapReducerM (r::IR) (i :: S) (o :: S) (a :: K.Type) =
   CheapReducerM
     (SubstReaderT AtomSubstVal
       (MaybeT1

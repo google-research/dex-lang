@@ -11,7 +11,7 @@
 # non-zero error status.
 
 tmpdiff=$(mktemp)
-diff --left-column -y $1 $2 > $tmpdiff \
+sdiff --left-column $1 $2 > $tmpdiff \
        && echo OK || (cat $tmpdiff; false)
 status=$?
 

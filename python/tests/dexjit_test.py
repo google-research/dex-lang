@@ -8,6 +8,7 @@ import unittest
 import numpy as np
 from functools import partial
 from contextlib import contextmanager
+import pytest
 
 import jax
 import jax.numpy as jnp
@@ -73,6 +74,8 @@ class JAX2DexTest(unittest.TestCase):
                                  lambda: ([rn(4, 2) for _ in range(3)],))
   test_concat_ragged = lax_test(partial(lax.concatenate, dimension=0),
                                 lambda: ([rn(1, 2, 4), rn(5, 2, 4), rn(2, 2, 4)],))
+  # FIXME(llvm-15): Re-enable test.
+  test_concat_ragged = pytest.mark.skip(reason='llvm-15 regression, segfault')(test_concat_ragged)
 
   test_dot_general_matmul = lax_test(partial(lax.dot_general, dimension_numbers=(((1,), (0,)), ((), ()))),
                                      lambda: (rn(4, 8), rn(8, 16)))
