@@ -200,11 +200,11 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
     (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ hostPtrTy i64
     initializeOutputStream streamFDOperand
     argOperands <- forM (zip [0..] argTys) \(i, ty) ->
-      gep i64 argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load (scalarTy ty)
+      gep hostVoidp argPtrOperand (i64Lit i) >>= castLPtr (scalarTy ty) >>= load (scalarTy ty)
     when (toBool requiresCUDA) ensureHasCUDAContext
     results <- extendSubst (bs @@> map opSubstVal argOperands) $ compileBlock body
     forM_ (zip [0..] results) \(i, x) ->
-      gep i64 resultPtrOperand (i64Lit i) >>= castLPtr (typeOf x) >>= flip store x
+      gep hostVoidp resultPtrOperand (i64Lit i) >>= castLPtr (typeOf x) >>= flip store x
     mainFun <- makeFunction fName
                  [streamFDParam, argPtrParam, resultPtrParam] (Just $ i64Lit 0)
     extraSpecs <- gets funSpecs
