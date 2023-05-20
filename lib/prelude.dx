@@ -2029,7 +2029,12 @@ def search_sorted(xs:n=>a, x:a) -> Maybe n given (n|Ix, a|Ord) =
         _ <- iter
         numLeft = n_to_i (get high) - n_to_i (get low)
         if numLeft == 1
-          then Done $ Just $ from_ordinal $ get low
+          then
+             ix = from_ordinal $ get low
+             result = if xs[ix] == x
+               then Just $ from_ordinal $ get low
+               else Nothing
+             Done result
           else
             centerIx = get low + unsafe_i_to_n (numLeft `idiv` 2)
             if x < xs[from_ordinal centerIx]
