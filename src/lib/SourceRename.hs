@@ -209,6 +209,7 @@ instance SourceRenamableE UExpr' where
     UNatLit   x -> return $ UNatLit x
     UIntLit   x -> return $ UIntLit x
     UFloatLit x -> return $ UFloatLit x
+    UTuple xs -> UTuple <$> mapM sourceRenameE xs
 
 instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =

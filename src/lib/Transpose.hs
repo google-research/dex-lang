@@ -130,7 +130,7 @@ withAccumulator ty cont = do
   singletonTypeVal ty >>= \case
     Nothing -> do
       baseMonoid <- tangentBaseMonoidFor ty
-      getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
+      getSnd =<< buildRunWriter noHint ty baseMonoid \_ ref ->
                    cont (LinRef $ Var ref) >> return UnitVal
     Just val -> do
       -- If the accumulator's type is inhabited by just one value, we
@@ -143,7 +143,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- getType ct >>= tangentBaseMonoidFor
-  void $ emitOp $ RefOp ref $ MExtend baseMonoid ct
+  emitMExtend baseMonoid ref ct
 
 getLinRegions :: TransposeM i o [SAtomName o]
 getLinRegions = asks fromListE
@@ -167,7 +167,8 @@ transposeWithDecls (Nest (Let b (DeclBinding _ ty expr)) rest) result ct =
                     transposeWithDecls rest result (sink ct)
       transposeExpr expr ctExpr
     Just nonlinExpr -> do
-      v <- emit nonlinExpr
+      ty' <- substNonlin ty
+      v <- emit ty' nonlinExpr
       extendSubst (b @> RenameNonlin v) $
         transposeWithDecls rest result ct
 
@@ -198,7 +199,7 @@ transposeExpr expr ct = case expr of
     Just fT <- getTransposedTopFun =<< substNonlin f
     (xsNonlin, [xLin]) <- return $ splitAt (length xs - 1) xs
     xsNonlin' <- mapM substNonlin xsNonlin
-    ct' <- naryTopApp fT (xsNonlin' ++ [ct])
+    ct' <- naryTopApp Auto fT (xsNonlin' ++ [ct])
     transposeAtom xLin ct'
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
@@ -230,7 +231,7 @@ transposeExpr expr ct = case expr of
       False -> do
         e' <- substNonlin e
         void $ buildCase e' UnitTy \i v -> do
-          v' <- emit (Atom v)
+          v' <- emitAtom v
           Abs b body <- return $ alts !! i
           extendSubst (b @> RenameNonlin v') do
             transposeBlock body (sink ct)
@@ -240,27 +241,26 @@ transposeExpr expr ct = case expr of
     idxTy <- substNonlin $ binderAnn b
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
-      tabApp ct i >>= transposeAtom e
+      tabApp Auto ct i >>= transposeAtom e
 
 transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
-  RefOp refArg m   -> do
+  RefOp refArg m -> do
     refArg' <- substNonlin refArg
-    let emitEff = emitOp . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- getType ct >>= tangentBaseMonoidFor
-        void $ emitEff $ MExtend baseMonoid ct
+        emitMExtend baseMonoid refArg' ct
       -- XXX: This assumes that the update function uses a tangent (0, +) monoid
       --      rule for RunWriter.
-      MExtend _ x -> transposeAtom x =<< emitEff MAsk
-      MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
+      MExtend _ x -> transposeAtom x =<< emitMAsk refArg'
+      MGet -> void $ emitMPut refArg' =<< addTangent ct =<< emitMGet refArg'
       MPut x -> do
-        ct' <- emitEff MGet
+        ct' <- emitMGet refArg'
         transposeAtom x ct'
         zero <- getType ct' >>= zeroAt
-        void $ emitEff $ MPut zero
+        emitMPut refArg' zero
       IndexRef _ -> notImplemented
       ProjRef _  -> notImplemented
   Hof hof       -> transposeHof hof ct
@@ -328,12 +328,12 @@ transposeHof hof ct = case hof of
     UnaryLamExpr b  body <- return lam
     ixTy <- ixTyFromDict =<< substNonlin d
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
-      ctElt <- tabApp (sink ct) (Var i)
+      ctElt <- tabApp Auto (sink ct) (Var i)
       extendSubst (b@>RenameNonlin i) $ transposeBlock body ctElt
       return UnitVal
   RunState Nothing s (BinaryLamExpr hB refB body) -> do
     (ctBody, ctState) <- fromPair ct
-    (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
+    (_, cts) <- (fromPair =<<) $ buildRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ctBody)
@@ -342,7 +342,7 @@ transposeHof hof ct = case hof of
   RunReader r (BinaryLamExpr hB refB body) -> do
     accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
     baseMonoid <- tangentBaseMonoidFor accumTy
-    (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
+    (_, ct') <- (fromPair =<<) $ buildRunWriter noHint accumTy baseMonoid \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ct)
@@ -351,7 +351,7 @@ transposeHof hof ct = case hof of
   RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
-    void $ emitRunReader noHint ctEff \h ref -> do
+    void $ buildRunReader noHint ctEff \h ref -> do
       extendSubst (hB@>RenameNonlin h) $ extendSubst (refB@>RenameNonlin ref) $
         extendLinRegions h $
           transposeBlock body (sink ctBody)

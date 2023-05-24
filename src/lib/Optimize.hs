@@ -247,8 +247,8 @@ emitSubstBlock (Block _ decls ans) = visitDeclsEmits decls $ visitAtom ans
 
 -- TODO: Refine the cost accounting so that operations that will become
 -- constant-foldable after inlining don't count towards it.
-ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
-ulExpr expr = case expr of
+ulExpr :: Emits o => SType o -> SExpr i -> ULM i o (SAtom o)
+ulExpr ty expr = case expr of
   PrimOp (Hof (For Fwd ixDict body)) ->
     case ixDict of
       IxDictRawFin (IdxRepVal n) -> do
@@ -264,13 +264,13 @@ ulExpr expr = case expr of
                 PiType (UnaryNest (tb:>_)) _ valTy -> do
                   let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                   let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
-                  emitExpr $ TabCon Nothing tabTy vals
+                  emitExpr ty $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
           False -> do
             inc bodyCost
             ixDict' <- visitGeneric ixDict
-            emitExpr $ PrimOp $ Hof $ For Fwd ixDict' body'
+            emitExpr ty $ PrimOp $ Hof $ For Fwd ixDict' body'
       _ -> nothingSpecial
   -- Avoid unrolling loops with large table literals
   TabCon _ _ els -> inc (length els) >> nothingSpecial
@@ -278,7 +278,7 @@ ulExpr expr = case expr of
   where
     inc i = modify \(ULS n) -> ULS (n + i)
     nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr)
-                     >>= emitExprToAtom
+                     >>= emitExprToAtom ty
     unrollBlowupThreshold = 12
     withLocalAccounting m = do
       oldCost <- get
@@ -327,8 +327,8 @@ hoistLoopInvariantDest (DestLamExpr bs body) = liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' ->
     DestLamExpr bs' <$> hoistLoopInvariantDestBlock body'
 
-licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
-licmExpr = \case
+licmExpr :: Emits o => SType o -> SExpr i -> LICMM i o (SAtom o)
+licmExpr ty = \case
   PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
     ix' <- substM ix
     dests' <- mapM visitAtom dests
@@ -353,7 +353,7 @@ licmExpr = \case
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
       block <- applySubst s bodyAbs >>= makeBlockFromDecls
       return $ UnaryLamExpr lb' block
-    emitExpr $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
+    emitExpr ty $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
   PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
     ix' <- substM ix
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
@@ -365,8 +365,8 @@ licmExpr = \case
     body' <- withFreshBinder noHint ixTy \i -> do
       block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
       return $ UnaryLamExpr i block
-    emitExpr $ PrimOp $ Hof $ For dir ix' body'
-  expr -> visitGeneric expr >>= emitExpr
+    emitExpr ty $ PrimOp $ Hof $ For dir ix' body'
+  expr -> visitGeneric expr >>= emitExpr ty
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]         -- hoisted dests

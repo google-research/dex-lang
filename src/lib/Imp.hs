@@ -274,8 +274,10 @@ translateDeclNestSubst
   -> Nest SDecl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
 translateDeclNestSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding _ _ expr)) rest -> do
-    x <- withSubst s $ translateExpr expr
+  Nest (Let b (DeclBinding _ resultTy expr)) rest -> do
+    x <- withSubst s do
+      resultTy' <- substM resultTy
+      translateExpr resultTy' expr
     translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
 translateDeclNest :: Emits o
@@ -286,15 +288,14 @@ translateDeclNest decls cont = do
   withSubst s' cont
 {-# INLINE translateDeclNest #-}
 
-translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
-translateExpr expr = confuseGHC >>= \_ -> case expr of
+translateExpr :: forall i o. Emits o => SType o -> SExpr i -> SubstImpM i o (SAtom o)
+translateExpr resultTy expr = confuseGHC >>= \_ -> case expr of
   TopApp f' xs' -> do
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
       DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
       FFITopFun _ _ -> do
-        resultTy <- getType $ TopApp f xs
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
         results <- impCall f scalarArgs
         restructureScalarOrPairType resultTy results
@@ -303,7 +304,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     f <- atomToRepVal =<< substM f'
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
-  PrimOp op -> toImpOp op
+  PrimOp op -> toImpOp resultTy op
   Case e alts unitResultTy _ -> do
     e' <- substM e
     case unitResultTy of
@@ -368,17 +369,17 @@ toImpRefOp refDest' m = do
             n <- indexSetSizeImp ixTy
             emitLoop noHint Fwd n \i -> do
               idx <- unsafeFromOrdinalImp (sink ixTy) i
-              xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
-              yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
+              xElt <- liftBuilderImp $ naryTabApp Auto (sink x) [sink idx]
+              yElt <- liftBuilderImp $ naryTabApp Auto (sink y) [sink idx]
               eltTy' <- applySubst (b@>SubstVal idx) eltTy
               ithDest <- indexDest (sink accDest) idx
               liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
 
-toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
-toImpOp op = case op of
-  Hof hof -> toImpHof hof
+toImpOp :: forall i o . Emits o => SType o -> PrimOp SimpIR i -> SubstImpM i o (SAtom o)
+toImpOp resultTy op = case op of
+  Hof hof -> toImpHof resultTy hof
   RefOp refDest eff -> toImpRefOp refDest eff
   DAMOp damOp -> case damOp of
     Seq d ixDict carry f -> do
@@ -407,7 +408,7 @@ toImpOp op = case op of
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
   MemOp    op' -> toImpMemOp    =<< substM op'
-  MiscOp   op' -> toImpMiscOp   =<< substM op'
+  MiscOp   op' -> toImpMiscOp resultTy =<< substM op'
   VectorOp op' -> toImpVectorOp =<< substM op'
   where
     fsa x = substM x >>= fromScalarAtom
@@ -432,9 +433,9 @@ toImpVectorOp = \case
   where
     returnIExprVal x = return $ toScalarAtom x
 
-toImpMiscOp :: Emits o => MiscOp SimpIR o -> SubstImpM i o (SAtom o)
-toImpMiscOp op = case op of
-  ThrowError resultTy -> do
+toImpMiscOp :: Emits o => SType o -> MiscOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpMiscOp resultTy op = case op of
+  ThrowError _ -> do
     emitStatement IThrowError
     buildGarbageVal resultTy
   CastOp destTy x -> do
@@ -445,7 +446,7 @@ toImpMiscOp op = case op of
   BitcastOp destTy x -> do
     BaseTy bt <- return destTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
-  UnsafeCoerce resultTy x -> do
+  UnsafeCoerce _ x -> do
     srcTy <- getType x
     srcRep  <- getRepBaseTypes srcTy
     destRep <- getRepBaseTypes resultTy
@@ -453,7 +454,7 @@ toImpMiscOp op = case op of
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
     RepVal _ tree <- atomToRepVal x
     repValAtom (RepVal resultTy tree)
-  GarbageVal resultTy -> buildGarbageVal resultTy
+  GarbageVal _ -> buildGarbageVal resultTy
   Select p x y -> do
     BaseTy _ <- getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
@@ -473,7 +474,6 @@ toImpMiscOp op = case op of
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
-    resultTy <- getType $ PrimOp $ MiscOp op
     Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- allocDest resultTy
     xScalar <- fromScalarAtom x
     size <- emitInstr $ IShowScalar tabPtr xScalar
@@ -513,71 +513,69 @@ toImpMemOp op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
-toImpHof hof = do
-  resultTy <- getTypeSubst (Hof hof)
-  case hof of
-    For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
-    While body -> do
-      body' <- buildBlockImp do
-        ans <- fromScalarAtom =<< translateBlock body
-        return [ans]
-      emitStatement $ IWhile body'
-      return UnitVal
-    RunReader r f -> do
-      BinaryLamExpr h ref body <- return f
-      r' <- substM r
-      rDest <- allocDest =<< getType r'
-      storeAtom rDest r'
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
-        translateBlock body
-    RunWriter d (BaseMonoid e _) f -> do
-      BinaryLamExpr h ref body <- return f
-      let PairTy ansTy accTy = resultTy
-      (aDest, wDest) <- case d of
-        Nothing -> destPairUnpack <$> allocDest resultTy
-        Just d' -> do
-          aDest <- allocDest ansTy
-          wDest <- atomToDest =<< substM d'
-          return (aDest, wDest)
-      e' <- substM e
-      PairE accTy' e'' <- sinkM $ PairE accTy e'
-      liftMonoidEmpty wDest accTy' e''
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
-        translateBlock body >>= storeAtom aDest
-      PairVal <$> loadAtom aDest <*> loadAtom wDest
-    RunState d s f -> do
-      BinaryLamExpr h ref body <- return f
-      let PairTy ansTy _ = resultTy
-      (aDest, sDest) <- case d of
-        Nothing -> destPairUnpack <$> allocDest resultTy
-        Just d' -> do
-          aDest <- allocDest ansTy
-          sDest <- atomToDest =<< substM d'
-          return (aDest, sDest)
-      storeAtom sDest =<< substM s
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
-        translateBlock body >>= storeAtom aDest
-      PairVal <$> loadAtom aDest <*> loadAtom sDest
-    RunIO body -> translateBlock body
-    RunInit body -> translateBlock body
-    where
-      liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
-      liftMonoidEmpty accDest accTy x = do
-        xTy <- getType x
-        alphaEq xTy accTy >>= \case
-          True -> storeAtom accDest x
-          False -> case accTy of
-            TabTy (b:>ixTy) eltTy -> do
-              n <- indexSetSizeImp ixTy
-              emitLoop noHint Fwd n \i -> do
-                idx <- unsafeFromOrdinalImp (sink ixTy) i
-                x' <- sinkM x
-                eltTy' <- applySubst (b@>SubstVal idx) eltTy
-                ithDest <- indexDest (sink accDest) idx
-                liftMonoidEmpty ithDest eltTy' x'
-            _ -> error $ "Base monoid type mismatch: can't lift " ++
-                  pprint xTy ++ " to " ++ pprint accTy
+toImpHof :: Emits o => SType o -> Hof SimpIR i -> SubstImpM i o (SAtom o)
+toImpHof resultTy hof = case hof of
+  For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
+  While body -> do
+    body' <- buildBlockImp do
+      ans <- fromScalarAtom =<< translateBlock body
+      return [ans]
+    emitStatement $ IWhile body'
+    return UnitVal
+  RunReader r f -> do
+    BinaryLamExpr h ref body <- return f
+    r' <- substM r
+    rDest <- allocDest =<< getType r'
+    storeAtom rDest r'
+    extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
+      translateBlock body
+  RunWriter d (BaseMonoid e _) f -> do
+    BinaryLamExpr h ref body <- return f
+    let PairTy ansTy accTy = resultTy
+    (aDest, wDest) <- case d of
+      Nothing -> destPairUnpack <$> allocDest resultTy
+      Just d' -> do
+        aDest <- allocDest ansTy
+        wDest <- atomToDest =<< substM d'
+        return (aDest, wDest)
+    e' <- substM e
+    PairE accTy' e'' <- sinkM $ PairE accTy e'
+    liftMonoidEmpty wDest accTy' e''
+    extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
+      translateBlock body >>= storeAtom aDest
+    PairVal <$> loadAtom aDest <*> loadAtom wDest
+  RunState d s f -> do
+    BinaryLamExpr h ref body <- return f
+    let PairTy ansTy _ = resultTy
+    (aDest, sDest) <- case d of
+      Nothing -> destPairUnpack <$> allocDest resultTy
+      Just d' -> do
+        aDest <- allocDest ansTy
+        sDest <- atomToDest =<< substM d'
+        return (aDest, sDest)
+    storeAtom sDest =<< substM s
+    extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
+      translateBlock body >>= storeAtom aDest
+    PairVal <$> loadAtom aDest <*> loadAtom sDest
+  RunIO body -> translateBlock body
+  RunInit body -> translateBlock body
+  where
+    liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
+    liftMonoidEmpty accDest accTy x = do
+      xTy <- getType x
+      alphaEq xTy accTy >>= \case
+        True -> storeAtom accDest x
+        False -> case accTy of
+          TabTy (b:>ixTy) eltTy -> do
+            n <- indexSetSizeImp ixTy
+            emitLoop noHint Fwd n \i -> do
+              idx <- unsafeFromOrdinalImp (sink ixTy) i
+              x' <- sinkM x
+              eltTy' <- applySubst (b@>SubstVal idx) eltTy
+              ithDest <- indexDest (sink accDest) idx
+              liftMonoidEmpty ithDest eltTy' x'
+          _ -> error $ "Base monoid type mismatch: can't lift " ++
+                pprint xTy ++ " to " ++ pprint accTy
 
 -- === Runtime representation of values and refs ===
 

@@ -101,6 +101,8 @@ data Expr r n where
  App             :: CAtom n -> [CAtom n]        -> Expr CoreIR n
  ApplyMethod     :: CAtom n -> Int -> [CAtom n] -> Expr CoreIR n
 
+type TypedExpr r = PairE (Type r) (Expr r)
+
 deriving instance IRRep r => Show (Expr r n)
 deriving via WrapE (Expr r) n instance IRRep r => Generic (Expr r n)
 
@@ -424,6 +426,7 @@ type CAtomName  = AtomName CoreIR
 type SAtom  = Atom SimpIR
 type SType  = Type SimpIR
 type SExpr  = Expr SimpIR
+type STypedExpr  = TypedExpr SimpIR
 type SBlock = Block SimpIR
 type SAlt   = Alt   SimpIR
 type SDecl  = Decl  SimpIR

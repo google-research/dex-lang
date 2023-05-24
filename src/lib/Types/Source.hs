@@ -251,6 +251,7 @@ data UExpr' (n::S) =
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
  | UPrim PrimName [UExpr n]
+ | UTuple [UExpr n] -- overloaded for type constructor and data constructor, resolved in inference
  | UFieldAccess (UExpr n) FieldName
  | UNatLit   Word64
  | UIntLit   Int
@@ -557,7 +558,6 @@ data PrimName =
  | UProjNewtype | UExplicitApply | UMonoLiteral
  | UIndexRef | UApplyMethod Int
  | UNat | UNatCon | UFin | UEffectRowKind
- | UTuple -- overloaded for type constructor and data constructor, resolved in inference
    deriving (Show, Eq)
 
 -- === instances ===

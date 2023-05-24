@@ -9,6 +9,7 @@ module Inline (inlineBindings) where
 import Data.List.NonEmpty qualified as NE
 
 import Builder
+import QueryType
 import Core
 import Err
 import CheapReduction
@@ -33,8 +34,8 @@ inlineBindingsBlock blk = liftInlineM $ buildScopedAssumeNoDecls $ inline Stop b
 -- === Data Structure ===
 
 data InlineExpr (r::IR) (o::S) where
-  DoneEx :: SExpr o -> InlineExpr SimpIR o
-  SuspEx :: SExpr i -> Subst InlineSubstVal i o -> InlineExpr SimpIR o
+  DoneEx :: STypedExpr o -> InlineExpr SimpIR o
+  SuspEx :: STypedExpr i -> Subst InlineSubstVal i o -> InlineExpr SimpIR o
 
 instance Show (InlineExpr r n) where
   show = \case
@@ -86,12 +87,12 @@ inlineDecls decls cont = do
 inlineDeclsSubst :: Emits o => Nest SDecl i i' -> InlineM i o (Subst InlineSubstVal i' o)
 inlineDeclsSubst = \case
   Empty -> getSubst
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding ann ty expr)) rest -> do
     if preInlineUnconditionally ann then do
       s <- getSubst
-      extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
+      extendSubst (b @> SubstVal (SuspEx (PairE ty expr) s)) $ inlineDeclsSubst rest
     else do
-      expr' <- inlineExpr Stop expr >>= (liftEnvReaderM . peepholeExpr)
+      expr' <- inlineExpr Stop (PairE ty expr) >>= (liftEnvReaderM . peepholeExpr)
       -- If the inliner starts moving effectful expressions, it may become
       -- necessary to query the effects of the new expression here.
       let presInfo = resolveWorkConservation ann expr'
@@ -115,11 +116,12 @@ inlineDeclsSubst = \case
       if presInfo == UsedOnce then do
         let substVal = case expr' of
              Atom (Var name') -> Rename name'
-             _ -> SubstVal (DoneEx expr')
+             _ -> SubstVal (DoneEx $ PairE ty expr')
         extendSubst (b @> substVal) $ inlineDeclsSubst rest
       else do
+        ty' <- visitType ty
         -- expr' can't be Atom (Var x) here
-        name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
+        name' <- emitDecl (getNameHint b) $ DeclBinding (dropOccInfo ann) ty' expr'
         extendSubst (b @> Rename name') do
           -- TODO For now, this inliner does not do any conditional inlining.
           -- In order to do it, we would need to augment the environment at this
@@ -248,11 +250,11 @@ preInlineUnconditionally = \case
 data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
   TabAppCtx :: [SAtom i] -> Subst InlineSubstVal i o
-            -> Context SExpr e o -> Context SExpr e o
+            -> Context STypedExpr e o -> Context STypedExpr e o
   CaseCtx :: [SAlt i] -> SType i -> EffectRow SimpIR i
           -> Subst InlineSubstVal i o
-          -> Context SExpr e o -> Context SExpr e o
-  EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
+          -> Context STypedExpr e o -> Context STypedExpr e o
+  EmitToAtomCtx :: Context SAtom e o -> Context STypedExpr e o
   EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
 
 class Inlinable (e1::E) where
@@ -269,8 +271,8 @@ instance Emits o => Visitor (InlineM i o) SimpIR i o where
   visitLam  = inline Stop
   visitPi   = inline Stop
 
-inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
-inlineExpr ctx = \case
+inlineExpr :: Emits o => Context STypedExpr e o -> SType o -> SExpr i -> InlineM i o (e o)
+inlineExpr ctx ty = \case
   Atom atom -> inlineAtom ctx atom
   TabApp tbl ixs -> do
     s <- getSubst
@@ -278,18 +280,24 @@ inlineExpr ctx = \case
   Case scrut alts resultTy effs -> do
     s <- getSubst
     inlineAtom (CaseCtx alts resultTy effs s ctx) scrut
-  expr -> visitGeneric expr >>= reconstruct ctx
+  expr -> do
+    expr' <- visitGeneric expr
+    reconstruct ctx $ PairE ty expr'
 
-inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
+inlineAtom :: Emits o => Context STypedExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
   ProjectElt i x -> do
     let (idxs, v) = asNaryProj i x
     ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
-    reconstruct ctx $ Atom ans
-  atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
+    ty <- getType ans
+    reconstruct ctx $ PairE ty (Atom ans)
+  atom -> do
+    atom' <- visitAtomPartial atom
+    ty <- getType atom'
+    reconstruct ctx $ PairE ty (Atom atom')
 
-inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
+inlineName :: Emits o => Context STypedExpr e o -> SAtomName i -> InlineM i o (e o)
 inlineName ctx name =
   lookupSubstM name >>= \case
     Rename name' -> do
@@ -301,9 +309,12 @@ inlineName ctx name =
       -- lookupEnv name' >>= \case
       --   (expr', presInfo) | inline presInfo expr' ctx -> inline
       --   no info -> do not inline (as now)
-      reconstruct ctx (Atom $ Var name')
-    SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
-    SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
+      ty <- getType $ Var name'
+      reconstruct ctx (PairE ty (Atom $ Var name'))
+    SubstVal (DoneEx (PairE ty expr)) -> dropSubst $ inlineExpr ctx ty expr
+    SubstVal (SuspEx (PairE ty expr) s') -> undefined
+      -- ty' <- withSubst s' $ visitType ty
+      -- withSubst s' $ inlineExpr ctx ty expr
 
 instance Inlinable SAtomName where
   inline ctx a = inlineName (EmitToAtomCtx $ EmitToNameCtx ctx) a
@@ -347,7 +358,7 @@ instance Inlinable SBlock where
       effs' <- inline Stop effs  -- TODO Really?
       reconstruct ctx $ Block (BlockAnn ty' effs') decls' ans'
 
-inlineBlockEmits :: Emits o => Context SExpr e2 o -> SBlock i -> InlineM i o (e2 o)
+inlineBlockEmits :: Emits o => Context STypedExpr e2 o -> SBlock i -> InlineM i o (e2 o)
 inlineBlockEmits ctx (Block _ decls ans) = do
   inlineDecls decls $ inlineAtom ctx ans
 
@@ -359,15 +370,16 @@ reconstruct ctx e = case ctx of
   TabAppCtx ixs s ctx' -> withSubst s $ reconstructTabApp ctx' e ixs
   CaseCtx alts resultTy effs s ctx' ->
     withSubst s $ reconstructCase ctx' e alts resultTy effs
-  EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
-  EmitToNameCtx ctx' -> emit (Atom e) >>= reconstruct ctx'
+  EmitToAtomCtx ctx' -> case e of
+    PairE ty expr -> emitExprToAtom ty expr >>= reconstruct ctx'
+  EmitToNameCtx ctx' -> emitAtom e >>= reconstruct ctx'
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
-  => Context SExpr e o -> SExpr o -> [SAtom i] -> InlineM i o (e o)
+  => Context STypedExpr e o -> STypedExpr o -> [SAtom i] -> InlineM i o (e o)
 reconstructTabApp ctx expr [] = do
   reconstruct ctx expr
-reconstructTabApp ctx expr ixs =
+reconstructTabApp ctx (PairE ty expr) ixs =
   case fromNaryForExpr (length ixs) expr of
     Just (bsCount, LamExpr bs (Block _ decls result)) -> do
       let (ixsPref, ixsRest) = splitAt bsCount ixs
@@ -413,42 +425,43 @@ reconstructTabApp ctx expr ixs =
           let ctx' = TabAppCtx ixsRest s ctx
           inlineAtom ctx' result
     Nothing -> do
-      array' <- emitExprToAtom expr
+      array' <- emitExprToAtom ty expr
       ixs' <- mapM (inline Stop) ixs
-      reconstruct ctx $ TabApp array' ixs'
+      appTy <- tabAppType array' ixs'
+      reconstruct ctx $ PairE appTy (TabApp array' ixs')
 
 reconstructCase :: Emits o
-  => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
+  => Context STypedExpr e o -> STypedExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
   -> InlineM i o (e o)
-reconstructCase ctx scrutExpr alts resultTy effs =
-  case scrutExpr of
-    Case sscrut salts _ _ -> do
-      -- Perform case-of-case optimization
-      -- TODO Add join points to reduce code duplication (and repeated inlining)
-      -- of the arms of the outer case
-      resultTy' <- inline Stop resultTy
-      reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
-        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
-        buildCase ans (sink resultTy') \j jval -> do
-          Abs b body <- return $ alts !! j
-          extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
-            inlineBlockEmits Stop body >>= emitExprToAtom)
-    _ -> do
-      -- Attempt case-of-known-constructor optimization
-      -- I can't use `buildCase` here because I want to propagate the incoming
-      -- context `ctx` into the selected alternative if the optimization fires,
-      -- but leave it around the whole reconstructed `Case` if it doesn't.
-      scrut <- emitExprToAtom scrutExpr
-      case trySelectBranch scrut of
-        Just (i, val) -> do
-          Abs b body <- return $ alts !! i
-          extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
-            inlineBlockEmits ctx body
-        Nothing -> do
-          alts' <- mapM visitAlt alts
-          resultTy' <- inline Stop resultTy
-          effs' <- inline Stop effs
-          reconstruct ctx $ Case scrut alts' resultTy' effs'
+reconstructCase ctx scrutExpr alts resultTy effs = undefined
+  -- case scrutExpr of
+  --   Case sscrut salts _ _ -> do
+  --     -- Perform case-of-case optimization
+  --     -- TODO Add join points to reduce code duplication (and repeated inlining)
+  --     -- of the arms of the outer case
+  --     resultTy' <- inline Stop resultTy
+  --     reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
+  --       ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
+  --       buildCase ans (sink resultTy') \j jval -> do
+  --         Abs b body <- return $ alts !! j
+  --         extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
+  --           inlineBlockEmits Stop body >>= emitExprToAtom)
+  --   _ -> do
+  --     -- Attempt case-of-known-constructor optimization
+  --     -- I can't use `buildCase` here because I want to propagate the incoming
+  --     -- context `ctx` into the selected alternative if the optimization fires,
+  --     -- but leave it around the whole reconstructed `Case` if it doesn't.
+  --     scrut <- emitExprToAtom scrutExpr
+  --     case trySelectBranch scrut of
+  --       Just (i, val) -> do
+  --         Abs b body <- return $ alts !! i
+  --         extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
+  --           inlineBlockEmits ctx body
+  --       Nothing -> do
+  --         alts' <- mapM visitAlt alts
+  --         resultTy' <- inline Stop resultTy
+  --         effs' <- inline Stop effs
+  --         reconstruct ctx $ Case scrut alts' resultTy' effs'
 
 instance Inlinable (EffectRow SimpIR)
 instance Inlinable (EffectAndType SimpIR)

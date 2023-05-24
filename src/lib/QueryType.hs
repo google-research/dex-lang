@@ -97,14 +97,6 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
-getPartialAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
-getPartialAppType f xs = liftTypeQueryM idSubst $ partialAppType f xs
-{-# INLINE getPartialAppType #-}
-
-getAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
-getAppType f xs = liftTypeQueryM idSubst $ appType f xs
-{-# INLINE getAppType #-}
-
 getTabAppType :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 getTabAppType f xs = liftTypeQueryM idSubst $ typeTabApp f xs
 {-# INLINE getTabAppType #-}
@@ -475,118 +467,6 @@ getSuperclassType bsAbove (Nest b bs) = \case
   0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
-instance IRRep r => HasType r (Expr r) where
-  getTypeE expr = case expr of
-    App f xs -> do
-      fTy <- getTypeE f
-      appType fTy $ toList xs
-    TopApp f xs -> do
-      PiType bs _ resultTy <- getTypeTopFun =<< substM f
-      xs' <- mapM substM xs
-      applySubst (bs @@> map SubstVal xs') resultTy
-    TabApp f xs -> do
-      fTy <- getTypeE f
-      typeTabApp fTy xs
-    Atom x   -> getTypeE x
-    TabCon _ ty _ -> substM ty
-    PrimOp          op -> getTypeE op
-    Case _ _ resultTy _ -> substM resultTy
-    ApplyMethod dict i args -> do
-      dict' <- substM dict
-      methodTy <- getMethodType dict' i
-      appType (Pi methodTy) args
-
-instance IRRep r => HasType r (DAMOp r) where
-  getTypeE = \case
-    AllocDest ty -> RawRefTy <$> substM ty
-    Place _ _ -> return UnitTy
-    Freeze ref -> getTypeE ref >>= \case
-      RawRefTy ty -> return ty
-      ty -> error $ "Not a reference type: " ++ pprint ty
-    Seq _ _ cinit _ -> getTypeE cinit
-    RememberDest d _ -> getTypeE d
-
-instance HasType CoreIR UserEffectOp where
-  getTypeE = \case
-    Handle hndName [] body -> do
-      hndName' <- substM hndName
-      r <- getTypeE body
-      instantiateHandlerType hndName' r []
-    Handle _ _ _  -> error "not implemented"
-    Perform eff i -> do
-      Eff (OneEffect (UserEffect effName)) <- return eff
-      EffectDef _ ops <- substM effName >>= lookupEffectDef
-      let (_, EffectOpType _pol lamTy) = ops !! i
-      return lamTy
-    Resume retTy _ -> substM retTy
-
-instance IRRep r => HasType r (PrimOp r) where
-  getTypeE primOp = case primOp of
-    BinOp op x _ -> do
-      xTy <- getTypeBaseType x
-      return $ TC $ BaseType $ typeBinOp op xTy
-    UnOp op x -> TC . BaseType . typeUnOp op <$> getTypeBaseType x
-    Hof  hof -> getTypeHof hof
-    MemOp op -> getTypeE op
-    MiscOp op -> getTypeE op
-    VectorOp op -> getTypeE op
-    DAMOp           op -> getTypeE op
-    UserEffectOp    op -> getTypeE op
-    RefOp ref m -> do
-      TC (RefType h s) <- getTypeE ref
-      case m of
-        MGet        -> return s
-        MPut _      -> return UnitTy
-        MAsk        -> return s
-        MExtend _ _ -> return UnitTy
-        IndexRef i -> do
-          TabTy (b:>_) eltTy <- return s
-          i' <- substM i
-          eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
-          return $ TC $ RefType h eltTy'
-        ProjRef p -> TC . RefType h <$> case p of
-          ProjectProduct i -> do
-            ProdTy tys <- return s
-            return $ tys !! i
-          UnwrapNewtype -> do
-            NewtypeTyCon tc <- return s
-            snd <$> unwrapNewtypeType tc
-
-instance IRRep r => HasType r (MemOp r) where
-  getTypeE = \case
-    IOAlloc _ -> return $ PtrTy (CPU, Scalar Word8Type)
-    IOFree _ -> return UnitTy
-    PtrOffset arr _ -> getTypeE arr
-    PtrLoad ptr -> do
-      PtrTy (_, t) <- getTypeE ptr
-      return $ BaseTy t
-    PtrStore _ _ -> return UnitTy
-
-instance IRRep r => HasType r (VectorOp r) where
-  getTypeE = \case
-    VectorBroadcast _ vty -> substM vty
-    VectorIota vty -> substM vty
-    VectorSubref ref _ vty -> getTypeE ref >>= \case
-      TC (RefType h _) -> TC . RefType h <$> substM vty
-      ty -> error $ "Not a reference type: " ++ pprint ty
-
-instance IRRep r => HasType r (MiscOp r) where
-  getTypeE = \case
-    Select _ x _ -> getTypeE x
-    ThrowError ty -> substM ty
-    ThrowException ty -> substM ty
-    CastOp t _ -> substM t
-    BitcastOp t _ -> substM t
-    UnsafeCoerce t _ -> substM t
-    GarbageVal t -> substM t
-    SumTag _ -> return TagRepTy
-    ToEnum t _ -> substM t
-    OutputStream ->
-      return $ BaseTy $ hostPtrTy $ Scalar Word8Type
-      where hostPtrTy ty = PtrType (CPU, ty)
-    ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
-    ShowScalar _ -> PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
-
 instantiateHandlerType :: EnvReader m => HandlerName n -> CType n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
   HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
@@ -620,33 +500,6 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
       PiType bs effs resultTy <- go ts
       return $ PiType (Nest b bs) effs resultTy
-
-getTypeHof :: IRRep r => Hof r i -> TypeQueryM i o (Type r o)
-getTypeHof hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ dict f -> do
-    PiType (UnaryNest (b:>_)) _ eltTy <- getLamExprTypeE f
-    ixTy <- ixTyFromDict =<< substM dict
-    return $ TabTy (b:>ixTy) eltTy
-  While _ -> return UnitTy
-  Linearize f _ -> do
-    PiType (UnaryNest (binder:>a)) Pure b <- getLamExprTypeE f
-    let b' = ignoreHoistFailure $ hoist binder b
-    fLinTy <- Pi <$> nonDepPiType [a] Pure b'
-    return $ PairTy b' fLinTy
-  Transpose f _ -> do
-    PiType (UnaryNest (_:>a)) _ _ <- getLamExprTypeE f
-    return a
-  RunReader _ f -> do
-    (resultTy, _) <- getTypeRWSAction f
-    return resultTy
-  RunWriter _ _ f -> do
-    uncurry PairTy <$> getTypeRWSAction f
-  RunState _ _ f -> do
-    (resultTy, stateTy) <- getTypeRWSAction f
-    return $ PairTy resultTy stateTy
-  RunIO f -> getTypeE f
-  RunInit f -> getTypeE f
-  CatchException f -> getTypeE f >>= makePreludeMaybeTy
 
 getLamExprTypeE :: IRRep r => LamExpr r i -> TypeQueryM i o (PiType r o)
 getLamExprTypeE (LamExpr bs body) =
@@ -692,6 +545,21 @@ rawStrType = liftEnvReaderM do
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => EnvReader m => Atom r n -> Type r n -> m n (Type r n)
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
+
+showScalarTy :: (IRRep r, EnvReader m) => m n (Type r n)
+showScalarTy = PairTy IdxRepTy <$> rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
+
+-- TODO: remove this. We shouldn't need it
+getTypeProjRef :: (IRRep r, EnvReader m, MonadFail1 m) => Projection -> Atom r n -> m n (Type r n)
+getTypeProjRef p ref = do
+  TC (RefType h s) <- getType ref
+  TC . RefType h <$> case p of
+    ProjectProduct i -> do
+      ProdTy tys <- return s
+      return $ tys !! i
+    UnwrapNewtype -> do
+      NewtypeTyCon tc <- return s
+      snd <$> unwrapNewtypeType tc
 
 -- === querying effects implementation ===
 

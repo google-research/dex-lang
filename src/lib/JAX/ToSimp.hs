@@ -119,7 +119,7 @@ unaryExpandRank :: forall i o. Emits o
 unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
-    [] -> emitExprToAtom $ PrimOp (UnOp op arg')
+    [] -> emitUnOp op arg'
     (DimSize sz:rest) -> buildFor noHint P.Fwd (finIxTy sz) \i -> do
-      ixed <- emitExprToAtom $ TabApp (sink arg') [Var i]
+      ixed <- naryTabApp Auto (sink arg') [Var i]
       go ixed rest

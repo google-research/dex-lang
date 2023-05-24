@@ -46,6 +46,7 @@ import Types.Core
 import Types.Primitives
 import Types.Source
 import Util
+import qualified Types.OpNames as P
 
 -- === Top-level interface ===
 
@@ -77,7 +78,7 @@ inferTopUDecl (UStructDecl tc def) result = do
       extendRenamer (tc@>sink tc') $
         inferDotMethod (sink tc') (Abs paramBs methodDef)
     methodSynth <- synthTopE (Lam method)
-    method' <- emitTopLet (getNameHint methodName) letAnn (Atom methodSynth)
+    method' <- emitTopLet (getNameHint methodName) letAnn methodSynth
     updateTopEnv $ UpdateFieldDef tc' methodName method'
   UDeclResultDone <$> applyRename (tc @> tc') result
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
@@ -117,7 +118,7 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
       def' <- synthInstanceDef def
       instanceName <- emitInstanceDef def'
       lam <- instanceFun instanceName expl
-      instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
+      instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet lam
       applyRename (instanceName' @> instanceAtomName) result
     _ -> error "impossible"
 inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case decl of
@@ -131,7 +132,8 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
     _ -> do
       PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
         val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
-        v <- emitHinted (getNameHint p) $ Atom val
+        valTy <- getType val
+        v <- emitHinted (getNameHint p) valTy $ Atom val
         bindLetPat p v do
           applyDefaults
           renameM result
@@ -473,7 +475,7 @@ formatAmbiguousVarErr infVar ty = \case
   AnnotationInfVar v ->
     "Couldn't infer type of unannotated binder " <> v
   ImplicitArgInfVar (f, argName) ->
-    "Couldn't infer implicit argument " <> argName <> " of " <> f
+    "Couldn't infer implicit argument `" <> argName <> "` of " <> f
   TypeInstantiationInfVar t ->
     "Couldn't infer instantiation of type " <> t
   MiscInfVar ->
@@ -540,14 +542,14 @@ instance Inferer InfererM where
     return defaults
 
 instance Builder CoreIR (InfererM i) where
-  rawEmitDecl hint ann expr = do
+  rawEmitDecl hint (DeclBinding ann ty expr) = do
     -- This zonking, and the zonking of the bindings elsewhere, is only to
     -- prevent `getType` from failing. But maybe we should just catch the
     -- failure if it occurs and generate a fresh inference name for the type in
     -- that case?
+    ty' <- zonk ty
     expr' <- zonk expr
-    ty <- getType expr'
-    emitInfererM hint $ LeftE $ DeclBinding ann ty expr'
+    emitInfererM hint $ LeftE $ DeclBinding ann ty' expr'
   {-# INLINE rawEmitDecl #-}
 
 getAllowedEffects :: InfererM i n (EffectRow CoreIR n)
@@ -900,8 +902,10 @@ withUDecl (WithSrcB src d) cont = addSrcContext src case d of
   UPass -> cont
   UExprDecl e -> inferSigma noHint e >> cont
   ULet letAnn p ann rhs -> do
+    -- TODO: let's not needlessly emit things twice here. We can make `checkMaybeAnnExpr` promise to emit something.
     val <- checkMaybeAnnExpr (getNameHint p) ann rhs
-    var <- emitDecl (getNameHint p) letAnn $ Atom val
+    valTy <- getType val
+    var <- emitDecl (getNameHint p) $ DeclBinding letAnn valTy $ Atom val
     bindLetPat p var cont
 
 -- "rho" means the required type here should not be (at the top level) an implicit pi type or
@@ -924,8 +928,10 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
       Check (TabPi tabPiTy) -> do checkUForExpr uFor tabPiTy
       Check _ -> inferUForExpr uFor
       Infer   -> inferUForExpr uFor
-    IxType _ ixDict <- asIxType $ binderType b'
-    result <- liftM Var $ emitHinted hint $ PrimOp $ Hof $ For dir ixDict lam
+    ixTy@(IxType _ ixDict) <- asIxType $ binderType b'
+    PiType (UnaryNest (b:>_)) _ eltTy <- getLamExprType lam
+    let resultTy = TabTy (b:>ixTy) eltTy
+    result <- liftM Var $ emitHinted hint resultTy $ PrimOp $ Hof $ For dir ixDict lam
     matchRequirement result
   UApp f posArgs namedArgs -> do
     f' <- inferWithoutInstantiation f >>= zonk
@@ -982,7 +988,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     ty' <- zonk =<< checkUType ty
     val' <- checkSigma hint val ty'
     matchRequirement val'
-  UPrim UTuple xs -> case reqTy of
+  UTuple xs -> case reqTy of
     Check TyKind -> Type . ProdTy <$> mapM checkUType xs
     _ -> do
       xs' <- mapM (inferRho noHint) xs
@@ -995,17 +1001,25 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     f' <- inferWithoutInstantiation f
     xs' <- mapM (inferRho noHint) xs
     applySigmaAtom f' xs' >>= matchRequirement
-  UPrim UProjNewtype [x] -> do
-    x' <- inferRho hint x >>= emitHinted hint . Atom
-    return $ unwrapNewtype $ Var x'
+  UPrim UProjNewtype [x] -> unwrapNewtype <$> inferRho hint x
+  UPrim (UMiscOp P.ShowAny) [x] -> do
+    -- handled separately because rawStrType is not expressible in source language
+    x' <- inferRho noHint x
+    t <- rawStrType
+    emitOp t (MiscOp $ ShowAny x') >>= matchRequirement
   UPrim prim xs -> do
+    resultTy <- case reqTy of
+      Check req -> return req
+      Infer -> case prim of
+        UPrimTC P.TypeKind -> return TyKind  -- needed to tie the knot (type of Type is Type)
+        _ -> throw CompilerErr "primitives should be explicitly typed"
     xs' <- forM xs \x -> do
       inferPrimArg x >>= \case
         Var v -> lookupAtomName v >>= \case
           LetBound (DeclBinding _ _ (Atom e)) -> return e
           _ -> return $ Var v
         x' -> return x'
-    matchRequirement =<< matchPrimApp prim xs'
+    matchPrimApp resultTy prim xs'
   UFieldAccess _ _ -> inferAndInstantiate
   UNatLit x -> do
     let defaultVal = Con $ Lit $ Word32Lit $ fromIntegral x
@@ -1042,7 +1056,7 @@ applyFromLiteralMethod methodName defaultVal defaultTy litVal = do
       resultTyVar <- freshInferenceName MiscInfVar TyKind
       dictTy <- DictTy <$> dictType className [Var resultTyVar]
       addDefault resultTyVar defaultTy
-      emitExpr $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
+      emitExpr (TyVar resultTyVar) $ ApplyMethod (DictHole (AlwaysEqual Nothing) dictTy Full) 0 [litVal]
 
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
@@ -1302,9 +1316,9 @@ maybeInterpretPunsAsTyCons _ x = x
 type IsDependent = Bool
 
 applySigmaAtom :: EmitsBoth o => SigmaAtom o -> [CAtom o] -> InfererM i o (CAtom o)
-applySigmaAtom (SigmaAtom _ f) args = emitExprWithEffects $ App f args
+applySigmaAtom (SigmaAtom _ f) args = emitAppInf f args
 applySigmaAtom (SigmaUVar _ f) args = case f of
-  UAtomVar f' -> emitExprWithEffects $ App (Var f') args
+  UAtomVar f' -> emitAppInf (Var f') args
   UTyConVar f' -> do
     TyConDef sn bs _ <- lookupTyCon f'
     let expls = nestToList (\(RolePiBinder _ (WithExpl expl _)) -> expl) bs
@@ -1326,11 +1340,14 @@ applySigmaAtom (SigmaUVar _ f) args = case f of
     let numParams = nestLength paramBs
     -- params aren't needed because they're already implied by the dict argument
     let (dictArg:args') = drop numParams args
-    emitExprWithEffects $ ApplyMethod dictArg methodIdx args'
+    fTy <- getMethodType dictArg methodIdx
+    PairE effs resultTy <- instantiateCorePi fTy args'
+    addEffects effs
+    emitExpr resultTy $ ApplyMethod dictArg methodIdx args'
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
 applySigmaAtom (SigmaPartialApp f prevArgs) args =
-  emitExprWithEffects $ App f (prevArgs ++ args)
+  emitAppInf f (prevArgs ++ args)
 
 splitParamPrefix :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n, [CAtom n])
 splitParamPrefix tc args = do
@@ -1370,10 +1387,12 @@ applyDataCon tc conIx topArgs = do
         where h:t = args
       _ -> error $ "Unexpected data con representation type: " ++ pprint rty
 
-emitExprWithEffects :: EmitsBoth o => CExpr o -> InfererM i o (CAtom o)
-emitExprWithEffects expr = do
-  addEffects =<< getEffects expr
-  emitExpr expr
+emitAppInf :: EmitsBoth o => CAtom o -> [CAtom o] -> InfererM i o (CAtom o)
+emitAppInf f xs = do
+  Pi piTy <- getType f
+  PairE effs resultTy <- instantiateCorePi piTy xs
+  addEffects effs
+  emitExpr resultTy $ App f xs
 
 checkArity :: BindsNames b => Nest (WithExpl b) n l -> [a] -> InfererM i o ()
 checkArity bs args = do
@@ -1445,8 +1464,8 @@ inferPrimArg x = do
       _ -> throw CompilerErr "Type args to primops must be reducible"
     _ -> emitBlock xBlock
 
-matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
-matchPrimApp = \case
+matchPrimApp :: Emits o => CType o -> PrimName -> [CAtom o] -> InfererM i o (CAtom o)
+matchPrimApp ty = \case
  UNat                -> \case ~[]  -> return $ Type $ NewtypeTyCon Nat
  UFin                -> \case ~[n] -> return $ Type $ NewtypeTyCon (Fin n)
  UEffectRowKind      -> \case ~[]  -> return $ Type $ NewtypeTyCon EffectRowKind
@@ -1454,28 +1473,28 @@ matchPrimApp = \case
  UNatCon             -> \case ~[x] -> return $ NewtypeCon NatCon x
  UPrimTC op -> \x -> Type . TC  <$> matchGenericOp (Right op) x
  UCon    op -> \x -> Con <$> matchGenericOp (Right op) x
- UMiscOp op -> \x -> emitOp =<< MiscOp <$> matchGenericOp op x
- UMemOp  op -> \x -> emitOp =<< MemOp  <$> matchGenericOp op x
- UBinOp op -> \case ~[x, y] -> emitOp $ BinOp op x y
- UUnOp  op -> \case ~[x]    -> emitOp $ UnOp  op x
- UMAsk      -> \case ~[r]    -> emitOp $ RefOp r MAsk
- UMGet      -> \case ~[r]    -> emitOp $ RefOp r MGet
- UMPut      -> \case ~[r, x] -> emitOp $ RefOp r $ MPut x
- UIndexRef  -> \case ~[r, i] -> emitOp $ RefOp r $ IndexRef i
- UApplyMethod i -> \case ~(d:args) -> emitExpr $ ApplyMethod d i args
- ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Linearize f' x
- UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Transpose f' x
- URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunReader x f'
- URunState  -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunState  Nothing x f'
- UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ While f'
- URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ RunIO f'
- UCatchException-> \case ~[f] -> do f' <- lam0 f; emitOp $ CatchException f'
- UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitOp $ RefOp r $ MExtend (BaseMonoid z f') x
+ UMiscOp op -> \x -> emitOp ty =<< MiscOp <$> matchGenericOp op x
+ UMemOp  op -> \x -> emitOp ty =<< MemOp  <$> matchGenericOp op x
+ UBinOp op -> \case ~[x, y] -> emitOp ty $ BinOp op x y
+ UUnOp  op -> \case ~[x]    -> emitOp ty $ UnOp  op x
+ UMAsk      -> \case ~[r]    -> emitOp ty $ RefOp r MAsk
+ UMGet      -> \case ~[r]    -> emitOp ty $ RefOp r MGet
+ UMPut      -> \case ~[r, x] -> emitOp ty $ RefOp r $ MPut x
+ UIndexRef  -> \case ~[r, i] -> emitOp ty $ RefOp r $ IndexRef i
+ UApplyMethod i -> \case ~(d:args) -> emitExpr ty $ ApplyMethod d i args
+ ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitOp ty $ Linearize f' x
+ UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitOp ty $ Transpose f' x
+ URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitOp ty $ RunReader x f'
+ URunState  -> \case ~[x, f]  -> do f' <- lam2 f; emitOp ty $ RunState  Nothing x f'
+ UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitOp ty $ While f'
+ URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitOp ty $ RunIO f'
+ UCatchException-> \case ~[f] -> do f' <- lam0 f; emitOp ty $ CatchException f'
+ UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitOp ty $ RefOp r $ MExtend (BaseMonoid z f') x
  URunWriter -> \args -> do
    [idVal, combiner, f] <- return args
    combiner' <- lam2 combiner
    f' <- lam2 f
-   emitOp $ RunWriter Nothing (BaseMonoid idVal combiner') f'
+   emitOp ty $ RunWriter Nothing (BaseMonoid idVal combiner') f'
  p -> \case xs -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
  where
    lam2 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)
@@ -1511,13 +1530,13 @@ pattern ExplicitCoreLam bs body <- Lam (CoreLamExpr _ (LamExpr bs body))
 inferTabApp :: EmitsBoth o => SrcPosCtx -> CAtom o -> [UExpr i] -> InfererM i o (CAtom o)
 inferTabApp tabCtx tab args = addSrcContext tabCtx do
   tabTy <- getType tab
-  args' <- inferNaryTabAppArgs tabTy args
-  liftM Var $ emit $ TabApp tab args'
+  (args', resultTy) <- inferNaryTabAppArgs tabTy args
+  emitExpr resultTy $ TabApp tab args'
 
 inferNaryTabAppArgs
   :: EmitsBoth o
-  => CType o -> [UExpr i] -> InfererM i o [CAtom o]
-inferNaryTabAppArgs _ [] = return []
+  => CType o -> [UExpr i] -> InfererM i o ([CAtom o], CType o)
+inferNaryTabAppArgs resultTy [] = return ([], resultTy)
 inferNaryTabAppArgs tabTy (arg:rest) = do
   TabPiType b resultTy <- fromTabPiType True tabTy
   let ixTy = binderType b
@@ -1527,8 +1546,8 @@ inferNaryTabAppArgs tabTy (arg:rest) = do
     else checkSigma (getNameHint b) arg ixTy
   arg'' <- zonk arg'
   resultTy' <- applySubst (b @> SubstVal arg'') resultTy
-  rest' <- inferNaryTabAppArgs resultTy' rest
-  return $ arg'':rest'
+  (rest', ty) <- inferNaryTabAppArgs resultTy' rest
+  return (arg'':rest', ty)
 
 checkSigmaDependent :: EmitsBoth o
                     => NameHint -> UExpr i -> CType o -> InfererM i o (CAtom o)
@@ -1565,7 +1584,7 @@ buildNthOrderedAlt alts scrutTy resultTy i v = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
-      emitOp $ MiscOp $ ThrowError resultTy'
+      emitOp resultTy' $ MiscOp $ ThrowError resultTy'
     Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
 
 -- converts from the ordinal index used in the core IR to the more complicated
@@ -1993,7 +2012,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     buildAltInf repTy' \arg -> do
       args <- forM idxs \projs -> do
         ans <- normalizeNaryProj (init projs) (Var arg)
-        emit $ Atom ans
+        emitAtom ans
       bindLetPats ps args $ cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
@@ -2029,16 +2048,16 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     ty <- getType v
     _  <- fromProdType n ty
     xs <- forM (iota n) \i -> do
-      normalizeProj (ProjectProduct i) (Var v) >>= zonk >>= emit . Atom
+      normalizeProj (ProjectProduct i) (Var v) >>= zonk >>= emitAtom
     bindLetPats ps xs cont
   UPatDepPair (PairB p1 p2) -> do
     let x = Var v
     ty <- getType x
     _  <- fromDepPairType ty
     x' <- zonk x  -- ensure it has a dependent pair type before unpacking
-    x1 <- getFst x' >>= zonk >>= emit . Atom
+    x1 <- getFst x' >>= zonk >>= emitAtom
     bindLetPat p1 x1 do
-      x2  <- getSnd x' >>= zonk >>= emit . Atom
+      x2  <- getSnd x' >>= zonk >>= emitAtom
       bindLetPat p2 x2 do
         cont
   UPatCon ~(InternalName _ conName) ps -> do
@@ -2052,7 +2071,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
         (params, UnitE) <- inferParams sourceName (Abs paramBs UnitE)
         constrainVarTy v $ TypeCon sourceName dataDefName params
         x <- cheapNormalize =<< zonk (Var v)
-        xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emit . Atom
+        xs <- forM idxss \idxs -> normalizeNaryProj idxs x >>= emitAtom
         bindLetPats ps xs cont
       _ -> throw TypeErr $ "sum type constructor in can't-fail pattern"
   UPatTable ps -> do
@@ -2064,7 +2083,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     tabTy <- idxTy ==> elemTy
     constrainTypesEq ty tabTy
     xs <- forM [0 .. n - 1] \i -> do
-      emit $ TabApp (Var v) [NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i)]
+      emit elemTy $ TabApp (Var v) [NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i)]
     bindLetPats ps xs cont
 
 checkAnn :: EmitsInf o => SourceName -> UAnn req i -> InfererM i o (CType o)
@@ -2100,7 +2119,7 @@ inferTabCon hint xs reqTy = do
       tabTy <- ixTy ==> elemTy
       xs' <- forM xs \x -> checkRho noHint x elemTy
       dTy <- DictTy <$> dataDictType elemTy
-      liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
+      liftM Var $ emitHinted hint tabTy $ TabCon (dataDictHole dTy) tabTy xs'
     Check tabTy -> do
       TabPiType b elemTy <- fromTabPiType True tabTy
       constrainTypesEq (binderType b) finTy
@@ -2115,7 +2134,7 @@ inferTabCon hint xs reqTy = do
             elemTy' <- applyRename (b@>binderName b') elemTy
             dTy <- DictTy <$> dataDictType elemTy'
             return $ Pi $ CorePiType ImplicitApp (UnaryNest (WithExpl (Inferred Nothing Unify) b')) Pure dTy
-      liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
+      liftM Var $ emitHinted hint tabTy $ TabCon (dataDictHole dTy) tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
 fromTabPiType :: EmitsBoth o => Bool -> CType o -> InfererM i o (TabPiType CoreIR o)
@@ -2966,7 +2985,7 @@ instance Visitor (DictSynthTraverserM i o) CoreIR i o where
   visitPi   = visitPiDefault
   visitLam  = visitLamNoEmits
 instance ExprVisitorNoEmits (DictSynthTraverserM i o) CoreIR i o where
-  visitExprNoEmits = visitGeneric
+  visitExprNoEmits _ = visitGeneric
 
 class DictSynthTraversable (e::E) where
   dsTraverse :: e i -> DictSynthTraverserM i o (e o)

@@ -64,9 +64,10 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       Vector _ _ -> error "not implemented"
       PtrType _  -> printTypeOnly "pointer"
       Scalar _ -> do
-        (n, tab) <- fromPair =<< emitExpr (PrimOp $ MiscOp $ ShowScalar atom)
+        sTy <- showScalarTy
+        (n, tab) <- fromPair =<< emitExpr sTy (PrimOp $ MiscOp $ ShowScalar atom)
         logicalTabTy <- finTabTyCore (NewtypeCon NatCon n) CharRepTy
-        tab' <- emitExpr $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
+        tab' <- emitExpr logicalTabTy $ PrimOp $ MiscOp $ UnsafeCoerce logicalTabTy tab
         emitCharTab tab'
     -- TODO: we could do better than this but it's not urgent because raw sum types
     -- aren't user-facing.
@@ -90,7 +91,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       let n = unwrapNewtype atom
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
-      emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
+      emitExpr intTy (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
@@ -173,7 +174,7 @@ withBuffer cont = do
       let piTy = CorePiType ExplicitApp piBinders eff UnitTy
       let lam = LamExpr (BinaryNest h b) body
       return $ Lam $ CoreLamExpr piTy lam
-  applyPreludeFunction "with_stack_internal" [lam]
+  applyPreludeFunction "with_stack_internal" Nothing [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do
@@ -186,18 +187,18 @@ extendBuffer buf tab = do
   RefTy h _ <- getType buf
   TabTy (_:>ixTy) _ <- getType tab
   n <- applyIxMethodCore Size ixTy []
-  void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
+  void $ applyPreludeFunction "stack_extend_internal" (Just UnitTy) [n, h, buf, tab]
 
 -- argument has type `Word8`
 pushBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 pushBuffer buf x = do
   RefTy h _ <- getType buf
-  void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
+  void $ applyPreludeFunction "stack_push_internal" (Just UnitTy) [h, buf, x]
 
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
-  emitExpr $ TabCon Nothing t (map charRepVal s)
+  emitExpr t $ TabCon Nothing t (map charRepVal s)
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
 getPreludeFunction sourceName = do
@@ -208,10 +209,12 @@ getPreludeFunction sourceName = do
     Nothing -> notfound
  where notfound = error $ "Function not defined: " ++ sourceName
 
-applyPreludeFunction :: (Emits n, CBuilder m) => String -> [CAtom n] -> m n (CAtom n)
-applyPreludeFunction name args = do
+applyPreludeFunction :: (Emits n, CBuilder m) => String -> Maybe (CType n) -> [CAtom n] -> m n (CAtom n)
+applyPreludeFunction name maybeResultTy args = do
   f <- getPreludeFunction name
-  naryApp f args
+  case maybeResultTy of
+    Just resultTy -> naryApp (Returns resultTy) f args
+    Nothing -> naryApp Auto f args
 
 strType :: EnvReader m => m n (CType n)
 strType = constructPreludeType "List" $ TyConParams [Explicit] [Type CharRepTy]
@@ -233,7 +236,7 @@ forEachTabElt
 forEachTabElt tab cont = do
   TabTy (_:>ixTy) _ <- getType tab
   void $ buildFor "i" Fwd ixTy \i -> do
-    x <- tabApp (sink tab) (Var i)
+    x <- naryTabApp Auto (sink tab) [Var i]
     i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]
     cont i' x
     return $ UnitVal

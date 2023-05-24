@@ -62,7 +62,6 @@ import Name
 import PPrint ()
 import Types.Primitives
 import Types.Source
-import qualified Types.OpNames as P
 import Util
 
 -- === Converting concrete syntax to abstract syntax ===
@@ -394,7 +393,7 @@ expr = propagateSrcE expr' where
   expr' (CFloat num)        = return $ UFloatLit num
   expr' CHole               = return   UHole
   expr' (CParens [g])       = dropSrcE <$> expr g
-  expr' (CParens gs) = UPrim UTuple <$> mapM expr gs
+  expr' (CParens gs) = UTuple <$> mapM expr gs
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   expr' (CBrackets gs) = UTabCon <$> mapM expr gs
@@ -519,7 +518,7 @@ charExpr :: Char -> (UExpr' VoidS)
 charExpr c = ULit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: UExpr' VoidS
-unitExpr = UPrim (UCon $ P.ProdCon) []
+unitExpr = UTuple []
 
 -- === Builders ===
 

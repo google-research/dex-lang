@@ -645,6 +645,8 @@ instance PrettyPrec (UExpr' n) where
     UIntLit   v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
     UDo block -> atPrec LowestPrec $ p block
+    UTuple xs  -> atPrec ArgPrec $ align $ group $
+      encloseSep "(" ")" ", " $ fmap pLowest xs
 
 instance Pretty FieldName' where
   pretty = \case

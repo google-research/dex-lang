@@ -6,17 +6,17 @@
 ### Primitive Types
 
 Type = %TyKind()
-Heap = %HeapType()
-Effects = %EffKind()
+Heap : Type = %HeapType()
+Effects : Type = %EffKind()
 
-Int64 = %Int64()
-Int32 = %Int32()
-Float64 = %Float64()
-Float32 = %Float32()
+Int64   : Type = %Int64()
+Int32   : Type = %Int32()
+Float64 : Type = %Float64()
+Float32 : Type = %Float32()
 
-Word8  = %Word8()
-Word32 = %Word32()
-Word64 = %Word64()
+Word8  : Type = %Word8()
+Word32 : Type = %Word32()
+Word64 : Type = %Word64()
 Byte = Word8
 Char = Byte
 
@@ -55,7 +55,7 @@ def i_to_f(x:Int)   -> Float = internal_cast x
 def f_to_i(x:Float) -> Int   = internal_cast x
 def raw_ptr_to_i64(x:RawPtr) -> Int64  = internal_cast x
 
-Nat = %Nat()
+Nat : Type = %Nat()
 NatRep = Word32
 
 def nat_to_rep(x : Nat)    -> NatRep = %projNewtype(x)
@@ -322,8 +322,8 @@ def Fin(n:Nat) -> Type = %Fin(n)
 def (-|)(x: Nat, y:Nat) -> Nat =
   x' = nat_to_rep x
   y' = nat_to_rep y
-  requires_clamp = %ilt(x', y')
-  rep_to_nat %select(requires_clamp, 0, (%isub(x', y')))
+  requires_clamp : Word8 = %ilt(x', y')
+  rep_to_nat %select(requires_clamp, 0, (%isub(x', y') :: NatRep))
 
 def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   x' = nat_to_rep x
@@ -667,14 +667,14 @@ interface AccumMonoid(h:Heap, w)
 
 instance AccumMonoid(h, n=>w) given (n|Ix, h, w) (am:AccumMonoid(h, w))
   getAccumMonoidData =
-    UnsafeMkAccumMonoidData(b, bm) = %applyMethod0(am)
+    UnsafeMkAccumMonoidData(b, bm) : AccumMonoidData(h, w) = %applyMethod0(am)
     UnsafeMkAccumMonoidData(b, bm)
 
 def (+=)(ref:Ref h w, x:w) -> {Accum h} ()
   given (h, w) (am:AccumMonoid(h, w)) =
-  UnsafeMkAccumMonoidData(b, bm) = %applyMethod0(am)
-  empty = %applyMethod0(bm)
-  %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y), x)
+  UnsafeMkAccumMonoidData(b, bm) : AccumMonoidData(h, w) = %applyMethod0(am)
+  empty : b = %applyMethod0(bm)
+  %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y) :: b , x)
 
 def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h) = %indexRef(ref, i)
 def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b, a|Data, h) = ref.0
@@ -703,12 +703,12 @@ def run_accum(
     bm:Monoid b,
     action: (given (h) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
     ) -> {|eff} (a, w)  given (a, b, w|Data, eff) (MonoidLifter(b,w)) =
-  empty = %applyMethod0(bm)
+  empty = %applyMethod0(bm) :: b
   def explicitAction(h':Heap, ref:Ref h' w) -> {Accum h'|eff} a =
     accumMonoidData : AccumMonoidData h' b = UnsafeMkAccumMonoidData b bm
     accumBaseMonoid = mk_accum_monoid accumMonoidData
     %explicitApply(action, h', accumBaseMonoid, ref)
-  %runWriter(empty, \x:b y:b. %applyMethod1(bm, x, y), explicitAction)
+  %runWriter(empty, \x:b y:b. (%applyMethod1(bm, x, y) :: b), explicitAction)
 
 def yield_accum(
     m:Monoid b,
@@ -1068,16 +1068,16 @@ def lbeta(x:a, y:a) -> a given (a|Sub|Floating) = lgamma x + lgamma y - lgamma (
 
 -- Todo: better numerics for very large and small values.
 -- Using %exp here to avoid circular definition problems.
-def float32_sinh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x), %exp(%fsub(0.0,x))), 2.0)
-def float32_cosh(x:Float32) -> Float32 = %fdiv(%fadd(%exp(x), %exp(%fsub(0.0,x))), 2.0)
-def float32_tanh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x), %exp(%fsub(0.0,x)))
-                                               ,%fadd(%exp(x), %exp(%fsub(0.0,x))))
+def float32_sinh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x)::Float32, %exp(%fsub(0.0,x)::Float32)::Float32)::Float32, 2.0)
+def float32_cosh(x:Float32) -> Float32 = %fdiv(%fadd(%exp(x)::Float32, %exp(%fsub(0.0,x)::Float32)::Float32)::Float32, 2.0)
+def float32_tanh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x)::Float32, %exp(%fsub(0.0,x)::Float32)::Float32)::Float32,
+                                               %fadd(%exp(x)::Float32, %exp(%fsub(0.0,x)::Float32)::Float32)::Float32)
 
 -- Todo: unify this with float32 functions.
-def float64_sinh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x), %exp(%fsub(f_to_f64 0.0, x))), f_to_f64 2.0)
-def float64_cosh(x:Float64) -> Float64 = %fdiv(%fadd(%exp(x), %exp(%fsub(f_to_f64 0.0, x))), f_to_f64 2.0)
-def float64_tanh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x), %exp(%fsub(f_to_f64 0.0, x)))
-                                               ,%fadd(%exp(x), %exp(%fsub(f_to_f64 0.0, x))))
+def float64_sinh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x)::Float64, %exp(%fsub(f_to_f64 0.0, x)::Float64)::Float64)::Float64, f_to_f64 2.0)
+def float64_cosh(x:Float64) -> Float64 = %fdiv(%fadd(%exp(x)::Float64, %exp(%fsub(f_to_f64 0.0, x)::Float64)::Float64)::Float64, f_to_f64 2.0)
+def float64_tanh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x)::Float64, %exp(%fsub(f_to_f64 0.0, x)::Float64)::Float64)::Float64
+                                              ,%fadd(%exp(x)::Float64, %exp(%fsub(f_to_f64 0.0, x)::Float64)::Float64)::Float64)
 
 instance Floating(Float64)
   def exp(x)   = %exp(x)
@@ -2190,7 +2190,7 @@ def is_power_of_2(x:Nat) -> Bool =
   x' = nat_to_rep x
   if x' == 0
     then False
-    else 0 == %and(x', (%isub(x', 1::NatRep)))
+    else 0 == %and(x', (%isub(x', 1::NatRep)::NatRep))
 
 -- This computes the integer part of the binary logarithm of the input.
 -- TODO: natlog2 0 should do something other than underflow the answer.

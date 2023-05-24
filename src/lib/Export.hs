@@ -52,7 +52,7 @@ prepareFunctionForExport cc f = do
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess npi -> return npi
   sig <- liftExportSigM $ corePiToExportSig cc closedNaryPi
-  CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
+  CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp Auto (sink f) (Var <$> xs)
   fSimp <- simplifyTopFunction f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject

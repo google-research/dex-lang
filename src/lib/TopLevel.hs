@@ -633,12 +633,12 @@ execUDecl mname decl = do
           f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
           applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
-          v <- emitTopLet (getNameHint b) ann (Atom result)
+          v <- emitTopLet (getNameHint b) ann result
           applyRename (b@>v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+      vs <- forM xs \x -> emitTopLet hint PlainLet x
       applyRename (bs@@>vs) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
@@ -655,7 +655,8 @@ compileTopLevelFun cc fSimp = do
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
   block <- liftBuilder $ buildBlock do
-    emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
+    sTy <- rawStrType
+    emitExpr sTy $ PrimOp $ MiscOp $ ShowAny $ sink x
   getDexString =<< evalBlock block
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
