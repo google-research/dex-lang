@@ -40,6 +40,7 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
+import QueryTypePure
 import Util (Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
@@ -160,13 +161,13 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (Atom x) = prettyPrec x
-  prettyPrec (App f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TopApp f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TabApp f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+  prettyPrec (App _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
+  prettyPrec (TopApp _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
+  prettyPrec (TabApp _ f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
   prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
-  prettyPrec (ApplyMethod d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -194,13 +195,11 @@ instance (IRRep r, PrettyPrecE e) => PrettyPrec (Abs (Binder r) e n) where
   prettyPrec (Abs binder body) = atPrec LowestPrec $ "\\" <> p binder <> "." <> pLowest body
 
 instance IRRep r => Pretty (DeclBinding r n) where
-  pretty (DeclBinding ann ty expr) =
-    "Decl" <> p ann <> indented (               "type: " <+> p ty
-                                 <> hardline <> "value:" <+> p expr)
+  pretty (DeclBinding ann expr) = "Decl" <> p ann <+> p expr
 
 instance IRRep r => Pretty (Decl r n l) where
-  pretty (Let b (DeclBinding ann ty rhs)) =
-    align $ annDoc <> p (b:>ty) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+  pretty (Let b (DeclBinding ann rhs)) =
+    align $ annDoc <> p (b:>getType rhs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
@@ -258,11 +257,10 @@ instance IRRep r => PrettyPrec (Atom r n) where
         parens $ p x <+> ",>" <+> p y
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
-    PtrVar v -> atPrec ArgPrec $ p v
-    DictCon d -> atPrec LowestPrec $ p d
+    PtrVar _ v -> atPrec ArgPrec $ p v
+    DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
     DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
@@ -278,7 +276,7 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy idxs v ->
+    ProjectEltTy _ idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
@@ -368,7 +366,7 @@ _inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
 
 inlineLastDecl :: IRRep r => Nest (Decl r) n l -> Atom r l -> Abs (Nest (Decl r)) (Expr r) n
 inlineLastDecl Empty result = Abs Empty $ Atom result
-inlineLastDecl (Nest (Let b (DeclBinding _ _ expr)) Empty) (Var v)
+inlineLastDecl (Nest (Let b (DeclBinding _ expr)) Empty) (Var (AtomVar v _))
   | v == binderName b = Abs Empty expr
 inlineLastDecl (Nest decl rest) result =
   case inlineLastDecl rest result of
@@ -400,6 +398,10 @@ instance Pretty (UEffect n) where
     UUserEffect name -> p name
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance PrettyPrec (AtomVar r n) where
+  prettyPrec (AtomVar v _) = prettyPrec v
+instance Pretty (AtomVar r n) where pretty = prettyFromPrettyPrec
 
 instance IRRep r => Pretty (AtomBinding r n) where
   pretty binding = case binding of
@@ -936,8 +938,8 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
       MExtend _ x -> "extend" <+> pApp ref <+> pApp x
       MGet        -> "get" <+> pApp ref
       MPut x      -> pApp ref <+> ":=" <+> pApp x
-      IndexRef i  -> pApp ref <+> "!" <+> pApp i
-      ProjRef  i  -> "proj" <+> pApp ref <+> p i
+      IndexRef _ i -> pApp ref <+> "!" <+> pApp i
+      ProjRef _ i   -> "proj_ref" <+> pApp ref <+> p i
     UnOp  op x   -> prettyOpDefault (UUnOp  op) [x]
     BinOp op x y -> prettyOpDefault (UBinOp op) [x, y]
     MiscOp op -> prettyOpGeneric op
@@ -981,7 +983,7 @@ instance IRRep r => PrettyPrec (Hof r n) where
     RunState  _ x body  -> "runState"  <+> pArg x <> nest 2 (line <> p body)
     RunIO body          -> "runIO" <+> pArg body
     RunInit body        -> "runInit" <+> pArg body
-    CatchException body -> "catchException" <+> pArg body
+    CatchException _ body -> "catchException" <+> pArg body
     Linearize body x    -> "linearize" <+> pArg body <+> pArg x
     Transpose body x    -> "transpose" <+> pArg body <+> pArg x
 

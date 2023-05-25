@@ -184,7 +184,7 @@ summaryExpr = \case
 
 summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
-  Var name -> ixExpr name
+  Var v -> ixExpr $ atomVarName v
   Con c -> constructor c
   _ -> unknown atom
   where
@@ -235,10 +235,11 @@ class HasOCC (e::E) where
 
 instance HasOCC SAtom where
   occ a = \case
-    Var n -> do
+    Var (AtomVar n ty) -> do
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
-      return $ Var n
-    ProjectElt i x -> ProjectElt i <$> occ a x
+      ty' <- occTy ty
+      return $ Var (AtomVar n ty')
+    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
     atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where
@@ -287,9 +288,9 @@ occNest :: Access n -> Nest SDecl n l -> SAtom l
 occNest a decls ans = case decls of
   Empty -> Abs Empty <$> occ a ans
   Nest d@(Let _ binding) ds -> do
-    isPureDecl <- isPure binding
+    isPureDecl <- return $ isPure binding
     dceAttempt <- refreshAbs (Abs d (Abs ds ans))
-      \d'@(Let b' (DeclBinding _ _ expr')) (Abs ds' ans') -> do
+      \d'@(Let b' (DeclBinding _ expr')) (Abs ds' ans') -> do
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
           below <- occNest (sink a) ds' ans'
@@ -312,15 +313,15 @@ occNest a decls ans = case decls of
         -- the decl's binder.  This means that variable bindings cut
         -- occurrence analysis, and each binding is considered for
         -- inlining separately.
-        DeclBinding _ ty expr <- occ accessOnce binding'
+        DeclBinding _ expr <- occ accessOnce binding'
         -- We save effects information here because the inliner will want to
         -- query the effects of an expression before it is substituted, and the
         -- type querying subsystem is not set up to do that.
-        effs <- getEffects expr
+        effs <- return $ getEffects expr
         let ann = case effs of
               Pure -> OccInfoPure usage
               _    -> OccInfoImpure usage
-        let binding'' = DeclBinding ann ty expr
+        let binding'' = DeclBinding ann expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
 checkAllFreeVariablesMentioned :: HoistableE e => e n -> OCCM n ()
@@ -338,17 +339,17 @@ checkAllFreeVariablesMentioned e = do
 #endif
 
 instance HasOCC (DeclBinding SimpIR) where
-  occ a (DeclBinding ann ty expr) = do
+  occ a (DeclBinding ann expr) = do
     expr' <- occ a expr
-    ty' <- occTy ty
-    return $ DeclBinding ann ty' expr'
+    return $ DeclBinding ann expr'
 
 instance HasOCC SExpr where
   occ a = \case
-    TabApp array ixs -> do
+    TabApp t array ixs -> do
+      t' <- occTy t
       (a', ixs') <- go a ixs
       array' <- occ a' array
-      return $ TabApp array' ixs'
+      return $ TabApp t' array' ixs'
     Case scrut alts ty effs -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
@@ -487,6 +488,6 @@ instance HasOCC (RefOp SimpIR) where
     MPut x -> MPut <$> occ accessOnce x
     MGet -> return MGet
     MAsk -> return MAsk
-    IndexRef i -> IndexRef <$> occ accessOnce i
-    ProjRef  i -> return $ ProjRef i
+    IndexRef t i -> IndexRef <$> occTy t <*> occ accessOnce i
+    ProjRef t i -> ProjRef <$> occTy t <*> pure i
   {-# INLINE occ #-}

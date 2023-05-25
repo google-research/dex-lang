@@ -86,7 +86,7 @@ inlineDecls decls cont = do
 inlineDeclsSubst :: Emits o => Nest SDecl i i' -> InlineM i o (Subst InlineSubstVal i' o)
 inlineDeclsSubst = \case
   Empty -> getSubst
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding ann expr)) rest -> do
     if preInlineUnconditionally ann then do
       s <- getSubst
       extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
@@ -114,13 +114,13 @@ inlineDeclsSubst = \case
       -- OnceUnsafe with whnfOrBot == True in the Secrets paper.)
       if presInfo == UsedOnce then do
         let substVal = case expr' of
-             Atom (Var name') -> Rename name'
+             Atom (Var name') -> Rename $ atomVarName name'
              _ -> SubstVal (DoneEx expr')
         extendSubst (b @> substVal) $ inlineDeclsSubst rest
       else do
         -- expr' can't be Atom (Var x) here
         name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
-        extendSubst (b @> Rename name') do
+        extendSubst (b @> Rename (atomVarName name')) do
           -- TODO For now, this inliner does not do any conditional inlining.
           -- In order to do it, we would need to augment the environment at this
           -- point, associating name' to (expr', presInfo) so name' could be
@@ -253,7 +253,7 @@ data Context (from::E) (to::E) (o::S) where
           -> Subst InlineSubstVal i o
           -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
-  EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
+  EmitToNameCtx :: Context SAtomVar e o -> Context SAtom e o
 
 class Inlinable (e1::E) where
   inline :: Emits o => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
@@ -272,7 +272,7 @@ instance Emits o => Visitor (InlineM i o) SimpIR i o where
 inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
 inlineExpr ctx = \case
   Atom atom -> inlineAtom ctx atom
-  TabApp tbl ixs -> do
+  TabApp _ tbl ixs -> do
     s <- getSubst
     inlineAtom (TabAppCtx ixs s ctx) tbl
   Case scrut alts resultTy effs -> do
@@ -283,15 +283,15 @@ inlineExpr ctx = \case
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt i x -> do
+  ProjectElt _ i x -> do
     let (idxs, v) = asNaryProj i x
     ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
     reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
-inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
+inlineName :: Emits o => Context SExpr e o -> SAtomVar i -> InlineM i o (e o)
 inlineName ctx name =
-  lookupSubstM name >>= \case
+  lookupSubstM (atomVarName name) >>= \case
     Rename name' -> do
       -- This is the considerInline function from the Secrets paper; this
       -- is where we decide whether to inline a binding that isn't to be
@@ -301,11 +301,12 @@ inlineName ctx name =
       -- lookupEnv name' >>= \case
       --   (expr', presInfo) | inline presInfo expr' ctx -> inline
       --   no info -> do not inline (as now)
-      reconstruct ctx (Atom $ Var name')
+      v <- toAtomVar name'
+      reconstruct ctx (Atom $ Var v)
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
-instance Inlinable SAtomName where
+instance Inlinable SAtomVar where
   inline ctx a = inlineName (EmitToAtomCtx $ EmitToNameCtx ctx) a
 
 instance Inlinable SAtom where
@@ -333,7 +334,7 @@ withBinders (Nest (b:>ty) bs) cont = do
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effs ty)  =
     reconstruct ctx =<< withBinders bs \bs' -> do
-      EffectAndType effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffectAndType effs ty)
+      EffTy effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffTy effs ty)
       return $ PiType bs' effs' ty'
 
 instance Inlinable SBlock where
@@ -391,8 +392,9 @@ reconstructTabApp ctx expr ixs =
       -- Current status: Emitting bindings in the interest if "launch and
       -- iterate"; have not tried `EmitToAtomCtx`.
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
+      let ixsPref'' = [v | AtomVar v _ <- ixsPref']
       s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref'
+      let moreSubst = bs @@> map Rename ixsPref''
       dropSubst $ extendSubst moreSubst do
         -- Decision here.  These decls have already been processed by the
         -- inliner once, so their occurrence information is stale (and should
@@ -415,7 +417,7 @@ reconstructTabApp ctx expr ixs =
     Nothing -> do
       array' <- emitExprToAtom expr
       ixs' <- mapM (inline Stop) ixs
-      reconstruct ctx $ TabApp array' ixs'
+      reconstruct ctx =<< mkTabApp array' ixs'
 
 reconstructCase :: Emits o
   => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
@@ -451,4 +453,4 @@ reconstructCase ctx scrutExpr alts resultTy effs =
           reconstruct ctx $ Case scrut alts' resultTy' effs'
 
 instance Inlinable (EffectRow SimpIR)
-instance Inlinable (EffectAndType SimpIR)
+instance Inlinable (EffTy     SimpIR)
