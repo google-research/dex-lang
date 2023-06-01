@@ -16,7 +16,7 @@ import Data.Word
 import Data.Functor
 import Data.Maybe (fromJust)
 import Data.List.NonEmpty qualified as NE
-import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
+import Data.Text.Prettyprint.Doc (Pretty, pretty, viaShow, (<+>))
 import Control.Category
 import Control.Monad.Reader
 import Control.Monad.State.Strict
@@ -357,18 +357,19 @@ data Stability
   deriving (Eq, Show)
 
 data VSubstValC (c::C) (n::S) where
-  VVal :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
-  VRename :: SAtomName n -> VSubstValC (AtomNameC SimpIR) n
+  VVal   :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
+  VRename :: Name c n -> VSubstValC c n
 
 type VAtom = VSubstValC (AtomNameC SimpIR)
 instance SinkableV VSubstValC
 instance SinkableE (VSubstValC c) where
   sinkingProofE fresh (VVal s x) = VVal s $ sinkingProofE fresh x
-  sinkingProofE fresh (VRename v) = VRename $ sinkingProofE fresh v
+  sinkingProofE fresh (VRename n) = VRename $ sinkingProofE fresh n
 
+instance Pretty (VSubstValC c n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
-  prettyPrec (VRename v) = atPrec LowestPrec $ "rename" <> pretty v
+  prettyPrec (VRename v) = atPrec LowestPrec $ "Rename" <+> pretty v
 
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
@@ -470,14 +471,9 @@ vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
   where
     iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
     iSubst v = case lookupSubstFragProjected frag v of
-      Left v'  -> sink $ fromNameVAtom v'
-      Right v' -> sink $ fromNameVAtom v'
+      Left v'  -> sink $ VRename v'
+      Right v' -> sink $ VRename v'
 vectorizeSeq _ _ _ = error "expected a unary lambda expression"
-
-fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
-fromNameVAtom v = case eqColorRep @c @(AtomNameC SimpIR) of
-  Just ColorsEqual -> VRename v
-  _ -> error "Unexpected non-atom name"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
@@ -502,6 +498,17 @@ vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
 vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
+    TabApp _ tbl [ix] -> do
+      VVal Uniform tbl' <- vectorizeAtom tbl
+      VVal Contiguous ix' <- vectorizeAtom ix
+      case getType tbl' of
+        (TabTy tb a) -> do
+          vty <- getVectorType =<< case hoist tb a of
+            HoistSuccess a' -> return a'
+            HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
+          VVal Varying <$> emitOp (VectorOp $ VectorIdx tbl' ix' vty)
+        tblTy -> do
+          throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
     Atom atom -> vectorizeAtom atom
     PrimOp op -> vectorizePrimOp op
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
@@ -593,7 +600,9 @@ vectorizeType t = do
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
-    Var v -> lookupSubstM $ atomVarName v
+    Var v -> lookupSubstM (atomVarName v) >>= \case
+      VRename v' -> VVal Uniform . Var <$> toAtomVar v'
+      v' -> return v'
     -- Vectors of base newtypes are already newtype-stripped.
     ProjectElt _ (ProjectProduct i) x -> do
       VVal vv x' <- vectorizeAtom x
@@ -611,6 +620,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
 uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
 uniformSubst subst n = case subst ! n of
   VVal Uniform x -> SubstVal x
+  VRename name -> Rename name
   -- TODO(nrink): Throw instead of `error`.
   _ -> error "Can't vectorize atom"
 

@@ -593,6 +593,12 @@ typeCheckVectorOp = \case
   VectorIota ty -> do
     ty'@(BaseTy (Vector _ _)) <- checkTypeE TyKind ty
     return ty'
+  VectorIdx tbl i ty -> do
+    TabTy b (BaseTy (Scalar sbt)) <- getTypeE tbl
+    i |: binderType b
+    ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
+    unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
+    return ty'
   VectorSubref ref i ty -> do
     RawRefTy (TabTy b (BaseTy (Scalar sbt))) <- getTypeE ref
     i |: binderType b
