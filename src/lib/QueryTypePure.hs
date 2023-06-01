@@ -189,6 +189,7 @@ instance IRRep r => HasType r (VectorOp r) where
   getType = \case
     VectorBroadcast _ vty -> vty
     VectorIota vty -> vty
+    VectorIdx _ _ vty -> vty
     VectorSubref ref _ vty -> case getType ref of
       TC (RefType h _) -> TC $ RefType h vty
       ty -> error $ "Not a reference type: " ++ show ty

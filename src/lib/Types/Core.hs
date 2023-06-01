@@ -48,10 +48,10 @@ import Types.Imp
 -- === core IR ===
 
 data Atom (r::IR) (n::S) where
- Var        :: AtomVar r n    -> Atom r n
- Con        :: Con r n         -> Atom r n
- PtrVar     :: PtrType -> PtrName n -> Atom r n
- ProjectElt :: Type r n -> Projection -> Atom r n                   -> Atom r n
+ Var        :: AtomVar r n                              -> Atom r n
+ Con        :: Con r n                                  -> Atom r n
+ PtrVar     :: PtrType -> PtrName n                     -> Atom r n
+ ProjectElt :: Type r n -> Projection -> Atom r n       -> Atom r n
  DepPair    :: Atom r n -> Atom r n -> DepPairType r n  -> Atom r n
  -- === CoreIR only ===
  Lam          :: CoreLamExpr n                 -> Atom CoreIR n
@@ -373,6 +373,7 @@ showStringBufferSize = 32
 data VectorOp r n =
    VectorBroadcast (Atom r n) (Type r n)         -- value, vector type
  | VectorIota (Type r n)                         -- vector type
+ | VectorIdx (Atom r n) (Atom r n) (Type r n)    -- table, base ix, vector type
  | VectorSubref (Atom r n) (Atom r n) (Type r n) -- ref, base ix, vector type
    deriving (Show, Generic)
 
@@ -1738,12 +1739,14 @@ instance GenericOp VectorOp where
   fromOp = \case
     VectorBroadcast x t -> GenericOpRep P.VectorBroadcast [t] [x]    []
     VectorIota t        -> GenericOpRep P.VectorIota      [t] []     []
+    VectorIdx x y t     -> GenericOpRep P.VectorIdx       [t] [x, y] []
     VectorSubref x y t  -> GenericOpRep P.VectorSubref    [t] [x, y] []
   {-# INLINE fromOp #-}
 
   toOp = \case
     GenericOpRep P.VectorBroadcast [t] [x]    [] -> Just $ VectorBroadcast x t
     GenericOpRep P.VectorIota      [t] []     [] -> Just $ VectorIota t
+    GenericOpRep P.VectorIdx       [t] [x, y] [] -> Just $ VectorIdx x y t
     GenericOpRep P.VectorSubref    [t] [x, y] [] -> Just $ VectorSubref x y t
     _ -> Nothing
   {-# INLINE toOp #-}

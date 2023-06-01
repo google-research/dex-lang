@@ -118,6 +118,8 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 :pp (2 > 1 || 4 < 5) && 6 == 6
 -- CHECK: (1| () |)
 
+-- === Vectorization ===
+
 "vectorization"
 -- CHECK-LABEL: vectorization
 
@@ -147,3 +149,13 @@ _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
 -- CHECK: [[i2:v#[0-9]+]]:<8xFloat64> = %fadd [[i0]] [[i1]]
 -- CHECK: [[ones:v#[0-9]+]]:<8xFloat64> = vbroadcast 1.
 -- CHECK: %fadd [[i2]] [[ones]]
+
+xs = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
+
+%passes vect
+_ = for i:(Fin 256). xs[i] + 1
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[i:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
+-- CHECK: %iadd [[i]] [[ones]]

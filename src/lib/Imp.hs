@@ -419,18 +419,25 @@ toImpVectorOp = \case
     val' <- fromScalarAtom val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
   VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
+  VectorIdx tbl' i vty -> do
+    -- VectorIdx requires that tbl' have a scalar element type, which is
+    -- ultimately enforced by `Lower.getVectorType` barfing on non-scalars.
+    tbl <- atomToRepVal tbl'
+    repValAtom =<< vectorIndexRepVal tbl i (toIVectorType vty)
   VectorSubref ref i vty -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fromScalarAtom refi
-    let PtrType (addrSpace, _) = getIType refi'
-    case vty of
-      BaseTy vty'@(Vector _ _) -> do
-        resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
-      _ -> error "Expected a vector type"
+    resultVal <- castPtrToVectorType refi' (toIVectorType vty)
+    repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
   where
     returnIExprVal x = return $ toScalarAtom x
+
+castPtrToVectorType :: Emits n
+  => IExpr n -> IVectorType -> SubstImpM i n (IExpr n)
+castPtrToVectorType ptr vty = do
+  let PtrType (addrSpace, _) = getIType ptr
+  cast ptr (PtrType (addrSpace, vty))
 
 toImpMiscOp :: Emits o => MiscOp SimpIR o -> SubstImpM i o (SAtom o)
 toImpMiscOp op = case op of
@@ -1010,8 +1017,10 @@ naryIndexRepVal x (ix:ixs) = do
 {-# INLINE naryIndexRepVal #-}
 
 -- TODO: de-dup with indexDest?
-indexRepVal :: Emits n => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
-indexRepVal (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
+indexRepValParam :: Emits n
+  => RepVal SimpIR n -> SAtom n -> (IExpr n -> SubstImpM i n (IExpr n))
+  -> SubstImpM i n (RepVal SimpIR n)
+indexRepValParam (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i func = do
   eltTy' <- applySubst (b@>SubstVal i) eltTy
   ord <- ordinalImp ixTy i
   leafTys <- typeToTree tabTy
@@ -1022,11 +1031,23 @@ indexRepVal (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
     -- we represent scalars by value, not by reference, so we do a load
     -- if this is the last index in the table nest.
     case ixStruct of
-      EmptyAbs (Nest _ Empty) -> load ptr'
-      _                       -> return ptr'
+      EmptyAbs (Nest _ Empty) -> func ptr' >>= load
+      _                       -> func ptr'
   return $ RepVal eltTy' vals'
-indexRepVal _ _ = error "expected table type"
+indexRepValParam _ _ _ = error "expected table type"
+{-# INLINE indexRepValParam #-}
+
+indexRepVal :: Emits n
+  => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
+indexRepVal rep i = indexRepValParam rep i return
 {-# INLINE indexRepVal #-}
+
+vectorIndexRepVal :: Emits n
+  => RepVal SimpIR n -> SAtom n -> IVectorType
+  -> SubstImpM i n (RepVal SimpIR n)
+vectorIndexRepVal rep i vty = indexRepValParam rep i action where
+  action ptr = castPtrToVectorType ptr vty
+{-# INLINE vectorIndexRepVal #-}
 
 projectDest :: Int -> Dest n -> Dest n
 projectDest i (Dest (ProdTy tys) (Branch ds)) =

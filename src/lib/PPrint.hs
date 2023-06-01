@@ -10,7 +10,8 @@
 
 module PPrint (
   pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
-  PrettyPrec(..), PrecedenceLevel (..), prettyBlock, printLitBlock, printResult) where
+  PrettyPrec(..), PrecedenceLevel (..), prettyBlock, printLitBlock,
+  printResult, prettyFromPrettyPrec) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
 import GHC.Exts (Constraint)
@@ -956,6 +957,7 @@ instance IRRep r => PrettyPrec (VectorOp r n) where
   prettyPrec = \case
     VectorBroadcast v vty -> atPrec LowestPrec $ "vbroadcast" <+> pApp v <+> pApp vty
     VectorIota vty -> atPrec LowestPrec $ "viota" <+> pApp vty
+    VectorIdx tbl i vty -> atPrec LowestPrec $ "vslice" <+> pApp tbl <+> pApp i <+> pApp vty
     VectorSubref ref i _ -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
 
 prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann

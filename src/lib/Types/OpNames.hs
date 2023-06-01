@@ -34,7 +34,7 @@ data MiscOp =
  | ThrowError | ThrowException | Tag | SumTag | Create | ToEnum
  | OutputStream | ShowAny | ShowScalar
 
-data VectorOp  = VectorBroadcast | VectorIota | VectorSubref
+data VectorOp  = VectorBroadcast | VectorIota | VectorIdx | VectorSubref
 
 data Hof  (r::IR) =
    While | RunReader | RunWriter | RunState | RunIO | RunInit
