@@ -252,22 +252,24 @@ occTy :: SType n -> OCCM n (SType n)
 occTy ty = occ accessOnce ty
 
 instance HasOCC SLam where
-  occ a (LamExpr bs body) = do
-    lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
-      LamExpr bs' <$> occ (sink a) body'
-    countFreeVarsAsOccurrencesB bs'
-    return lam
+  occ a (LamExpr bs body) = undefined
+  -- occ a (LamExpr bs body) = do
+  --   lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
+  --     LamExpr bs' <$> occ (sink a) body'
+  --   countFreeVarsAsOccurrencesB bs'
+  --   return lam
 
 instance HasOCC (PiType SimpIR) where
-  occ _ (PiType bs effs ty) = do
-    -- The way this and hoistState are written, the pass will crash if any of
-    -- the AccessInfos reference this binder.
-    piTy@(PiType bs' _ _) <- refreshAbs (Abs bs (PairE effs ty)) \b (PairE effs' ty') ->
-      -- I (dougalm) am not sure about this. I'm just trying to mimic the old
-      -- behavior when this would go through the `HasOCC PairE` instance.
-      PiType b <$> occGeneric accessOnce effs' <*> occ accessOnce ty'
-    countFreeVarsAsOccurrencesB bs'
-    return piTy
+  occ _ _ = undefined
+  -- occ _ (PiType bs effs ty) = do
+  --   -- The way this and hoistState are written, the pass will crash if any of
+  --   -- the AccessInfos reference this binder.
+  --   piTy@(PiType bs' _ _) <- refreshAbs (Abs bs (PairE effs ty)) \b (PairE effs' ty') ->
+  --     -- I (dougalm) am not sure about this. I'm just trying to mimic the old
+  --     -- behavior when this would go through the `HasOCC PairE` instance.
+  --     PiType b <$> occGeneric accessOnce effs' <*> occ accessOnce ty'
+  --   countFreeVarsAsOccurrencesB bs'
+  --   return piTy
 
 instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
@@ -395,13 +397,13 @@ occurrenceAndSummary atom = do
 
 instance HasOCC (Hof SimpIR) where
   occ a hof = case hof of
-    For ann ixDict (UnaryLamExpr b body) -> do
-      ixDict' <- inlinedLater ixDict
-      occWithBinder (Abs b body) \b' body' -> do
-        extend b' (Occ.Var $ binderName b') do
-          (body'', bodyFV) <- isolated (occ accessOnce body')
-          modify (<> abstractFor b' bodyFV)
-          return $ For ann ixDict' (UnaryLamExpr b' body'')
+    -- For ann ixDict (UnaryLamExpr b body) -> do
+    --   ixDict' <- inlinedLater ixDict
+    --   occWithBinder (Abs b body) \b' body' -> do
+    --     extend b' (Occ.Var $ binderName b') do
+    --       (body'', bodyFV) <- isolated (occ accessOnce body')
+    --       modify (<> abstractFor b' bodyFV)
+    --       return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> do
       (body', bodyFV) <- isolated (occ accessOnce body)
@@ -450,13 +452,14 @@ instance HasOCC (Hof SimpIR) where
       error "Expecting to do occurrence analysis before lowering."
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
-oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
-oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
-  occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
-    extend b' (sink ix) do
-      LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
-      return $ LamExpr (Nest b' bs') body'
-oneShot _ _ _ = error "zip error"
+oneShot = undefined
+-- oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
+-- oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
+--   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
+--     extend b' (sink ix) do
+--       LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
+--       return $ LamExpr (Nest b' bs') body'
+-- oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
 occWithBinder

@@ -147,6 +147,12 @@ type AtomBinderP (r::IR) = BinderP (AtomNameC r)
 type Binder r = AtomBinderP r (Type r) :: B
 type Alt r = Abs (Binder r) (Block r) :: E
 
+data WithDeclsB (r::IR) (b::B) (n::S) (l::S) where
+  WithDeclsB :: Nest (Decl r) n l -> b l l' -> WithDeclsB r b n l'
+
+data WithDeclsE (r::IR) (e::E) (n::S) where
+  WithDeclsE :: Nest (Decl r) n l -> e l -> WithDeclsE r e n
+
 newtype DotMethods n = DotMethods (M.Map SourceName (CAtomName n))
         deriving (Show, Generic, Monoid, Semigroup)
 
@@ -192,7 +198,7 @@ data BlockAnn r n l where
   NoBlockAnn :: BlockAnn r n n
 
 data LamExpr (r::IR) (n::S) where
-  LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
+  LamExpr :: Nest (WithDeclsB r (Binder r)) n l -> WithDeclsE r (Block r) l -> LamExpr r n
 
 data CoreLamExpr (n::S) = CoreLamExpr (CorePiType n) (LamExpr CoreIR n)
 
@@ -230,15 +236,15 @@ data IxType (r::IR) (n::S) =
 type IxBinder r = BinderP (AtomNameC r) (IxType r)
 
 data TabPiType (r::IR) (n::S) where
-  TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
+  TabPiType :: IxBinder r n l -> WithDeclsE r (Type r) l -> TabPiType r n
 
 data PiType (r::IR) (n::S) where
-  PiType :: Nest (Binder r) n l -> EffectRow r l -> Type r l -> PiType r n
+  PiType :: Nest (WithDeclsB r (Binder r)) n l -> WithDeclsE r (EffTy r) l -> PiType r n
 
-type CoreBinders = Nest (WithExpl CBinder)
+type CoreBinders = Nest (WithExpl (WithDeclsB CoreIR CBinder))
 
 data CorePiType (n::S) where
-  CorePiType :: AppExplicitness -> CoreBinders n l -> EffectRow CoreIR l -> Type CoreIR l -> CorePiType n
+  CorePiType :: AppExplicitness -> CoreBinders n l -> WithDeclsE CoreIR (EffTy CoreIR) l -> CorePiType n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
@@ -468,7 +474,7 @@ isSumCon = \case
 
 data RolePiBinder (n::S) (l::S) = RolePiBinder ParamRole (WithExpl CBinder n l)
      deriving (Show, Generic)
-type RolePiBinders = Nest RolePiBinder
+type RolePiBinders = Nest (WithDeclsB CoreIR RolePiBinder)
 
 data ClassDef (n::S) where
   ClassDef
@@ -1107,7 +1113,7 @@ pattern RefTy r a = TC (RefType r a)
 pattern RawRefTy :: Type r n -> Type r n
 pattern RawRefTy a = TC (RefType (Con HeapVal) a)
 
-pattern TabTy :: IxBinder r n l -> Type r l -> Type r n
+pattern TabTy :: IxBinder r n l -> WithDeclsE r (Type r) l -> Type r n
 pattern TabTy b body = TabPi (TabPiType b body)
 
 pattern FinTy :: Atom CoreIR n -> Type CoreIR n
@@ -1128,13 +1134,17 @@ pattern EffKind = NewtypeTyCon EffectRowKind
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = NewtypeTyCon (Fin (NatVal n))
 
-pattern NullaryLamExpr :: Block r n -> LamExpr r n
+pattern NullaryLamExpr :: WithDeclsE r (Block r) n -> LamExpr r n
 pattern NullaryLamExpr body = LamExpr Empty body
 
-pattern UnaryLamExpr :: Binder r n l -> Block r l -> LamExpr r n
+pattern UnaryLamExpr :: WithDeclsB r (Binder r) n l
+                     -> WithDeclsE r (Block r) l
+                     -> LamExpr r n
 pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 
-pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
+pattern BinaryLamExpr :: WithDeclsB r (Binder r) n l1
+                      -> WithDeclsB r (Binder r) l1 l2
+                      -> WithDeclsE r (Block r) l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
 
 pattern NullaryDestLamExpr :: DestBlock r n -> DestLamExpr r n
@@ -2078,10 +2088,10 @@ instance Semigroup (Cache n) where
 
 instance GenericE (LamExpr r) where
   type RepE (LamExpr r) = Abs (Nest (Binder r)) (Block r)
-  fromE (LamExpr b block) = Abs b block
-  {-# INLINE fromE #-}
-  toE   (Abs b block) = LamExpr b block
-  {-# INLINE toE #-}
+  -- fromE (LamExpr b block) = Abs b block
+  -- {-# INLINE fromE #-}
+  -- toE   (Abs b block) = LamExpr b block
+  -- {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (LamExpr r)
 instance IRRep r => HoistableE     (LamExpr r)
@@ -2138,10 +2148,10 @@ deriving via WrapE CoreLamExpr n instance Generic (CoreLamExpr n)
 
 instance GenericE CorePiType where
   type RepE CorePiType = LiftE AppExplicitness `PairE` Abs CoreBinders (EffectRow CoreIR `PairE` CType)
-  fromE (CorePiType ex b eff resultTy) = LiftE ex `PairE` Abs b (eff `PairE` resultTy)
-  {-# INLINE fromE #-}
-  toE   (LiftE ex `PairE` Abs b (eff `PairE` resultTy)) = CorePiType ex b eff resultTy
-  {-# INLINE toE #-}
+  -- fromE (CorePiType ex b eff resultTy) = LiftE ex `PairE` Abs b (eff `PairE` resultTy)
+  -- {-# INLINE fromE #-}
+  -- toE   (LiftE ex `PairE` Abs b (eff `PairE` resultTy)) = CorePiType ex b eff resultTy
+  -- {-# INLINE toE #-}
 
 instance SinkableE      CorePiType
 instance HoistableE     CorePiType
@@ -2194,10 +2204,10 @@ instance IRRep r => AlphaHashableE (IxType r) where
 
 instance IRRep r => GenericE (TabPiType r) where
   type RepE (TabPiType r) = Abs (IxBinder r) (Type r)
-  fromE (TabPiType b resultTy) = Abs b resultTy
-  {-# INLINE fromE #-}
-  toE   (Abs b resultTy) = TabPiType b resultTy
-  {-# INLINE toE #-}
+  -- fromE (TabPiType b resultTy) = Abs b resultTy
+  -- {-# INLINE fromE #-}
+  -- toE   (Abs b resultTy) = TabPiType b resultTy
+  -- {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (TabPiType r)
 instance IRRep r => HoistableE     (TabPiType r)
@@ -2209,10 +2219,10 @@ deriving via WrapE (TabPiType r) n instance IRRep r => Generic (TabPiType r n)
 
 instance GenericE (PiType r) where
   type RepE (PiType r) = Abs (Nest (Binder r)) (PairE (EffectRow r) (Type r))
-  fromE (PiType bs eff resultTy) = Abs bs (PairE eff resultTy)
-  {-# INLINE fromE #-}
-  toE   (Abs bs (PairE eff resultTy)) = PiType bs eff resultTy
-  {-# INLINE toE #-}
+  -- fromE (PiType bs eff resultTy) = Abs bs (PairE eff resultTy)
+  -- {-# INLINE fromE #-}
+  -- toE   (Abs bs (PairE eff resultTy)) = PiType bs eff resultTy
+  -- {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (PiType r)
 instance IRRep r => HoistableE     (PiType r)
@@ -2910,3 +2920,54 @@ instance Store (UserEffectOp n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
 instance Store (DotMethods n)
+
+
+instance GenericE (WithDeclsE r e) where
+  type RepE (WithDeclsE r e) = UnitE
+
+deriving via WrapE (WithDeclsE r e) n instance Generic (WithDeclsE r e n)
+deriving via WrapB (WithDeclsB r b) n l instance Generic (WithDeclsB r b n l)
+
+instance GenericB (WithDeclsB r b) where
+  type RepB (WithDeclsB r b) = UnitB
+
+instance Store (WithDeclsB r b n l) where
+  size = undefined
+  peek = undefined
+  poke = undefined
+
+instance Show (WithDeclsB r b n l) where
+  show = undefined
+
+instance Store (WithDeclsE r e n) where
+  size = undefined
+  peek = undefined
+  poke = undefined
+
+instance Show (WithDeclsE r e n) where
+  show = undefined
+
+instance Generic (UnitB n l)
+instance GenericB UnitB
+instance AlphaEqB (UnitB) where
+  withAlphaEqB _ _ _ = undefined
+
+instance AlphaHashableB (UnitB) where
+  hashWithSaltB = undefined
+
+instance SinkableB (WithDeclsB r b) where
+  sinkingProofB _ _ _ = undefined
+
+instance HoistableB (WithDeclsB r b) where
+instance AlphaEqB (WithDeclsB r b) where
+instance AlphaHashableB (WithDeclsB r b) where
+
+instance RenameB (WithDeclsB r b) where
+  renameB _ _ _ = undefined
+
+instance ProvesExt (WithDeclsB r b) where
+  toExtEvidence = undefined
+
+instance BindsNames (WithDeclsB r b) where
+  toScopeFrag = undefined
+

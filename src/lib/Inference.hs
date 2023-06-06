@@ -1355,6 +1355,14 @@ splitParamPrefix tc args = do
   params <- makeTyConParams tc paramArgs
   return (params, dataArgs)
 
+makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
+makeTyConParams tc params = undefined
+-- makeTyConParams tc params = do
+--   TyConDef _ paramBs _ <- lookupTyCon tc
+--   let expls = nestToList (\(RolePiBinder _ b) -> getExpl b) paramBs
+--   return $ TyConParams expls params
+
+
 applyDataCon :: Emits o => TyConName o -> Int -> [CAtom o] -> InfererM i o (CAtom o)
 applyDataCon tc conIx topArgs = do
   tyDef@(TyConDef sn _ _) <- lookupTyCon tc
@@ -2721,7 +2729,7 @@ trySynthTerm ty reqMethodAccess = do
 {-# SCC trySynthTerm #-}
 
 type SynthAtom = CAtom
-type SynthPiType = Abs (Nest (WithExpl CBinder)) DictType
+type SynthPiType = Abs (Nest (WithExpl (WithDeclsB CoreIR CBinder))) (WithDeclsE CoreIR DictType)
 data SynthType n =
    SynthDictType (DictType n)
  | SynthPiType (SynthPiType n)
@@ -2906,7 +2914,7 @@ instantiateSynthArgs targetTop (Abs bsTop resultTyTop) = do
     arg -> return arg
  where
    go :: EmitsInf o
-      => DictType o -> Abs (Nest (WithExpl CBinder)) DictType i
+      => DictType o -> Abs (Nest (WithExpl (WithDeclsB CoreIR CBinder))) DictType i
       -> SubstReaderT AtomSubstVal SolverM i o [CAtom o]
    go target (Abs bs proposed) = case bs of
      Empty -> do
@@ -2926,7 +2934,7 @@ synthDictForData dictTy@(DictType "Data" dName [Type ty]) = case ty of
   -- TODO Deduplicate vs CheckType.checkDataLike
   -- The "Var" case is different
   TyVar _ -> synthDictFromGiven dictTy
-  TabPi (TabPiType b eltTy) -> recurBinder (Abs b eltTy) >> success
+  TabPi (TabPiType b eltTy) -> undefined -- recurBinder (Abs b eltTy) >> success
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l >> recurBinder (Abs b r) >> success
   NewtypeTyCon nt -> do
@@ -3000,7 +3008,7 @@ instance DictSynthTraversable CAtom where
       case ans of
         Failure errs -> put (LiftE errs) >> renameM atom
         Success d    -> return d
-    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _ _) (LamExpr bsLam body)) -> do
+    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _) (LamExpr bsLam body)) -> do
       Pi piTy' <- dsTraverse $ Pi piTy
       let (expls, _) = unzipExpls bsPi
       lam' <- dsTraverseExplBinders (zipExpls expls bsLam) \bsLamExpl' -> do
@@ -3014,28 +3022,31 @@ instance DictSynthTraversable CAtom where
 
 instance DictSynthTraversable CType where
   dsTraverse ty = case ty of
-    Pi (CorePiType appExpl bs effs resultTy) -> Pi <$>
+    Pi (CorePiType appExpl bs effTy) -> Pi <$>
       dsTraverseExplBinders bs \bs' -> do
-        CorePiType appExpl bs' <$> renameM effs <*> dsTraverse resultTy
+        CorePiType appExpl bs' <$> dsTraverse effTy
     TyVar _          -> renameM ty
     ProjectEltTy _ _ _ -> renameM ty
     _ -> visitTypePartial ty
+
+instance DictSynthTraversable e => DictSynthTraversable (WithDeclsE CoreIR e) where
+  dsTraverse = undefined
 
 instance DictSynthTraversable DataConDefs where dsTraverse = visitGeneric
 instance DictSynthTraversable (Block CoreIR) where
   dsTraverse = visitBlockNoEmits
 
 dsTraverseExplBinders
-  :: Nest (WithExpl CBinder) i i'
-  -> (forall o'. DExt o o' => Nest (WithExpl CBinder) o o' -> DictSynthTraverserM i' o' a)
+  :: Nest (WithExpl (WithDeclsB CoreIR CBinder)) i i'
+  -> (forall o'. DExt o o' => Nest (WithExpl (WithDeclsB CoreIR CBinder)) o o' -> DictSynthTraverserM i' o' a)
   -> DictSynthTraverserM i o a
 dsTraverseExplBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-dsTraverseExplBinders (Nest (WithExpl expl b) bs) cont = do
-  ty <- dsTraverse $ binderType b
-  withFreshBinder (getNameHint b) ty \b' -> do
-    let v = binderName b'
-    extendSynthCandidatesDict expl v $ extendRenamer (b@>v) do
-      dsTraverseExplBinders bs \bs' -> cont $ Nest (WithExpl expl b') bs'
+-- dsTraverseExplBinders (Nest (WithExpl expl b) bs) cont = do
+--   ty <- dsTraverse $ binderType b
+--   withFreshBinder (getNameHint b) ty \b' -> do
+--     let v = binderName b'
+--     extendSynthCandidatesDict expl v $ extendRenamer (b@>v) do
+--       dsTraverseExplBinders bs \bs' -> cont $ Nest (WithExpl expl b') bs'
 
 extendSynthCandidatesDict :: Explicitness -> CAtomName n -> DictSynthTraverserM i n a -> DictSynthTraverserM i n a
 extendSynthCandidatesDict c v cont = DictSynthTraverserM do
@@ -3079,11 +3090,12 @@ buildTabPiInf
   => NameHint -> IxType CoreIR n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomVar l -> InfererM i l (CType l))
   -> InfererM i n (TabPiType CoreIR n)
-buildTabPiInf hint ixTy body = do
-  Abs (WithExpl _ (b:>_)) resultTy <-
-    buildAbsInf hint Explicit (ixTypeType ixTy) \v ->
-      withoutEffects $ body v
-  return $ TabPiType (b:>ixTy) resultTy
+buildTabPiInf hint ixTy body = undefined
+-- buildTabPiInf hint ixTy body = do
+--   Abs (WithExpl _ (b:>_)) resultTy <-
+--     buildAbsInf hint Explicit (ixTypeType ixTy) \v ->
+--       withoutEffects $ body v
+--   return $ TabPiType (b:>ixTy) resultTy
 
 buildDepPairTyInf
   :: EmitsInf n
@@ -3174,7 +3186,9 @@ instance BindsEnv InfOutFrag where
   toEnvFrag (InfOutFrag frag _ _) = toEnvFrag frag
 
 instance GenericE SynthType where
-  type RepE SynthType = EitherE2 DictType (Abs (Nest (WithExpl CBinder)) DictType)
+  type RepE SynthType = EitherE2 DictType
+         (Abs (Nest (WithExpl (WithDeclsB CoreIR CBinder)))
+              (WithDeclsE CoreIR DictType))
   fromE (SynthDictType d) = Case0 d
   fromE (SynthPiType   t) = Case1 t
   toE (Case0 d) = SynthDictType d

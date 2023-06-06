@@ -161,19 +161,20 @@ withBuffer
   :: Emits n
   => (forall l . (Emits l, DExt n l) => CAtom l -> BuilderM CoreIR l ())
   -> BuilderM CoreIR n (CAtom n)
-withBuffer cont = do
-  lam <- withFreshBinder "h" (TC HeapType) \h -> do
-    bufTy <- bufferTy (Var $ binderVar h)
-    withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
-      body <- buildBlock do
-        cont $ sink $ Var $ binderVar b
-        return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
-      let piTy = CorePiType ExplicitApp piBinders eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
-      return $ Lam $ CoreLamExpr piTy lam
-  applyPreludeFunction "with_stack_internal" [lam]
+withBuffer cont = undefined
+-- withBuffer cont = do
+--   lam <- withFreshBinder "h" (TC HeapType) \h -> do
+--     bufTy <- bufferTy (Var $ binderVar h)
+--     withFreshBinder "buf" bufTy \b -> do
+--       let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
+--       body <- buildBlock do
+--         cont $ sink $ Var $ binderVar b
+--         return UnitVal
+--       let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
+--       let piTy = CorePiType ExplicitApp piBinders eff UnitTy
+--       let lam = LamExpr (BinaryNest h b) body
+--       return $ Lam $ CoreLamExpr piTy lam
+--   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do

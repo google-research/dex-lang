@@ -245,6 +245,9 @@ instance BindsEnv (LiftB e) where
   toEnvFrag (LiftB _) = EnvFrag emptyOutFrag
   {-# INLINE toEnvFrag #-}
 
+instance BindsEnv (WithDeclsB r b) where
+  toEnvFrag = undefined
+
 nestToEnvFragRec :: (BindsEnv b, Distinct l) => EnvFrag n h -> Nest b h l -> EnvFrag n l
 nestToEnvFragRec f = \case
   Empty       -> f
@@ -424,8 +427,9 @@ getInstanceDicts name = do
 liftLamExpr :: (IRRep r, EnvReader m)
   => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
   -> LamExpr r n -> m n (LamExpr r n)
-liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
-  refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
+liftLamExpr f (LamExpr bs (WithDeclsE ds body)) = liftEnvReaderM $
+  refreshAbs (Abs (PairB bs ds) body) \(PairB bs' ds') body' ->
+    LamExpr bs' <$> WithDeclsE ds' <$> f body'
 
 type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
 
@@ -457,7 +461,8 @@ fromNaryForExpr maxDepth = \case
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do
-        expr <- exprBlock body
+        WithDeclsE Empty body' <- return body
+        expr <- exprBlock body'
         guard $ maxDepth > 1
         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
         return (d + 1, LamExpr (Nest b bs) body2)

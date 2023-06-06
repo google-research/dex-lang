@@ -248,44 +248,45 @@ emitSubstBlock (Block _ decls ans) = visitDeclsEmits decls $ visitAtom ans
 -- TODO: Refine the cost accounting so that operations that will become
 -- constant-foldable after inlining don't count towards it.
 ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
-ulExpr expr = case expr of
-  PrimOp (Hof (For Fwd ixDict body)) ->
-    case ixDict of
-      IxDictRawFin (IdxRepVal n) -> do
-        (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
-        -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
-        case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
-          True -> case body' of
-            UnaryLamExpr b' block' -> do
-              vals <- dropSubst $ forM (iota n) \i -> do
-                extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
-              inc $ fromIntegral n  -- To account for the TabCon we emit below
-              case getLamExprType body' of
-                PiType (UnaryNest (tb:>_)) _ valTy -> do
-                  let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
-                  let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
-                  emitExpr $ TabCon Nothing tabTy vals
-                _ -> error "Expected `for` body to have a Pi type"
-            _ -> error "Expected `for` body to be a lambda expression"
-          False -> do
-            inc bodyCost
-            ixDict' <- visitGeneric ixDict
-            emitExpr $ PrimOp $ Hof $ For Fwd ixDict' body'
-      _ -> nothingSpecial
-  -- Avoid unrolling loops with large table literals
-  TabCon _ _ els -> inc (length els) >> nothingSpecial
-  _ -> nothingSpecial
-  where
-    inc i = modify \(ULS n) -> ULS (n + i)
-    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr)
-                     >>= emitExprToAtom
-    unrollBlowupThreshold = 12
-    withLocalAccounting m = do
-      oldCost <- get
-      ans <- put (ULS 0) *> m
-      ULS newCost <- get
-      put oldCost $> (ans, newCost)
-    {-# INLINE withLocalAccounting #-}
+ulExpr = undefined
+-- ulExpr expr = case expr of
+--   PrimOp (Hof (For Fwd ixDict body)) ->
+--     case ixDict of
+--       IxDictRawFin (IdxRepVal n) -> do
+--         (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
+--         -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
+--         case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
+--           True -> case body' of
+--             UnaryLamExpr b' block' -> do
+--               vals <- dropSubst $ forM (iota n) \i -> do
+--                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
+--               inc $ fromIntegral n  -- To account for the TabCon we emit below
+--               case getLamExprType body' of
+--                 PiType (UnaryNest (tb:>_)) _ valTy -> do
+--                   let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
+--                   let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
+--                   emitExpr $ TabCon Nothing tabTy vals
+--                 _ -> error "Expected `for` body to have a Pi type"
+--             _ -> error "Expected `for` body to be a lambda expression"
+--           False -> do
+--             inc bodyCost
+--             ixDict' <- visitGeneric ixDict
+--             emitExpr $ PrimOp $ Hof $ For Fwd ixDict' body'
+--       _ -> nothingSpecial
+--   -- Avoid unrolling loops with large table literals
+--   TabCon _ _ els -> inc (length els) >> nothingSpecial
+--   _ -> nothingSpecial
+--   where
+--     inc i = modify \(ULS n) -> ULS (n + i)
+--     nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr)
+--                      >>= emitExprToAtom
+--     unrollBlowupThreshold = 12
+--     withLocalAccounting m = do
+--       oldCost <- get
+--       ans <- put (ULS 0) *> m
+--       ULS newCost <- get
+--       put oldCost $> (ans, newCost)
+--     {-# INLINE withLocalAccounting #-}
 
 -- === Loop invariant code motion ===
 
@@ -328,46 +329,47 @@ hoistLoopInvariantDest (DestLamExpr bs body) = liftEnvReaderM $
     DestLamExpr bs' <$> hoistLoopInvariantDestBlock body'
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
-licmExpr = \case
-  PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
-    ix' <- substM ix
-    dests' <- mapM visitAtom dests
-    let numCarriesOriginal = length dests'
-    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
-      Block _ decls ans <- buildBlock $ visitBlockEmits body
-      -- Now, we process the decls and decide which ones to hoist.
-      liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
-    extraDests' <- mapM toAtomVar extraDests
-    -- Append the destinations of hoisted Allocs as loop carried values.
-    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
-    let carryTy = getType dests''
-    let lbTy = case ixTyFromDict ix' of IxType ixTy _ -> PairTy ixTy carryTy
-    extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
-    Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
-    body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
-      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
-      let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
-      let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-      block <- applySubst s bodyAbs >>= makeBlockFromDecls
-      return $ UnaryLamExpr lb' block
-    emitExpr $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
-  PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
-    ix' <- substM ix
-    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      Block _ decls ans <- buildBlock $ visitBlockEmits body
-      liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
-    ixTy <- substM $ binderType b
-    body' <- withFreshBinder noHint ixTy \i -> do
-      block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
-      return $ UnaryLamExpr i block
-    emitExpr $ PrimOp $ Hof $ For dir ix' body'
-  expr -> visitGeneric expr >>= emitExpr
+licmExpr = undefined
+-- licmExpr = \case
+--   PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+--     ix' <- substM ix
+--     dests' <- mapM visitAtom dests
+--     let numCarriesOriginal = length dests'
+--     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+--       -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
+--       Block _ decls ans <- buildBlock $ visitBlockEmits body
+--       -- Now, we process the decls and decide which ones to hoist.
+--       liftEnvReaderM $ runSubstReaderT idSubst $
+--           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+--     PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
+--     extraDests' <- mapM toAtomVar extraDests
+--     -- Append the destinations of hoisted Allocs as loop carried values.
+--     let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
+--     let carryTy = getType dests''
+--     let lbTy = case ixTyFromDict ix' of IxType ixTy _ -> PairTy ixTy carryTy
+--     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
+--     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+--     body' <- withFreshBinder noHint lbTy \lb' -> do
+--       (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
+--       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+--       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+--       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
+--       block <- applySubst s bodyAbs >>= makeBlockFromDecls
+--       return $ UnaryLamExpr lb' block
+--     emitExpr $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
+--   PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
+--     ix' <- substM ix
+--     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+--       Block _ decls ans <- buildBlock $ visitBlockEmits body
+--       liftEnvReaderM $ runSubstReaderT idSubst $
+--           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+--     PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+--     ixTy <- substM $ binderType b
+--     body' <- withFreshBinder noHint ixTy \i -> do
+--       block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
+--       return $ UnaryLamExpr i block
+--     emitExpr $ PrimOp $ Hof $ For dir ix' body'
+--   expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]          -- hoisted dests
@@ -459,14 +461,16 @@ instance HasDCE SAtom where
 
 instance HasDCE SType where dce = visitTypePartial
 instance HasDCE (PiType SimpIR) where
-  dce (PiType bs eff ty) = do
-    Abs bs' (EffTy eff' ty') <- dce (Abs bs (EffTy eff ty))
-    return $ PiType bs' eff' ty'
+  dce = undefined
+  -- dce (PiType bs effty) = do
+  --   Abs bs' effty' <- dce (Abs bs effty)
+  --   return $ PiType bs' effty'
 
 instance HasDCE (LamExpr SimpIR) where
-  dce (LamExpr bs e) = do
-    Abs bs' e' <- dce (Abs bs e)
-    return $ LamExpr bs' e'
+  dce = undefined
+  -- dce (LamExpr bs e) = do
+  --   Abs bs' e' <- dce (Abs bs e)
+  --   return $ LamExpr bs' e'
 
 instance HasDCE SBlock where
   dce (Block ann decls ans) = case (ann, decls) of

@@ -35,14 +35,15 @@ simplifyClosedJaxpr ClosedJaxpr{jaxpr, consts=[]} = simplifyJaxpr jaxpr
 simplifyClosedJaxpr _ = error "TODO Support consts"
 
 simplifyJaxpr :: Jaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
-simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
-  simplifyJBinders invars \invarsB -> do
-    simplifyJBinders constvars \constvarsB -> do
-      body <- buildBlock do
-        simplifyEqns eqns do
-          outs <- (map fst) <$> mapM simplifyAtom outvars
-          return $ Con $ ProdCon $ outs
-      return $ LamExpr (invarsB >>> constvarsB) body
+simplifyJaxpr = undefined
+-- simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
+--   simplifyJBinders invars \invarsB -> do
+--     simplifyJBinders constvars \constvarsB -> do
+--       body <- buildBlock do
+--         simplifyEqns eqns do
+--           outs <- (map fst) <$> mapM simplifyAtom outvars
+--           return $ Con $ ProdCon $ outs
+--       return $ LamExpr (invarsB >>> constvarsB) body
 
 simplifyJBinders
   :: Nest JBinder i i'

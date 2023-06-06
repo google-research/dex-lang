@@ -211,47 +211,49 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
 
 instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
   cheapReduceE :: forall i o. Type r i -> CheapReducerM r i o (Type r o)
-  cheapReduceE a = case a of
-    -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
-    -- we have a chance to apply tham. Also, recursive traversal of those bodies
-    -- means that we will follow the full call chain, so it's really expensive!
-    -- TODO: we don't collect the dict holes here, so there's a danger of
-    -- dropping them if they turn out to be phantom.
-    TabPi (TabPiType (b:>ixTy) resultTy) -> do
-      ixTy' <- cheapReduceE ixTy
-      withFreshBinder (getNameHint b) ixTy' \b' -> do
-        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType b' resultTy'
-    -- We traverse the Atom constructors that might contain lambda expressions
-    -- explicitly, to make sure that we can skip normalizing free vars inside those.
-    NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
-    -- Do recursive reduction via substitution
-    -- TODO: we don't collect the dict holes here, so there's a danger of
-    -- dropping them if they turn out to be phantom.
-    _ -> do
-      a' <- substM a
-      dropSubst $ traverseNames cheapReduceName a'
+  cheapReduceE a = undefined
+  -- cheapReduceE a = case a of
+  --   -- Don't try to eagerly reduce lambda bodies. We might get stuck long before
+  --   -- we have a chance to apply tham. Also, recursive traversal of those bodies
+  --   -- means that we will follow the full call chain, so it's really expensive!
+  --   -- TODO: we don't collect the dict holes here, so there's a danger of
+  --   -- dropping them if they turn out to be phantom.
+  --   TabPi (TabPiType (b:>ixTy) resultTy) -> do
+  --     ixTy' <- cheapReduceE ixTy
+  --     withFreshBinder (getNameHint b) ixTy' \b' -> do
+  --       resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
+  --       return $ TabPi $ TabPiType b' resultTy'
+  --   -- We traverse the Atom constructors that might contain lambda expressions
+  --   -- explicitly, to make sure that we can skip normalizing free vars inside those.
+  --   NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
+  --   -- Do recursive reduction via substitution
+  --   -- TODO: we don't collect the dict holes here, so there's a danger of
+  --   -- dropping them if they turn out to be phantom.
+  --   _ -> do
+  --     a' <- substM a
+  --     dropSubst $ traverseNames cheapReduceName a'
 
 cheapReduceDictExpr :: CType o -> DictExpr i -> CheapReducerM CoreIR i o (CAtom o)
-cheapReduceDictExpr resultTy d = case d of
-  SuperclassProj child superclassIx -> do
-    cheapReduceE child >>= \case
-      DictCon _ (InstanceDict instanceName args) -> dropSubst do
-        args' <- mapM cheapReduceE args
-        InstanceDef _ bs _ body <- lookupInstanceDef instanceName
-        let InstanceBody superclasses _ = body
-        applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
-      child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
-  InstantiatedGiven f xs ->
-    reduceApp <|> justSubst
-    where reduceApp = do
-            f' <- cheapReduceE f
-            xs' <- mapM cheapReduceE (toList xs)
-            cheapReduceApp f' xs'
-  InstanceDict _ _ -> justSubst
-  IxFin _          -> justSubst
-  DataData ty      -> DictCon resultTy . DataData <$> cheapReduceE ty
-  where justSubst = DictCon resultTy <$> substM d
+cheapReduceDictExpr resultTy d = undefined
+-- cheapReduceDictExpr resultTy d = case d of
+--   SuperclassProj child superclassIx -> do
+--     cheapReduceE child >>= \case
+--       DictCon _ (InstanceDict instanceName args) -> dropSubst do
+--         args' <- mapM cheapReduceE args
+--         InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+--         let InstanceBody superclasses _ = body
+--         applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+--       child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
+--   InstantiatedGiven f xs ->
+--     reduceApp <|> justSubst
+--     where reduceApp = do
+--             f' <- cheapReduceE f
+--             xs' <- mapM cheapReduceE (toList xs)
+--             cheapReduceApp f' xs'
+--   InstanceDict _ _ -> justSubst
+--   IxFin _          -> justSubst
+--   DataData ty      -> DictCon resultTy . DataData <$> cheapReduceE ty
+--   where justSubst = DictCon resultTy <$> substM d
 
 instance CheaplyReducibleE CoreIR TyConParams TyConParams where
   cheapReduceE (TyConParams infs ps) =
@@ -264,42 +266,44 @@ instance (CheaplyReducibleE r (Atom r) e', NiceE r e') => CheaplyReducibleE r (B
   cheapReduceE (Block _ decls result) = cheapReduceE $ Abs decls result
 
 instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
-  cheapReduceE expr = confuseGHC >>= \_ -> case expr of
-    Atom atom -> cheapReduceE atom
-    App _ f' xs' -> do
-      xs <- mapM cheapReduceE xs'
-      f <- cheapReduceE f'
-      cheapReduceApp f xs
-    -- TODO: Make sure that this wraps correctly
-    -- TODO: Other casts?
-    PrimOp (MiscOp (CastOp ty' val')) -> do
-      ty <- cheapReduceE ty'
-      case ty of
-        BaseTy (Scalar Word32Type) -> do
-          val <- cheapReduceE val'
-          case val of
-            Con (Lit (Word64Lit v)) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
-            _ -> empty
-        _ -> empty
-    ApplyMethod _ dict i explicitArgs -> do
-      explicitArgs' <- mapM cheapReduceE explicitArgs
-      cheapReduceE dict >>= \case
-        DictCon _ (InstanceDict instanceName args) -> dropSubst do
-          args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
-          let method = methods !! i
-          extendSubst (bs@@>(SubstVal <$> args')) do
-            method' <- cheapReduceE method
-            cheapReduceApp method' explicitArgs'
-        _ -> empty
-    _ -> empty
+  cheapReduceE expr = undefined
+  -- cheapReduceE expr = confuseGHC >>= \_ -> case expr of
+  --   Atom atom -> cheapReduceE atom
+  --   App _ f' xs' -> do
+  --     xs <- mapM cheapReduceE xs'
+  --     f <- cheapReduceE f'
+  --     cheapReduceApp f xs
+  --   -- TODO: Make sure that this wraps correctly
+  --   -- TODO: Other casts?
+  --   PrimOp (MiscOp (CastOp ty' val')) -> do
+  --     ty <- cheapReduceE ty'
+  --     case ty of
+  --       BaseTy (Scalar Word32Type) -> do
+  --         val <- cheapReduceE val'
+  --         case val of
+  --           Con (Lit (Word64Lit v)) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
+  --           _ -> empty
+  --       _ -> empty
+  --   ApplyMethod _ dict i explicitArgs -> do
+  --     explicitArgs' <- mapM cheapReduceE explicitArgs
+  --     cheapReduceE dict >>= \case
+  --       DictCon _ (InstanceDict instanceName args) -> dropSubst do
+  --         args' <- mapM cheapReduceE args
+  --         InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+  --         let method = methods !! i
+  --         extendSubst (bs@@>(SubstVal <$> args')) do
+  --           method' <- cheapReduceE method
+  --           cheapReduceApp method' explicitArgs'
+  --       _ -> empty
+  --   _ -> empty
 
 cheapReduceApp :: CAtom o -> [CAtom o] -> CheapReducerM CoreIR i o (CAtom o)
-cheapReduceApp f xs = case f of
-  Lam (CoreLamExpr _ (LamExpr bs body)) -> do
-    let subst = bs @@> fmap SubstVal xs
-    dropSubst $ extendSubst subst $ cheapReduceE body
-  _ -> empty
+cheapReduceApp f xs = undefined
+-- cheapReduceApp f xs = case f of
+--   Lam (CoreLamExpr _ (LamExpr bs body)) -> do
+--     let subst = bs @@> fmap SubstVal xs
+--     dropSubst $ extendSubst subst $ cheapReduceE body
+--   _ -> empty
 
 instance IRRep r => CheaplyReducibleE r (IxType r) (IxType r) where
   cheapReduceE (IxType t d) = IxType <$> cheapReduceE t <*> cheapReduceE d
@@ -467,9 +471,10 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
-instantiateTyConDef (TyConDef _ bs conDefs) (TyConParams _ xs) = do
-  applySubst (bs @@> (SubstVal <$> xs)) conDefs
-{-# INLINE instantiateTyConDef #-}
+instantiateTyConDef (TyConDef _ bs conDefs) (TyConParams _ xs) = undefined
+-- instantiateTyConDef (TyConDef _ bs conDefs) (TyConParams _ xs) = do
+--   applySubst (bs @@> (SubstVal <$> xs)) conDefs
+-- {-# INLINE instantiateTyConDef #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -517,15 +522,17 @@ instance VisitGeneric (LamExpr r) r where visitGeneric = visitLam
 instance VisitGeneric (PiType  r) r where visitGeneric = visitPi
 
 instance VisitGeneric (Block r) r where
-  visitGeneric b = visitGeneric (LamExpr Empty b) >>= \case
-    LamExpr Empty b' -> return b'
-    _ -> error "not a block"
+  visitGeneric b = undefined
+  -- visitGeneric b = visitGeneric (LamExpr Empty b) >>= \case
+  --   LamExpr Empty b' -> return b'
+  --   _ -> error "not a block"
 
 visitAlt :: Visitor m r i o => Alt r i -> m (Alt r o)
-visitAlt (Abs b body) = do
-  visitGeneric (LamExpr (UnaryNest b) body) >>= \case
-    LamExpr (UnaryNest b') body' -> return $ Abs b' body'
-    _ -> error "not an alt"
+visitAlt (Abs b body) = undefined
+-- visitAlt (Abs b body) = do
+--   visitGeneric (LamExpr (UnaryNest b) body) >>= \case
+--     LamExpr (UnaryNest b') body' -> return $ Abs b' body'
+--     _ -> error "not an alt"
 
 traverseOpTerm
   :: (GenericOp e, Visitor m r i o, OpConst e r ~ OpConst e r)
@@ -552,10 +559,11 @@ visitTypeDefault = \case
 visitPiDefault
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
   => PiType r i -> m i o (PiType r o)
-visitPiDefault (PiType bs eff ty) = do
-  visitBinders bs \bs' -> do
-    EffTy eff' ty' <- visitGeneric $ EffTy eff ty
-    return $ PiType bs' eff' ty'
+visitPiDefault = undefined
+-- visitPiDefault (PiType bs eff ty) = do
+--   visitBinders bs \bs' -> do
+--     EffTy eff' ty' <- visitGeneric $ EffTy eff ty
+--     return $ PiType bs' eff' ty'
 
 visitBinders
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
@@ -730,24 +738,27 @@ instance VisitGeneric CoreLamExpr CoreIR where
   visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam
 
 instance VisitGeneric CorePiType CoreIR where
-  visitGeneric (CorePiType app bsExpl eff ty) = do
-    let (expls, bs) = unzipExpls bsExpl
-    PiType bs' eff' ty' <- visitGeneric $ PiType bs eff ty
-    let bsExpl' = zipExpls expls bs'
-    return $ CorePiType app bsExpl' eff' ty'
+  visitGeneric = undefined
+  -- visitGeneric (CorePiType app bsExpl eff ty) = do
+  --   let (expls, bs) = unzipExpls bsExpl
+  --   PiType bs' eff' ty' <- visitGeneric $ PiType bs eff ty
+  --   let bsExpl' = zipExpls expls bs'
+  --   return $ CorePiType app bsExpl' eff' ty'
 
 instance IRRep r => VisitGeneric (TabPiType r) r where
-  visitGeneric (TabPiType (b:>IxType t d) eltTy) = do
-    d' <- visitGeneric d
-    visitGeneric (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
-      PiType (UnaryNest (b':>t')) Pure eltTy' -> TabPiType (b':>IxType t' d') eltTy'
-      _ -> error "not a table pi type"
+  visitGeneric (TabPiType (b:>IxType t d) eltTy) = undefined
+  -- visitGeneric (TabPiType (b:>IxType t d) eltTy) = do
+  --   d' <- visitGeneric d
+  --   visitGeneric (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
+  --     PiType (UnaryNest (b':>t')) Pure eltTy' -> TabPiType (b':>IxType t' d') eltTy'
+  --     _ -> error "not a table pi type"
 
 instance IRRep r => VisitGeneric (DepPairType r) r where
-  visitGeneric (DepPairType expl b ty) = do
-    visitGeneric (PiType (UnaryNest b) Pure ty) <&> \case
-      PiType (UnaryNest b') Pure ty' -> DepPairType expl b' ty'
-      _ -> error "not a dependent pair type"
+  visitGeneric (DepPairType expl b ty) = undefined
+  -- visitGeneric (DepPairType expl b ty) = do
+  --   visitGeneric (PiType (UnaryNest b) Pure ty) <&> \case
+  --     PiType (UnaryNest b') Pure ty' -> DepPairType expl b' ty'
+  --     _ -> error "not a dependent pair type"
 
 instance VisitGeneric (RepVal SimpIR) SimpIR where
   visitGeneric (RepVal ty tree) = RepVal <$> visitGeneric ty <*> mapM renameIExpr tree
@@ -772,10 +783,11 @@ instance VisitGeneric DataConDefs CoreIR where
       return $ StructFields $ zip names tys'
 
 instance VisitGeneric DataConDef CoreIR where
-  visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = do
-    PiType bs' _ _  <- visitGeneric $ PiType bs Pure UnitTy
-    repTy' <- visitGeneric repTy
-    return $ DataConDef sn (Abs bs' UnitE) repTy' ps
+  visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = undefined
+  -- visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = do
+  --   PiType bs' _  <- visitGeneric $ PiType bs Pure UnitTy
+  --   repTy' <- visitGeneric repTy
+  --   return $ DataConDef sn (Abs bs' UnitE) repTy' ps
 
 instance VisitGeneric (Con      r) r where visitGeneric = traverseOpTerm
 instance VisitGeneric (TC       r) r where visitGeneric = traverseOpTerm
@@ -901,3 +913,9 @@ instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
 instance SubstE AtomSubstVal DataConDefs
+
+instance FromName v => SubstE v (WithDeclsE r e) where
+  substE = undefined
+
+instance FromName v => SubstB v (WithDeclsB r b) where
+  substB _ _ _ = undefined
