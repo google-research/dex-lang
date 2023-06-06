@@ -50,7 +50,7 @@ toImpFunction :: EnvReader m
   => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)
 toImpFunction cc lam = do
   (DestLamExpr bs bodyAbs) <- return lam
-  ty <- getNaryDestLamExprType lam
+  ty <- return $ getDestLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
     case cc of
@@ -274,7 +274,7 @@ translateDeclNestSubst
   -> Nest SDecl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
 translateDeclNestSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding _ _ expr)) rest -> do
+  Nest (Let b (DeclBinding _ expr)) rest -> do
     x <- withSubst s $ translateExpr expr
     translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
@@ -288,17 +288,17 @@ translateDeclNest decls cont = do
 
 translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
 translateExpr expr = confuseGHC >>= \_ -> case expr of
-  TopApp f' xs' -> do
+  TopApp (EffTy _ resultTy') f' xs' -> do
+    resultTy <- substM resultTy'
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
       DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
       FFITopFun _ _ -> do
-        resultTy <- getType $ TopApp f xs
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
         results <- impCall f scalarArgs
         restructureScalarOrPairType resultTy results
-  TabApp f' xs' -> do
+  TabApp _ f' xs' -> do
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
     repValAtom =<< naryIndexRepVal f (toList xs)
@@ -336,7 +336,7 @@ toImpRefOp refDest' m = do
   substM m >>= \case
     MAsk -> loadAtom refDest
     MExtend (BaseMonoid _ combine) x -> do
-      xTy <- getType x
+      xTy <- return $ getType x
       refVal <- loadAtom refDest
       liftMonoidCombine refDest xTy combine refVal x
       return UnitVal
@@ -348,8 +348,8 @@ toImpRefOp refDest' m = do
       -- than to go through a general purpose atom.
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
-    IndexRef i -> destToAtom <$> indexDest refDest i
-    ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
+    IndexRef _ i -> destToAtom <$> indexDest refDest i
+    ProjRef  _ ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
   where
     liftMonoidCombine :: Emits o
       => (Dest o) -> SType o -> LamExpr SimpIR o
@@ -383,7 +383,7 @@ toImpOp op = case op of
   DAMOp damOp -> case damOp of
     Seq d ixDict carry f -> do
       UnaryLamExpr b body <- return f
-      ixTy <- ixTyFromDict =<< substM ixDict
+      ixTy <- ixTyFromDict <$> substM ixDict
       carry' <- substM carry
       n <- indexSetSizeImp ixTy
       emitLoop (getNameHint b) d n \i -> do
@@ -438,7 +438,7 @@ toImpMiscOp op = case op of
     emitStatement IThrowError
     buildGarbageVal resultTy
   CastOp destTy x -> do
-    BaseTy _  <- getType x
+    BaseTy _  <- return $ getType x
     BaseTy bt <- return destTy
     x' <- fsa x
     returnIExprVal =<< cast x' bt
@@ -446,7 +446,7 @@ toImpMiscOp op = case op of
     BaseTy bt <- return destTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
   UnsafeCoerce resultTy x -> do
-    srcTy <- getType x
+    srcTy <- return $ getType x
     srcRep  <- getRepBaseTypes srcTy
     destRep <- getRepBaseTypes resultTy
     assertEq srcRep destRep $
@@ -455,7 +455,7 @@ toImpMiscOp op = case op of
     repValAtom (RepVal resultTy tree)
   GarbageVal resultTy -> buildGarbageVal resultTy
   Select p x y -> do
-    BaseTy _ <- getType x
+    BaseTy _ <- return $ getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
   SumTag con -> case con of
     Con (SumCon _ tag _) -> return $ TagRepVal $ fromIntegral tag
@@ -473,7 +473,7 @@ toImpMiscOp op = case op of
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
-    resultTy <- getType $ PrimOp $ MiscOp op
+    resultTy <- return $ getType $ PrimOp $ MiscOp op
     Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- allocDest resultTy
     xScalar <- fromScalarAtom x
     size <- emitInstr $ IShowScalar tabPtr xScalar
@@ -515,7 +515,7 @@ toImpMemOp op = case op of
 
 toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
 toImpHof hof = do
-  resultTy <- getTypeSubst (Hof hof)
+  resultTy <- substM $ getType hof
   case hof of
     For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
     While body -> do
@@ -527,7 +527,7 @@ toImpHof hof = do
     RunReader r f -> do
       BinaryLamExpr h ref body <- return f
       r' <- substM r
-      rDest <- allocDest =<< getType r'
+      rDest <- allocDest $ getType r'
       storeAtom rDest r'
       extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock body
@@ -564,7 +564,7 @@ toImpHof hof = do
     where
       liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
       liftMonoidEmpty accDest accTy x = do
-        xTy <- getType x
+        xTy <- return $ getType x
         alphaEq xTy accTy >>= \case
           True -> storeAtom accDest x
           False -> case accTy of
@@ -841,7 +841,7 @@ loadRepVal (Dest valTy destTree) = do
 {-# INLINE loadRepVal #-}
 
 atomToRepVal :: Emits n => SAtom n -> SubstImpM i n (SRepVal n)
-atomToRepVal x = RepVal <$> getType x <*> go x where
+atomToRepVal x = RepVal (getType x) <$> go x where
   go :: Emits n => SAtom n -> SubstImpM i n (Tree (IExpr n))
   go atom = case atom of
     RepValAtom dRepVal -> do
@@ -860,15 +860,13 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
         else buildGarbageVal t <&> \(RepValAtom (RepVal _ tree)) -> tree
       return $ Branch $ tag':xs
     Con HeapVal -> return $ Branch []
-    Var v -> lookupAtomName v >>= \case
+    Var v -> lookupAtomName (atomVarName v) >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
-    PtrVar p -> do
-      PtrBinding ty _ <- lookupEnv p
-      return $ Leaf $ IPtrVar p ty
-    ProjectElt p val -> do
+    PtrVar ty p -> return $ Leaf $ IPtrVar p ty
+    ProjectElt _ p val -> do
       (ps, v) <- return $ asNaryProj p val
-      lookupAtomName v >>= \case
+      lookupAtomName (atomVarName v) >>= \case
         TopDataBound (RepVal _ tree) -> applyProjection (toList ps) tree
         _ -> error "should only be projecting a data atom"
       where
@@ -1090,7 +1088,7 @@ computeSizeGivenOrdinal
 computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
     Abs bOrdinal <$> buildBlock do
-      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
+      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderVar bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
 
@@ -1145,7 +1143,7 @@ hoistDeclsRec b declsAbove Empty result =
   return $ Abs Empty $ Abs b $ Abs declsAbove result
 hoistDeclsRec b declsAbove (Nest decl declsBelow) result  = do
   let (Let _ expr) = decl
-  exprIsPure <- isPure expr
+  let exprIsPure = isPure expr
   refreshAbs (Abs decl (Abs declsBelow result))
     \decl' (Abs declsBelow' result') ->
       case exchangeBs (PairB (PairB b declsAbove) decl') of

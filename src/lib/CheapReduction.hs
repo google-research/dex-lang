@@ -11,11 +11,11 @@ module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
   , normalizeProj, asNaryProj, normalizeNaryProj
   , depPairLeftTy, instantiateTyConDef
-  , dataDefRep, instantiateDepPairTy, projType, unwrapNewtypeType, repValAtom
+  , dataDefRep, instantiateDepPairTy, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault, visitAlt)
+  , visitBinders, visitPiDefault, visitAlt, toAtomVar)
   where
 
 import Control.Applicative
@@ -36,6 +36,7 @@ import IRVariants
 import MTL1
 import Name
 import PPrint ()
+import QueryTypePure
 import Types.Core
 import Types.Imp
 import Types.Primitives
@@ -132,7 +133,7 @@ cheapReduceWithDeclsRec
   -> CheapReducerM r i o (Abs (Nest (Decl r)) e o)
 cheapReduceWithDeclsRec decls cont = case decls of
   Empty -> Abs Empty <$> cont
-  Nest (Let b binding@(DeclBinding _ _ expr)) rest -> do
+  Nest (Let b binding@(DeclBinding _ expr)) rest -> do
     optional (cheapReduceE expr) >>= \case
       Nothing -> do
         binding' <- substM binding
@@ -158,7 +159,7 @@ cheapReduceAtomBinding
   :: forall r i o. IRRep r
   => AtomName r o -> AtomBinding r o -> CheapReducerM r i o (AtomSubstVal (AtomNameC r) o)
 cheapReduceAtomBinding v = \case
-  LetBound (DeclBinding _ _ e) -> do
+  LetBound (DeclBinding _ e) -> do
     cachedVal <- lookupCache v >>= \case
       Nothing -> do
         result <- optional (dropSubst $ cheapReduceE e)
@@ -191,7 +192,9 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> traverseOp con cheapReduceE cheapReduceE (error "unexpected lambda")
-    DictCon d -> cheapReduceE d
+    DictCon t d -> do
+      t' <- cheapReduceE t
+      cheapReduceDictExpr t' d
     SimpInCore (LiftSimp t x) -> do
       t' <- cheapReduceE t
       x' <- substM x
@@ -229,21 +232,26 @@ instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
 
-instance CheaplyReducibleE CoreIR DictExpr CAtom where
-  cheapReduceE d = case d of
-    SuperclassProj child superclassIx -> do
-      cheapReduceE child >>= \case
-        DictCon (InstanceDict instanceName args) -> dropSubst do
-          args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ body <- lookupInstanceDef instanceName
-          let InstanceBody superclasses _ = body
-          applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
-        child' -> return $ DictCon $ SuperclassProj child' superclassIx
-    InstantiatedGiven f xs -> cheapReduceE (App f $ toList xs) <|> justSubst
-    InstanceDict _ _ -> justSubst
-    IxFin _          -> justSubst
-    DataData ty      -> DictCon . DataData <$> cheapReduceE ty
-    where justSubst = DictCon <$> substM d
+cheapReduceDictExpr :: CType o -> DictExpr i -> CheapReducerM CoreIR i o (CAtom o)
+cheapReduceDictExpr resultTy d = case d of
+  SuperclassProj child superclassIx -> do
+    cheapReduceE child >>= \case
+      DictCon _ (InstanceDict instanceName args) -> dropSubst do
+        args' <- mapM cheapReduceE args
+        InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+        let InstanceBody superclasses _ = body
+        applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+      child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
+  InstantiatedGiven f xs ->
+    reduceApp <|> justSubst
+    where reduceApp = do
+            f' <- cheapReduceE f
+            xs' <- mapM cheapReduceE (toList xs)
+            cheapReduceApp f' xs'
+  InstanceDict _ _ -> justSubst
+  IxFin _          -> justSubst
+  DataData ty      -> DictCon resultTy . DataData <$> cheapReduceE ty
+  where justSubst = DictCon resultTy <$> substM d
 
 instance CheaplyReducibleE CoreIR TyConParams TyConParams where
   cheapReduceE (TyConParams infs ps) =
@@ -258,7 +266,7 @@ instance (CheaplyReducibleE r (Atom r) e', NiceE r e') => CheaplyReducibleE r (B
 instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
   cheapReduceE expr = confuseGHC >>= \_ -> case expr of
     Atom atom -> cheapReduceE atom
-    App f' xs' -> do
+    App _ f' xs' -> do
       xs <- mapM cheapReduceE xs'
       f <- cheapReduceE f'
       cheapReduceApp f xs
@@ -273,10 +281,10 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
             Con (Lit (Word64Lit v)) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
             _ -> empty
         _ -> empty
-    ApplyMethod dict i explicitArgs -> do
+    ApplyMethod _ dict i explicitArgs -> do
       explicitArgs' <- mapM cheapReduceE explicitArgs
       cheapReduceE dict >>= \case
-        DictCon (InstanceDict instanceName args) -> dropSubst do
+        DictCon _ (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
           InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
           let method = methods !! i
@@ -316,40 +324,48 @@ instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
 -- shouldn't have to choose `normalizeProj` or `asNaryProj` on a
 -- case-by-case basis. This is here for now because it makes it easier to switch
 -- to the new version of `ProjectElt`.
-asNaryProj :: IRRep r => Projection -> Atom r n -> (NE.NonEmpty Projection, AtomName r n)
+asNaryProj :: IRRep r => Projection -> Atom r n -> (NE.NonEmpty Projection, AtomVar r n)
 asNaryProj p (Var v) = (p NE.:| [], v)
-asNaryProj p1 (ProjectElt p2 x) = do
+asNaryProj p1 (ProjectElt _ p2 x) = do
   let (p2' NE.:| ps, v) = asNaryProj p2 x
   (p1 NE.:| (p2':ps), v)
-asNaryProj p x = error $ "Can't normalize projection: " ++ pprint (ProjectElt p x)
+asNaryProj p x = error $ "Can't normalize projection: " ++ pprint p ++ " " ++ pprint x
 
 -- assumes the atom is already normalized
-normalizeNaryProj :: EnvReader m => [Projection] -> Atom r n -> m n (Atom r n)
+normalizeNaryProj :: IRRep r => EnvReader m => [Projection] -> Atom r n -> m n (Atom r n)
 normalizeNaryProj [] x = return x
 normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 
 -- assumes the atom itself is already normalized
-normalizeProj :: EnvReader m => Projection -> Atom r n -> m n (Atom r n)
+normalizeProj :: IRRep r => EnvReader m => Projection -> Atom r n -> m n (Atom r n)
 normalizeProj UnwrapNewtype atom = case atom of
-   NewtypeCon  _ x -> return x
-   SimpInCore (LiftSimp (NewtypeTyCon t) x) -> do
-     t' <- snd <$> unwrapNewtypeType t
-     return $ SimpInCore $ LiftSimp t' x
-   x -> return $ ProjectElt UnwrapNewtype x
+  NewtypeCon  _ x -> return x
+  SimpInCore (LiftSimp (NewtypeTyCon t) x) -> do
+    t' <- snd <$> unwrapNewtypeType t
+    return $ SimpInCore $ LiftSimp t' x
+  x -> case getType x of
+    NewtypeTyCon t -> do
+      t' <- snd <$> unwrapNewtypeType t
+      return $ ProjectElt t' UnwrapNewtype x
+    _ -> error "expected a newtype"
 normalizeProj (ProjectProduct i) atom = case atom of
   Con (ProdCon xs) -> return $ xs !! i
   DepPair l _ _ | i == 0 -> return l
   DepPair _ r _ | i == 1 -> return r
-  SimpInCore (LiftSimp ty x) -> do
-    ty' <- projType i ty atom
+  SimpInCore (LiftSimp _ x) -> do
     x' <- normalizeProj (ProjectProduct i) x
-    return $ SimpInCore $ LiftSimp ty' x'
-  RepValAtom (RepVal t tree) -> do
-    t' <- projType i t =<< repValAtom (RepVal t tree)
-    case tree of
-      Branch trees -> repValAtom $ RepVal t' (trees!!i)
-      Leaf _ -> error "unexpected leaf"
-  x -> return $ ProjectElt (ProjectProduct i) x
+    resultTy <- getResultTy
+    return $ SimpInCore $ LiftSimp resultTy x'
+  RepValAtom (RepVal _ tree) -> case tree of
+    Branch trees -> do
+      resultTy <- getResultTy
+      repValAtom $ RepVal resultTy (trees!!i)
+    Leaf _ -> error "unexpected leaf"
+  _ -> do
+    resultTy <- getResultTy
+    return $ ProjectElt resultTy (ProjectProduct i) atom
+  where
+    getResultTy = projType i (getType atom) atom
 {-# INLINE normalizeProj #-}
 
 -- === lifting imp to simp and simp to core ===
@@ -381,7 +397,7 @@ liftSimpType = \case
 liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
 liftSimpAtom ty simpAtom = case simpAtom of
   Var _          -> justLift
-  ProjectElt _ _ -> justLift
+  ProjectElt _ _ _ -> justLift
   RepValAtom _   -> justLift -- TODO(dougalm): should we make more effort to pull out products etc?
   _ -> do
     (cons , ty') <- unwrapLeadingNewtypesType ty
@@ -410,8 +426,6 @@ confuseGHC :: IRRep r => CheapReducerM r i n (DistinctEvidence n)
 confuseGHC = getDistinct
 {-# INLINE confuseGHC #-}
 
--- === Type-querying helpers ===
-
 -- TODO: These used to live in QueryType. Think about a better way to organize
 -- them. Maybe a common set of low-level type-querying utils that both
 -- CheapReduction and QueryType import?
@@ -424,12 +438,21 @@ unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type Co
 unwrapNewtypeType = \case
   Nat                   -> return (NatCon, IdxRepTy)
   Fin n                 -> return (FinCon n, NatTy)
-  UserADTType _ defName params -> do
+  UserADTType sn defName params -> do
     def <- lookupTyCon defName
     ty' <- dataDefRep <$> instantiateTyConDef def params
-    return (UserADTData defName params, ty')
+    return (UserADTData sn defName params, ty')
   ty -> error $ "Shouldn't be projecting: " ++ pprint ty
 {-# INLINE unwrapNewtypeType #-}
+
+projType :: (IRRep r, EnvReader m) => Int -> Type r n -> Atom r n -> m n (Type r n)
+projType i ty x = case ty of
+  ProdTy xs -> return $ xs !! i
+  DepPairTy t | i == 0 -> return $ depPairLeftTy t
+  DepPairTy t | i == 1 -> do
+    xFst <- normalizeProj (ProjectProduct 0) x
+    instantiateDepPairTy t xFst
+  _ -> error $ "Can't project type: " ++ pprint ty
 
 unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
 unwrapLeadingNewtypesType = \case
@@ -471,15 +494,6 @@ makeStructRepVal tyConName args = do
 instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
 instantiateDepPairTy (DepPairType _ b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
 {-# INLINE instantiateDepPairTy #-}
-
-projType :: (IRRep r, EnvReader m) => Int -> Type r n -> Atom r n -> m n (Type r n)
-projType i ty x = case ty of
-  ProdTy xs -> return $ xs !! i
-  DepPairTy t | i == 0 -> return $ depPairLeftTy t
-  DepPairTy t | i == 1 -> do
-    xFst <- normalizeProj (ProjectProduct 0) x
-    instantiateDepPairTy t xFst
-  _ -> error $ "Can't project type: " ++ pprint ty
 
 -- === traversable terms ===
 
@@ -524,7 +538,7 @@ visitAtomDefault
 visitAtomDefault atom = case atom of
   Var _          -> atomSubstM atom
   SimpInCore _   -> atomSubstM atom
-  ProjectElt i x -> ProjectElt i <$> visitGeneric x
+  ProjectElt t i x -> ProjectElt <$> visitType t <*> pure i <*> visitGeneric x
   _ -> visitAtomPartial atom
 
 visitTypeDefault
@@ -532,7 +546,7 @@ visitTypeDefault
   => Type r i -> m i o (Type r o)
 visitTypeDefault = \case
   TyVar v          -> atomSubstM $ TyVar v
-  ProjectEltTy i x -> ProjectEltTy i <$> visitGeneric x
+  ProjectEltTy t i x -> ProjectEltTy <$> visitType t <*> pure i <*> visitGeneric x
   x -> visitTypePartial x
 
 visitPiDefault
@@ -540,7 +554,7 @@ visitPiDefault
   => PiType r i -> m i o (PiType r o)
 visitPiDefault (PiType bs eff ty) = do
   visitBinders bs \bs' -> do
-    EffectAndType eff' ty' <- visitGeneric $ EffectAndType eff ty
+    EffTy eff' ty' <- visitGeneric $ EffTy eff ty
     return $ PiType bs' eff' ty'
 
 visitBinders
@@ -564,9 +578,9 @@ visitAtomPartial :: (IRRep r, Visitor m r i o) => Atom r i -> m (Atom r o)
 visitAtomPartial = \case
   Var _          -> error "Not handled generically"
   SimpInCore _   -> error "Not handled generically"
-  ProjectElt _ _ -> error "Not handled generically"
+  ProjectElt _ _ _ -> error "Not handled generically"
   Con con -> Con <$> visitGeneric con
-  PtrVar v -> PtrVar <$> renameN v
+  PtrVar t v -> PtrVar t <$> renameN v
   DepPair x y t -> do
     x' <- visitGeneric x
     y' <- visitGeneric y
@@ -574,7 +588,7 @@ visitAtomPartial = \case
     return $ DepPair x' y' t'
   Lam lam   -> Lam     <$> visitGeneric lam
   Eff eff   -> Eff     <$> visitGeneric eff
-  DictCon d -> DictCon <$> visitGeneric d
+  DictCon t d -> DictCon <$> visitType t <*> visitGeneric d
   NewtypeCon con x -> NewtypeCon <$> visitGeneric con <*> visitGeneric x
   DictHole ctx ty access -> DictHole ctx <$> visitGeneric ty <*> pure access
   TypeAsAtom t -> TypeAsAtom <$> visitGeneric t
@@ -585,7 +599,7 @@ visitAtomPartial = \case
 visitTypePartial :: (IRRep r, Visitor m r i o) => Type r i -> m (Type r o)
 visitTypePartial = \case
   TyVar _          -> error "Not handled generically"
-  ProjectEltTy _ _ -> error "Not handled generically"
+  ProjectEltTy _ _ _ -> error "Not handled generically"
   NewtypeTyCon t -> NewtypeTyCon <$> visitGeneric t
   Pi           t -> Pi           <$> visitGeneric t
   TabPi        t -> TabPi        <$> visitGeneric t
@@ -595,8 +609,11 @@ visitTypePartial = \case
 
 instance IRRep r => VisitGeneric (Expr r) r where
   visitGeneric = \case
-    TopApp v xs -> TopApp <$> renameN v <*> mapM visitGeneric xs
-    TabApp tab xs -> TabApp <$> visitGeneric tab <*> mapM visitGeneric xs
+    TopApp et v xs -> TopApp <$> visitGeneric et <*> renameN v <*> mapM visitGeneric xs
+    TabApp t tab xs -> TabApp <$> visitType t <*> visitGeneric tab <*> mapM visitGeneric xs
+    -- TODO: should we reuse the original effects? Whether it's valid depends on
+    -- the type-preservation requirements for a visitor. We should clarify what
+    -- those are.
     Case x alts t _ -> do
       x' <- visitGeneric x
       t' <- visitGeneric t
@@ -612,8 +629,8 @@ instance IRRep r => VisitGeneric (Expr r) r where
     TabCon Nothing t xs -> TabCon Nothing <$> visitGeneric t <*> mapM visitGeneric xs
     TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> visitGeneric d) <*> visitGeneric t <*> mapM visitGeneric xs
     PrimOp op -> PrimOp <$> visitGeneric op
-    App fAtom xs -> App <$> visitGeneric fAtom <*> mapM visitGeneric xs
-    ApplyMethod m i xs -> ApplyMethod <$> visitGeneric m <*> pure i <*> mapM visitGeneric xs
+    App et fAtom xs -> App <$> visitGeneric et <*> visitGeneric fAtom <*> mapM visitGeneric xs
+    ApplyMethod et m i xs -> ApplyMethod <$> visitGeneric et <*> visitGeneric m <*> pure i <*> mapM visitGeneric xs
 
 instance IRRep r => VisitGeneric (PrimOp r) r where
   visitGeneric = \case
@@ -636,7 +653,7 @@ instance IRRep r => VisitGeneric (Hof r) r where
     While          b -> While          <$> visitGeneric b
     RunIO          b -> RunIO          <$> visitGeneric b
     RunInit        b -> RunInit        <$> visitGeneric b
-    CatchException b -> CatchException <$> visitGeneric b
+    CatchException t b -> CatchException <$> visitType t <*> visitGeneric b
     Linearize      lam x -> Linearize <$> visitGeneric lam <*> visitGeneric x
     Transpose      lam x -> Transpose <$> visitGeneric lam <*> visitGeneric x
 
@@ -686,7 +703,7 @@ instance VisitGeneric DictExpr CoreIR where
 
 instance VisitGeneric NewtypeCon CoreIR where
   visitGeneric = \case
-    UserADTData t params -> UserADTData <$> renameN t <*> visitGeneric params
+    UserADTData sn t params -> UserADTData sn <$> renameN t <*> visitGeneric params
     NatCon -> return NatCon
     FinCon x -> FinCon <$> visitGeneric x
 
@@ -740,12 +757,11 @@ instance VisitGeneric (RepVal SimpIR) SimpIR where
             IPtrVar v t -> IPtrVar <$> renameN v <*> pure t
 
 instance IRRep r => VisitGeneric (DeclBinding r) r where
-  visitGeneric (DeclBinding ann ty expr) =
-    DeclBinding ann <$> visitGeneric ty <*> visitGeneric expr
+  visitGeneric (DeclBinding ann expr) = DeclBinding ann <$> visitGeneric expr
 
-instance IRRep r => VisitGeneric (EffectAndType r) r where
-  visitGeneric (EffectAndType eff ty) =
-    EffectAndType <$> visitGeneric eff <*> visitGeneric ty
+instance IRRep r => VisitGeneric (EffTy r) r where
+  visitGeneric (EffTy eff ty) =
+    EffTy <$> visitGeneric eff <*> visitGeneric ty
 
 instance VisitGeneric DataConDefs CoreIR where
   visitGeneric = \case
@@ -770,6 +786,11 @@ instance VisitGeneric (MemOp    r) r where visitGeneric = traverseOpTerm
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
 
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
+
 newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst AtomSubstVal i o) a }
         deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst AtomSubstVal i o))
 
@@ -793,22 +814,22 @@ instance SubstV (SubstVal Atom) (SubstVal Atom) where
 
 instance IRRep r => SubstE AtomSubstVal (Atom r) where
   substE es@(env, subst) = \case
-    Var v -> case subst!v of
-      Rename v' -> Var v'
+    Var (AtomVar v ty) -> case subst!v of
+      Rename v' -> Var $ AtomVar v' (substE es ty)
       SubstVal x -> x
     SimpInCore x   -> SimpInCore (substE es x)
-    ProjectElt i x -> do
+    ProjectElt _ i x -> do
      let x' = substE es x
      runEnvReaderM env $ normalizeProj i x'
     atom -> runReader (runSubstVisitor $ visitAtomPartial atom) es
 
 instance IRRep r => SubstE AtomSubstVal (Type r) where
   substE es@(env, subst) = \case
-    TyVar v -> case subst ! v of
-      Rename v' -> TyVar v'
+    TyVar (AtomVar v ty) -> case subst ! v of
+      Rename v' -> TyVar $ AtomVar v' (substE es ty)
       SubstVal (Type t) -> t
       SubstVal atom -> error $ "bad substitution: " ++ pprint v ++ " -> " ++ pprint atom
-    ProjectEltTy i x -> do
+    ProjectEltTy _ i x -> do
      let x' = substE es x
      case runEnvReaderM env $ normalizeProj i x' of
        Type t   -> t
@@ -822,8 +843,10 @@ instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
     let effs' = eSetFromList $ map (substE env) (eSetToList effs)
     let tailEffRow = case tailVar of
           NoTail -> EffectRow mempty NoTail
-          EffectRowTail v -> case snd env ! v of
-            Rename        v'  -> EffectRow mempty (EffectRowTail v')
+          EffectRowTail (AtomVar v _) -> case snd env ! v of
+            Rename        v'  -> do
+              let v'' = runEnvReaderM (fst env) $ toAtomVar v'
+              EffectRow mempty (EffectRowTail v'')
             SubstVal (Var v') -> EffectRow mempty (EffectRowTail v')
             SubstVal (Eff r)  -> r
             _ -> error "Not a valid effect substitution"
@@ -832,9 +855,9 @@ instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
 instance IRRep r => SubstE AtomSubstVal (Effect r)
 
 instance SubstE AtomSubstVal SpecializationSpec where
-  substE env (AppSpecialization f ab) = do
+  substE env (AppSpecialization (AtomVar f _) ab) = do
     let f' = case snd env ! f of
-               Rename v -> v
+               Rename v -> runEnvReaderM (fst env) $ toAtomVar v
                SubstVal (Var v) -> v
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
@@ -856,6 +879,7 @@ instance IRRep r => SubstE AtomSubstVal (VectorOp r)
 instance IRRep r => SubstE AtomSubstVal (MemOp r)
 instance IRRep r => SubstE AtomSubstVal (PrimOp r)
 instance IRRep r => SubstE AtomSubstVal (RefOp r)
+instance IRRep r => SubstE AtomSubstVal (EffTy r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
 instance IRRep r => SubstE AtomSubstVal (Block r)
 instance IRRep r => SubstE AtomSubstVal (GenericOpRep const r)

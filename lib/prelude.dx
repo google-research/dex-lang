@@ -2365,7 +2365,7 @@ def dex_test_mode() -> Bool = unsafe_io \. check_env "DEX_TEST_MODE"
 '## Exception effect
 -- TODO: move `error` and `todo` to here.
 
-def catch(f:() -> {Except|eff} a) -> {|eff} Maybe a given (a, eff) =
+def catch(f:() -> {Except|eff} a) -> {|eff} Maybe a given (a, eff)=
   f' : (() -> {Except|eff} a) = \. f()
   %catchException(f')
 

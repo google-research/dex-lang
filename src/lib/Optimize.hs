@@ -191,9 +191,9 @@ foldCast sTy l = case sTy of
 peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
 peepholeExpr expr = case expr of
   PrimOp op -> peepholeOp op
-  TabApp (Var t) [IdxRepVal ord] ->
+  TabApp _ (Var (AtomVar t _)) [IdxRepVal ord] ->
     lookupAtomName t <&> \case
-      LetBound (DeclBinding ann _ (TabCon Nothing tabTy elems))
+      LetBound (DeclBinding ann (TabCon Nothing tabTy elems))
         | ann /= NoInlineLet && isFinTabTy tabTy->
         -- It is not safe to assume that this index can always be simplified!
         -- For example, it might be coming from an unsafe_from_ordinal that is
@@ -260,7 +260,7 @@ ulExpr expr = case expr of
               vals <- dropSubst $ forM (iota n) \i -> do
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
-              getLamExprType body' >>= \case
+              case getLamExprType body' of
                 PiType (UnaryNest (tb:>_)) _ valTy -> do
                   let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                   let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
@@ -313,7 +313,7 @@ hoistLoopInvariantDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlo
 hoistLoopInvariantDestBlock (DestBlock (db:>dTy) body) = do
   liftAtomSubstBuilder @LICMTag do
     dTy' <- visitType dTy
-    (Abs db' body') <- buildAbs (getNameHint db) dTy' \v ->
+    (Abs db' body') <- buildAbs (getNameHint db) dTy' \(AtomVar v _) ->
       extendRenamer (db@>v) $ buildBlock $ visitBlockEmits body
     return $ DestBlock db' body'
 {-# SCC hoistLoopInvariantDestBlock #-}
@@ -340,14 +340,15 @@ licmExpr = \case
       liftEnvReaderM $ runSubstReaderT idSubst $
           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
     PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
+    extraDests' <- mapM toAtomVar extraDests
     -- Append the destinations of hoisted Allocs as loop carried values.
-    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests)
-    carryTy <- getType dests''
-    lbTy <- ixTyFromDict ix' <&> \case IxType ixTy _ -> PairTy ixTy carryTy
-    extraDestsTyped <- forM extraDests \d -> (d,) <$> getType d
+    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
+    let carryTy = getType dests''
+    let lbTy = case ixTyFromDict ix' of IxType ixTy _ -> PairTy ixTy carryTy
+    extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
     body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPair $ Var $ binderName lb'
+      (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
@@ -369,7 +370,7 @@ licmExpr = \case
   expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
-        -> [SAtomName n2]         -- hoisted dests
+        -> [SAtomName n2]          -- hoisted dests
         -> AtomNameBinder SimpIR n2 n3   -- loop binder
         -> RNest SDecl n3 n4      -- loop-dependent decls
         -> Nest SDecl m1 m2       -- decls remaining to process
@@ -386,19 +387,18 @@ seqLICM !top !topDestNames !lb !reg decls ans = case decls of
     return $ Abs (unRNest top) $ PairE (ListE $ reverse topDestNames) $ Abs lb $ Abs (unRNest reg) ans'
   Nest (Let bb binding) bs -> do
     binding' <- substM binding
-    effs <- getEffects binding'
     withFreshBinder (getNameHint bb) binding' \(bb':>_) -> do
       let b = Let bb' binding'
       let moveOn = extendRenamer (bb@>binderName bb') $
                      seqLICM top topDestNames lb (RNest reg b) bs ans
-      case effs of
+      case getEffects binding' of
         -- OPTIMIZE: We keep querying the ScopeFrag of lb and reg here, leading to quadratic runtime
         Pure -> case exchangeBs $ PairB (PairB lb reg) b of
           HoistSuccess (PairB b' lbreg@(PairB lb' reg')) -> do
             withSubscopeDistinct lbreg $ withExtEvidence b' $
               extendRenamer (bb@>sink (binderName b')) do
                 extraTopDestNames <- return case b' of
-                  Let bn (DeclBinding _ _ (PrimOp (DAMOp (AllocDest _)))) -> [binderName bn]
+                  Let bn (DeclBinding _ (PrimOp (DAMOp (AllocDest _)))) -> [binderName bn]
                   _ -> []
                 seqLICM (RNest top b') (extraTopDestNames ++ sinkList topDestNames) lb' reg' bs ans
               where
@@ -454,13 +454,13 @@ instance Color c => HasDCE (Name c) where
 instance HasDCE SAtom where
   dce = \case
     Var n -> modify (<> FV (freeVarsE n)) $> Var n
-    ProjectElt i x -> ProjectElt i <$> dce x
+    ProjectElt t i x -> ProjectElt <$> dce t <*> pure i <*> dce x
     atom -> visitAtomPartial atom
 
 instance HasDCE SType where dce = visitTypePartial
 instance HasDCE (PiType SimpIR) where
   dce (PiType bs eff ty) = do
-    Abs bs' (EffectAndType eff' ty') <- dce (Abs bs (EffectAndType eff ty))
+    Abs bs' (EffTy eff' ty') <- dce (Abs bs (EffTy eff ty))
     return $ PiType bs' eff' ty'
 
 instance HasDCE (LamExpr SimpIR) where
@@ -522,14 +522,13 @@ dceNest :: Nest SDecl n l -> SAtom l -> DCEM n (Abs (Nest SDecl) SAtom n)
 dceNest decls ans = case decls of
   Empty -> Abs Empty <$> dce ans
   Nest b@(Let _ decl) bs -> do
-    isPureDecl <- isPure decl
     -- Note that we only ever dce the abs below under this refreshAbs,
     -- which will remove any references to b upon exit (it happens
     -- because refreshAbs of StateT1 triggers hoistState, which we
     -- implement by deleting the entries that can't hoist).
     dceAttempt <- refreshAbs (Abs b (Abs bs ans)) \b' (Abs bs' ans') -> do
       below <- dceNest bs' ans'
-      case isPureDecl of
+      case isPure decl of
         False -> return $ ElimFailure b' below
         True  -> do
           hoistUsingCachedFVs b' below <&> \case
@@ -549,6 +548,6 @@ instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasDCE e) => HasDCE (A
     return a'
   {-# INLINE dce #-}
 
-instance HasDCE (EffectRow     SimpIR)
-instance HasDCE (DeclBinding   SimpIR)
-instance HasDCE (EffectAndType SimpIR)
+instance HasDCE (EffectRow   SimpIR)
+instance HasDCE (DeclBinding SimpIR)
+instance HasDCE (EffTy       SimpIR)

@@ -44,34 +44,34 @@ data ExportNativeFunction = ExportNativeFunction
 prepareFunctionForExport :: (Mut n, Topper m)
   => CallingConvention -> CAtom n -> m n ExportNativeFunction
 prepareFunctionForExport cc f = do
-  naryPi <- getType f >>= \case
+  naryPi <- case getType f of
     Pi piTy -> return piTy
     _ -> throw TypeErr "Only first-order functions can be exported"
-  closedNaryPi <- case hoistToTop naryPi of
+  sig <- liftExportSigM $ corePiToExportSig cc naryPi
+  closedSig <- case hoistToTop sig of
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
-    HoistSuccess npi -> return npi
-  sig <- liftExportSigM $ corePiToExportSig cc closedNaryPi
+    HoistSuccess s -> return s
   CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
   fSimp <- simplifyTopFunction f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
-  return $ ExportNativeFunction nativeFun sig
+  return $ ExportNativeFunction nativeFun closedSig
 {-# INLINE prepareFunctionForExport #-}
 {-# SCC prepareFunctionForExport #-}
 
 prepareSLamForExport :: (Mut n, Topper m)
   => CallingConvention -> SLam n -> m n ExportNativeFunction
 prepareSLamForExport cc f = do
-  naryPi <- getLamExprType f
-  closedNaryPi <- case hoistToTop naryPi of
+  let naryPi = getLamExprType f
+  sig <- liftExportSigM $ simpPiToExportSig cc naryPi
+  closedSig <- case hoistToTop sig of
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
-    HoistSuccess npi -> return npi
-  sig <- liftExportSigM $ simpPiToExportSig cc closedNaryPi
+    HoistSuccess s -> return s
   fImp <- compileTopLevelFun cc f
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
-  return $ ExportNativeFunction nativeFun sig
+  return $ ExportNativeFunction nativeFun closedSig
 {-# INLINE prepareSLamForExport #-}
 {-# SCC prepareSLamForExport #-}
 
@@ -92,9 +92,12 @@ newtype ExportSigM (r::IR) (i::S) (o::S) (a:: *) = ExportSigM {
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader (Rename r), MonadFail)
 
-liftExportSigM :: Fallible m => ExportSigM r VoidS VoidS a -> m a
-liftExportSigM = liftExcept . runFallibleM . runEnvReaderT emptyOutMap
-  . runSubstReaderT idSubst . runExportSigM
+liftExportSigM :: (EnvReader m, Fallible1 m) => ExportSigM r n n a -> m n a
+liftExportSigM cont = do
+  Distinct <- getDistinct
+  env <- unsafeGetEnv
+  liftExcept $ runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $
+    runExportSigM cont
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
@@ -179,7 +182,7 @@ parseTabTy = go []
         maybeDim <- case maybeN of
           Just (Var v)    -> do
             s <- getSubst
-            let (Rename v') = s ! v
+            let (Rename v') = s ! atomVarName v
             return $ Just (ExportDimVar v')
           Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
           Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
@@ -209,6 +212,14 @@ data ExportedSignature n = forall l l'.
                     , exportedCCallSig :: [CAtomName l']
                     }
 
+instance GenericE ExportedSignature where
+  type RepE ExportedSignature =
+         (Abs (Nest ExportArg) (Abs (Nest ExportResult) (ListE CAtomName)))
+  fromE (ExportedSignature x y z) = Abs x (Abs y (ListE z))
+  toE   (Abs x (Abs y (ListE z))) = ExportedSignature x y z
+
+instance HoistableE ExportedSignature
+
 instance GenericE ExportDim where
   type RepE ExportDim = EitherE CAtomName (LiftE Int)
   fromE = \case
@@ -219,6 +230,7 @@ instance GenericE ExportDim where
     LeftE v -> ExportDimVar v
     RightE (LiftE n) -> ExportDimLit n
 instance RenameE        ExportDim
+instance HoistableE     ExportDim
 instance SinkableE      ExportDim
 
 instance GenericE ExportType where
@@ -233,6 +245,7 @@ instance GenericE ExportType where
     RightE (LiftE sbt `PairE` ListE shape) -> RectContArrayPtr sbt shape
   {-# INLINE toE #-}
 instance RenameE        ExportType
+instance HoistableE     ExportType
 instance SinkableE      ExportType
 
 instance ToBinding ExportType ExportAtomNameC where
@@ -243,6 +256,7 @@ instance ToBinding ExportType ExportAtomNameC where
 deriving via (BinderP ExportAtomNameC ExportType) instance GenericB   ExportResult
 deriving via (BinderP ExportAtomNameC ExportType) instance ProvesExt  ExportResult
 deriving via (BinderP ExportAtomNameC ExportType) instance BindsNames ExportResult
+deriving via (BinderP ExportAtomNameC ExportType) instance HoistableB  ExportResult
 instance BindsAtMostOneName ExportResult ExportAtomNameC where
   (ExportResult b) @> v = b @> v
 instance BindsOneName ExportResult ExportAtomNameC where
@@ -256,6 +270,8 @@ instance ProvesExt       ExportArg
 instance BindsNames      ExportArg
 instance SinkableB       ExportArg
 instance RenameB         ExportArg
+instance HoistableB      ExportArg
+
 instance BindsAtMostOneName ExportArg ExportAtomNameC where
   (ExportArg _ b) @> v = b @> v
 instance BindsOneName ExportArg ExportAtomNameC where

@@ -23,7 +23,7 @@ import Types.Primitives
 generalizeIxDict :: EnvReader m => Atom CoreIR n -> m n (Generalized CoreIR CAtom n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
-  dictTy <- getType dict'
+  dictTy <- return $ getType dict'
   dictTyGeneralized <- generalizeType dictTy
   dictGeneralized <- liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
   return dictGeneralized
@@ -90,7 +90,7 @@ liftGeneralizerM cont = do
 {-# INLINE liftGeneralizerM #-}
 
 -- XXX: the supplied type may be more general than the type of the atom!
-emitGeneralizationParameter :: Type CoreIR n -> Atom CoreIR n -> GeneralizerM n (AtomName CoreIR n)
+emitGeneralizationParameter :: Type CoreIR n -> Atom CoreIR n -> GeneralizerM n (AtomVar CoreIR n)
 emitGeneralizationParameter ty val = GeneralizerM do
   Abs b v <- return $ newName noHint
   let emission = Abs (RNest REmpty (GeneralizationEmission (b:>ty) val)) v
@@ -99,7 +99,7 @@ emitGeneralizationParameter ty val = GeneralizerM do
     -- dependent pair binders). As long as those variables are only used in
     -- DataParam roles, this hoisting should succeed.
     Nothing -> error $ "expected atom to be hoistable " ++ pprint val
-    Just v' -> return v'
+    Just v' -> return $ AtomVar v' ty
 
 -- === actual generalization traversal ===
 

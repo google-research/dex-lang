@@ -277,7 +277,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize =<< getType val
+      ty <- cheapNormalize $ getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
@@ -309,14 +309,14 @@ evalSourceBlock' mname block = case sbContents block of
         impl <- case expr of
           WithSrcE _ (UVar _) ->
             renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
+              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> Var <$> toAtomVar v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
-        fType <- getType fname'
+        fType <- getType <$> toAtomVar fname'
         (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
         impl `checkHasType` linFunTy >>= \case
           Failure _ -> do
-            implTy <- getType impl
+            let implTy = getType impl
             throw TypeErr $ unlines
               [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
               , "but it has type:" , "" , pprint implTy]
@@ -558,7 +558,7 @@ evalBlock typed = do
       impOpt <- checkPass ImpPass $ toImpFunction cc (NullaryDestLamExpr lOpt)
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
-      resultTy <- getDestBlockType lOpt
+      let resultTy = getType lOpt
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
@@ -629,17 +629,17 @@ execUDecl mname decl = do
       result <- evalBlock block
       case ann of
         NoInlineLet -> do
-          fTy <- getType result
+          let fTy = getType result
           f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
           applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
-          applyRename (b@>v) sm >>= emitSourceMap
+          applyRename (b@>atomVarName v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope bs result
       vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>vs) sm >>= emitSourceMap
+      applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
@@ -753,9 +753,9 @@ checkPass name cont = do
 #endif
   return result
 
-checkEffects :: (Topper m, HasEffectsE e r, IRRep r) => EffectRow r n -> e n -> m n ()
+checkEffects :: (Topper m, HasEffects e r, IRRep r) => EffectRow r n -> e n -> m n ()
 checkEffects allowedEffs e = do
-  actualEffs <- getEffects e
+  let actualEffs = getEffects e
   checkExtends allowedEffs actualEffs
 
 addResultCtx :: SourceBlock -> Result -> Result
@@ -956,7 +956,7 @@ getLinearizationType zeros = \case
       resultTanTy <- maybeTangentType resultTy' >>= \case
         Just rtt -> return rtt
         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
-      tanFunTy <- Pi <$> nonDepPiType argTanTys Pure resultTanTy
+      let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
       let fullTy = CorePiType ExplicitApp bs' Pure (PairTy resultTy' tanFunTy)
       return (numIs, numEs, Pi fullTy)
   _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"

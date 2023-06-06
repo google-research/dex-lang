@@ -355,7 +355,7 @@ instance (SinkableV v, ScopeReader m, EnvExtender m)
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 
 liftSubstEnvReaderM
-  :: (EnvReader m, FromName v)
+  :: forall v m n a. (EnvReader m, FromName v)
   => SubstEnvReaderM v n n a
   -> m n a
 liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
