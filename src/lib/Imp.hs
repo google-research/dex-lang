@@ -367,7 +367,8 @@ toImpRefOp refDest' m = do
           ans <- liftBuilderImp $ emitBlock (sink body')
           storeAtom accDest ans
         False -> case accTy of
-          TabTy (b:>ixTy) eltTy -> do
+          TabTy d (b:>t) eltTy -> do
+            let ixTy = IxType t d
             n <- indexSetSizeImp ixTy
             emitLoop noHint Fwd n \i -> do
               idx <- unsafeFromOrdinalImp (sink ixTy) i
@@ -578,7 +579,8 @@ toImpHof hof = do
         alphaEq xTy accTy >>= \case
           True -> storeAtom accDest x
           False -> case accTy of
-            TabTy (b:>ixTy) eltTy -> do
+            TabTy d (b:>t) eltTy -> do
+              let ixTy = IxType t d
               n <- indexSetSizeImp ixTy
               emitLoop noHint Fwd n \i -> do
                 idx <- unsafeFromOrdinalImp (sink ixTy) i
@@ -608,6 +610,7 @@ type IndexStructure r = EmptyAbs (IdxNest r) :: E
 pattern Singleton :: IndexStructure r n
 pattern Singleton = EmptyAbs Empty
 
+type IxBinder r = PairB (LiftB (IxDict r)) (Binder r)
 type IdxNest r = Nest (IxBinder r)
 
 data TypeCtxLayer (r::IR) (n::S) (l::S) where
@@ -621,8 +624,8 @@ instance SinkableE Dest where
 -- `ScalarDesc` describes how to interpret an Imp value in terms of the nest of
 -- buffers that it points to
 data BufferElementType = UnboxedValue BaseType | BoxedBuffer BufferElementType deriving (Show)
-data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType deriving (Show)
-data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType deriving (Show)
+data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType
+data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType
 
 getRefBufferType :: LeafType n -> BufferType n
 getRefBufferType fullLeafTy = case splitLeadingIxs fullLeafTy of
@@ -694,7 +697,7 @@ typeToTree tyTop = return $ go REmpty tyTop
   go :: RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (LeafType n)
   go ctx = \case
     BaseTy b -> Leaf $ LeafType (unRNest ctx) b
-    TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy
+    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy
     RefTy _ t -> go (RNest ctx RefCtx) t
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
       let tree1 = rec t1
@@ -730,7 +733,7 @@ valueToTree (RepVal tyTop valTop) = do
      -> m n (Tree (LeafType n))
   go ctx ty val = case ty of
     BaseTy b -> return $ Leaf $ LeafType (unRNest ctx) b
-    TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy val
+    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy val
     RefTy _ t -> go (RNest ctx RefCtx) t val
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
       Branch [v1, v2] -> do
@@ -1000,9 +1003,9 @@ buildGarbageVal ty =
 -- === Operations on dests ===
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
-indexDest (Dest destValTy@(TabTy (b:>idxTy) eltTy) tree) i = do
+indexDest (Dest destValTy@(TabTy d (b:>t) eltTy) tree) i = do
   eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp idxTy i
+  ord <- ordinalImp (IxType t d) i
   leafTys <- typeToTree destValTy
   Dest eltTy' <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
     BufferType ixStruct _ <- return $ getRefBufferType leafTy
@@ -1023,9 +1026,9 @@ naryIndexRepVal x (ix:ixs) = do
 indexRepValParam :: Emits n
   => RepVal SimpIR n -> SAtom n -> (IExpr n -> SubstImpM i n (IExpr n))
   -> SubstImpM i n (RepVal SimpIR n)
-indexRepValParam (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i func = do
+indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func = do
   eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp ixTy i
+  ord <- ordinalImp (IxType t d) i
   leafTys <- typeToTree tabTy
   vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
     BufferPtr (BufferType ixStruct _) <- return $ getIExprInterpretation leafTy
@@ -1100,8 +1103,8 @@ computeElemCount idxNest' = do
 elemCountPoly :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
 elemCountPoly (Abs bs UnitE) = case bs of
   Empty -> return $ IdxRepVal 1
-  Nest b@(_:>ixTy) rest -> do
-   curSize <- indexSetSize ixTy
+  Nest b@(PairB (LiftB d) (_:>t)) rest -> do
+   curSize <- indexSetSize $ IxType t d
    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
    sumUsingPolysImp curSize restSizes
 
@@ -1109,10 +1112,10 @@ computeSizeGivenOrdinal
   :: EnvReader m
   => IxBinder SimpIR n l -> IndexStructure SimpIR l
   -> m n (Abs (Binder SimpIR) (Block SimpIR) n)
-computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
+computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
     Abs bOrdinal <$> buildBlock do
-      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderVar bOrdinal
+      i <- unsafeFromOrdinal (sink $ IxType t d) $ Var $ sink $ binderVar bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
 
@@ -1120,10 +1123,10 @@ computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
 -- and a trailing nest of indices that can contain inter-dependencies.
 indexStructureSplit :: IndexStructure SimpIR n -> ([IxType SimpIR n], IndexStructure SimpIR n)
 indexStructureSplit (Abs Empty UnitE) = ([], EmptyAbs Empty)
-indexStructureSplit s@(Abs (Nest b rest) UnitE) =
+indexStructureSplit s@(Abs (Nest (PairB (LiftB d) b) rest) UnitE) =
   case hoist b (EmptyAbs rest) of
     HoistFailure _     -> ([], s)
-    HoistSuccess rest' -> (binderAnn b:ans1, ans2)
+    HoistSuccess rest' -> (IxType (binderType b) d:ans1, ans2)
       where (ans1, ans2) = indexStructureSplit rest'
 
 computeOffset :: forall n. Emits n
@@ -1464,7 +1467,7 @@ isSingletonType topTy = isJust $ checkIsSingleton topTy
   where
     checkIsSingleton :: Type r n -> Maybe ()
     checkIsSingleton ty = case ty of
-      TabPi (TabPiType _ body) -> checkIsSingleton body
+      TabPi (TabPiType _ _ body) -> checkIsSingleton body
       TC (ProdType tys) -> mapM_ checkIsSingleton tys
       _ -> Nothing
 
@@ -1545,7 +1548,7 @@ instance Pretty (LeafType n) where
 
 instance Pretty (TypeCtxLayer SimpIR n l) where
   pretty = \case
-    TabCtx ix            -> pretty ix
+    TabCtx (PairB _ b)        -> pretty b
     DepPairCtx (RightB UnitB) -> "dep-pair-instantiated"
     DepPairCtx (LeftB b)      -> "dep-pair" <+> pretty b
     RefCtx               -> "refctx"

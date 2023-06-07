@@ -152,12 +152,12 @@ lowerFor _ _ _ _ = error "expected a unary lambda expression"
 lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
 lowerTabCon maybeDest tabTy elems = do
-  tabTy'@(TabPi (TabPiType (_:>ixTy') _)) <- substM tabTy
+  tabTy'@(TabPi (TabPiType dict (_:>t) _)) <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
-    buildBlock $ unsafeFromOrdinal (sink ixTy') $ Var $ sink ord
+    buildBlock $ unsafeFromOrdinal (sink $ IxType t dict) $ Var $ sink ord
   -- This is emitting a chain of RememberDest ops to force `dest` to be used
   -- linearly, and to force reads of the `Freeze dest'` result not to be
   -- reordered in front of the writes.
@@ -506,7 +506,7 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
       VVal Uniform tbl' <- vectorizeAtom tbl
       VVal Contiguous ix' <- vectorizeAtom ix
       case getType tbl' of
-        (TabTy tb a) -> do
+        TabTy _ tb a -> do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
@@ -539,7 +539,7 @@ vectorizeRefOp ref' op =
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
       case getType ref of
-        TC (RefType _ (TabTy tb a)) -> do
+        TC (RefType _ (TabTy _ tb a)) -> do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"

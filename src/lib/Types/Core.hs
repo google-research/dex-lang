@@ -83,7 +83,7 @@ data AtomVar (r::IR) (n::S) = AtomVar
   , atomVarType :: Type r n }
      deriving (Show, Generic)
 
-type TabLamExpr = Abs (IxBinder SimpIR) (Abs (Nest SDecl) CAtom)
+type TabLamExpr = PairE (IxDict SimpIR) (Abs (Binder SimpIR) (Abs (Nest SDecl) CAtom))
 data SimpInCore (n::S) =
    LiftSimp (CType n) (SAtom n)
  | LiftSimpFun (CorePiType n) (LamExpr SimpIR n)
@@ -215,10 +215,8 @@ data IxType (r::IR) (n::S) =
          , ixTypeDict :: IxDict r n }
   deriving (Show, Generic)
 
-type IxBinder r = BinderP (AtomNameC r) (IxType r)
-
 data TabPiType (r::IR) (n::S) where
-  TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
+  TabPiType :: IxDict r n -> Binder r n l -> Type r l -> TabPiType r n
 
 data PiType (r::IR) (n::S) where
   PiType :: Nest (Binder r) n l -> EffTy r l -> PiType r n
@@ -964,10 +962,6 @@ instance IRRep r => BindsOneAtomName r (BinderP (AtomNameC r) (Type r)) where
   binderType (_ :> ty) = ty
   binderVar (b:>t) = AtomVar (binderName b) (sink t)
 
-instance IRRep r => BindsOneAtomName r (IxBinder r) where
-  binderType (_ :> IxType ty _) = ty
-  binderVar  (b :> IxType ty _) = AtomVar (binderName b) (sink ty)
-
 instance BindsOneAtomName CoreIR b => BindsOneAtomName CoreIR (WithExpl b) where
   binderType (WithExpl _ b) = binderType b
   binderVar  (WithExpl _ b) = binderVar b
@@ -1015,7 +1009,7 @@ class HasArgType (e::E) (r::IR) | e -> r where
   argType :: e n -> Type r n
 
 instance HasArgType (TabPiType r) r where
-  argType (TabPiType (_:>IxType ty _) _) = ty
+  argType (TabPiType _ (_:>ty) _) = ty
 
 -- === Pattern synonyms ===
 
@@ -1098,8 +1092,8 @@ pattern RefTy r a = TC (RefType r a)
 pattern RawRefTy :: Type r n -> Type r n
 pattern RawRefTy a = TC (RefType (Con HeapVal) a)
 
-pattern TabTy :: IxBinder r n l -> Type r l -> Type r n
-pattern TabTy b body = TabPi (TabPiType b body)
+pattern TabTy :: IxDict r n -> Binder r n l -> Type r l -> Type r n
+pattern TabTy d b body = TabPi (TabPiType d b body)
 
 pattern FinTy :: Atom CoreIR n -> Type CoreIR n
 pattern FinTy n = NewtypeTyCon (Fin n)
@@ -2153,16 +2147,21 @@ instance IRRep r => AlphaHashableE (IxType r) where
   hashWithSaltE env salt (IxType t _) = hashWithSaltE env salt t
 
 instance IRRep r => GenericE (TabPiType r) where
-  type RepE (TabPiType r) = Abs (IxBinder r) (Type r)
-  fromE (TabPiType b resultTy) = Abs b resultTy
+  type RepE (TabPiType r) = PairE (IxDict r) (Abs (Binder r) (Type r))
+  fromE (TabPiType d b resultTy) = PairE d (Abs b resultTy)
   {-# INLINE fromE #-}
-  toE   (Abs b resultTy) = TabPiType b resultTy
+  toE   (PairE d (Abs b resultTy)) = TabPiType d b resultTy
   {-# INLINE toE #-}
+
+instance IRRep r => AlphaEqE (TabPiType r) where
+  alphaEqE (TabPiType _ b1 t1) (TabPiType _ b2 t2) =
+    alphaEqE (Abs b1 t1) (Abs b2 t2)
+
+instance IRRep r => AlphaHashableE (TabPiType r) where
+  hashWithSaltE env salt (TabPiType _ b t) = hashWithSaltE env salt $ Abs b t
 
 instance IRRep r => SinkableE      (TabPiType r)
 instance IRRep r => HoistableE     (TabPiType r)
-instance IRRep r => AlphaEqE       (TabPiType r)
-instance IRRep r => AlphaHashableE (TabPiType r)
 instance IRRep r => RenameE        (TabPiType r)
 deriving instance IRRep r => Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance IRRep r => Generic (TabPiType r n)

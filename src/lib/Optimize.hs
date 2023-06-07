@@ -203,7 +203,7 @@ peepholeExpr expr = case expr of
   -- Think, partial evaluation of threefry.
   _ -> return expr
   where isFinTabTy = \case
-          TabPi (TabPiType (_:>(IxType _ (IxDictRawFin _))) _) -> True
+          TabPi (TabPiType (IxDictRawFin _) _ _) -> True
           _ -> False
 
 -- === Loop unrolling ===
@@ -259,8 +259,7 @@ ulExpr expr = case expr of
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               case getLamExprType body' of
                 PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
-                  let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
-                  let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
+                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
                   emitExpr $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"

@@ -281,7 +281,7 @@ instance PrettyPrec (SimpInCore n) where
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
     LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
     ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
-    TabLam _ lamExpr -> atPrec AppPrec $ "tablam" <+> p lamExpr
+    TabLam _ _ -> atPrec AppPrec $ "tablam"
 
 instance IRRep r => Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
@@ -329,7 +329,7 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType (b :> IxType ty dict) body) = let
+  pretty (TabPiType dict (b:>ty) body) = let
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body

@@ -236,8 +236,8 @@ transposeExpr expr ct = case expr of
             transposeBlock body (sink ct)
           return UnitVal
   TabCon _ ty es -> do
-    TabTy b _ <- return ty
-    idxTy <- substNonlin $ binderAnn b
+    TabTy d b _ <- return ty
+    idxTy <- substNonlin $ IxType (binderType b) d
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e

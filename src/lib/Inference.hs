@@ -1534,7 +1534,7 @@ inferNaryTabAppArgs
   => CType o -> [UExpr i] -> InfererM i o [CAtom o]
 inferNaryTabAppArgs _ [] = return []
 inferNaryTabAppArgs tabTy (arg:rest) = do
-  TabPiType b resultTy <- fromTabPiType True tabTy
+  TabPiType _ b resultTy <- fromTabPiType True tabTy
   let ixTy = binderType b
   let isDependent = binderName b `isFreeIn` resultTy
   arg' <- if isDependent
@@ -1822,15 +1822,15 @@ checkImplicitLamRestrictions :: Nest (WithExpl CBinder) o o' -> EffectRow CoreIR
 checkImplicitLamRestrictions _ _ = return () -- TODO
 
 checkUForExpr :: EmitsBoth o => UForExpr i -> TabPiType CoreIR o -> InfererM i o (LamExpr CoreIR o)
-checkUForExpr (UForExpr (UAnnBinder bFor ann cs) body) tabPi@(TabPiType bPi _) = do
+checkUForExpr (UForExpr (UAnnBinder bFor ann cs) body) tabPi@(TabPiType _ bPi _) = do
   unless (null cs) $ throw TypeErr "`for` binders shouldn't have constraints"
-  let iTy = ixTypeType $ binderAnn bPi
+  let iTy = binderAnn bPi
   case ann of
     UNoAnn -> return ()
     UAnn forAnn -> checkUType forAnn >>= constrainTypesEq iTy
   Abs b body' <- buildAbsInf (getNameHint bFor) Explicit iTy \i -> do
     extendRenamer (bFor@>atomVarName i) do
-      TabPiType bPi' resultTy <- sinkM tabPi
+      TabPiType _ bPi' resultTy <- sinkM tabPi
       resultTy' <- applyRename (bPi'@>atomVarName i) resultTy
       buildBlockInf do
         withBlockDecls body \result ->
@@ -2119,7 +2119,7 @@ inferTabCon hint xs reqTy = do
       dTy <- DictTy <$> dataDictType elemTy
       liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
     Check tabTy -> do
-      TabPiType b elemTy <- fromTabPiType True tabTy
+      TabPiType _ b elemTy <- fromTabPiType True tabTy
       constrainTypesEq (binderType b) finTy
       xs' <- forM (enumerate xs) \(i, x) -> do
         let i' = NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i) :: CAtom o
@@ -2506,7 +2506,7 @@ instance Unifiable CorePiType where
     go _ _ = empty
 
 unifyTabPiType :: EmitsInf n => TabPiType CoreIR n -> TabPiType CoreIR n -> SolverM n ()
-unifyTabPiType (TabPiType b1 ty1) (TabPiType b2 ty2) = do
+unifyTabPiType (TabPiType _ b1 ty1) (TabPiType _ b2 ty2) = do
   let ann1 = binderType b1
   let ann2 = binderType b2
   unify ann1 ann2
@@ -2924,7 +2924,7 @@ synthDictForData dictTy@(DictType "Data" dName [Type ty]) = case ty of
   -- TODO Deduplicate vs CheckType.checkDataLike
   -- The "Var" case is different
   TyVar _ -> synthDictFromGiven dictTy
-  TabPi (TabPiType b eltTy) -> recurBinder (Abs b eltTy) >> success
+  TabPi (TabPiType _ b eltTy) -> recurBinder (Abs b eltTy) >> success
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l >> recurBinder (Abs b r) >> success
   NewtypeTyCon nt -> do
@@ -3077,11 +3077,11 @@ buildTabPiInf
   => NameHint -> IxType CoreIR n
   -> (forall l. (EmitsInf l, Ext n l) => CAtomVar l -> InfererM i l (CType l))
   -> InfererM i n (TabPiType CoreIR n)
-buildTabPiInf hint ixTy body = do
+buildTabPiInf hint (IxType t d) body = do
   Abs (WithExpl _ (b:>_)) resultTy <-
-    buildAbsInf hint Explicit (ixTypeType ixTy) \v ->
+    buildAbsInf hint Explicit t \v ->
       withoutEffects $ body v
-  return $ TabPiType (b:>ixTy) resultTy
+  return $ TabPiType d (b:>t) resultTy
 
 buildDepPairTyInf
   :: EmitsInf n

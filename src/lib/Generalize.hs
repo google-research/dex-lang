@@ -128,13 +128,13 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
-  TabPi (TabPiType (b:>(IxType iTy (IxDictAtom d))) resultTy) -> do
+  TabPi (TabPiType (IxDictAtom d) (b:>iTy) resultTy) -> do
     iTy' <- f' TypeParam TyKind iTy
     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
     d'   <- f DictParam dictTy d
     withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
       resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
-      return $ TabTy (b':>IxType iTy' (IxDictAtom d')) resultTy'
+      return $ TabTy (IxDictAtom d') (b':>iTy') resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
   TabPi t -> return $ TabPi t
   TC tc -> TC <$> case tc of

@@ -217,11 +217,12 @@ instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    TabPi (TabPiType (b:>ixTy) resultTy) -> do
-      ixTy' <- cheapReduceE ixTy
-      withFreshBinder (getNameHint b) ixTy' \b' -> do
+    TabPi (TabPiType d (b:>t) resultTy) -> do
+      t' <- cheapReduceE t
+      d' <- cheapReduceE d
+      withFreshBinder (getNameHint b) t' \b' -> do
         resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType b' resultTy'
+        return $ TabPi $ TabPiType d' b' resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
@@ -737,10 +738,10 @@ instance VisitGeneric CorePiType CoreIR where
     return $ CorePiType app bsExpl' effty'
 
 instance IRRep r => VisitGeneric (TabPiType r) r where
-  visitGeneric (TabPiType (b:>IxType t d) eltTy) = do
+  visitGeneric (TabPiType d b eltTy) = do
     d' <- visitGeneric d
-    visitGeneric (PiType (UnaryNest (b:>t)) (EffTy Pure eltTy)) <&> \case
-      PiType (UnaryNest (b':>t')) (EffTy Pure eltTy') -> TabPiType (b':>IxType t' d') eltTy'
+    visitGeneric (PiType (UnaryNest b) (EffTy Pure eltTy)) <&> \case
+      PiType (UnaryNest b') (EffTy Pure eltTy') -> TabPiType d' b' eltTy'
       _ -> error "not a table pi type"
 
 instance IRRep r => VisitGeneric (DepPairType r) r where

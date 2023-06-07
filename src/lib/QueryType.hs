@@ -63,7 +63,7 @@ typeOfApp _ _ = error "expected a pi type"
 
 typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfTabApp t [] = return t
-typeOfTabApp (TabTy (b:>_) resultTy) (i:rest) = do
+typeOfTabApp (TabTy _ (b:>_) resultTy) (i:rest) = do
   resultTy' <- applySubst (b@>SubstVal i) resultTy
   typeOfTabApp resultTy' rest
 typeOfTabApp ty _ = error $ "expected a table type. Got: " ++ pprint ty
@@ -96,7 +96,7 @@ typeOfTopApp f xs = do
 
 typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Atom r n -> m n (Type r n)
 typeOfIndexRef (TC (RefType h s)) i = do
-  TabTy (b:>_) eltTy <- return s
+  TabTy _ (b:>_) eltTy <- return s
   eltTy' <- applyAbs (Abs b eltTy) (SubstVal i)
   return $ TC $ RefType h eltTy'
 typeOfIndexRef _ _ = error "expected a ref type"

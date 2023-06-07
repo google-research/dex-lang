@@ -213,8 +213,7 @@ instance IRRep r => HasType r (MiscOp r) where
 instance IRRep r => HasType r (Hof r) where
   getType = \case
     For _ dict f -> case getLamExprType f of
-      PiType (UnaryNest (b:>_)) (EffTy _ eltTy) ->
-        TabTy (b:>ixTyFromDict dict) eltTy
+      PiType (UnaryNest b) (EffTy _ eltTy) -> TabTy dict b eltTy
       _ -> error "expected a unary pi type"
     While _ -> UnitTy
     Linearize f _ -> case getLamExprType f of
@@ -257,9 +256,9 @@ nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resu
     CorePiType ExplicitApp bs' $ EffTy eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
-nonDepTabPiType argTy resultTy =
+nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType (b:>argTy) resultTy'
+    Abs b resultTy' -> TabPiType d (b:>t) resultTy'
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b

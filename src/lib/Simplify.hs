@@ -10,6 +10,7 @@ module Simplify
   ( simplifyTopBlock, simplifyTopFunction, SimplifiedBlock (..), ReconstructAtom (..), applyReconTop,
     linearizeTopFun) where
 
+import Control.Applicative
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
@@ -103,11 +104,26 @@ tryAsDataAtom atom = do
       notData = error $ "Not runtime-representable data: " ++ pprint atom
 
 forceTabLam :: Emits n => TabLamExpr n -> SimplifyM i n (SAtom n)
-forceTabLam (Abs (b:>ixTy) ab) =
-  buildFor (getNameHint b) Fwd ixTy \v -> do
+forceTabLam (PairE d (Abs (b:>ixTy) ab)) =
+  buildFor (getNameHint b) Fwd (IxType ixTy d) \v -> do
     Abs decls result <- applyRename (b@>(atomVarName v)) ab
     result' <- emitDecls decls result
     toDataAtomIgnoreRecon result'
+
+type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
+
+fromNaryTabLam :: Int -> CAtom n -> Maybe (Int, NaryTabLamExpr n)
+fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
+fromNaryTabLam maxDepth = \case
+  SimpInCore (TabLam _ (PairE _ (Abs b body))) ->
+    extend <|> (Just $ (1, Abs (Nest b Empty) body))
+    where
+      extend = case body of
+        Abs Empty lam | maxDepth > 1 -> do
+          (d, Abs (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
+          return $ (d + 1, Abs (Nest b (Nest b2 bs2)) body2)
+        _ -> Nothing
+  _ -> Nothing
 
 forceACase :: Emits n => SAtom n -> [Abs SBinder CAtom n] -> CType n -> SimplifyM i n (SAtom n)
 forceACase scrut alts resultTy = do
@@ -138,12 +154,13 @@ getRepType ty = go ty where
         x <- liftSimpAtom (sink l) (Var $ binderVar b')
         r' <- go =<< applySubst (b@>SubstVal x) r
         return $ DepPairTy $ DepPairType expl b' r'
-    TabPi (TabPiType (b:>ixTy) bodyTy) -> do
-      ixTy' <- simplifyIxType ixTy
-      withFreshBinder (getNameHint b) ixTy' \b' -> do
+    TabPi (TabPiType d (b:>t) bodyTy) -> do
+      let ixTy = IxType t d
+      IxType t' d' <- simplifyIxType ixTy
+      withFreshBinder (getNameHint b) t' \b' -> do
         x <- liftSimpAtom (sink $ ixTypeType ixTy) (Var $ binderVar b')
         bodyTy' <- go =<< applySubst (b@>SubstVal x) bodyTy
-        return $ TabPi $ TabPiType b' bodyTy'
+        return $ TabPi $ TabPiType d' b' bodyTy'
     NewtypeTyCon con -> do
       (_, ty') <- unwrapNewtypeType con
       go ty'
@@ -791,7 +808,7 @@ simplifyHof _hint hof = case hof of
   For d ixDict lam -> do
     (lam', Abs (UnaryNest bIx) recon) <- simplifyLam lam
     ixTypeCore <- ixTyFromDict <$> substM ixDict
-    ixTypeSimp@(IxType _ ixDict') <- simplifyIxType ixTypeCore
+    IxType ixTy ixDict' <- simplifyIxType ixTypeCore
     ans <- emitExpr $ PrimOp $ Hof $ For d ixDict' lam'
     case recon of
       CoerceRecon _ -> do
@@ -800,7 +817,7 @@ simplifyHof _hint hof = case hof of
       LamRecon (Abs bsClosure reconResult) -> do
         TabPi resultTy <- substM $ getType $ Hof hof
         liftM (SimpInCore . TabLam resultTy) $
-          buildAbs noHint ixTypeSimp \i -> buildScoped do
+          PairE ixDict' <$> buildAbs noHint ixTy \i -> buildScoped do
             i' <- sinkM i
             xs <- unpackTelescope bsClosure =<< tabApp (sink ans) (Var i')
             applySubst (bIx@>Rename (atomVarName i') <.> bsClosure @@> map SubstVal xs) reconResult

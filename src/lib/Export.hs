@@ -159,7 +159,7 @@ toExportType :: IRRep r => Type r i -> ExportSigM r i o (ExportType o)
 toExportType ty = case ty of
   BaseTy (Scalar sbt) -> return $ ScalarType sbt
   NewtypeTyCon Nat    -> return $ ScalarType IdxRepScalarBaseTy
-  TabTy  _ _          -> parseTabTy ty >>= \case
+  TabTy _ _ _         -> parseTabTy ty >>= \case
     Nothing  -> unsupported
     Just ety -> return ety
   _ -> unsupported
@@ -174,8 +174,8 @@ parseTabTy = go []
     go shape = \case
       BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy  (b:>ixty) a -> do
-        maybeN <- case ixty of
+      TabTy d (b:>ixty) a -> do
+        maybeN <- case IxType ixty d of
           (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
           (IxType _ (IxDictRawFin n)) -> return $ Just n
           _ -> return Nothing

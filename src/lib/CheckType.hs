@@ -323,7 +323,7 @@ typeCheckExpr effs expr = case expr of
     methodTy' <- applySubst subst methodTy
     checkApp effs (Pi methodTy') args >>= checkAgainstGiven reqTy
   TabCon _ ty xs -> do
-    ty'@(TabPi (TabPiType b restTy)) <- checkTypeE TyKind ty
+    ty'@(TabPi (TabPiType _ b restTy)) <- checkTypeE TyKind ty
     case fromConstAbs (Abs b restTy) of
       HoistSuccess elTy -> forM_ xs (|: elTy)
       -- XXX: in the dependent case we don't check that the element types
@@ -396,7 +396,7 @@ instance IRRep r => CheckableE r (IxType r) where
   checkE (IxType t _) = checkE t
 
 instance IRRep r => HasType r (TabPiType r) where
-  getTypeE (TabPiType b resultTy) = do
+  getTypeE (TabPiType _ b resultTy) = do
     checkB b \_ -> resultTy|:TyKind
     return TyKind
 
@@ -494,7 +494,7 @@ typeCheckPrimOp effs op = case op of
       MAsk      ->           declareEff effs (RWSEffect Reader h) $> s
       MExtend _ x -> x|:s >> declareEff effs (RWSEffect Writer h) $> UnitTy
       IndexRef givenTy i -> do
-        TabTy (b:>IxType iTy _) eltTy <- return s
+        TabTy _ (b:>iTy) eltTy <- return s
         i' <- checkTypeE iTy i
         eltTy' <- applyAbs (Abs b eltTy) (SubstVal i')
         checkAgainstGiven givenTy (TC $ RefType h eltTy')
@@ -596,13 +596,13 @@ typeCheckVectorOp = \case
     ty'@(BaseTy (Vector _ _)) <- checkTypeE TyKind ty
     return ty'
   VectorIdx tbl i ty -> do
-    TabTy b (BaseTy (Scalar sbt)) <- getTypeE tbl
+    TabTy _ b (BaseTy (Scalar sbt)) <- getTypeE tbl
     i |: binderType b
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return ty'
   VectorSubref ref i ty -> do
-    RawRefTy (TabTy b (BaseTy (Scalar sbt))) <- getTypeE ref
+    RawRefTy (TabTy _ b (BaseTy (Scalar sbt))) <- getTypeE ref
     i |: binderType b
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
@@ -629,10 +629,10 @@ typeCheckUserEffect = \case
 typeCheckPrimHof :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> Hof r i -> m i o (Type r o)
 typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
-    ixTy <- ixTyFromDict <$> renameM ixDict
+    IxType t d <- ixTyFromDict <$> renameM ixDict
     PiType (UnaryNest (b:>argTy)) (EffTy _ eltTy) <- checkLamExpr f
-    checkTypesEq (ixTypeType ixTy) argTy
-    return $ TabTy (b:>ixTy) eltTy
+    checkTypesEq t argTy
+    return $ TabTy d (b:>t) eltTy
   While body -> do
     condTy <- getTypeE body
     checkTypesEq (BaseTy $ Scalar Word8Type) condTy
@@ -787,7 +787,7 @@ checkApp allowedEffs fTy xs = case fTy of
 checkTabApp :: (Typer m r, IRRep r) => Type r o -> [Atom r i] -> m i o (Type r o)
 checkTabApp ty [] = return ty
 checkTabApp ty (i:rest) = do
-  TabTy (b :> IxType ixTy _) resultTy <- return ty
+  TabTy _ (b :> ixTy) resultTy <- return ty
   i' <- checkTypeE ixTy i
   resultTy' <- applySubst (b@>SubstVal i') resultTy
   checkTabApp resultTy' rest
@@ -1033,7 +1033,7 @@ isData ty = liftM isJust $ runCheck do
 checkDataLike :: Typer m r => Type CoreIR i -> m i o ()
 checkDataLike ty = case ty of
   TyVar _ -> notData
-  TabPi (TabPiType b eltTy) -> do
+  TabPi (TabPiType _ b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
   DepPairTy (DepPairType _ b@(_:>l) r) -> do

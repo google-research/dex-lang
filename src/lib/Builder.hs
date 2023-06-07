@@ -829,8 +829,8 @@ buildMap :: (Emits n, ScopableBuilder r m)
          -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
          -> m n (Atom r n)
 buildMap xs f = do
-  TabTy (_:>ixTy) _ <- return $ getType xs
-  buildFor noHint Fwd ixTy \i ->
+  TabTy d (_:>t) _ <- return $ getType xs
+  buildFor noHint Fwd (IxType t d) \i ->
     tabApp (sink xs) (Var i) >>= f
 
 unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
@@ -885,7 +885,7 @@ zeroAt ty = liftEmitBuilder $ go ty where
   go = \case
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
-   TabTy (b:>ixTy) bodyTy -> buildFor (getNameHint b) Fwd ixTy \i ->
+   TabTy d (b:>t) bodyTy -> buildFor (getNameHint b) Fwd (IxType t d) \i ->
      go =<< applySubst (b @> SubstVal (Var i)) bodyTy
    _ -> unreachable
   zeroLit bt = case bt of
@@ -908,10 +908,10 @@ maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
 
 maybeTangentType' :: IRRep r => Type r n -> EnvReaderT Maybe n (Type r n)
 maybeTangentType' ty = case ty of
-  TabTy b bodyTy -> do
+  TabTy d b bodyTy -> do
     refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
       bodyTanTy <- rec bodyTy'
-      return $ TabTy b' bodyTanTy
+      return $ TabTy d b' bodyTanTy
   TC con    -> case con of
     BaseType (Scalar Float64Type) -> return $ TC con
     BaseType (Scalar Float32Type) -> return $ TC con
@@ -930,8 +930,8 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getType x of
-    TabTy (b:>ixTy) _  ->
-      liftEmitBuilder $ buildFor (getNameHint b) Fwd ixTy \i -> do
+    TabTy d (b:>t) _  ->
+      liftEmitBuilder $ buildFor (getNameHint b) Fwd (IxType t d) \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ BinOp FAdd x y
@@ -1282,10 +1282,10 @@ isJustE x = liftEmitBuilder $
 -- Monoid a -> (n=>a) -> a
 reduceE :: (Emits n, Builder r m) => BaseMonoid r n -> Atom r n -> m n (Atom r n)
 reduceE monoid xs = liftEmitBuilder do
-  TabTy (n:>ty) a <- return $ getType xs
+  TabTy d (n:>ty) a <- return $ getType xs
   a' <- return $ ignoreHoistFailure $ hoist n a
   getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
-    buildFor noHint Fwd (sink ty) \i -> do
+    buildFor noHint Fwd (sink $ IxType ty d) \i -> do
       x <- tabApp (sink xs) (Var i)
       emitExpr $ PrimOp $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
 
@@ -1299,21 +1299,21 @@ mapE :: (Emits n, ScopableBuilder r m)
      => (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
      -> Atom r n -> m n (Atom r n)
 mapE f xs = do
-  TabTy (n:>ty) _ <- return $ getType xs
-  buildFor (getNameHint n) Fwd ty \i -> do
+  TabTy d (n:>ty) _ <- return $ getType xs
+  buildFor (getNameHint n) Fwd (IxType ty d) \i -> do
     x <- tabApp (sink xs) (Var i)
     f x
 
 -- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
 catMaybesE :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)
 catMaybesE maybes = do
-  TabTy n (MaybeTy a) <- return $ getType maybes
+  TabTy d n (MaybeTy a) <- return $ getType maybes
   justs <- liftEmitBuilder $ mapE isJustE maybes
   monoid <- andMonoid
   allJust <- reduceE monoid justs
-  liftEmitBuilder $ emitIf allJust (MaybeTy $ TabTy n a)
-    (JustAtom (sink $ TabTy n a) <$> mapE fromJustE (sink maybes))
-    (return (NothingAtom $ sink $ TabTy n a))
+  liftEmitBuilder $ emitIf allJust (MaybeTy $ TabTy d n a)
+    (JustAtom (sink $ TabTy d n a) <$> mapE fromJustE (sink maybes))
+    (return (NothingAtom $ sink $ TabTy d n a))
 
 emitWhile :: (Emits n, ScopableBuilder r m)
           => (forall l. (Emits l, DExt n l) => m l (Atom r l))
