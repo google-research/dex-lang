@@ -9,7 +9,7 @@
 module CheckType (
   CheckableE (..), CheckableB (..),
   checkTypes, checkTypesM, checkHasType,
-  checkExtends, tryGetType, isData, asFFIFunType
+  checkExtends, tryGetType, isData, asFFIFunType, checkDestLam
   ) where
 
 import Prelude hiding (id)
@@ -51,6 +51,13 @@ tryGetType e = liftExcept =<< liftTyperT (getTypeE e)
 checkHasType :: (EnvReader m, HasType r e) => e n -> Type r n -> m n (Except ())
 checkHasType e ty = liftTyperT $ e |: ty
 {-# INLINE checkHasType #-}
+
+checkDestLam :: (EnvReader m, Fallible1 m) => LamExpr SimpIR n -> m n ()
+checkDestLam lam = do
+  let allowedEffs = OneEffect InitEffect
+  PiType bs effs _ <- return $ getDestLamExprType lam
+  let effs' = ignoreHoistFailure $ hoist bs effs
+  checkExtends allowedEffs effs'
 
 -- === the type checking/querying monad ===
 
@@ -171,11 +178,6 @@ instance (CheckableB r b, CheckableE r e) => CheckableE r (Abs b e) where
 
 instance (IRRep r) => CheckableE r (LamExpr r) where
   checkE (LamExpr bs body) = checkB bs \_ ->  void $ getTypeE body
-
-instance (IRRep r) => CheckableE r (DestLamExpr r) where
-  checkE (DestLamExpr bs block) = checkB bs \_ -> do
-    DestBlock destb body <- return block
-    checkB destb \_ -> void $ getTypeE body
 
 -- === type checking core ===
 

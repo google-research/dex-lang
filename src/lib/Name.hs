@@ -321,6 +321,11 @@ toRNest n = go REmpty n
       Empty     -> acc
       Nest b bs -> go (RNest acc b) bs
 
+popNest :: Nest b n l -> Maybe (PairB (Nest b) b n l)
+popNest bs = case toRNest bs of
+  RNest bs' b -> Just $ PairB (unRNest bs') b
+  REmpty -> Nothing
+
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)
   deriving (Show, Generic)

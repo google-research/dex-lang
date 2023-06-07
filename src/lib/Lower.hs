@@ -8,7 +8,7 @@
 
 module Lower
   ( lowerFullySequential, lowerFullySequentialNoDest
-  , vectorizeLoops
+  , vectorizeLoops, DestLamExpr, DestBlock
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -66,17 +66,20 @@ import Util (enumerate, foldMapM)
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-lowerFullySequential :: EnvReader m => SLam n -> m n (DestLamExpr SimpIR n)
+type DestLamExpr = SLam
+type DestBlock = Abs (SBinder) SBlock
+
+lowerFullySequential :: EnvReader m => SLam n -> m n (DestLamExpr n)
 lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
   refreshAbs (Abs bs body) \bs' body' -> do
-    body'' <- lowerFullySequentialBlock body'
-    return $ DestLamExpr bs' body''
+    Abs b body'' <- lowerFullySequentialBlock body'
+    return $ LamExpr (bs' >>> UnaryNest b) body''
 
-lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
+lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock n)
 lowerFullySequentialBlock b = liftAtomSubstBuilder do
   resultDestTy <- RawRefTy <$> substM (getType b)
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
-    DestBlock destBinder <$> buildBlock do
+    Abs destBinder <$> buildBlock do
       let dest = Var $ sink $ binderVar destBinder
       lowerBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequentialBlock #-}
@@ -374,9 +377,9 @@ instance PrettyPrec (VSubstValC c n) where
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
 vectorizeLoopsBlock :: (EnvReader m)
-  => Word32 -> DestBlock SimpIR n
-  -> m n (DestBlock SimpIR n, Errs)
-vectorizeLoopsBlock vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
+  => Word32 -> DestBlock n
+  -> m n (DestBlock n, Errs)
+vectorizeLoopsBlock vectorByteWidth (Abs destb body) = liftEnvReaderM do
   refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
     vblock <- liftBuilderT $ buildBlock do
                 s <- vectorizeLoopsRec emptyInFrag decls
@@ -386,16 +389,17 @@ vectorizeLoopsBlock vectorByteWidth (DestBlock destb body) = liftEnvReaderM do
       -- caught inside `vectorizeLoopsRec` (and should have been added to the
       -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
       Failure errs -> error $ pprint errs
-      Success (block', errs) -> return $ (DestBlock d block', errs)
+      Success (block', errs) -> return $ (Abs d block', errs)
 {-# SCC vectorizeLoopsBlock #-}
 
-vectorizeLoops  :: (EnvReader m)
-  => Word32 -> DestLamExpr SimpIR n
-  -> m n (DestLamExpr SimpIR n, Errs)
-vectorizeLoops width (DestLamExpr bs body) = liftEnvReaderM do
-  refreshAbs (Abs bs body) \bs' body' -> do
-    (body'', errs) <- vectorizeLoopsBlock width body'
-    return $ (DestLamExpr bs' body'', errs)
+vectorizeLoops  :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
+vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
+  case popNest bsDestB of
+    Just (PairB bs b) ->
+      refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
+        (Abs b'' body'', errs) <- vectorizeLoopsBlock width body'
+        return $ (LamExpr (bs' >>> UnaryNest b'') body'', errs)
+    Nothing -> error "expected a trailing dest binder"
 
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
 addVectErrCtx name payload m =

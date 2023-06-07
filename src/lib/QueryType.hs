@@ -47,6 +47,14 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
+getDestLamExprType :: LamExpr SimpIR n -> PiType SimpIR n
+getDestLamExprType (LamExpr bsRefB body) =
+  case popNest bsRefB of
+    Just (PairB bs (bDest:>RawRefTy ansTy)) -> do
+      let resultEffs = ignoreHoistFailure $ hoist bDest $ getEffects body
+      PiType bs resultEffs ansTy
+    _ -> error "expected trailing dest binder"
+
 typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfApp (Pi (CorePiType _ bs _ resultTy)) xs = do
   let subst = bs @@> fmap SubstVal xs

@@ -887,7 +887,6 @@ instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal DictType
 instance SubstE AtomSubstVal DictExpr
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)
-instance IRRep r => SubstE AtomSubstVal (DestBlock r)
 instance SubstE AtomSubstVal CorePiType
 instance SubstE AtomSubstVal CoreLamExpr
 instance IRRep r => SubstE AtomSubstVal (TabPiType r)

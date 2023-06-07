@@ -278,9 +278,6 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
 getLamExprType :: IRRep r => LamExpr r n -> PiType r n
 getLamExprType (LamExpr bs body) = PiType bs (getEffects body) (getType body)
 
-getDestLamExprType :: IRRep r => DestLamExpr r n -> PiType r n
-getDestLamExprType (DestLamExpr bs body) = PiType bs (getEffects body) (getType body)
-
 getTypeRWSAction :: IRRep r => LamExpr r n -> (Type r n, Type r n)
 getTypeRWSAction f = case getLamExprType f of
   PiType (BinaryNest regionBinder refBinder) _ resultTy -> do
@@ -296,10 +293,6 @@ instance IRRep r => HasType r (Block r) where
   getType (Block NoBlockAnn Empty result) = getType result
   getType (Block (BlockAnn ty _) _ _) = ty
   getType _ = error "impossible"
-
-instance IRRep r => HasType r (DestBlock r) where
-  getType (DestBlock (_:>RawRefTy ansTy) _) = ansTy
-  getType _ = error "not a valid dest block"
 
 -- === querying effects implementation ===
 
@@ -380,30 +373,8 @@ instance IRRep r => HasEffects (Block r) r where
   getEffects (Block NoBlockAnn _ _) = Pure
   {-# INLINE getEffects #-}
 
-instance IRRep r => HasEffects (DestBlock r) r where
-  getEffects (DestBlock b (Block ann _ _)) = case ann of
-    BlockAnn _ effs -> ignoreHoistFailure $ hoist b effs
-    NoBlockAnn -> Pure
-  {-# INLINE getEffects #-}
-
 instance IRRep r => HasEffects (Alt r) r where
   getEffects (Abs bs body) = ignoreHoistFailure $ hoist bs (getEffects body)
-  {-# INLINE getEffects #-}
-
--- wrapper to allow checking the effects of an applied nullary lambda
-data NullaryLamApp r n = NullaryLamApp (LamExpr r n)
--- XXX: this should only be used for nullary lambdas
-instance IRRep r => HasEffects (NullaryLamApp r) r where
-  getEffects (NullaryLamApp (NullaryLamExpr block)) = getEffects block
-  getEffects _ = error "not a nullary lambda"
-  {-# INLINE getEffects #-}
-
--- wrapper to allow checking the effects of an applied nullary dest lambda
-data NullaryDestLamApp r n = NullaryDestLamApp (DestLamExpr r n)
--- XXX: this should only be used for nullary lambdas
-instance IRRep r => HasEffects (NullaryDestLamApp r) r where
-  getEffects (NullaryDestLamApp (NullaryDestLamExpr block)) = getEffects block
-  getEffects _ = error "not a nullary lambda"
   {-# INLINE getEffects #-}
 
 functionEffs :: IRRep r => LamExpr r n -> EffectRow r n

@@ -212,11 +212,6 @@ instance IRRep r => PrettyPrec (LamExpr r n) where
   prettyPrec (LamExpr bs body) =
     atPrec LowestPrec $ prettyLam (p bs <> ".") body
 
-instance IRRep r => Pretty (DestLamExpr r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (DestLamExpr r n) where
-  prettyPrec (DestLamExpr bs body) =
-    atPrec LowestPrec $ prettyLam (p bs <> ".") body
-
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
@@ -1003,10 +998,6 @@ instance IRRep r => PrettyPrec (DAMOp r n) where
     Place r v -> pApp r <+> "r:=" <+> pApp v
     Freeze r  -> "freeze" <+> pApp r
     AllocDest ty -> "alloc" <+> pApp ty
-
-instance IRRep r => Pretty (DestBlock r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (DestBlock r n) where
-  prettyPrec (DestBlock b body) = prettyPrec $ Abs b body
 
 instance IRRep r => Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (BaseMonoid r n) where

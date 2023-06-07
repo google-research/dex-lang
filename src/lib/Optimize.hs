@@ -7,10 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( optimize, peepholeOp, peepholeExpr
-  , hoistLoopInvariant, hoistLoopInvariantDest
-  , dceTop, dceTopDest
-  , foldCast ) where
+  ( optimize, peepholeOp, peepholeExpr, hoistLoopInvariant, dceTop, foldCast ) where
 
 import Data.Functor
 import Data.Word
@@ -309,23 +306,9 @@ hoistLoopInvariantBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 hoistLoopInvariantBlock body = liftLICMM $ buildBlock $ visitBlockEmits body
 {-# SCC hoistLoopInvariantBlock #-}
 
-hoistLoopInvariantDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
-hoistLoopInvariantDestBlock (DestBlock (db:>dTy) body) = do
-  liftAtomSubstBuilder @LICMTag do
-    dTy' <- visitType dTy
-    (Abs db' body') <- buildAbs (getNameHint db) dTy' \(AtomVar v _) ->
-      extendRenamer (db@>v) $ buildBlock $ visitBlockEmits body
-    return $ DestBlock db' body'
-{-# SCC hoistLoopInvariantDestBlock #-}
-
 hoistLoopInvariant :: EnvReader m => SLam n -> m n (SLam n)
 hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
 {-# INLINE hoistLoopInvariant #-}
-
-hoistLoopInvariantDest :: EnvReader m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
-hoistLoopInvariantDest (DestLamExpr bs body) = liftEnvReaderM $
-  refreshAbs (Abs bs body) \bs' body' ->
-    DestLamExpr bs' <$> hoistLoopInvariantDestBlock body'
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
 licmExpr = \case
@@ -422,19 +405,9 @@ dceTop :: EnvReader m => SLam n -> m n (SLam n)
 dceTop = liftLamExpr dceBlock
 {-# INLINE dceTop #-}
 
-dceTopDest :: EnvReader m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
-dceTopDest (DestLamExpr bs body) = liftEnvReaderM $
-  refreshAbs (Abs bs body) \bs' body' -> DestLamExpr bs' <$> dceDestBlock body'
-{-# INLINE dceTopDest #-}
-
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 dceBlock b = liftEnvReaderM $ evalStateT1 (runDCEM $ dce b) mempty
 {-# SCC dceBlock #-}
-
-dceDestBlock :: EnvReader m => DestBlock SimpIR n -> m n (DestBlock SimpIR n)
-dceDestBlock (DestBlock d b) = liftEnvReaderM $
-  refreshAbs (Abs d b) \d' b' -> DestBlock d' <$> dceBlock b'
-{-# INLINE dceDestBlock #-}
 
 class HasDCE (e::E) where
   dce :: e n -> DCEM n (e n)

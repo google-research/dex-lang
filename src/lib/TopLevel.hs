@@ -43,7 +43,7 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends)
+import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends, checkDestLam)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -551,14 +551,15 @@ evalBlock typed = do
     AtomicBlock result -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
-      checkEffects (OneEffect InitEffect) (NullaryDestLamApp lowered)
-      NullaryDestLamExpr lOpt <- loweredOptimizations lowered
-      checkEffects (OneEffect InitEffect) lOpt
+      checkDestLam lowered
+      lOpt <- loweredOptimizations lowered
+      checkDestLam lOpt
       cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc (NullaryDestLamExpr lOpt)
+      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
-      let resultTy = getType lOpt
+      PiType bs _ resultTy' <- return $ getDestLamExprType lOpt
+      let resultTy = ignoreHoistFailure $ hoist bs resultTy'
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
@@ -571,10 +572,10 @@ simpOptimizations simp = do
   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
   whenOpt inlined2 $ checkPass OptPass . optimize
 
-loweredOptimizations :: Topper m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
+loweredOptimizations :: Topper m => DestLamExpr n -> m n (DestLamExpr n)
 loweredOptimizations lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
-    (dceTopDest >=> hoistLoopInvariantDest)
+    (dceTop >=> hoistLoopInvariant)
   whenOpt lopt \lo -> do
     (vo, errs) <- vectorizeLoops 64 lo
     l <- getFilteredLogger

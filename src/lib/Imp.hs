@@ -46,10 +46,15 @@ import Types.Imp
 import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
+-- XXX: The LamExpr should be in destination-passing style, with its last
+-- argument a reference to the result.
 toImpFunction :: EnvReader m
-  => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)
+  => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
 toImpFunction cc lam = do
-  (DestLamExpr bs bodyAbs) <- return lam
+  (LamExpr bsAndRefB body) <- return lam
+  PairB bs destB <- case popNest bsAndRefB of
+    Just bsAndRefB' -> return bsAndRefB'
+    Nothing -> error "expected a trailing reference binder"
   ty <- return $ getDestLamExprType lam
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
@@ -57,19 +62,17 @@ toImpFunction cc lam = do
       EntryFunCC _ -> do
         argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          DestBlock (destb:>destTy) body <- return bodyAbs
-          dest <- case destTy of
+          dest <- case binderType destB of
             RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
             _ -> error "Expected a reference type for body destination"
-          extendSubst (destb @> SubstVal (destToAtom dest)) do
+          extendSubst (destB @> SubstVal (destToAtom dest)) do
             void $ translateBlock body
           resultAtom <- loadAtom dest
           repValToList <$> atomToRepVal resultAtom
       _ -> do
         (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          (DestBlock destb body) <- return bodyAbs
-          extendSubst (destb @> SubstVal (destToAtom (sink resultDest))) do
+          extendSubst (destB @> SubstVal (destToAtom (sink resultDest))) do
             void $ translateBlock body
             return []
 

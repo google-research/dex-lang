@@ -196,16 +196,6 @@ data LamExpr (r::IR) (n::S) where
 
 data CoreLamExpr (n::S) = CoreLamExpr (CorePiType n) (LamExpr CoreIR n)
 
--- TODO(dougalm): let's get rid of this and just use a `LamExpr` with an extra argument.
-data DestBlock (r::IR) (n::S) where
-  -- The binder is for the destination that holds the result of the Block.
-  -- The Block itself should not return anything -- it communicates results
-  -- entirely through the destination.
-  DestBlock :: forall r n l. Binder r n l -> Block r l -> DestBlock r n
-
-data DestLamExpr (r::IR) (n::S) where
-  DestLamExpr :: Nest (Binder r) n l -> DestBlock r l -> DestLamExpr r n
-
 data IxDict r n where
   IxDictAtom        :: Atom CoreIR n         -> IxDict CoreIR n
   -- TODO: make these two only available in SimpIR (currently we can't do that
@@ -1137,9 +1127,6 @@ pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 
 pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
-
-pattern NullaryDestLamExpr :: DestBlock r n -> DestLamExpr r n
-pattern NullaryDestLamExpr body = DestLamExpr Empty body
 
 pattern AtomicBlock :: Atom r n -> Block r n
 pattern AtomicBlock atom <- Block _ Empty atom
@@ -2093,36 +2080,6 @@ instance IRRep r => AlphaHashableE (LamExpr r)
 instance IRRep r => RenameE        (LamExpr r)
 deriving instance IRRep r => Show (LamExpr r n)
 deriving via WrapE (LamExpr r) n instance IRRep r => Generic (LamExpr r n)
-
-instance GenericE (DestBlock r) where
-  type RepE (DestBlock r) = Abs (Binder r) (Block r)
-  fromE (DestBlock b block) = Abs b block
-  {-# INLINE fromE #-}
-  toE   (Abs b block) = DestBlock b block
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (DestBlock r)
-instance IRRep r => HoistableE     (DestBlock r)
-instance IRRep r => AlphaEqE       (DestBlock r)
-instance IRRep r => AlphaHashableE (DestBlock r)
-instance IRRep r => RenameE        (DestBlock r)
-deriving instance IRRep r => Show (DestBlock r n)
-deriving via WrapE (DestBlock r) n instance IRRep r => Generic (DestBlock r n)
-
-instance GenericE (DestLamExpr r) where
-  type RepE (DestLamExpr r) = Abs (Nest (Binder r)) (DestBlock r)
-  fromE (DestLamExpr b block) = Abs b block
-  {-# INLINE fromE #-}
-  toE   (Abs b block) = DestLamExpr b block
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (DestLamExpr r)
-instance IRRep r => HoistableE     (DestLamExpr r)
-instance IRRep r => AlphaEqE       (DestLamExpr r)
-instance IRRep r => AlphaHashableE (DestLamExpr r)
-instance IRRep r => RenameE        (DestLamExpr r)
-deriving instance IRRep r => Show (DestLamExpr r n)
-deriving via WrapE (DestLamExpr r) n instance IRRep r => Generic (DestLamExpr r n)
 
 instance GenericE CoreLamExpr where
   type RepE CoreLamExpr = CorePiType `PairE` LamExpr CoreIR
