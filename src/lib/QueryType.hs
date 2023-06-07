@@ -52,11 +52,11 @@ getDestLamExprType (LamExpr bsRefB body) =
   case popNest bsRefB of
     Just (PairB bs (bDest:>RawRefTy ansTy)) -> do
       let resultEffs = ignoreHoistFailure $ hoist bDest $ getEffects body
-      PiType bs resultEffs ansTy
+      PiType bs $ EffTy resultEffs ansTy
     _ -> error "expected trailing dest binder"
 
 typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
-typeOfApp (Pi (CorePiType _ bs _ resultTy)) xs = do
+typeOfApp (Pi (CorePiType _ bs (EffTy _ resultTy))) xs = do
   let subst = bs @@> fmap SubstVal xs
   applySubst subst resultTy
 typeOfApp _ _ = error "expected a pi type"
@@ -91,8 +91,8 @@ typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
 
 typeOfTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (EffTy SimpIR n)
 typeOfTopApp f xs = do
-  PiType bs eff resultTy <- getTypeTopFun f
-  applySubst (bs @@> map SubstVal xs) (EffTy eff resultTy)
+  PiType bs effTy <- getTypeTopFun f
+  applySubst (bs @@> map SubstVal xs) effTy
 
 typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Atom r n -> m n (Type r n)
 typeOfIndexRef (TC (RefType h s)) i = do
@@ -114,20 +114,20 @@ typeOfProjRef (TC (RefType h s)) p = do
 typeOfProjRef _ _ = error "expected a reference"
 
 appEffTy  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (EffTy r n)
-appEffTy (Pi (CorePiType _ bs eff resultTy)) xs = do
+appEffTy (Pi (CorePiType _ bs effTy)) xs = do
   let subst = bs @@> fmap SubstVal xs
-  applySubst subst $ EffTy eff resultTy
+  applySubst subst effTy
 appEffTy t _ = error $ "expected a pi type, got: " ++ pprint t
 
 partialAppType  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
-partialAppType (Pi (CorePiType expl bs effs resultTy)) xs = do
+partialAppType (Pi (CorePiType expl bs effTy)) xs = do
   PairB bs1 bs2 <- return $ splitNestAt (length xs) bs
   let subst = bs1 @@> fmap SubstVal xs
-  applySubst subst $ Pi $ CorePiType expl bs2 effs resultTy
+  applySubst subst $ Pi $ CorePiType expl bs2 effTy
 partialAppType _ _ = error "expected a pi type"
 
 appEffects :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (EffectRow r n)
-appEffects (Pi (CorePiType _ bs effs _)) xs = do
+appEffects (Pi (CorePiType _ bs (EffTy effs _))) xs = do
   let subst = bs @@> fmap SubstVal xs
   applySubst subst effs
 appEffects _ _ = error "expected a pi type"
@@ -156,7 +156,7 @@ getUVarType = \case
   UClassVar v -> do
     ClassDef _ _ _ bs _ _ <- lookupClassDef v
     let bs' = fmapNest (\(RolePiBinder _ b) -> b) bs
-    return $ Pi $ CorePiType ExplicitApp bs' Pure TyKind
+    return $ Pi $ CorePiType ExplicitApp bs' $ EffTy Pure TyKind
   UMethodVar  v -> getMethodNameType v
   UEffectVar   _ -> error "not implemented"
   UEffectOpVar _ -> error "not implemented"
@@ -173,9 +173,9 @@ getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
       withFreshBinder noHint dictTy \dictB -> do
         scDicts <- getSuperclassDicts (Var $ binderVar dictB)
         piTy' <- applySubst (scBinders'@@>(SubstVal<$>scDicts)) piTy
-        CorePiType appExpl methodBs effs resultTy <- return piTy'
+        CorePiType appExpl methodBs effTy <- return piTy'
         let dictBs = UnaryNest $ WithExpl (Inferred Nothing (Synth $ Partial $ succ i)) dictB
-        return $ Pi $ CorePiType appExpl (paramBs'' >>> dictBs >>> methodBs) effs resultTy
+        return $ Pi $ CorePiType appExpl (paramBs'' >>> dictBs >>> methodBs) effTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
 getMethodType dict i = do
@@ -196,7 +196,7 @@ getTyConNameType v = do
     Empty -> return TyKind
     _ -> do
       let bs' = fmapNest (\(RolePiBinder _ b) -> b) bs
-      return $ Pi $ CorePiType ExplicitApp bs' Pure TyKind
+      return $ Pi $ CorePiType ExplicitApp bs' $ EffTy Pure TyKind
 
 getDataConNameType :: EnvReader m => DataConName n -> m n (Type CoreIR n)
 getDataConNameType dataCon = liftEnvReaderM do
@@ -210,7 +210,7 @@ getDataConNameType dataCon = liftEnvReaderM do
                                        _     -> ExplicitApp
           let resultTy = NewtypeTyCon $ UserADTType tcSn (sink tyCon) (sink params)
           let dataBs' = fmapNest (WithExpl Explicit) dataBs
-          return $ Pi $ CorePiType appExpl (paramBs' >>> dataBs') Pure resultTy
+          return $ Pi $ CorePiType appExpl (paramBs' >>> dataBs') (EffTy Pure resultTy)
 
 getStructDataConType :: EnvReader m => TyConName n -> m n (CType n)
 getStructDataConType tyCon = liftEnvReaderM do
@@ -220,7 +220,7 @@ getStructDataConType tyCon = liftEnvReaderM do
     let resultTy = NewtypeTyCon $ UserADTType tcSn (sink tyCon) params
     Abs dataBs resultTy' <- return $ typesAsBinderNest fieldTys resultTy
     let dataBs' = fmapNest (WithExpl Explicit) dataBs
-    return $ Pi $ CorePiType ExplicitApp (paramBs' >>> dataBs') Pure resultTy'
+    return $ Pi $ CorePiType ExplicitApp (paramBs' >>> dataBs') (EffTy Pure resultTy')
 
 buildDataConType
   :: (EnvReader m, EnvExtender m)
@@ -327,12 +327,12 @@ liftIFunType :: (IRRep r, EnvReader m) => IFunType -> m n (PiType r n)
 liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
   go :: IRRep r => [BaseType] -> EnvReaderM n (PiType r n)
   go = \case
-    [] -> return $ PiType Empty (OneEffect IOEffect) resultTy
+    [] -> return $ PiType Empty (EffTy (OneEffect IOEffect) resultTy)
       where resultTy = case resultTys of
               [] -> UnitTy
               [t] -> BaseTy t
               [t1, t2] -> PairTy (BaseTy t1) (BaseTy t2)
               _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
-      PiType bs effs resultTy <- go ts
-      return $ PiType (Nest b bs) effs resultTy
+      PiType bs effTy <- go ts
+      return $ PiType (Nest b bs) effTy

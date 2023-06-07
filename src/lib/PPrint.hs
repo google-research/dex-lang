@@ -165,7 +165,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (App _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TopApp _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
   prettyPrec (TabApp _ f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Case e alts _ effs) = prettyPrecCase "case" e alts effs
+  prettyPrec (Case e alts (EffTy effs _)) = prettyPrecCase "case" e alts effs
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
@@ -204,7 +204,7 @@ instance IRRep r => Pretty (Decl r n l) where
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
-  pretty (PiType bs effs resultTy) =
+  pretty (PiType bs (EffTy effs resultTy)) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
@@ -301,7 +301,7 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl bs eff resultTy) =
+  pretty (CorePiType appExpl bs (EffTy eff resultTy)) =
     prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
     where
       prettyEff = case eff of

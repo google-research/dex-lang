@@ -131,7 +131,7 @@ instance IRRep r => HasType r (Expr r) where
     Atom x   -> getType x
     TabCon _ ty _ -> ty
     PrimOp op -> getType op
-    Case _ _ resultTy _ -> resultTy
+    Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
 
 instance IRRep r => HasType r (DAMOp r) where
@@ -213,18 +213,18 @@ instance IRRep r => HasType r (MiscOp r) where
 instance IRRep r => HasType r (Hof r) where
   getType = \case
     For _ dict f -> case getLamExprType f of
-      PiType (UnaryNest (b:>_)) _ eltTy ->
+      PiType (UnaryNest (b:>_)) (EffTy _ eltTy) ->
         TabTy (b:>ixTyFromDict dict) eltTy
       _ -> error "expected a unary pi type"
     While _ -> UnitTy
     Linearize f _ -> case getLamExprType f of
-      PiType (UnaryNest (binder:>a)) Pure b -> do
+      PiType (UnaryNest (binder:>a)) (EffTy Pure b) -> do
         let b' = ignoreHoistFailure $ hoist binder b
         let fLinTy = Pi $ nonDepPiType [a] Pure b'
         PairTy b' fLinTy
       _ -> error "expected a unary pi type"
     Transpose f _ -> case getLamExprType f of
-      PiType (UnaryNest (_:>a)) _ _ -> a
+      PiType (UnaryNest (_:>a)) _ -> a
       _ -> error "expected a unary pi type"
     RunReader _ f -> resultTy
       where (resultTy, _) = getTypeRWSAction f
@@ -254,7 +254,7 @@ nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
   Abs bs (PairE eff' resultTy') -> do
     let bs' = fmapNest (WithExpl Explicit) bs
-    CorePiType ExplicitApp bs' eff' resultTy'
+    CorePiType ExplicitApp bs' $ EffTy eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType argTy resultTy =
@@ -276,11 +276,11 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
   IxDictSpecialized n _ _ -> n
 
 getLamExprType :: IRRep r => LamExpr r n -> PiType r n
-getLamExprType (LamExpr bs body) = PiType bs (getEffects body) (getType body)
+getLamExprType (LamExpr bs body) = PiType bs (EffTy (getEffects body) (getType body))
 
 getTypeRWSAction :: IRRep r => LamExpr r n -> (Type r n, Type r n)
 getTypeRWSAction f = case getLamExprType f of
-  PiType (BinaryNest regionBinder refBinder) _ resultTy -> do
+  PiType (BinaryNest regionBinder refBinder) (EffTy _ resultTy) -> do
     case binderType refBinder of
       RefTy _ referentTy -> do
         let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
@@ -291,7 +291,7 @@ getTypeRWSAction f = case getLamExprType f of
 
 instance IRRep r => HasType r (Block r) where
   getType (Block NoBlockAnn Empty result) = getType result
-  getType (Block (BlockAnn ty _) _ _) = ty
+  getType (Block (BlockAnn (EffTy _ ty)) _ _) = ty
   getType _ = error "impossible"
 
 -- === querying effects implementation ===
@@ -302,7 +302,7 @@ instance IRRep r => HasEffects (Expr r) r where
     App (EffTy eff _) _ _ -> eff
     TopApp (EffTy eff _) _ _ -> eff
     TabApp _ _ _ -> Pure
-    Case _ _ _ effs -> effs
+    Case _ _ (EffTy effs _) -> effs
     TabCon _ _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
@@ -369,7 +369,7 @@ instance IRRep r => HasEffects (PrimOp r) r where
 
 
 instance IRRep r => HasEffects (Block r) r where
-  getEffects (Block (BlockAnn _ effs) _ _) = effs
+  getEffects (Block (BlockAnn (EffTy effs _)) _ _) = effs
   getEffects (Block NoBlockAnn _ _) = Pure
   {-# INLINE getEffects #-}
 
@@ -379,12 +379,12 @@ instance IRRep r => HasEffects (Alt r) r where
 
 functionEffs :: IRRep r => LamExpr r n -> EffectRow r n
 functionEffs f = case getLamExprType f of
-  PiType b effs _ -> ignoreHoistFailure $ hoist b effs
+  PiType b et -> ignoreHoistFailure $ hoist b (etEff et)
 
 rwsFunEffects :: IRRep r => RWS -> LamExpr r n -> EffectRow r n
 rwsFunEffects rws f = case getLamExprType f of
-   PiType (BinaryNest h ref) effs _ -> do
-     let effs' = ignoreHoistFailure $ hoist ref effs
+   PiType (BinaryNest h ref) et -> do
+     let effs' = ignoreHoistFailure $ hoist ref (etEff et)
      let hVal = Var $ AtomVar (binderName h) (TC HeapType)
      let effs'' = deleteEff (RWSEffect rws hVal) effs'
      ignoreHoistFailure $ hoist h effs''

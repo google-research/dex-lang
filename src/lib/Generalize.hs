@@ -31,7 +31,7 @@ generalizeIxDict dict = liftGeneralizerM do
 
 generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
 generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
-  PairE (CorePiType _ bs _ _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
+  PairE (CorePiType _ bs _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
   ListE <$> go bs argsTop'
   where
     go :: Nest (WithExpl CBinder) i i' -> [Atom CoreIR n]

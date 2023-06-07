@@ -602,7 +602,7 @@ withType e = do
 {-# INLINE withType #-}
 
 makeBlock :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> Atom r l -> Type r l -> Block r n
-makeBlock decls effs atom ty = Block (BlockAnn ty' effs') decls atom where
+makeBlock decls effs atom ty = Block (BlockAnn (EffTy effs' ty')) decls atom where
   ty' = ignoreHoistFailure $ hoist decls ty
   effs' = ignoreHoistFailure $ hoist decls effs
 {-# INLINE makeBlock #-}
@@ -625,7 +625,7 @@ absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
             <> group ("With effects:" <> nest 2 (line <> pretty effs))
   ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
   effs' <- liftHoistExcept' (docAsStr msg) $ hoist decls effs
-  return $ Block (BlockAnn ty' effs') decls result
+  return $ Block (BlockAnn (EffTy effs' ty')) decls result
 {-# INLINE absToBlock #-}
 
 makeBlockFromDecls :: (EnvReader m, IRRep r) => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
@@ -634,7 +634,7 @@ makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
   ty <- return $ getType result
   effs <- declNestEffects decls
   PairE ty' effs' <- return $ ignoreHoistFailure $ hoist decls $ PairE ty effs
-  return $ Block (BlockAnn ty' effs') decls result
+  return $ Block (BlockAnn (EffTy effs' ty')) decls result
 {-# INLINE makeBlockFromDecls #-}
 
 coreLamExpr :: EnvReader m => AppExplicitness
@@ -644,14 +644,14 @@ coreLamExpr appExpl ab = liftEnvReaderM do
   refreshAbs ab \bs' (PairE effs' body') -> do
     resultTy <- return $ getType body'
     let bs'' = fmapNest withoutExpl bs'
-    return $ CoreLamExpr (CorePiType appExpl bs' effs' resultTy) (LamExpr bs'' body')
+    return $ CoreLamExpr (CorePiType appExpl bs' (EffTy effs' resultTy)) (LamExpr bs'' body')
 
 buildCoreLam
   :: ScopableBuilder CoreIR m
   => CorePiType n
   -> (forall l. (Emits l, DExt n l) => [CAtomVar l] -> m l (CAtom l))
   -> m n (CoreLamExpr n)
-buildCoreLam piTy@(CorePiType _ bs _ _) cont = do
+buildCoreLam piTy@(CorePiType _ bs _) cont = do
   lam <- buildLamExpr (EmptyAbs $ fmapNest withoutExpl bs) cont
   return $ CoreLamExpr piTy lam
 
@@ -733,7 +733,7 @@ buildLamExprFromPi
   => PiType r n
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomVar r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildLamExprFromPi (PiType bs _ _) cont = buildLamExpr (EmptyAbs bs) cont
+buildLamExprFromPi (PiType bs _) cont = buildLamExpr (EmptyAbs bs) cont
 
 buildAlt
   :: ScopableBuilder r m
@@ -784,7 +784,7 @@ buildCase' scrut resultTy indexedAltBody = do
           eff <- return $ getEffects blk
           return $ blk `PairE` eff
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
-      return $ Case scrut alts resultTy $ mconcat effs
+      return $ Case scrut alts $ EffTy (mconcat effs) resultTy
 
 buildCase :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n

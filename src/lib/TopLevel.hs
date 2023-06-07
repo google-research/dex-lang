@@ -558,7 +558,7 @@ evalBlock typed = do
       impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
-      PiType bs _ resultTy' <- return $ getDestLamExprType lOpt
+      PiType bs (EffTy _ resultTy') <- return $ getDestLamExprType lOpt
       let resultTy = ignoreHoistFailure $ hoist bs resultTy'
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
@@ -944,7 +944,7 @@ instance Generic TopStateEx where
 
 getLinearizationType :: SymbolicZeros -> CType n -> EnvReaderT Except n (Int, Int, CType n)
 getLinearizationType zeros = \case
-  Pi (CorePiType ExplicitApp bs Pure resultTy) -> do
+  Pi (CorePiType ExplicitApp bs (EffTy Pure resultTy)) -> do
     (numIs, numEs) <- getNumImplicits $ fst $ unzipExpls bs
     refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
       PairB _ bsE <- return $ splitNestAt numIs bs'
@@ -958,7 +958,7 @@ getLinearizationType zeros = \case
         Just rtt -> return rtt
         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
       let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
-      let fullTy = CorePiType ExplicitApp bs' Pure (PairTy resultTy' tanFunTy)
+      let fullTy = CorePiType ExplicitApp bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
       return (numIs, numEs, Pi fullTy)
   _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
   where

@@ -258,7 +258,7 @@ ulExpr expr = case expr of
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               case getLamExprType body' of
-                PiType (UnaryNest (tb:>_)) _ valTy -> do
+                PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
                   let ixTy = IxType IdxRepTy (IxDictRawFin (IdxRepVal n))
                   let tabTy = TabPi $ TabPiType (tb:>ixTy) valTy
                   emitExpr $ TabCon Nothing tabTy vals
@@ -432,9 +432,9 @@ instance HasDCE SAtom where
 
 instance HasDCE SType where dce = visitTypePartial
 instance HasDCE (PiType SimpIR) where
-  dce (PiType bs eff ty) = do
-    Abs bs' (EffTy eff' ty') <- dce (Abs bs (EffTy eff ty))
-    return $ PiType bs' eff' ty'
+  dce (PiType bs effTy) = do
+    Abs bs' effTy' <- dce (Abs bs effTy)
+    return $ PiType bs' effTy'
 
 instance HasDCE (LamExpr SimpIR) where
   dce (LamExpr bs e) = do
@@ -445,7 +445,7 @@ instance HasDCE SBlock where
   dce (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> dce ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
-    (BlockAnn ty effs, _    ) -> do
+    (BlockAnn effTy, _    ) -> do
       -- The free vars accumulated in the state of DCEM should correspond to
       -- the free vars of the Abs of the block answer, by the decls traversed
       -- so far. dceNest takes care to uphold this invariant, but we temporarily
@@ -457,9 +457,8 @@ instance HasDCE SBlock where
       put mempty
       Abs decls' ans' <- dceNest decls ans
       modify (<> old)
-      ty' <- dce ty
-      effs' <- dce effs
-      return $ Block (BlockAnn ty' effs') decls' ans'
+      effTy' <- dce effTy
+      return $ Block (BlockAnn effTy') decls' ans'
 
 data CachedFVs e n = UnsafeCachedFVs { _cachedFVs :: (NameSet n), fromCachedFVs :: (e n) }
 instance HoistableE (CachedFVs e) where

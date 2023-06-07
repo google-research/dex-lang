@@ -101,7 +101,7 @@ liftExportSigM cont = do
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
-corePiToExportSig cc (CorePiType _ tbs effs resultTy) = do
+corePiToExportSig cc (CorePiType _ tbs (EffTy effs resultTy)) = do
     case effs of
       Pure -> return ()
       _    -> throw TypeErr "Only pure functions can be exported"
@@ -109,7 +109,7 @@ corePiToExportSig cc (CorePiType _ tbs effs resultTy) = do
 
 simpPiToExportSig :: CallingConvention
   -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
-simpPiToExportSig cc (PiType bs effs resultTy) = do
+simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
   case effs of
     Pure -> return ()
     _    -> throw TypeErr "Only pure functions can be exported"

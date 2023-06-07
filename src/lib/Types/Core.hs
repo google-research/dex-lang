@@ -99,7 +99,7 @@ deriving via WrapE (Type r) n instance IRRep r => Generic (Type r n)
 data Expr r n where
  TopApp :: EffTy SimpIR n -> TopFunName n -> [SAtom n]         -> Expr SimpIR n
  TabApp :: Type r n -> Atom r n -> [Atom r n] -> Expr r n
- Case   :: Atom r n -> [Alt r n] -> Type r n -> EffectRow r n -> Expr r n
+ Case   :: Atom r n -> [Alt r n] -> EffTy r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
  TabCon :: Maybe (WhenCore r Dict n) -> Type r n -> [Atom r n] -> Expr r n
  PrimOp :: PrimOp r n                           -> Expr r n
@@ -113,8 +113,6 @@ data BaseMonoid r n =
   BaseMonoid { baseEmpty   :: Atom r n
              , baseCombine :: LamExpr r n }
   deriving (Show, Generic)
-
-type EffAbs = Abs (Binder CoreIR) (EffectRow CoreIR)
 
 data DeclBinding r n = DeclBinding LetAnn (Expr r n)
      deriving (Show, Generic)
@@ -188,7 +186,7 @@ data Block (r::IR) (n::S) where
   Block :: BlockAnn r n l -> Nest (Decl r) n l -> Atom r l -> Block r n
 
 data BlockAnn r n l where
-  BlockAnn :: Type r n -> EffectRow r n -> BlockAnn r n l
+  BlockAnn :: EffTy r n -> BlockAnn r n l
   NoBlockAnn :: BlockAnn r n n
 
 data LamExpr (r::IR) (n::S) where
@@ -223,12 +221,12 @@ data TabPiType (r::IR) (n::S) where
   TabPiType :: IxBinder r n l -> Type r l -> TabPiType r n
 
 data PiType (r::IR) (n::S) where
-  PiType :: Nest (Binder r) n l -> EffectRow r l -> Type r l -> PiType r n
+  PiType :: Nest (Binder r) n l -> EffTy r l -> PiType r n
 
 type CoreBinders = Nest (WithExpl CBinder)
 
 data CorePiType (n::S) where
-  CorePiType :: AppExplicitness -> CoreBinders n l -> EffectRow CoreIR l -> Type CoreIR l -> CorePiType n
+  CorePiType :: AppExplicitness -> CoreBinders n l -> EffTy CoreIR l -> CorePiType n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
@@ -882,7 +880,9 @@ deriving instance IRRep r => Show (EffectRowTail r n)
 deriving instance IRRep r => Eq   (EffectRowTail r n)
 deriving via WrapE (EffectRowTail r) n instance IRRep r => Generic (EffectRowTail r n)
 
-data EffTy (r::IR) (n::S) = EffTy (EffectRow r n) (Type r n)
+data EffTy (r::IR) (n::S) =
+  EffTy { etEff :: EffectRow r n
+        , etTy  :: Type r n }
      deriving (Generic, Show)
 
 deriving instance IRRep r => Show (EffectRow r n)
@@ -1631,7 +1631,7 @@ instance IRRep r => GenericE (Expr r) where
     ( EitherE5
  {- App -}    (WhenCore r (EffTy r `PairE` Atom r `PairE` ListE (Atom r)))
  {- TabApp -} (Type r `PairE` Atom r `PairE` ListE (Atom r))
- {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` Type r `PairE` EffectRow r)
+ {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` EffTy r)
  {- Atom -}   (Atom r)
  {- TopApp -} (WhenSimp r (EffTy r `PairE` TopFunName `PairE` ListE (Atom r)))
     )
@@ -1643,7 +1643,7 @@ instance IRRep r => GenericE (Expr r) where
   fromE = \case
     App    et f xs        -> Case0 $ Case0 (WhenIRE (et `PairE` f `PairE` ListE xs))
     TabApp  t f xs        -> Case0 $ Case1 (t `PairE` f `PairE` ListE xs)
-    Case e alts ty eff -> Case0 $ Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff)
+    Case e alts effTy  -> Case0 $ Case2 (e `PairE` ListE alts `PairE` effTy)
     Atom x             -> Case0 $ Case3 (x)
     TopApp et f xs        -> Case0 $ Case4 (WhenIRE (et `PairE` f `PairE` ListE xs))
     TabCon d ty xs     -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
@@ -1654,7 +1654,7 @@ instance IRRep r => GenericE (Expr r) where
     Case0 case0 -> case case0 of
       Case0 (WhenIRE (et `PairE` f `PairE` ListE xs))     -> App    et f xs
       Case1 (t `PairE` f `PairE` ListE xs)                -> TabApp t f xs
-      Case2 (e `PairE` ListE alts `PairE` ty `PairE` eff) -> Case e alts ty eff
+      Case2 (e `PairE` ListE alts `PairE` effTy) -> Case e alts effTy
       Case3 (x)                                           -> Atom x
       Case4 (WhenIRE (et `PairE` f `PairE` ListE xs))     -> TopApp et f xs
       _ -> error "impossible"
@@ -1881,12 +1881,12 @@ instance IRRep r => AlphaHashableE (TC r)
 instance IRRep r => RenameE        (TC r)
 
 instance IRRep r => GenericE (Block r) where
-  type RepE (Block r) = PairE (MaybeE (PairE (Type r) (EffectRow r))) (Abs (Nest (Decl r)) (Atom r))
-  fromE (Block (BlockAnn ty effs) decls result) = PairE (JustE (PairE ty effs)) (Abs decls result)
+  type RepE (Block r) = PairE (MaybeE (EffTy r)) (Abs (Nest (Decl r)) (Atom r))
+  fromE (Block (BlockAnn effTy) decls result) = PairE (JustE effTy) (Abs decls result)
   fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
   fromE _ = error "impossible"
   {-# INLINE fromE #-}
-  toE   (PairE (JustE (PairE ty effs)) (Abs decls result)) = Block (BlockAnn ty effs) decls result
+  toE   (PairE (JustE effTy) (Abs decls result)) = Block (BlockAnn effTy) decls result
   toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
   toE   _ = error "impossible"
   {-# INLINE toE #-}
@@ -2097,10 +2097,10 @@ deriving instance Show (CoreLamExpr n)
 deriving via WrapE CoreLamExpr n instance Generic (CoreLamExpr n)
 
 instance GenericE CorePiType where
-  type RepE CorePiType = LiftE AppExplicitness `PairE` Abs CoreBinders (EffectRow CoreIR `PairE` CType)
-  fromE (CorePiType ex b eff resultTy) = LiftE ex `PairE` Abs b (eff `PairE` resultTy)
+  type RepE CorePiType = LiftE AppExplicitness `PairE` Abs CoreBinders (EffTy CoreIR)
+  fromE (CorePiType ex b effTy) = LiftE ex `PairE` Abs b effTy
   {-# INLINE fromE #-}
-  toE   (LiftE ex `PairE` Abs b (eff `PairE` resultTy)) = CorePiType ex b eff resultTy
+  toE   (LiftE ex `PairE` Abs b effTy) = CorePiType ex b effTy
   {-# INLINE toE #-}
 
 instance SinkableE      CorePiType
@@ -2168,10 +2168,10 @@ deriving instance IRRep r => Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance IRRep r => Generic (TabPiType r n)
 
 instance GenericE (PiType r) where
-  type RepE (PiType r) = Abs (Nest (Binder r)) (PairE (EffectRow r) (Type r))
-  fromE (PiType bs eff resultTy) = Abs bs (PairE eff resultTy)
+  type RepE (PiType r) = Abs (Nest (Binder r)) (EffTy r)
+  fromE (PiType bs effTy) = Abs bs effTy
   {-# INLINE fromE #-}
-  toE   (Abs bs (PairE eff resultTy)) = PiType bs eff resultTy
+  toE   (Abs bs effTy) = PiType bs effTy
   {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (PiType r)

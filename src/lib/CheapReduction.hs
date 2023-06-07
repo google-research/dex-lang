@@ -552,10 +552,10 @@ visitTypeDefault = \case
 visitPiDefault
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
   => PiType r i -> m i o (PiType r o)
-visitPiDefault (PiType bs eff ty) = do
+visitPiDefault (PiType bs effty) = do
   visitBinders bs \bs' -> do
-    EffTy eff' ty' <- visitGeneric $ EffTy eff ty
-    return $ PiType bs' eff' ty'
+    effty' <- visitGeneric effty
+    return $ PiType bs' effty'
 
 visitBinders
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
@@ -614,17 +614,17 @@ instance IRRep r => VisitGeneric (Expr r) r where
     -- TODO: should we reuse the original effects? Whether it's valid depends on
     -- the type-preservation requirements for a visitor. We should clarify what
     -- those are.
-    Case x alts t _ -> do
+    Case x alts (EffTy _ t) -> do
       x' <- visitGeneric x
       t' <- visitGeneric t
       alts' <- mapM visitAlt alts
       let effs' = foldMap altEffects alts'
-      return $ Case x' alts' t' effs'
+      return $ Case x' alts' $ EffTy effs' t'
       where
         altEffects :: Alt r n -> EffectRow r n
         altEffects (Abs bs (Block ann _ _)) = case ann of
           NoBlockAnn -> Pure
-          BlockAnn _ effs -> ignoreHoistFailure $ hoist bs effs
+          BlockAnn (EffTy effs _) -> ignoreHoistFailure $ hoist bs effs
     Atom x -> Atom <$> visitGeneric x
     TabCon Nothing t xs -> TabCon Nothing <$> visitGeneric t <*> mapM visitGeneric xs
     TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> visitGeneric d) <*> visitGeneric t <*> mapM visitGeneric xs
@@ -730,23 +730,23 @@ instance VisitGeneric CoreLamExpr CoreIR where
   visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam
 
 instance VisitGeneric CorePiType CoreIR where
-  visitGeneric (CorePiType app bsExpl eff ty) = do
+  visitGeneric (CorePiType app bsExpl effty) = do
     let (expls, bs) = unzipExpls bsExpl
-    PiType bs' eff' ty' <- visitGeneric $ PiType bs eff ty
+    PiType bs' effty' <- visitGeneric $ PiType bs effty
     let bsExpl' = zipExpls expls bs'
-    return $ CorePiType app bsExpl' eff' ty'
+    return $ CorePiType app bsExpl' effty'
 
 instance IRRep r => VisitGeneric (TabPiType r) r where
   visitGeneric (TabPiType (b:>IxType t d) eltTy) = do
     d' <- visitGeneric d
-    visitGeneric (PiType (UnaryNest (b:>t)) Pure eltTy) <&> \case
-      PiType (UnaryNest (b':>t')) Pure eltTy' -> TabPiType (b':>IxType t' d') eltTy'
+    visitGeneric (PiType (UnaryNest (b:>t)) (EffTy Pure eltTy)) <&> \case
+      PiType (UnaryNest (b':>t')) (EffTy Pure eltTy') -> TabPiType (b':>IxType t' d') eltTy'
       _ -> error "not a table pi type"
 
 instance IRRep r => VisitGeneric (DepPairType r) r where
   visitGeneric (DepPairType expl b ty) = do
-    visitGeneric (PiType (UnaryNest b) Pure ty) <&> \case
-      PiType (UnaryNest b') Pure ty' -> DepPairType expl b' ty'
+    visitGeneric (PiType (UnaryNest b) (EffTy Pure ty)) <&> \case
+      PiType (UnaryNest b') (EffTy Pure ty') -> DepPairType expl b' ty'
       _ -> error "not a dependent pair type"
 
 instance VisitGeneric (RepVal SimpIR) SimpIR where
@@ -773,7 +773,7 @@ instance VisitGeneric DataConDefs CoreIR where
 
 instance VisitGeneric DataConDef CoreIR where
   visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = do
-    PiType bs' _ _  <- visitGeneric $ PiType bs Pure UnitTy
+    PiType bs' _  <- visitGeneric $ PiType bs $ EffTy Pure UnitTy
     repTy' <- visitGeneric repTy
     return $ DataConDef sn (Abs bs' UnitE) repTy' ps
 

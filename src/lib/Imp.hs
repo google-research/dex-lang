@@ -119,18 +119,18 @@ getNaryLamImpArgTypes :: EnvReader m
   => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
   go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (PiType bs effs resultTy) = case bs of
+  go (PiType bs effTy) = case bs of
     Nest piB rest -> do
       ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (PiType rest effs resultTy)) \_ restPi -> do
+      refreshAbs (Abs piB (PiType rest effTy)) \_ restPi -> do
         (argTys, resultTys) <- go restPi
         return (ts:argTys, resultTys)
-    Empty -> ([],) <$> getDestBaseTypes resultTy
+    Empty -> ([],) <$> getDestBaseTypes (etTy effTy)
 
 interpretImpArgsWithDest :: EnvReader m
   => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
 interpretImpArgsWithDest t xs = do
-  (PiType bs _ resultTy) <- return t
+  (PiType bs (EffTy _ resultTy)) <- return t
   (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
   resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
   (destTree, xsRest) <- listToTree resultTy' xsLeft
@@ -307,7 +307,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
   PrimOp op -> toImpOp op
-  Case e alts unitResultTy _ -> do
+  Case e alts (EffTy _ unitResultTy) -> do
     e' <- substM e
     case unitResultTy of
       UnitTy -> return ()
@@ -1205,7 +1205,7 @@ withFreshIBinder hint ty cont = do
 emitCall
   :: Emits n => PiType SimpIR n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall (PiType bs _ resultTy) f xs = do
+emitCall (PiType bs (EffTy _ resultTy)) f xs = do
   resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
   dest <- allocDest resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x

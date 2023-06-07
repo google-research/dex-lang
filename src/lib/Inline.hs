@@ -275,7 +275,7 @@ inlineExpr ctx = \case
   TabApp _ tbl ixs -> do
     s <- getSubst
     inlineAtom (TabAppCtx ixs s ctx) tbl
-  Case scrut alts resultTy effs -> do
+  Case scrut alts (EffTy effs resultTy) -> do
     s <- getSubst
     inlineAtom (CaseCtx alts resultTy effs s ctx) scrut
   expr -> visitGeneric expr >>= reconstruct ctx
@@ -332,21 +332,20 @@ withBinders (Nest (b:>ty) bs) cont = do
       withBinders bs \bs' -> cont $ Nest b' bs'
 
 instance Inlinable (PiType SimpIR) where
-  inline ctx (PiType bs effs ty)  =
+  inline ctx (PiType bs effTy)  =
     reconstruct ctx =<< withBinders bs \bs' -> do
-      EffTy effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffTy effs ty)
-      return $ PiType bs' effs' ty'
+      effTy' <- buildScopedAssumeNoDecls $ inline Stop effTy
+      return $ PiType bs' effTy'
 
 instance Inlinable SBlock where
   inline ctx (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn, Empty) ->
       (Block NoBlockAnn Empty <$> inline Stop ans) >>= reconstruct ctx
     (NoBlockAnn, _) -> error "should be unreachable"
-    (BlockAnn ty effs, _) -> do
+    (BlockAnn effTy, _) -> do
       (Abs decls' ans') <- buildScoped $ inlineDecls decls $ inline Stop ans
-      ty' <- inline Stop ty
-      effs' <- inline Stop effs  -- TODO Really?
-      reconstruct ctx $ Block (BlockAnn ty' effs') decls' ans'
+      effTy' <- inline Stop effTy
+      reconstruct ctx $ Block (BlockAnn effTy') decls' ans'
 
 inlineBlockEmits :: Emits o => Context SExpr e2 o -> SBlock i -> InlineM i o (e2 o)
 inlineBlockEmits ctx (Block _ decls ans) = do
@@ -424,7 +423,7 @@ reconstructCase :: Emits o
   -> InlineM i o (e o)
 reconstructCase ctx scrutExpr alts resultTy effs =
   case scrutExpr of
-    Case sscrut salts _ _ -> do
+    Case sscrut salts _ -> do
       -- Perform case-of-case optimization
       -- TODO Add join points to reduce code duplication (and repeated inlining)
       -- of the arms of the outer case
@@ -450,7 +449,7 @@ reconstructCase ctx scrutExpr alts resultTy effs =
           alts' <- mapM visitAlt alts
           resultTy' <- inline Stop resultTy
           effs' <- inline Stop effs
-          reconstruct ctx $ Case scrut alts' resultTy' effs'
+          reconstruct ctx $ Case scrut alts' (EffTy effs' resultTy')
 
 instance Inlinable (EffectRow SimpIR)
 instance Inlinable (EffTy     SimpIR)

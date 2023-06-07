@@ -112,7 +112,7 @@ lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
 lowerExpr expr = emitExpr =<< case expr of
   TabCon Nothing ty els -> lowerTabCon Nothing ty els
   PrimOp (Hof (For dir ixDict body)) -> lowerFor Nothing dir ixDict body
-  Case e alts ty _ -> lowerCase Nothing e alts ty
+  Case e alts (EffTy _ ty) -> lowerCase Nothing e alts ty
   _ -> visitGeneric expr
 
 lowerBlock :: Emits o => SBlock i -> LowerM i o (SAtom o)
@@ -193,7 +193,7 @@ lowerCase maybeDest scrut alts resultTy = do
           buildBlock do
             lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
     eff' <- foldMapM (pure . getEffects) alts'
-    void $ emitExpr $ Case (sink scrut') alts' UnitTy eff'
+    void $ emitExpr $ Case (sink scrut') alts' (EffTy eff' UnitTy)
     return UnitVal
   return $ PrimOp $ DAMOp $ Freeze dest'
 
@@ -288,7 +288,7 @@ lowerExprWithDest dest expr = case expr of
   PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
     s' <- visitAtom s
     return $ RunState ref' s' body'
-  Case e alts ty _ -> case dest of
+  Case e alts (EffTy _ ty) -> case dest of
     Nothing -> lowerCase Nothing e alts ty
     Just (FullDest d) -> lowerCase (Just d) e alts ty
     Just d -> do

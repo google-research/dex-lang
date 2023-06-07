@@ -398,7 +398,7 @@ linearizeExpr expr = case expr of
     zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
   PrimOp op      -> linearizeOp op
-  Case e alts resultTy effs -> do
+  Case e alts (EffTy effs resultTy) -> do
     e' <- renameM e
     effs' <- renameM effs
     resultTy' <- renameM resultTy
@@ -414,7 +414,7 @@ linearizeExpr expr = case expr of
         alts'' <- forM (enumerate alts') \(i, alt) -> do
           injectAltResult tys i alt
         let fullResultTy = PairTy resultTy' $ SumTy tys
-        result <- emitExpr $ Case e' alts'' fullResultTy effs'
+        result <- emitExpr $ Case e' alts'' (EffTy effs' fullResultTy)
         (primal, residualss) <- fromPair result
         resultTangentType <- tangentType resultTy'
         return $ WithTangent primal do

@@ -306,7 +306,7 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     tySimp <- getRepType ty'
     xs' <- forM xs \x -> simplifyDataAtom x
     liftSimpAtom ty' =<< emitExpr (TabCon Nothing tySimp xs')
-  Case scrut alts resultTy _ -> do
+  Case scrut alts (EffTy _ resultTy) -> do
     scrut' <- simplifyAtom scrut
     resultTy' <- substM resultTy
     defuncCaseCore scrut' resultTy' \i x -> do
@@ -336,7 +336,7 @@ caseComputingEffs
   :: forall m n r. (MonadFail1 m, EnvReader m, IRRep r)
   => Atom r n -> [Alt r n] -> Type r n -> m n (Expr r n)
 caseComputingEffs scrut alts resultTy = do
-  return $ Case scrut alts resultTy $ foldMap getEffects alts
+  return $ Case scrut alts (EffTy (foldMap getEffects alts) resultTy)
 {-# INLINE caseComputingEffs #-}
 
 defuncCaseCore :: Emits o
@@ -599,9 +599,9 @@ simplifyDictMethod absDict@(Abs bs dict) method = do
 ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
-    CorePiType _ methodArgs _ resultTy <- getMethodType dict (fromEnum method)
+    CorePiType _ methodArgs (EffTy _ resultTy) <- getMethodType dict (fromEnum method)
     let allBs = extraArgBs >>> fmapNest withoutExpl methodArgs
-    return $ PiType allBs Pure resultTy
+    return $ PiType allBs (EffTy Pure resultTy)
 
 -- TODO: do we even need this, or is it just a glorified `SubstM`?
 simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
@@ -981,7 +981,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
           -- a custom linearization defined for a function on ADTs will
           -- not work.
           fLin' <- sinkM fLin
-          Pi (CorePiType _ bs _ _) <- return $ getType fLin'
+          Pi (CorePiType _ bs _) <- return $ getType fLin'
           let tangentCoreTys = fromNonDepNest bs
           tangentArgs' <- zipWithM liftSimpAtom tangentCoreTys tangentArgs
           resultTyTangent <- typeOfApp (getType fLin') tangentArgs'
@@ -1035,7 +1035,7 @@ defuncLinearized ab = liftBuilder $ refreshAbs ab \bs ab' -> do
 type HandlerM = SubstReaderT AtomSubstVal (BuilderM SimpIR)
 
 exceptToMaybeBlock :: Emits o => SBlock i -> HandlerM i o (SAtom o)
-exceptToMaybeBlock (Block (BlockAnn ty _) decls result) = do
+exceptToMaybeBlock (Block (BlockAnn (EffTy _ ty)) decls result) = do
   ty' <- substM ty
   exceptToMaybeDecls ty' decls $ Atom result
 exceptToMaybeBlock (Block NoBlockAnn Empty result) = exceptToMaybeExpr $ Atom result
@@ -1056,7 +1056,7 @@ exceptToMaybeDecls resultTy (Nest (Let b (DeclBinding _ rhs)) decls) finalResult
 
 exceptToMaybeExpr :: Emits o => SExpr i -> HandlerM i o (SAtom o)
 exceptToMaybeExpr expr = case expr of
-  Case e alts resultTy _ -> do
+  Case e alts (EffTy _ resultTy) -> do
     e' <- substM e
     resultTy' <- substM $ MaybeTy resultTy
     buildCase e' resultTy' \i v -> do

@@ -148,7 +148,7 @@ getInstanceType (InstanceDef className bs params _) = liftEnvReaderM do
     ClassDef classSourceName _ _ _ _ _ <- lookupClassDef className'
     let dTy = DictTy $ DictType classSourceName className' params'
     let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
-    return $ CorePiType ImplicitApp bs'' Pure dTy
+    return $ CorePiType ImplicitApp bs'' $ EffTy Pure dTy
 
 -- === Inferer interface ===
 
@@ -839,7 +839,7 @@ data RequiredTy (e::E) (n::S) =
 checkSigma :: EmitsBoth o
            => NameHint -> UExpr i -> CType o -> InfererM i o (CAtom o)
 checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
-  Pi piTy@(CorePiType _ bs _ _) -> do
+  Pi piTy@(CorePiType _ bs _) -> do
     if all (== Explicit) (nestToList getExpl bs)
       then fallback
       else case expr of
@@ -938,9 +938,9 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     inferTabApp (srcPos tab) tab' args >>= matchRequirement
   UPi (UPiExpr bs appExpl effs ty) -> do
     -- TODO: check explicitness constraints
-    ab <- withUBinders bs \_ -> PairE <$> checkUEffRow effs <*> checkUType ty
-    Abs bs' (PairE effs' body') <- return ab
-    matchRequirement $ Type $ Pi $ CorePiType appExpl bs' effs' body'
+    ab <- withUBinders bs \_ -> EffTy <$> checkUEffRow effs <*> checkUType ty
+    Abs bs' effTy' <- return ab
+    matchRequirement $ Type $ Pi $ CorePiType appExpl bs' effTy'
   UTabPi (UTabPiExpr (UAnnBinder b ann cs) ty) -> do
     unless (null cs) $ throw TypeErr "`=>` shouldn't have constraints"
     ann' <- asIxType =<< checkAnn (getSourceName b) ann
@@ -1148,10 +1148,10 @@ getFieldDefs ty = case ty of
 
 instantiateSigma :: forall i o. EmitsBoth o => SigmaAtom o -> InfererM i o (CAtom o)
 instantiateSigma sigmaAtom = case getType sigmaAtom of
-  Pi piTy@(CorePiType ExplicitApp _ _ _) -> do
+  Pi piTy@(CorePiType ExplicitApp _ _) -> do
     Lam <$> etaExpandExplicits fDesc piTy \args ->
       applySigmaAtom (sink sigmaAtom) args
-  Pi (CorePiType ImplicitApp bs _ resultTy) -> do
+  Pi (CorePiType ImplicitApp bs (EffTy _ resultTy)) -> do
     args <- inferMixedArgs @UExpr fDesc (Abs bs resultTy) [] []
     applySigmaAtom sigmaAtom args
   DepPairTy (DepPairType ImplicitDepPair _ _) ->
@@ -1189,7 +1189,7 @@ etaExpandExplicits
   :: EmitsInf o => SourceName -> CorePiType o
   -> (forall o'. (EmitsBoth o', DExt o o') => [CAtom o'] -> InfererM i o' (CAtom o'))
   -> InfererM i o (CoreLamExpr o)
-etaExpandExplicits fSourceName (CorePiType _ bsTop effs _) contTop = do
+etaExpandExplicits fSourceName (CorePiType _ bsTop (EffTy effs _)) contTop = do
   ab <- go bsTop \xs -> do
     effs' <- applySubst (bsTop@@>(SubstVal<$>xs)) effs
     withAllowedEffects effs' do
@@ -1217,10 +1217,10 @@ buildLamInf
   -> (forall o' .  (EmitsBoth o', DExt o o')
                 => [(Explicitness, CAtom o')] -> CType o' -> InfererM i o' (CAtom o'))
   -> InfererM i o (CoreLamExpr o)
-buildLamInf (CorePiType appExpl bsTop effs resultTy) contTop = do
+buildLamInf (CorePiType appExpl bsTop effTy) contTop = do
   ab <- go bsTop \xs -> do
     let (expls, xs') = unzip xs
-    (PairE effs' resultTy') <- applySubst (bsTop@@>(SubstVal<$>xs')) (PairE effs resultTy)
+    EffTy effs' resultTy' <- applySubst (bsTop@@>(SubstVal<$>xs')) effTy
     withAllowedEffects effs' do
       body <- buildBlockInf $ contTop (zip expls $ sinkList xs') (sink resultTy')
       return $ PairE effs' body
@@ -1265,16 +1265,14 @@ checkOrInferApp
 checkOrInferApp f' posArgs namedArgs reqTy = do
   f <- maybeInterpretPunsAsTyCons reqTy f'
   case getType f of
-    Pi (CorePiType appExpl bs effs resultTy) -> case appExpl of
+    Pi (CorePiType appExpl bs effTy) -> case appExpl of
       ExplicitApp -> do
         checkArity bs posArgs
-        let bsAbs = Abs bs $ PairE effs resultTy
-        args' <- inferMixedArgs fDesc bsAbs posArgs namedArgs
+        args' <- inferMixedArgs fDesc (Abs bs effTy) posArgs namedArgs
         applySigmaAtom f args' >>= matchRequirement
       ImplicitApp -> do
         -- TODO: should this already have been done by the time we get `f`?
-        let bsAbs = Abs bs $ PairE effs resultTy
-        implicitArgs <- inferMixedArgs @UExpr fDesc bsAbs [] []
+        implicitArgs <- inferMixedArgs @UExpr fDesc (Abs bs effTy) [] []
         f'' <- SigmaAtom (Just fDesc) <$> applySigmaAtom f implicitArgs
         checkOrInferApp f'' posArgs namedArgs Infer >>= matchRequirement
     -- TODO: special-case error for when `fTy` can't possibly be a function
@@ -1689,8 +1687,8 @@ inferDotMethod tc (Abs uparamBs (Abs selfB lam)) = do
 
 prependCoreLamExpr :: Nest (WithExpl CBinder) n l -> CoreLamExpr l -> CoreLamExpr n
 prependCoreLamExpr bs e = case e of
-  CoreLamExpr (CorePiType appExpl piBs effs resultTy) (LamExpr lamBs body) -> do
-    let piType  = CorePiType appExpl (bs >>> piBs) effs resultTy
+  CoreLamExpr (CorePiType appExpl piBs effTy) (LamExpr lamBs body) -> do
+    let piType  = CorePiType appExpl (bs >>> piBs) effTy
     let lamExpr = LamExpr (fmapNest withoutExpl bs >>> lamBs) body
     CoreLamExpr piType lamExpr
 
@@ -1742,7 +1740,7 @@ inferClassDef className methodNames paramBs methods = do
      ListE <$> forM methods \m -> do
        checkUType m >>= \case
          Pi t -> return t
-         t -> return $ CorePiType ImplicitApp Empty Pure t
+         t -> return $ CorePiType ImplicitApp Empty (EffTy Pure t)
   Abs (PairB bs scs) (ListE mtys) <- identifySuperclasses ab
   return $ ClassDef className methodNames paramNames bs scs mtys
 
@@ -1851,12 +1849,12 @@ inferUForExpr (UForExpr (UAnnBinder bFor ann cs) body) = do
 
 checkULam :: EmitsInf o => ULamExpr i -> CorePiType o -> InfererM i o (CoreLamExpr o)
 checkULam (ULamExpr lamBs lamAppExpl lamEffs lamResultTy body)
-          (CorePiType piAppExpl piBs piEffs piResultTy) = do
+          (CorePiType piAppExpl piBs effTy) = do
   checkArity piBs (nestToList (const ()) lamBs)
   when (piAppExpl /= lamAppExpl) $ throw TypeErr $ "Wrong arrow. Expected "
      ++ pprint piAppExpl ++ " got " ++ pprint lamAppExpl
   ab <- checkLamBinders piBs lamBs \vs -> do
-    PairE piResultTy' piEffs' <- applyRename (piBs@@>map atomVarName vs) $ PairE piResultTy piEffs
+    EffTy piEffs' piResultTy' <- applyRename (piBs@@>map atomVarName vs) effTy
     case lamResultTy of
       Nothing -> return ()
       Just t -> checkUType t >>= constrainTypesEq piResultTy'
@@ -2133,7 +2131,7 @@ inferTabCon hint xs reqTy = do
           withFreshBinder noHint finTy \b' ->  do
             elemTy' <- applyRename (b@>binderName b') elemTy
             dTy <- DictTy <$> dataDictType elemTy'
-            return $ Pi $ CorePiType ImplicitApp (UnaryNest (WithExpl (Inferred Nothing Unify) b')) Pure dTy
+            return $ Pi $ CorePiType ImplicitApp (UnaryNest (WithExpl (Inferred Nothing Unify) b')) (EffTy Pure dTy)
       liftM Var $ emitHinted hint $ TabCon (dataDictHole dTy) tabTy xs'
 
 -- Bool flag is just to tweak the reported error message
@@ -2487,16 +2485,16 @@ unifyEq e1 e2 = guard =<< alphaEq e1 e2
 {-# INLINE unifyEq #-}
 
 instance Unifiable CorePiType where
-  unifyZonked (CorePiType appExpl1 bsTop1 eff1 ty1)
-              (CorePiType appExpl2 bsTop2 eff2 ty2) = do
+  unifyZonked (CorePiType appExpl1 bsTop1 effTy1)
+              (CorePiType appExpl2 bsTop2 effTy2) = do
     unless (appExpl1 == appExpl2) empty
-    go (Abs bsTop1 (PairE eff1 ty1)) (Abs bsTop2 (PairE eff2 ty2))
+    go (Abs bsTop1 effTy1) (Abs bsTop2 effTy2)
    where
     go :: EmitsInf n
-       => Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CType) n
-       -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CType) n
+       => Abs (Nest (WithExpl CBinder)) (EffTy CoreIR) n
+       -> Abs (Nest (WithExpl CBinder)) (EffTy CoreIR) n
        -> SolverM n ()
-    go (Abs Empty (PairE e1 t1)) (Abs Empty (PairE e2 t2)) = unify t1 t2 >> unify e1 e2
+    go (Abs Empty (EffTy e1 t1)) (Abs Empty (EffTy e2 t2)) = unify t1 t2 >> unify e1 e2
     go (Abs (Nest (WithExpl expl1 (b1:>t1)) bs1) rest1)
        (Abs (Nest (WithExpl expl2 (b2:>t2)) bs2) rest2) = do
       unless (expl1 == expl2) empty
@@ -2774,7 +2772,7 @@ getSynthType x = ignoreExcept $ typeAsSynthType (getType x)
 typeAsSynthType :: CType n -> Except (SynthType n)
 typeAsSynthType = \case
   DictTy dictTy -> return $ SynthDictType dictTy
-  Pi (CorePiType ImplicitApp bs Pure (DictTy d)) -> return $ SynthPiType (Abs bs d)
+  Pi (CorePiType ImplicitApp bs (EffTy Pure (DictTy d))) -> return $ SynthPiType (Abs bs d)
   ty -> Failure $ Errs [Err TypeErr mempty $ "Can't synthesize terms of type: " ++ pprint ty]
 {-# SCC typeAsSynthType #-}
 
@@ -2892,7 +2890,7 @@ synthDictFromInstance :: DictType n -> SyntherM n (SynthAtom n)
 synthDictFromInstance targetTy@(DictType _ targetClass _) = do
   instances <- getInstanceDicts targetClass
   asum $ instances <&> \candidate -> do
-    CorePiType _ bs _ (DictTy candidateTy) <- lookupInstanceTy candidate
+    CorePiType _ bs (EffTy _ (DictTy candidateTy)) <- lookupInstanceTy candidate
     args <- instantiateSynthArgs targetTy $ Abs bs candidateTy
     return $ DictCon (DictTy targetTy) $ InstanceDict candidate args
 
@@ -3000,7 +2998,7 @@ instance DictSynthTraversable CAtom where
       case ans of
         Failure errs -> put (LiftE errs) >> renameM atom
         Success d    -> return d
-    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _ _) (LamExpr bsLam body)) -> do
+    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _) (LamExpr bsLam body)) -> do
       Pi piTy' <- dsTraverse $ Pi piTy
       let (expls, _) = unzipExpls bsPi
       lam' <- dsTraverseExplBinders (zipExpls expls bsLam) \bsLamExpl' -> do
@@ -3014,9 +3012,9 @@ instance DictSynthTraversable CAtom where
 
 instance DictSynthTraversable CType where
   dsTraverse ty = case ty of
-    Pi (CorePiType appExpl bs effs resultTy) -> Pi <$>
+    Pi (CorePiType appExpl bs (EffTy effs resultTy)) -> Pi <$>
       dsTraverseExplBinders bs \bs' -> do
-        CorePiType appExpl bs' <$> renameM effs <*> dsTraverse resultTy
+        CorePiType appExpl bs' <$> (EffTy <$> renameM effs <*> dsTraverse resultTy)
     TyVar _          -> renameM ty
     ProjectEltTy _ _ _ -> renameM ty
     _ -> visitTypePartial ty

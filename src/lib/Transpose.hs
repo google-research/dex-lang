@@ -63,7 +63,7 @@ unpackLinearLamExpr
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
-  PiType bsTy _ resultTy <- return $ getLamExprType lam
+  PiType bsTy (EffTy _ resultTy) <- return $ getLamExprType lam
   PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
   let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
   return ( Abs bsNonlin $ Abs bLin body
@@ -223,7 +223,7 @@ transposeExpr expr ct = case expr of
           LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
-  Case e alts _ _ -> do
+  Case e alts _ -> do
     linearScrutinee <- isLin e
     case linearScrutinee of
       True  -> notImplemented

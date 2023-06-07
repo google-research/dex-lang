@@ -55,7 +55,7 @@ checkHasType e ty = liftTyperT $ e |: ty
 checkDestLam :: (EnvReader m, Fallible1 m) => LamExpr SimpIR n -> m n ()
 checkDestLam lam = do
   let allowedEffs = OneEffect InitEffect
-  PiType bs effs _ <- return $ getDestLamExprType lam
+  PiType bs (EffTy effs _) <- return $ getDestLamExprType lam
   let effs' = ignoreHoistFailure $ hoist bs effs
   checkExtends allowedEffs effs'
 
@@ -302,12 +302,12 @@ typeCheckExpr effs expr = case expr of
     fTy <- getTypeE f
     checkTabApp fTy xs >>= checkAgainstGiven reqTy
   TopApp (EffTy _ reqTy) f xs -> do
-    PiType bs _ resultTy <- getTypeTopFun =<< renameM f
+    PiType bs (EffTy _ resultTy) <- getTypeTopFun =<< renameM f
     xs' <- mapM renameM xs
     checkedApplyNaryAbs (Abs bs resultTy) xs' >>= checkAgainstGiven reqTy
   Atom x   -> getTypeE x
   PrimOp op -> typeCheckPrimOp effs op
-  Case e alts resultTy caseEffs -> do
+  Case e alts (EffTy caseEffs resultTy) -> do
     caseEffs' <- renameM caseEffs
     resultTy'  <- renameM resultTy
     checkCase e alts resultTy' caseEffs'
@@ -335,7 +335,7 @@ typeCheckExpr effs expr = case expr of
 instance IRRep r => HasType r (Block r) where
   getTypeE = \case
     Block NoBlockAnn Empty atom -> getTypeE atom
-    Block (BlockAnn reqTy effs') decls result -> do
+    Block (BlockAnn (EffTy effs' reqTy)) decls result -> do
       effs <- renameM effs'
       reqTy' <- renameM reqTy
       go effs reqTy' decls result
@@ -386,7 +386,7 @@ instance IRRep r => HasType r (DepPairType r) where
     return TyKind
 
 instance HasType CoreIR CorePiType where
-  getTypeE (CorePiType _ bs eff resultTy) = do
+  getTypeE (CorePiType _ bs (EffTy eff resultTy)) = do
     checkB bs \_ -> do
       void $ checkE eff
       resultTy|:TyKind
@@ -416,14 +416,14 @@ checkAgainstGiven givenTy computedTy = do
   return givenTy'
 
 checkCoreLam :: Typer m CoreIR => CorePiType o -> LamExpr CoreIR i -> m i o ()
-checkCoreLam (CorePiType _ Empty effs resultTy) (LamExpr Empty body) = do
+checkCoreLam (CorePiType _ Empty (EffTy effs resultTy)) (LamExpr Empty body) = do
   resultTy' <- checkBlockWithEffs effs body
   checkTypesEq resultTy resultTy'
-checkCoreLam (CorePiType expl (Nest piB piBs) effs resultTy) (LamExpr (Nest lamB lamBs) body) = do
+checkCoreLam (CorePiType expl (Nest piB piBs) effTy) (LamExpr (Nest lamB lamBs) body) = do
   argTy <- renameM $ binderType lamB
   checkTypesEq (binderType piB) argTy
   withFreshBinder (getNameHint lamB) argTy \b -> do
-    piTy <- applyRename (piB@>binderName b) (CorePiType expl piBs effs resultTy)
+    piTy <- applyRename (piB@>binderName b) (CorePiType expl piBs effTy)
     extendRenamer (lamB@>binderName b) do
       checkCoreLam piTy (LamExpr lamBs body)
 checkCoreLam _ _ = throw TypeErr "zip error"
@@ -630,7 +630,7 @@ typeCheckPrimHof :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> Hof
 typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
   For _ ixDict f -> do
     ixTy <- ixTyFromDict <$> renameM ixDict
-    PiType (UnaryNest (b:>argTy)) _ eltTy <- checkLamExpr f
+    PiType (UnaryNest (b:>argTy)) (EffTy _ eltTy) <- checkLamExpr f
     checkTypesEq (ixTypeType ixTy) argTy
     return $ TabTy (b:>ixTy) eltTy
   While body -> do
@@ -638,13 +638,13 @@ typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case ho
     checkTypesEq (BaseTy $ Scalar Word8Type) condTy
     return UnitTy
   Linearize f x -> do
-    PiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    PiType (UnaryNest (binder:>a)) (EffTy Pure b) <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
     fLinTy <- return $ Pi $ nonDepPiType [a] Pure b'
     x |: a
     return $ PairTy b' fLinTy
   Transpose f x -> do
-    PiType (UnaryNest (binder:>a)) Pure b <- checkLamExpr f
+    PiType (UnaryNest (binder:>a)) (EffTy Pure b) <- checkLamExpr f
     b' <- liftHoistExcept $ hoist binder b
     x |: b'
     return a
@@ -690,12 +690,12 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     case carryTy' of
       ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
       _ -> badCarry
-    PiType (UnaryNest b) _ _ <- checkLamExprWithEffs effs f
+    PiType (UnaryNest b) _ <- checkLamExprWithEffs effs f
     checkTypesEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
   RememberDest d body -> do
     dTy@(RawRefTy _) <- getTypeE d
-    PiType (UnaryNest b) _ UnitTy <- checkLamExpr body
+    PiType (UnaryNest b) (EffTy _ UnitTy) <- checkLamExpr body
     checkTypesEq (binderType b) dTy
     return dTy
   AllocDest ty -> RawRefTy <$> checkTypeE TyKind ty
@@ -713,17 +713,17 @@ checkLamExpr (LamExpr bsTop body) = case bsTop of
   Empty -> do
     resultTy <- getTypeE body
     effs <- renameM $ getEffects body
-    return $ PiType Empty effs resultTy
+    return $ PiType Empty $ EffTy effs resultTy
   Nest (b:>ty) bs -> do
     ty' <- checkTypeE TyKind ty
     withFreshBinder (getNameHint b) ty' \b' ->
       extendRenamer (b@>binderName b') do
-        PiType bs' eff resultTy <- checkLamExpr (LamExpr bs body)
-        return $ PiType (Nest b' bs') eff resultTy
+        PiType bs' effTy  <- checkLamExpr (LamExpr bs body)
+        return $ PiType (Nest b' bs') effTy
 
 checkLamExprWithEffs :: (Typer m r, IRRep r) => EffectRow r o -> LamExpr r i -> m i o (PiType r o)
 checkLamExprWithEffs allowedEffs lam = do
-  piTy@(PiType bs effs _) <- checkLamExpr lam
+  piTy@(PiType bs (EffTy effs _)) <- checkLamExpr lam
   effs' <- liftHoistExcept $ hoist bs effs
   checkExtends allowedEffs effs'
   return piTy
@@ -774,11 +774,11 @@ checkAlt resultTyReq bTyReq effs (Abs b body) = do
 
 checkApp :: (Typer m r, IRRep r) => EffectRow r o -> Type r o -> [Atom r i] -> m i o (Type r o)
 checkApp allowedEffs fTy xs = case fTy of
-  Pi (CorePiType _ bs effs resultTy) -> do
+  Pi (CorePiType _ bs effTy) -> do
     xs' <- mapM renameM xs
     checkArgTys bs xs'
     let subst = bs @@> fmap SubstVal xs'
-    PairE effs' resultTy' <- applySubst subst $ PairE effs resultTy
+    EffTy effs' resultTy' <- applySubst subst effTy
     checkExtends allowedEffs effs'
     return resultTy'
   _ -> throw TypeErr $
@@ -997,18 +997,18 @@ asFFIFunType ty = return do
   return (impTy, piTy)
 
 checkFFIFunTypeM :: Fallible m => CorePiType n -> m IFunType
-checkFFIFunTypeM (CorePiType appExpl (Nest b bs) eff resultTy) = do
+checkFFIFunTypeM (CorePiType appExpl (Nest b bs) effTy) = do
   argTy <- checkScalar $ binderType b
   case bs of
     Empty -> do
-      resultTys <- checkScalarOrPairType resultTy
+      resultTys <- checkScalarOrPairType (etTy effTy)
       let cc = case length resultTys of
                  0 -> error "Not implemented"
                  1 -> FFICC
                  _ -> FFIMultiResultCC
       return $ IFunType cc [argTy] resultTys
     Nest b' rest -> do
-      let naryPiRest = CorePiType appExpl (Nest b' rest) eff resultTy
+      let naryPiRest = CorePiType appExpl (Nest b' rest) effTy
       IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
       return $ IFunType cc (argTy:argTys) resultTys
 checkFFIFunTypeM _ = error "expected at least one argument"

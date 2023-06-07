@@ -259,13 +259,13 @@ instance HasOCC SLam where
     return lam
 
 instance HasOCC (PiType SimpIR) where
-  occ _ (PiType bs effs ty) = do
+  occ _ (PiType bs effTy) = do
     -- The way this and hoistState are written, the pass will crash if any of
     -- the AccessInfos reference this binder.
-    piTy@(PiType bs' _ _) <- refreshAbs (Abs bs (PairE effs ty)) \b (PairE effs' ty') ->
+    piTy@(PiType bs' _) <- refreshAbs (Abs bs effTy) \b effTy' ->
       -- I (dougalm) am not sure about this. I'm just trying to mimic the old
       -- behavior when this would go through the `HasOCC PairE` instance.
-      PiType b <$> occGeneric accessOnce effs' <*> occ accessOnce ty'
+      PiType b <$> occGeneric accessOnce effTy'
     countFreeVarsAsOccurrencesB bs'
     return piTy
 
@@ -273,11 +273,11 @@ instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> occ a ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
-    (BlockAnn ty effs, _    ) -> do
+    (BlockAnn (EffTy effs ty), _    ) -> do
       Abs decls' ans' <- occNest a decls ans
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
-      return $ Block (BlockAnn ty' effs) decls' ans'
+      return $ Block (BlockAnn (EffTy effs ty')) decls' ans'
 
 data ElimResult (n::S) where
   ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
@@ -350,14 +350,14 @@ instance HasOCC SExpr where
       (a', ixs') <- go a ixs
       array' <- occ a' array
       return $ TabApp t' array' ixs'
-    Case scrut alts ty effs -> do
+    Case scrut alts (EffTy effs ty) -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
       (alts', innerFVs) <- unzip <$> mapM (isolated . occAlt a scrutIx) alts
       modify (<> foldl' Occ.max zero innerFVs)
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
-      return $ Case scrut' alts' ty' effs
+      return $ Case scrut' alts' (EffTy effs ty')
     PrimOp (Hof op) -> PrimOp . Hof <$> occ a op
     PrimOp (RefOp ref op) -> do
       ref' <- occ a ref
