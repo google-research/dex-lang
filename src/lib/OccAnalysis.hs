@@ -12,7 +12,6 @@ import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
-import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -20,7 +19,7 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
-import QueryType
+import Visit
 
 -- === External API ===
 

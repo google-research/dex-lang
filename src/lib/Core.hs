@@ -431,16 +431,16 @@ type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
 
 fromNaryTabLam :: Int -> CAtom n -> Maybe (Int, NaryTabLamExpr n)
 fromNaryTabLam maxDepth | maxDepth <= 0 = error "expected positive number of args"
-fromNaryTabLam maxDepth = \case
-  SimpInCore (TabLam _ (Abs (b:>IxType ty _) body)) ->
-    extend <|> (Just $ (1, Abs (Nest (b:>ty) Empty) body))
-    where
-      extend = case body of
-        Abs Empty lam | maxDepth > 1 -> do
-          (d, Abs (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
-          return $ (d + 1, Abs (Nest (b:>ty) (Nest b2 bs2)) body2)
-        _ -> Nothing
-  _ -> Nothing
+-- fromNaryTabLam maxDepth = \case
+--   SimpInCore (TabLam _ (Abs (b:>IxType ty _) body)) ->
+--     extend <|> (Just $ (1, Abs (Nest (b:>ty) Empty) body))
+--     where
+--       extend = case body of
+--         Abs Empty lam | maxDepth > 1 -> do
+--           (d, Abs (Nest b2 bs2) body2) <- fromNaryTabLam (maxDepth - 1) lam
+--           return $ (d + 1, Abs (Nest (b:>ty) (Nest b2 bs2)) body2)
+--         _ -> Nothing
+--   _ -> Nothing
 
 -- first argument is the number of args expected
 fromNaryTabLamExact :: Int -> CAtom n -> Maybe (NaryTabLamExpr n)

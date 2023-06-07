@@ -78,7 +78,6 @@ instance IRRep r => HasType r (Atom r) where
     DictCon ty _ -> ty
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
     DictHole _ ty _ -> ty
     TypeAsAtom ty -> getType ty
@@ -92,7 +91,6 @@ instance IRRep r => HasType r (Type r) where
     TC _        -> TyKind
     DictTy _    -> TyKind
     TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -118,10 +116,11 @@ instance IRRep r => HasType r (Con r) where
     HeapVal        -> TC HeapType
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
-getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
-  i -> getSuperclassType (RNest bsAbove b) bs (i-1)
+getSuperclassType _ Empty = undefined
+-- getSuperclassType _ Empty = error "bad index"
+-- getSuperclassType bsAbove (Nest b bs) = \case
+--   0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
+--   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
 instance IRRep r => HasType r (Expr r) where
   getType expr = case expr of
@@ -210,35 +209,37 @@ instance IRRep r => HasType r (MiscOp r) where
     ShowScalar _ -> PairTy IdxRepTy $ rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
 
 instance IRRep r => HasType r (Hof r) where
-  getType = \case
-    For _ dict f -> case getLamExprType f of
-      PiType (UnaryNest (b:>_)) _ eltTy ->
-        TabTy (b:>ixTyFromDict dict) eltTy
-      _ -> error "expected a unary pi type"
-    While _ -> UnitTy
-    Linearize f _ -> case getLamExprType f of
-      PiType (UnaryNest (binder:>a)) Pure b -> do
-        let b' = ignoreHoistFailure $ hoist binder b
-        let fLinTy = Pi $ nonDepPiType [a] Pure b'
-        PairTy b' fLinTy
-      _ -> error "expected a unary pi type"
-    Transpose f _ -> case getLamExprType f of
-      PiType (UnaryNest (_:>a)) _ _ -> a
-      _ -> error "expected a unary pi type"
-    RunReader _ f -> resultTy
-      where (resultTy, _) = getTypeRWSAction f
-    RunWriter _ _ f -> uncurry PairTy $ getTypeRWSAction f
-    RunState _ _ f -> PairTy resultTy stateTy
-      where (resultTy, stateTy) = getTypeRWSAction f
-    RunIO f -> getType f
-    RunInit f -> getType f
-    CatchException ty _ -> ty
+  getType = undefined
+  -- getType = \case
+  --   For _ dict f -> case getLamExprType f of
+  --     PiType (UnaryNest (b:>_)) _ eltTy ->
+  --       TabTy (b:>ixTyFromDict dict) eltTy
+  --     _ -> error "expected a unary pi type"
+  --   While _ -> UnitTy
+  --   Linearize f _ -> case getLamExprType f of
+  --     PiType (UnaryNest (binder:>a)) Pure b -> do
+  --       let b' = ignoreHoistFailure $ hoist binder b
+  --       let fLinTy = Pi $ nonDepPiType [a] Pure b'
+  --       PairTy b' fLinTy
+  --     _ -> error "expected a unary pi type"
+  --   Transpose f _ -> case getLamExprType f of
+  --     PiType (UnaryNest (_:>a)) _ _ -> a
+  --     _ -> error "expected a unary pi type"
+  --   RunReader _ f -> resultTy
+  --     where (resultTy, _) = getTypeRWSAction f
+  --   RunWriter _ _ f -> uncurry PairTy $ getTypeRWSAction f
+  --   RunState _ _ f -> PairTy resultTy stateTy
+  --     where (resultTy, stateTy) = getTypeRWSAction f
+  --   RunIO f -> getType f
+  --   RunInit f -> getType f
+  --   CatchException ty _ -> ty
 
 rawStrType :: IRRep r => Type r n
-rawStrType = case newName "n" of
-  Abs b v -> do
-    let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+rawStrType = undefined
+-- rawStrType = case newName "n" of
+--   Abs b v -> do
+--     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
+--     DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
@@ -247,18 +248,19 @@ rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
   => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
-typesAsBinderNest types body = toConstBinderNest types body
+typesAsBinderNest types body = undefined -- toConstBinderNest types body
 
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
-nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
-  Abs bs (PairE eff' resultTy') -> do
-    let bs' = fmapNest (WithExpl Explicit) bs
-    CorePiType ExplicitApp bs' eff' resultTy'
+nonDepPiType argTys eff resultTy = undefined
+-- nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
+--   Abs bs (PairE eff' resultTy') -> do
+--     let bs' = fmapNest (WithExpl Explicit) bs
+--     CorePiType ExplicitApp bs' eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
-nonDepTabPiType argTy resultTy =
-  case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType (b:>argTy) resultTy'
+nonDepTabPiType argTy resultTy = undefined
+  -- case toConstAbsPure resultTy of
+  --   Abs b resultTy' -> TabPiType (b:>argTy) resultTy'
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b
@@ -275,30 +277,22 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
   IxDictSpecialized n _ _ -> n
 
 getLamExprType :: IRRep r => LamExpr r n -> PiType r n
-getLamExprType (LamExpr bs body) = PiType bs (getEffects body) (getType body)
+getLamExprType (LamExpr bs body) = undefined -- PiType bs (getEffects body) (getType body)
 
 getDestLamExprType :: IRRep r => DestLamExpr r n -> PiType r n
-getDestLamExprType (DestLamExpr bs body) = PiType bs (getEffects body) (getType body)
+getDestLamExprType (DestLamExpr bs body) = undefined -- PiType bs (getEffects body) (getType body)
 
 getTypeRWSAction :: IRRep r => LamExpr r n -> (Type r n, Type r n)
-getTypeRWSAction f = case getLamExprType f of
-  PiType (BinaryNest regionBinder refBinder) _ resultTy -> do
-    case binderType refBinder of
-      RefTy _ referentTy -> do
-        let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
-        let resultTy' = ignoreHoistFailure $ hoist (PairB regionBinder refBinder) resultTy
-        (resultTy', referentTy')
-      _ -> error "expected a ref"
-  _ -> error "expected a pi type"
-
-instance IRRep r => HasType r (Block r) where
-  getType (Block NoBlockAnn Empty result) = getType result
-  getType (Block (BlockAnn ty _) _ _) = ty
-  getType _ = error "impossible"
-
-instance IRRep r => HasType r (DestBlock r) where
-  getType (DestBlock (_:>RawRefTy ansTy) _) = ansTy
-  getType _ = error "not a valid dest block"
+getTypeRWSAction f = undefined -- case getLamExprType f of
+-- getTypeRWSAction f = case getLamExprType f of
+--   PiType (BinaryNest regionBinder refBinder) _ resultTy -> do
+--     case binderType refBinder of
+--       RefTy _ referentTy -> do
+--         let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
+--         let resultTy' = ignoreHoistFailure $ hoist (PairB regionBinder refBinder) resultTy
+--         (resultTy', referentTy')
+--       _ -> error "expected a ref"
+--   _ -> error "expected a pi type"
 
 -- === querying effects implementation ===
 
@@ -358,65 +352,27 @@ instance IRRep r => HasEffects (PrimOp r) r where
       RememberDest _ f -> functionEffs f
       AllocDest _ -> Pure -- is this correct?
       Freeze _    -> Pure -- is this correct?
-    Hof hof -> case hof of
-      For _ _ f     -> functionEffs f
-      While body    -> getEffects body
-      Linearize _ _ -> Pure  -- Body has to be a pure function
-      Transpose _ _ -> Pure  -- Body has to be a pure function
-      RunReader _ f -> rwsFunEffects Reader f
-      RunWriter d _ f -> maybeInit d $ rwsFunEffects Writer f
-      RunState  d _ f -> maybeInit d $ rwsFunEffects State  f
-      RunIO          f -> deleteEff IOEffect        $ getEffects f
-      RunInit        f -> deleteEff InitEffect      $ getEffects f
-      CatchException _ f -> deleteEff ExceptionEffect $ getEffects f
-      where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
-            maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
+    Hof hof -> undefined -- TODO Hof/Hof' with uniformly annotated result types and effecs
+    -- case hof of
+    --   For _ _ f     -> functionEffs f
+    --   While body    -> getEffects body
+    --   Linearize _ _ -> Pure  -- Body has to be a pure function
+    --   Transpose _ _ -> Pure  -- Body has to be a pure function
+    --   RunReader _ f -> rwsFunEffects Reader f
+    --   RunWriter d _ f -> maybeInit d $ rwsFunEffects Writer f
+    --   RunState  d _ f -> maybeInit d $ rwsFunEffects State  f
+    --   RunIO          f -> deleteEff IOEffect        $ getEffects f
+    --   RunInit        f -> deleteEff InitEffect      $ getEffects f
+    --   CatchException _ f -> deleteEff ExceptionEffect $ getEffects f
+    --   where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
+    --         maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
   {-# INLINE getEffects #-}
 
-
-instance IRRep r => HasEffects (Block r) r where
-  getEffects (Block (BlockAnn _ effs) _ _) = effs
-  getEffects (Block NoBlockAnn _ _) = Pure
-  {-# INLINE getEffects #-}
-
-instance IRRep r => HasEffects (DestBlock r) r where
-  getEffects (DestBlock b (Block ann _ _)) = case ann of
-    BlockAnn _ effs -> ignoreHoistFailure $ hoist b effs
-    NoBlockAnn -> Pure
-  {-# INLINE getEffects #-}
 
 instance IRRep r => HasEffects (Alt r) r where
-  getEffects (Abs bs body) = ignoreHoistFailure $ hoist bs (getEffects body)
-  {-# INLINE getEffects #-}
-
--- wrapper to allow checking the effects of an applied nullary lambda
-data NullaryLamApp r n = NullaryLamApp (LamExpr r n)
--- XXX: this should only be used for nullary lambdas
-instance IRRep r => HasEffects (NullaryLamApp r) r where
-  getEffects (NullaryLamApp (NullaryLamExpr block)) = getEffects block
-  getEffects _ = error "not a nullary lambda"
-  {-# INLINE getEffects #-}
-
--- wrapper to allow checking the effects of an applied nullary dest lambda
-data NullaryDestLamApp r n = NullaryDestLamApp (DestLamExpr r n)
--- XXX: this should only be used for nullary lambdas
-instance IRRep r => HasEffects (NullaryDestLamApp r) r where
-  getEffects (NullaryDestLamApp (NullaryDestLamExpr block)) = getEffects block
-  getEffects _ = error "not a nullary lambda"
+  getEffects (Abs bs body) = undefined -- ignoreHoistFailure $ hoist bs (getEffects body)
   {-# INLINE getEffects #-}
 
 functionEffs :: IRRep r => LamExpr r n -> EffectRow r n
 functionEffs f = case getLamExprType f of
-  PiType b effs _ -> ignoreHoistFailure $ hoist b effs
-
-rwsFunEffects :: IRRep r => RWS -> LamExpr r n -> EffectRow r n
-rwsFunEffects rws f = case getLamExprType f of
-   PiType (BinaryNest h ref) effs _ -> do
-     let effs' = ignoreHoistFailure $ hoist ref effs
-     let hVal = Var $ AtomVar (binderName h) (TC HeapType)
-     let effs'' = deleteEff (RWSEffect rws hVal) effs'
-     ignoreHoistFailure $ hoist h effs''
-   _ -> error "Expected a binary function type"
-
-deleteEff :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
-deleteEff eff (EffectRow effs t) = EffectRow (effs `eSetDifference` eSetSingleton eff) t
+  PiType b (WithDecls ds (EffTy effs _)) -> ignoreHoistFailure $ hoist (PairB b ds) effs

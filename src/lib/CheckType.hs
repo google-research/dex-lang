@@ -29,7 +29,7 @@ import MTL1
 import Name
 import Subst
 import PPrint ()
-import QueryType hiding (HasType)
+import Builder
 import Types.Core
 import Types.Imp
 import Types.Primitives
