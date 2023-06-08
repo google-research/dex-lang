@@ -214,9 +214,6 @@ instance IRRep r => BindsEnv (Decl r) where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
   {-# INLINE toEnvFrag #-}
 
-instance BindsEnv TopEnvFrag where
-  toEnvFrag = undefined
-
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
@@ -407,51 +404,11 @@ withFreshBinders (binding:rest) cont = do
       cont (Nest b bs)
            (sink (binderName b) : vs)
 
-getLambdaDicts :: EnvReader m => m n [AtomName CoreIR n]
-getLambdaDicts = do
-  env <- withEnv moduleEnv
-  return $ lambdaDicts $ envSynthCandidates env
-{-# INLINE getLambdaDicts #-}
-
 getInstanceDicts :: EnvReader m => ClassName n -> m n [InstanceName n]
 getInstanceDicts name = do
   env <- withEnv moduleEnv
   return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
 {-# INLINE getInstanceDicts #-}
-
-nonDepPiType :: EnvReader m
-             => [CType n] -> EffectRow CoreIR n -> CType n -> m n (CorePiType n)
-nonDepPiType argTys eff resultTy = do
-  Abs bs (PairE eff' resultTy') <- typesAsBinderNest argTys (PairE eff resultTy)
-  let bs' = fmapNest (WithExpl Explicit) bs
-  return $ CorePiType ExplicitApp bs' eff' resultTy'
-
-typesAsBinderNest
-  :: forall m r n e. (EnvReader m, IRRep r, SinkableE e)
-  => [Type r n] -> e n -> m n (Abs (Nest (Binder r)) e n)
-typesAsBinderNest types body =
-  getDistinct >>= \Distinct -> liftEnvReaderM $ go types
-  where
-    go :: forall l.  DExt n l => [Type r l] -> EnvReaderM l (Abs (Nest (Binder r)) e l)
-    go = \case
-      [] -> Abs Empty <$> sinkM body
-      ty:rest -> withFreshBinder noHint ty \b -> do
-        Abs bs body' <- go $ map sink rest
-        return $ Abs (Nest b bs) body'
-
-nonDepTabPiType :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (TabPiType r n)
-nonDepTabPiType argTy resultTy =
-  toConstAbs resultTy >>= \case
-    Abs b resultTy' -> return $ TabPiType (b:>argTy) resultTy'
-
-(==>) :: (IRRep r, ScopeReader m) => IxType r n -> Type r n -> m n (Type r n)
-a ==> b = TabPi <$> nonDepTabPiType a b
-
-finTabTyCore :: EnvReader m => CAtom n -> CType n -> m n (CType n)
-finTabTyCore n eltTy = IxType (FinTy n) (IxDictAtom (DictCon (IxFin n))) ==> eltTy
-
-finIxTy :: Int -> IxType r n
-finIxTy n = IxType IdxRepTy (IxDictRawFin (IdxRepVal $ fromIntegral n))
 
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, CorePiType, respectively) up to the given maxDepth, and return the
@@ -463,20 +420,12 @@ finIxTy n = IxType IdxRepTy (IxDictRawFin (IdxRepVal $ fromIntegral n))
 -- - The `exact` versions only succeed if at least maxDepth binders were
 --   present, in which case exactly maxDepth binders are packed into the nary
 --   structure.  Excess binders, if any, are still left in the unary structures.
-blockEffects :: IRRep r => Block r n -> EffectRow r n
-blockEffects (Block blockAnn _ _) = case blockAnn of
-  NoBlockAnn -> Pure
-  BlockAnn _ eff -> eff
 
 liftLamExpr :: (IRRep r, EnvReader m)
   => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
   -> LamExpr r n -> m n (LamExpr r n)
 liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
-
-destBlockEffects :: IRRep r => DestBlock r n -> EffectRow r n
-destBlockEffects (DestBlock destb block) =
-  ignoreHoistFailure $ hoist destb $ blockEffects block
 
 type NaryTabLamExpr = Abs (Nest SBinder) (Abs (Nest SDecl) CAtom)
 

@@ -16,6 +16,7 @@ import IRVariants
 import Name
 import Subst
 import Occurrence hiding (Var)
+import Optimize
 import Types.Core
 import Types.Primitives
 
@@ -85,12 +86,12 @@ inlineDecls decls cont = do
 inlineDeclsSubst :: Emits o => Nest SDecl i i' -> InlineM i o (Subst InlineSubstVal i' o)
 inlineDeclsSubst = \case
   Empty -> getSubst
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding ann expr)) rest -> do
     if preInlineUnconditionally ann then do
       s <- getSubst
       extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
     else do
-      expr' <- inlineExpr Stop expr
+      expr' <- inlineExpr Stop expr >>= (liftEnvReaderM . peepholeExpr)
       -- If the inliner starts moving effectful expressions, it may become
       -- necessary to query the effects of the new expression here.
       let presInfo = resolveWorkConservation ann expr'
@@ -113,13 +114,13 @@ inlineDeclsSubst = \case
       -- OnceUnsafe with whnfOrBot == True in the Secrets paper.)
       if presInfo == UsedOnce then do
         let substVal = case expr' of
-             Atom (Var name') -> Rename name'
+             Atom (Var name') -> Rename $ atomVarName name'
              _ -> SubstVal (DoneEx expr')
         extendSubst (b @> substVal) $ inlineDeclsSubst rest
       else do
         -- expr' can't be Atom (Var x) here
         name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
-        extendSubst (b @> Rename name') do
+        extendSubst (b @> Rename (atomVarName name')) do
           -- TODO For now, this inliner does not do any conditional inlining.
           -- In order to do it, we would need to augment the environment at this
           -- point, associating name' to (expr', presInfo) so name' could be
@@ -248,8 +249,11 @@ data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
   TabAppCtx :: [SAtom i] -> Subst InlineSubstVal i o
             -> Context SExpr e o -> Context SExpr e o
+  CaseCtx :: [SAlt i] -> SType i -> EffectRow SimpIR i
+          -> Subst InlineSubstVal i o
+          -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
-  EmitToNameCtx :: Context SAtomName e o -> Context SAtom e o
+  EmitToNameCtx :: Context SAtomVar e o -> Context SAtom e o
 
 class Inlinable (e1::E) where
   inline :: Emits o => Context e1 e2 o -> e1 i -> InlineM i o (e2 o)
@@ -268,23 +272,26 @@ instance Emits o => Visitor (InlineM i o) SimpIR i o where
 inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
 inlineExpr ctx = \case
   Atom atom -> inlineAtom ctx atom
-  TabApp tbl ixs -> do
+  TabApp _ tbl ixs -> do
     s <- getSubst
     inlineAtom (TabAppCtx ixs s ctx) tbl
+  Case scrut alts resultTy effs -> do
+    s <- getSubst
+    inlineAtom (CaseCtx alts resultTy effs s ctx) scrut
   expr -> visitGeneric expr >>= reconstruct ctx
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt i x -> do
+  ProjectElt _ i x -> do
     let (idxs, v) = asNaryProj i x
     ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
     reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
-inlineName :: Emits o => Context SExpr e o -> SAtomName i -> InlineM i o (e o)
+inlineName :: Emits o => Context SExpr e o -> SAtomVar i -> InlineM i o (e o)
 inlineName ctx name =
-  lookupSubstM name >>= \case
+  lookupSubstM (atomVarName name) >>= \case
     Rename name' -> do
       -- This is the considerInline function from the Secrets paper; this
       -- is where we decide whether to inline a binding that isn't to be
@@ -294,11 +301,12 @@ inlineName ctx name =
       -- lookupEnv name' >>= \case
       --   (expr', presInfo) | inline presInfo expr' ctx -> inline
       --   no info -> do not inline (as now)
-      reconstruct ctx (Atom $ Var name')
+      v <- toAtomVar name'
+      reconstruct ctx (Atom $ Var v)
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
-instance Inlinable SAtomName where
+instance Inlinable SAtomVar where
   inline ctx a = inlineName (EmitToAtomCtx $ EmitToNameCtx ctx) a
 
 instance Inlinable SAtom where
@@ -326,7 +334,7 @@ withBinders (Nest (b:>ty) bs) cont = do
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effs ty)  =
     reconstruct ctx =<< withBinders bs \bs' -> do
-      EffectAndType effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffectAndType effs ty)
+      EffTy effs' ty' <- buildScopedAssumeNoDecls $ inline Stop (EffTy effs ty)
       return $ PiType bs' effs' ty'
 
 instance Inlinable SBlock where
@@ -340,12 +348,18 @@ instance Inlinable SBlock where
       effs' <- inline Stop effs  -- TODO Really?
       reconstruct ctx $ Block (BlockAnn ty' effs') decls' ans'
 
+inlineBlockEmits :: Emits o => Context SExpr e2 o -> SBlock i -> InlineM i o (e2 o)
+inlineBlockEmits ctx (Block _ decls ans) = do
+  inlineDecls decls $ inlineAtom ctx ans
+
 -- Still using InlineM because we may call back into inlining, and we wish to
 -- retain our output binding environment.
 reconstruct :: Emits o => Context e1 e2 o -> e1 o -> InlineM i o (e2 o)
 reconstruct ctx e = case ctx of
   Stop -> return e
   TabAppCtx ixs s ctx' -> withSubst s $ reconstructTabApp ctx' e ixs
+  CaseCtx alts resultTy effs s ctx' ->
+    withSubst s $ reconstructCase ctx' e alts resultTy effs
   EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
   EmitToNameCtx ctx' -> emit (Atom e) >>= reconstruct ctx'
 {-# INLINE reconstruct #-}
@@ -378,8 +392,9 @@ reconstructTabApp ctx expr ixs =
       -- Current status: Emitting bindings in the interest if "launch and
       -- iterate"; have not tried `EmitToAtomCtx`.
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
+      let ixsPref'' = [v | AtomVar v _ <- ixsPref']
       s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref'
+      let moreSubst = bs @@> map Rename ixsPref''
       dropSubst $ extendSubst moreSubst do
         -- Decision here.  These decls have already been processed by the
         -- inliner once, so their occurrence information is stale (and should
@@ -402,7 +417,40 @@ reconstructTabApp ctx expr ixs =
     Nothing -> do
       array' <- emitExprToAtom expr
       ixs' <- mapM (inline Stop) ixs
-      reconstruct ctx $ TabApp array' ixs'
+      reconstruct ctx =<< mkTabApp array' ixs'
+
+reconstructCase :: Emits o
+  => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
+  -> InlineM i o (e o)
+reconstructCase ctx scrutExpr alts resultTy effs =
+  case scrutExpr of
+    Case sscrut salts _ _ -> do
+      -- Perform case-of-case optimization
+      -- TODO Add join points to reduce code duplication (and repeated inlining)
+      -- of the arms of the outer case
+      resultTy' <- inline Stop resultTy
+      reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
+        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
+        buildCase ans (sink resultTy') \j jval -> do
+          Abs b body <- return $ alts !! j
+          extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
+            inlineBlockEmits Stop body >>= emitExprToAtom)
+    _ -> do
+      -- Attempt case-of-known-constructor optimization
+      -- I can't use `buildCase` here because I want to propagate the incoming
+      -- context `ctx` into the selected alternative if the optimization fires,
+      -- but leave it around the whole reconstructed `Case` if it doesn't.
+      scrut <- emitExprToAtom scrutExpr
+      case trySelectBranch scrut of
+        Just (i, val) -> do
+          Abs b body <- return $ alts !! i
+          extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
+            inlineBlockEmits ctx body
+        Nothing -> do
+          alts' <- mapM visitAlt alts
+          resultTy' <- inline Stop resultTy
+          effs' <- inline Stop effs
+          reconstruct ctx $ Case scrut alts' resultTy' effs'
 
 instance Inlinable (EffectRow SimpIR)
-instance Inlinable (EffectAndType SimpIR)
+instance Inlinable (EffTy     SimpIR)

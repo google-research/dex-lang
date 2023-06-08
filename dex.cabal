@@ -94,6 +94,7 @@ library
                      , Types.OpNames
                      , Types.Source
                      , QueryType
+                     , QueryTypePure
                      , Util
   if flag(live)
     exposed-modules:   Actor

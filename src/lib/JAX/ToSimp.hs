@@ -15,6 +15,7 @@ import IRVariants
 import Name
 import JAX.Concrete
 import Subst
+import QueryType
 import Types.Core
 import Types.Primitives qualified as P
 
@@ -61,7 +62,7 @@ simplifyJTy JArrayName{shape, dtype} = go shape $ simplifyDType dtype where
   go [] ty = return ty
   go ((DimSize sz):rest) ty = do
     rest' <- go rest ty
-    finIxTy sz ==> rest'
+    return $ finIxTy sz ==> rest'
 
 simplifyDType :: DType -> Type r n
 simplifyDType = \case
@@ -101,7 +102,9 @@ simplifyAtom = \case
       case env ! nm of
         -- TODO Assuming the subst is not type-changing
         SubstVal x -> return (x, ty)
-        Rename nm' -> return (Var nm', ty)
+        Rename nm' -> do
+          nm'' <- toAtomVar nm'
+          return (Var nm'', ty)
   -- TODO In Jax, literals can presumably include (large) arrays.  How should we
   -- represent them here?
   JLiteral (JLit {..}) -> return (Con (Lit (P.Float32Lit 0.0)), ty)
@@ -121,5 +124,5 @@ unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go arg' = \case
     [] -> emitExprToAtom $ PrimOp (UnOp op arg')
     (DimSize sz:rest) -> buildFor noHint P.Fwd (finIxTy sz) \i -> do
-      ixed <- emitExprToAtom $ TabApp (sink arg') [Var i]
+      ixed <- mkTabApp (sink arg') [Var i] >>= emitExprToAtom
       go ixed rest

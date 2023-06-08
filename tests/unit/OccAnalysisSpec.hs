@@ -50,7 +50,7 @@ uExprToBlock expr = do
 findRunIOAnnotation :: SBlock n -> LetAnn
 findRunIOAnnotation (Block _ decls _) = go decls where
   go :: Nest SDecl n l -> LetAnn
-  go (Nest (Let _ (DeclBinding ann _ (PrimOp (Hof (RunIO _))))) _) = ann
+  go (Nest (Let _ (DeclBinding ann (PrimOp (Hof (RunIO _))))) _) = ann
   go (Nest _ rest) = go rest
   go Empty = error "RunIO not found"
 

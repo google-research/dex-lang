@@ -394,6 +394,19 @@ toConstAbsPure :: (HoistableE e, SinkableE e)
 toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
   where n = freshRawName noHint $ fromNameSet $ freeVarsE e
 
+toConstBinderNest
+  :: forall n ann e c
+  .  (HoistableE ann, HoistableE e, SinkableE e, SinkableE ann, Color c)
+  => [ann n] -> e n -> Abs (Nest (BinderP c ann)) e n
+toConstBinderNest anns body = withFabricatedDistinct @n $ runScopeReaderM scope $ go anns
+  where
+    go :: forall l.  DExt n l => [ann l] -> ScopeReaderM l (Abs (Nest (BinderP c ann)) e l)
+    go = \case
+      [] -> Abs Empty <$> sinkM body
+      ann:rest -> withFreshM noHint \b -> do
+        Abs bs body' <- go $ map sink rest
+        return $ Abs (Nest (b:>sink ann) bs) body'
+    scope = Scope $ UnsafeMakeScopeFrag $ fromNameSet $ freeVarsE (ListE anns `PairE` body)
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 

@@ -106,7 +106,7 @@ dexInsert ctxPtr namePtr atomPtr = do
   runTopperMFromContext ctxPtr do
     -- TODO: Check if atom is compatible with context! Use module name?
     name <- emitTopLet (getNameHint @String sourceName) PlainLet $ Atom $ unsafeCoerceE atom
-    emitSourceMap $ SourceMap $ M.singleton sourceName [ModuleVar Main $ Just $ UAtomVar name]
+    emitSourceMap $ SourceMap $ M.singleton sourceName [ModuleVar Main $ Just $ UAtomVar (atomVarName name)]
 
 dexLookup :: Ptr Context -> CString -> IO (Ptr AtomEx)
 dexLookup ctxPtr namePtr = do
@@ -114,7 +114,7 @@ dexLookup ctxPtr namePtr = do
   runTopperMFromContext ctxPtr do
     lookupSourceMap name >>= \case
       Just (UAtomVar v) -> lookupAtomName v >>= \case
-        LetBound (DeclBinding _ _ (Atom atom)) -> liftIO $ toStablePtr $ AtomEx atom
+        LetBound (DeclBinding _ (Atom atom)) -> liftIO $ toStablePtr $ AtomEx atom
         _ -> liftIO $ setError "Looking up an unevaluated atom?" $> nullPtr
       Just _  -> liftIO $ setError "Only Atom names can be looked up" $> nullPtr
       Nothing -> liftIO $ setError ("Unbound name: " ++ name) $> nullPtr

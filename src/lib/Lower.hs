@@ -16,7 +16,7 @@ import Data.Word
 import Data.Functor
 import Data.Maybe (fromJust)
 import Data.List.NonEmpty qualified as NE
-import Data.Text.Prettyprint.Doc (pretty, viaShow, (<+>))
+import Data.Text.Prettyprint.Doc (Pretty, pretty, viaShow, (<+>))
 import Control.Category
 import Control.Monad.Reader
 import Control.Monad.State.Strict
@@ -74,10 +74,10 @@ lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
 
 lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock SimpIR n)
 lowerFullySequentialBlock b = liftAtomSubstBuilder do
-  resultDestTy <- RawRefTy <$> getTypeSubst b
+  resultDestTy <- RawRefTy <$> substM (getType b)
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     DestBlock destBinder <$> buildBlock do
-      let dest = Var $ sink $ binderName destBinder
+      let dest = Var $ sink $ binderVar destBinder
       lowerBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequentialBlock #-}
 
@@ -121,7 +121,7 @@ lowerFor
   :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> IxDict SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
 lowerFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
-  ansTy <- getTypeSubst $ Hof $ For dir ixDict $ lam
+  ansTy <- substM $ getType $ For dir ixDict $ lam
   ixDict' <- substM ixDict
   ty' <- substM ty
   case isSingletonType ansTy of
@@ -135,14 +135,15 @@ lowerFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
       initDest <- ProdVal . (:[]) <$> case maybeDest of
         Just  d -> return d
         Nothing -> emitOp $ DAMOp $ AllocDest ansTy
-      destTy <- getType initDest
+      let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
         dest <- normalizeProj (ProjectProduct 0) destProd
-        idest <- emitOp $ RefOp dest $ IndexRef i
+        idest <- emitOp =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      let seqHof = PrimOp $ DAMOp $ Seq dir ixDict' initDest body'
-      PrimOp . DAMOp . Freeze . ProjectElt (ProjectProduct 0) <$> (Var <$> emit seqHof)
+      let seqHof = DAMOp $ Seq dir ixDict' initDest body'
+      ans <- emitOp seqHof >>= getProj 0
+      return $ PrimOp $ DAMOp $ Freeze ans
 lowerFor _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: forall i o. Emits o
@@ -185,10 +186,10 @@ lowerCase maybeDest scrut alts resultTy = do
     alts' <- forM alts \(Abs (b:>ty) body) -> do
       ty' <- substM ty
       buildAbs (getNameHint b) ty' \b' ->
-        extendSubst (b @> Rename b') $
+        extendSubst (b @> Rename (atomVarName b')) $
           buildBlock do
             lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
-    eff' <- foldMapM getEffects alts'
+    eff' <- foldMapM (pure . getEffects) alts'
     void $ emitExpr $ Case (sink scrut') alts' UnitTy eff'
     return UnitVal
   return $ PrimOp $ DAMOp $ Freeze dest'
@@ -234,10 +235,10 @@ lookupDest = flip lookupNameMap
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMap v $ FullDest dest
-  ProjectElt p x -> do
+  Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
+  ProjectElt _ p x -> do
     (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMap v $ ProjDest ps dest
+    return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
@@ -254,8 +255,11 @@ lowerBlockWithDest dest (Block _ decls ans) = do
         Just DistinctBetween -> do
           s' <- traverseDeclNestWithDestS destMap s decls
           -- But we have to emit explicit writes, for all the vars that are not defined in decls!
-          forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) ->
-            place d $ case s ! n of Rename v -> Var v; SubstVal a -> a
+          forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) -> do
+            x <- case s ! n of
+              Rename v -> Var <$> toAtomVar v
+              SubstVal a -> return a
+            place d x
           withSubst s' $ substM ans
 
 traverseDeclNestWithDestS
@@ -264,12 +268,12 @@ traverseDeclNestWithDestS
   -> LowerM i o (Subst AtomSubstVal i' o)
 traverseDeclNestWithDestS destMap s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding ann _ expr)) rest -> do
+  Nest (Let b (DeclBinding ann expr)) rest -> do
     DistinctBetween <- return $ withExtEvidence rest $ shortenBetween @i' b
     let maybeDest = lookupDest destMap $ sinkBetween $ binderName b
     expr' <- withSubst s $ lowerExprWithDest maybeDest expr
     v <- emitDecl (getNameHint b) ann expr'
-    traverseDeclNestWithDestS destMap (s <>> (b @> Rename v)) rest
+    traverseDeclNestWithDestS destMap (s <>> (b @> Rename (atomVarName v))) rest
 
 lowerExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 lowerExprWithDest dest expr = case expr of
@@ -313,7 +317,7 @@ lowerExprWithDest dest expr = case expr of
           ty' <- visitType $ ignoreHoistFailure $ hoist hb ty
           liftM (PrimOp . Hof) $ mkHof refDest =<<
             buildEffLam (getNameHint rb) ty' \hb' rb' ->
-              extendRenamer (hb@>hb' <.> rb@>rb') do
+              extendRenamer (hb@>atomVarName hb' <.> rb@>atomVarName rb') do
                 case bodyDest of
                   Nothing -> lowerBlock body
                   Just bd -> lowerBlockWithDest (sink bd) body
@@ -353,14 +357,19 @@ data Stability
   deriving (Eq, Show)
 
 data VSubstValC (c::C) (n::S) where
-  VVal :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
+  VVal   :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
+  VRename :: Name c n -> VSubstValC c n
+
 type VAtom = VSubstValC (AtomNameC SimpIR)
 instance SinkableV VSubstValC
 instance SinkableE (VSubstValC c) where
   sinkingProofE fresh (VVal s x) = VVal s $ sinkingProofE fresh x
+  sinkingProofE fresh (VRename n) = VRename $ sinkingProofE fresh n
 
+instance Pretty (VSubstValC c n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
+  prettyPrec (VRename v) = atPrec LowestPrec $ "Rename" <+> pretty v
 
 type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
 
@@ -406,7 +415,7 @@ vectorizeLoopsRec :: (Ext i o, Emits o)
 vectorizeLoopsRec frag nest =
   case nest of
     Empty -> return frag
-    Nest (Let b (DeclBinding ann _ expr)) rest -> do
+    Nest (Let b (DeclBinding ann expr)) rest -> do
       vectorByteWidth <- ask
       expr' <- applyRename frag expr
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
@@ -428,7 +437,7 @@ vectorizeLoopsRec frag nest =
                 body' <- applyRename frag body
                 emit $ PrimOp $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal n)) dest' body'
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
-      vectorizeLoopsRec (frag <.> b @> v) rest
+      vectorizeLoopsRec (frag <.> b @> atomVarName v) rest
 
 atMostInitEffect :: IRRep r => EffectRow r n -> Bool
 atMostInitEffect scrutinee = case scrutinee of
@@ -440,7 +449,7 @@ vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
 vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
-  if atMostInitEffect (blockEffects body)
+  if atMostInitEffect (getEffects body)
     then do
       (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
@@ -462,14 +471,9 @@ vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
   where
     iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
     iSubst v = case lookupSubstFragProjected frag v of
-      Left v'  -> sink $ fromNameVAtom v'
-      Right v' -> sink $ fromNameVAtom v'
+      Left v'  -> sink $ VRename v'
+      Right v' -> sink $ VRename v'
 vectorizeSeq _ _ _ = error "expected a unary lambda expression"
-
-fromNameVAtom :: forall c n. Color c => Name c n -> VSubstValC c n
-fromNameVAtom v = case eqColorRep @c @(AtomNameC SimpIR) of
-  Just ColorsEqual -> VVal Uniform $ Var v
-  _ -> error "Unexpected non-atom name"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
@@ -487,13 +491,24 @@ vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
       go :: Emits o => Nest SDecl i i' -> VectorizeM i o (VAtom o)
       go = \case
         Empty -> vectorizeAtom ans
-        Nest (Let b (DeclBinding _ _ expr)) rest -> do
+        Nest (Let b (DeclBinding _ expr)) rest -> do
           v <- vectorizeExpr expr
           extendSubst (b @> v) $ go rest
 
 vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
+    TabApp _ tbl [ix] -> do
+      VVal Uniform tbl' <- vectorizeAtom tbl
+      VVal Contiguous ix' <- vectorizeAtom ix
+      case getType tbl' of
+        (TabTy tb a) -> do
+          vty <- getVectorType =<< case hoist tb a of
+            HoistSuccess a' -> return a'
+            HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
+          VVal Varying <$> emitOp (VectorOp $ VectorIdx tbl' ix' vty)
+        tblTy -> do
+          throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
     Atom atom -> vectorizeAtom atom
     PrimOp op -> vectorizePrimOp op
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
@@ -516,10 +531,10 @@ vectorizeDAMOp op =
 vectorizeRefOp :: Emits o => SAtom i -> RefOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeRefOp ref' op =
   case op of
-    IndexRef i' -> do
+    IndexRef _ i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
-      getType ref >>= \case
+      case getType ref of
         TC (RefType _ (TabTy tb a)) -> do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
@@ -561,7 +576,7 @@ vectorizePrimOp op = case op of
     VVal Contiguous <$> emitOp (MemOp $ PtrOffset ptr off)
   MemOp (PtrLoad arg) -> do
     VVal Contiguous ptr <- vectorizeAtom arg
-    BaseTy (PtrType (addrSpace, a)) <- getType ptr
+    BaseTy (PtrType (addrSpace, a)) <- return $ getType ptr
     BaseTy av <- getVectorType $ BaseTy a
     ptr' <- emitOp $ MiscOp $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
     VVal Varying <$> emitOp (MemOp $ PtrLoad ptr')
@@ -585,16 +600,18 @@ vectorizeType t = do
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
-    Var v -> lookupSubstM v
+    Var v -> lookupSubstM (atomVarName v) >>= \case
+      VRename v' -> VVal Uniform . Var <$> toAtomVar v'
+      v' -> return v'
     -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt (ProjectProduct i) x -> do
+    ProjectElt _ (ProjectProduct i) x -> do
       VVal vv x' <- vectorizeAtom x
       ov <- case vv of
         ProdStability sbs -> return $ sbs !! i
         _ -> throwVectErr "Invalid projection"
       x'' <- normalizeProj (ProjectProduct i) x'
       return $ VVal ov x''
-    ProjectElt UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
+    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -603,6 +620,7 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
 uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
 uniformSubst subst n = case subst ! n of
   VVal Uniform x -> SubstVal x
+  VRename name -> Rename name
   -- TODO(nrink): Throw instead of `error`.
   _ -> error "Can't vectorize atom"
 
@@ -619,11 +637,11 @@ ensureVarying :: Emits o => VAtom o -> VectorizeM i o (SAtom o)
 ensureVarying (VVal s val) = case s of
   Varying -> return val
   Uniform -> do
-    vty <- getVectorType =<< getType val
+    vty <- getVectorType $ getType val
     emitOp $ VectorOp $ VectorBroadcast val vty
   -- Note that the implementation of this case will depend on val's type.
   Contiguous -> do
-    ty <- getType val
+    let ty = getType val
     vty <- getVectorType ty
     case ty of
       BaseTy (Scalar sbt) -> do
@@ -632,6 +650,9 @@ ensureVarying (VVal s val) = case s of
         emitOp $ BinOp (if isIntegral sbt then IAdd else FAdd) bval iota
       _ -> throwVectErr "Not implemented"
   ProdStability _ -> throwVectErr "Not implemented"
+ensureVarying (VRename v) = do
+  x <- Var <$> toAtomVar v
+  ensureVarying (VVal Uniform x)
 
 -- === Extensions to the name system ===
 
@@ -676,7 +697,7 @@ instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
     PrimOp (RefOp _ _) -> fallback
     PrimOp _ -> do
       expr' <- renameM expr
-      ty <- getType expr'
+      let ty = getType expr'
       modify (\(LiftE x) -> LiftE $ min (typeByteWidth ty) x)
       return expr'
     _ -> fallback
