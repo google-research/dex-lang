@@ -43,6 +43,7 @@ def multiclass_logreg_jaxopt(X, y):
 
 
 def main(argv):
+  # Compare performance of Jaxopt and Dex BFGS on a multiclass logistic regression problem.
   X, y = datasets.make_classification(n_samples=FLAGS.n_samples,
                                       n_features=FLAGS.n_features,
                                       n_classes=FLAGS.n_classes,
@@ -54,7 +55,7 @@ def main(argv):
 
   with open('examples/bfgs.dx', 'r') as f:
     m = dex.Module(f.read())
-    dex_bfgs = djax.primitive(m.multiclass_fin)
+    dex_bfgs = djax.primitive(m.multiclass_logreg_int)
 
     start_time = time.time()
     dex_value = dex_bfgs(

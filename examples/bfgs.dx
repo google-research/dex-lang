@@ -185,7 +185,9 @@ def multiclass_logreg(
   res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search maxls f) tol maxiter 
   res.fval
 
-def multiclass_fin(
+-- Define a version of `multiclass_logreg` with Int instead of Nat labels, callable from Python 
+-- (see benchmarks/bfgs.py).
+def multiclass_logreg_int(
   xs:(Fin n)=>(Fin d)=>Float,
   ys:(Fin n)=>Int,
   num_classes:Int,
