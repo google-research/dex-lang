@@ -388,7 +388,12 @@ instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
   prettyPrec (VRename v) = atPrec LowestPrec $ "Rename" <+> pretty v
 
-type TopVectorizeM = BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM))
+newtype TopVectorizeM (o::S) (a:: *) = TopVectorizeM
+  { runTopVectorizeM ::
+      BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM)) o a }
+  deriving ( Functor, Applicative, Monad, MonadFail, MonadReader Word32
+           , MonadState Errs, Fallible, ScopeReader, EnvReader
+           , EnvExtender, Builder SimpIR, Catchable )
 
 vectorizeLoopsBlock :: (EnvReader m)
   => Word32 -> DestBlock n
@@ -396,7 +401,7 @@ vectorizeLoopsBlock :: (EnvReader m)
 vectorizeLoopsBlock vectorByteWidth (Abs destb body) = liftEnvReaderM do
   refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
     vblock <- liftBuilderT $ buildBlock do
-                s <- vectorizeLoopsRec emptyInFrag decls
+                s <- runTopVectorizeM $ vectorizeLoopsRec emptyInFrag decls
                 applyRename s ans
     case (runFallibleM . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) vblock of
       -- The failure case should not occur: vectorization errors should have been
