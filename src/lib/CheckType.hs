@@ -473,7 +473,12 @@ typeCheckNewtypeTyCon = \case
 
 typeCheckPrimOp :: (Typer m r, IRRep r) => EffectRow r o -> PrimOp r i -> m i o (Type r o)
 typeCheckPrimOp effs op = case op of
-  Hof  hof -> typeCheckPrimHof effs hof
+  Hof (TypedHof effTy hof) -> do
+    EffTy effs' resultTy <- renameM effTy
+    checkExtends effs effs'
+    resultTy' <- typeCheckPrimHof effs hof
+    checkTypesEq resultTy resultTy'
+    return resultTy
   VectorOp vOp -> typeCheckVectorOp vOp
   BinOp binop x y -> do
     xTy <- typeCheckBaseType x
@@ -628,8 +633,8 @@ typeCheckUserEffect = \case
 
 typeCheckPrimHof :: forall r m i o. (Typer m r, IRRep r) => EffectRow r o -> Hof r i -> m i o (Type r o)
 typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case hof of
-  For _ ixDict f -> do
-    IxType t d <- ixTyFromDict <$> renameM ixDict
+  For _ ixTy f -> do
+    IxType t d <- renameM ixTy
     PiType (UnaryNest (b:>argTy)) (EffTy _ eltTy) <- checkLamExpr f
     checkTypesEq t argTy
     return $ TabTy d (b:>t) eltTy
@@ -683,8 +688,10 @@ typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case ho
 
 typeCheckDAMOp :: forall r m i o . (Typer m r, IRRep r) => EffectRow r o -> DAMOp r i -> m i o (Type r o)
 typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
-  Seq _ ixDict carry f -> do
-    ixTy <- ixTyFromDict <$> renameM ixDict
+  Seq effAnn _ ixTy' carry f -> do
+    effAnn' <- renameM effAnn
+    checkExtends effs effAnn'
+    ixTy <- renameM ixTy'
     carryTy' <- getTypeE carry
     let badCarry = throw TypeErr $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
     case carryTy' of
@@ -693,7 +700,9 @@ typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
     PiType (UnaryNest b) _ <- checkLamExprWithEffs effs f
     checkTypesEq (PairTy (ixTypeType ixTy) carryTy') (binderType b)
     return carryTy'
-  RememberDest d body -> do
+  RememberDest effAnn d body -> do
+    effAnn' <- renameM effAnn
+    checkExtends effs effAnn'
     dTy@(RawRefTy _) <- getTypeE d
     PiType (UnaryNest b) (EffTy _ UnitTy) <- checkLamExpr body
     checkTypesEq (binderType b) dTy

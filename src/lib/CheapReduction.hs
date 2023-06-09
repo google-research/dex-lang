@@ -645,6 +645,9 @@ instance IRRep r => VisitGeneric (PrimOp r) r where
     UserEffectOp op -> UserEffectOp <$> visitGeneric op
     RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
 
+instance IRRep r => VisitGeneric (TypedHof r) r where
+  visitGeneric (TypedHof eff hof) = TypedHof <$> visitGeneric eff <*> visitGeneric hof
+
 instance IRRep r => VisitGeneric (Hof r) r where
   visitGeneric = \case
     For ann d lam -> For ann <$> visitGeneric d <*> visitGeneric lam
@@ -663,8 +666,8 @@ instance IRRep r => VisitGeneric (BaseMonoid r) r where
 
 instance IRRep r => VisitGeneric (DAMOp r) r where
   visitGeneric = \case
-    Seq dir d x lam -> Seq dir <$> visitGeneric d <*> visitGeneric x <*> visitGeneric lam
-    RememberDest x lam -> RememberDest <$> visitGeneric x <*> visitGeneric lam
+    Seq eff dir d x lam -> Seq <$> visitGeneric eff <*> pure dir <*> visitGeneric d <*> visitGeneric x <*> visitGeneric lam
+    RememberDest eff x lam -> RememberDest <$> visitGeneric eff <*> visitGeneric x <*> visitGeneric lam
     AllocDest t -> AllocDest <$> visitGeneric t
     Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
     Freeze x  -> Freeze <$> visitGeneric x
@@ -723,6 +726,9 @@ instance IRRep r => VisitGeneric (IxDict r) r where
     IxDictAtom   x -> IxDictAtom   <$> visitGeneric x
     IxDictRawFin x -> IxDictRawFin <$> visitGeneric x
     IxDictSpecialized t v xs -> IxDictSpecialized <$> visitGeneric t <*> renameN v <*> mapM visitGeneric xs
+
+instance IRRep r => VisitGeneric (IxType r) r where
+  visitGeneric (IxType t d) = IxType <$> visitType t <*> visitGeneric d
 
 instance VisitGeneric DictType CoreIR where
   visitGeneric (DictType n v xs) = DictType n <$> renameN v <*> mapM visitGeneric xs
@@ -872,6 +878,7 @@ instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance SubstE AtomSubstVal UserEffectOp
 instance IRRep r => SubstE AtomSubstVal (DAMOp r)
+instance IRRep r => SubstE AtomSubstVal (TypedHof r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (TC r)
 instance IRRep r => SubstE AtomSubstVal (Con r)

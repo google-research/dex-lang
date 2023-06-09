@@ -927,8 +927,8 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
       Check (TabPi tabPiTy) -> do checkUForExpr uFor tabPiTy
       Check _ -> inferUForExpr uFor
       Infer   -> inferUForExpr uFor
-    IxType _ ixDict <- asIxType $ binderType b'
-    result <- liftM Var $ emitHinted hint $ PrimOp $ Hof $ For dir ixDict lam
+    ixTy <- asIxType $ binderType b'
+    result <- emitHof $ For dir ixTy lam
     matchRequirement result
   UApp f posArgs namedArgs -> do
     f' <- inferWithoutInstantiation f >>= zonk
@@ -1477,19 +1477,19 @@ matchPrimApp = \case
  UMPut      -> \case ~[r, x] -> emitOp $ RefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> indexRef r i
  UApplyMethod i -> \case ~(d:args) -> emitExpr =<< mkApplyMethod d i args
- ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Linearize f' x
- UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitOp $ Transpose f' x
- URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunReader x f'
- URunState  -> \case ~[x, f]  -> do f' <- lam2 f; emitOp $ RunState  Nothing x f'
- UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ While f'
- URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitOp $ RunIO f'
- UCatchException-> \case ~[f] -> do f' <- lam0 f; emitOp =<< mkCatchException f'
+ ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
+ UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
+ URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitHof $ RunReader x f'
+ URunState  -> \case ~[x, f]  -> do f' <- lam2 f; emitHof $ RunState  Nothing x f'
+ UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ While f'
+ URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ RunIO f'
+ UCatchException-> \case ~[f] -> do f' <- lam0 f; emitHof =<< mkCatchException f'
  UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitOp $ RefOp r $ MExtend (BaseMonoid z f') x
  URunWriter -> \args -> do
    [idVal, combiner, f] <- return args
    combiner' <- lam2 combiner
    f' <- lam2 f
-   emitOp $ RunWriter Nothing (BaseMonoid idVal combiner') f'
+   emitHof $ RunWriter Nothing (BaseMonoid idVal combiner') f'
  p -> \case xs -> throw TypeErr $ "Bad primitive application: " ++ show (p, xs)
  where
    lam2 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)

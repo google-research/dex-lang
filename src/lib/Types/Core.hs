@@ -83,7 +83,7 @@ data AtomVar (r::IR) (n::S) = AtomVar
   , atomVarType :: Type r n }
      deriving (Show, Generic)
 
-type TabLamExpr = PairE (IxDict SimpIR) (Abs (Binder SimpIR) (Abs (Nest SDecl) CAtom))
+type TabLamExpr = PairE (IxType SimpIR) (Abs (Binder SimpIR) (Abs (Nest SDecl) CAtom))
 data SimpInCore (n::S) =
    LiftSimp (CType n) (SAtom n)
  | LiftSimpFun (CorePiType n) (LamExpr SimpIR n)
@@ -316,7 +316,7 @@ data PrimOp (r::IR) (n::S) where
  MemOp    :: MemOp r n                       -> PrimOp r n
  VectorOp :: VectorOp r n                    -> PrimOp r n
  MiscOp   :: MiscOp r n                      -> PrimOp r n
- Hof      :: Hof r n                         -> PrimOp r n
+ Hof      :: TypedHof r n                    -> PrimOp r n
  RefOp    :: Atom r n -> RefOp r n           -> PrimOp r n
  DAMOp        :: DAMOp SimpIR n              -> PrimOp SimpIR n
  UserEffectOp :: UserEffectOp n              -> PrimOp CoreIR n
@@ -363,8 +363,11 @@ data VectorOp r n =
  | VectorSubref (Atom r n) (Atom r n) (Type r n) -- ref, base ix, vector type
    deriving (Show, Generic)
 
+data TypedHof r n = TypedHof (EffTy r n) (Hof r n)
+     deriving (Show, Generic)
+
 data Hof r n where
- For       :: ForAnn -> IxDict r n -> LamExpr r n -> Hof r n
+ For       :: ForAnn -> IxType r n -> LamExpr r n -> Hof r n
  While     :: Block r n -> Hof r n
  RunReader :: Atom r n -> LamExpr r n -> Hof r n
  RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
@@ -380,8 +383,8 @@ deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
 
 -- Ops for "Dex Abstract Machine"
 data DAMOp r n =
-   Seq Direction (IxDict r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
- | RememberDest (Atom r n) (LamExpr r n)
+   Seq (EffectRow r n) Direction (IxType r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
+ | RememberDest (EffectRow r n) (Atom r n) (LamExpr r n)
  | AllocDest (Type r n)        -- type
  | Place (Atom r n) (Atom r n) -- reference, value
  | Freeze (Atom r n)           -- reference
@@ -1346,21 +1349,21 @@ instance AlphaHashableE UserEffectOp
 
 instance IRRep r => GenericE (DAMOp r) where
   type RepE (DAMOp r) = EitherE5
-  {- Seq -}            (LiftE Direction `PairE` IxDict r `PairE` Atom r `PairE` LamExpr r)
-  {- RememberDest -}   (Atom r `PairE` LamExpr r)
+  {- Seq -}            (EffectRow r `PairE` LiftE Direction `PairE` IxType r `PairE` Atom r `PairE` LamExpr r)
+  {- RememberDest -}   (EffectRow r `PairE` Atom r `PairE` LamExpr r)
   {- AllocDest -}      (Type r)
   {- Place -}          (Atom r `PairE` Atom r)
   {- Freeze -}         (Atom r)
   fromE = \case
-    Seq d x y z      -> Case0 $ LiftE d `PairE` x `PairE` y `PairE` z
-    RememberDest x y -> Case1 (x `PairE` y)
+    Seq e d x y z      -> Case0 $ e `PairE` LiftE d `PairE` x `PairE` y `PairE` z
+    RememberDest e x y -> Case1 (e `PairE` x `PairE` y)
     AllocDest x      -> Case2 x
     Place x y        -> Case3 (x `PairE` y)
     Freeze x         -> Case4 x
   {-# INLINE fromE #-}
   toE = \case
-    Case0 (LiftE d `PairE` x `PairE` y `PairE` z) -> Seq d x y z
-    Case1 (x `PairE` y)                           -> RememberDest x y
+    Case0 (e `PairE` LiftE d `PairE` x `PairE` y `PairE` z) -> Seq e d x y z
+    Case1 (e `PairE` x `PairE` y)                           -> RememberDest e x y
     Case2 x                                       -> AllocDest x
     Case3 (x `PairE` y)                           -> Place x y
     Case4 x                                       -> Freeze x
@@ -1373,11 +1376,24 @@ instance IRRep r => RenameE        (DAMOp r)
 instance IRRep r => AlphaEqE       (DAMOp r)
 instance IRRep r => AlphaHashableE (DAMOp r)
 
-instance IsPrimOp Hof where toPrimOp = Hof
+instance IsPrimOp TypedHof where toPrimOp = Hof
+instance IRRep r => GenericE (TypedHof r) where
+  type RepE (TypedHof r) = EffTy r `PairE` Hof r
+  fromE (TypedHof effTy hof) = effTy `PairE` hof
+  {-# INLINE fromE #-}
+  toE   (effTy `PairE` hof) = TypedHof effTy hof
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (TypedHof r)
+instance IRRep r => HoistableE     (TypedHof r)
+instance IRRep r => RenameE        (TypedHof r)
+instance IRRep r => AlphaEqE       (TypedHof r)
+instance IRRep r => AlphaHashableE (TypedHof r)
+
 instance IRRep r => GenericE (Hof r) where
   type RepE (Hof r) = EitherE2
     (EitherE6
-  {- For -}       (LiftE ForAnn `PairE` IxDict r `PairE` LamExpr r)
+  {- For -}       (LiftE ForAnn `PairE` IxType r `PairE` LamExpr r)
   {- While -}     (Block r)
   {- RunReader -} (Atom r `PairE` LamExpr r)
   {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
@@ -1675,7 +1691,7 @@ instance IRRep r => GenericE (PrimOp r) where
  {- VectorOp -} (VectorOp r)
  {- MiscOp -}   (MiscOp r)
    ) (EitherE4
- {- Hof -}           (Hof r)
+ {- Hof -}           (TypedHof r)
  {- RefOp -}         (Atom r `PairE` RefOp r)
  {- DAMOp -}         (WhenSimp r (DAMOp SimpIR))
  {- UserEffectOp -}  (WhenCore r UserEffectOp)
@@ -2860,6 +2876,7 @@ instance Store InfVarDesc
 instance Store IxMethod
 instance Store ParamRole
 instance Store (SpecializedDictDef n)
+instance IRRep r => Store (TypedHof r n)
 instance IRRep r => Store (Hof r n)
 instance IRRep r => Store (RefOp r n)
 instance IRRep r => Store (BaseMonoid r n)

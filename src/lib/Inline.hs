@@ -216,7 +216,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (PrimOp (Hof (For _ _ (UnaryLamExpr _ body)))) = 1 + ixDepthBlock body
+    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body))))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
     ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr

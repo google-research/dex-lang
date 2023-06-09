@@ -62,7 +62,7 @@ simplifyJTy JArrayName{shape, dtype} = go shape $ simplifyDType dtype where
   go [] ty = return ty
   go ((DimSize sz):rest) ty = do
     rest' <- go rest ty
-    return $ finIxTy sz ==> rest'
+    return $ litFinIxTy sz ==> rest'
 
 simplifyDType :: DType -> Type r n
 simplifyDType = \case
@@ -123,6 +123,6 @@ unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
     [] -> emitExprToAtom $ PrimOp (UnOp op arg')
-    (DimSize sz:rest) -> buildFor noHint P.Fwd (finIxTy sz) \i -> do
+    (DimSize sz:rest) -> buildFor noHint P.Fwd (litFinIxTy sz) \i -> do
       ixed <- mkTabApp (sink arg') [Var i] >>= emitExprToAtom
       go ixed rest

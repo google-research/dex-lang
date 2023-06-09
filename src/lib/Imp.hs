@@ -382,12 +382,12 @@ toImpRefOp refDest' m = do
 
 toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
-  Hof hof -> toImpHof hof
+  Hof hof -> toImpTypedHof hof
   RefOp refDest eff -> toImpRefOp refDest eff
   DAMOp damOp -> case damOp of
-    Seq d ixDict carry f -> do
+    Seq _ d ixTy' carry f -> do
       UnaryLamExpr b body <- return f
-      ixTy <- ixTyFromDict <$> substM ixDict
+      ixTy <- substM ixTy'
       carry' <- substM carry
       n <- indexSetSizeImp ixTy
       emitLoop (getNameHint b) d n \i -> do
@@ -395,7 +395,7 @@ toImpOp op = case op of
         void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
           translateBlock body
       return carry'
-    RememberDest d f -> do
+    RememberDest _ d f -> do
       UnaryLamExpr b body <- return f
       d' <- substM d
       void $ extendSubst (b @> SubstVal d') $ translateBlock body
@@ -524,9 +524,9 @@ toImpMemOp op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
-toImpHof hof = do
-  resultTy <- substM $ getType hof
+toImpTypedHof :: Emits o => TypedHof SimpIR i -> SubstImpM i o (SAtom o)
+toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
+  resultTy <- substM resultTy'
   case hof of
     For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
     While body -> do

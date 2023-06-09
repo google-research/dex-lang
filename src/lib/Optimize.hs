@@ -246,8 +246,8 @@ emitSubstBlock (Block _ decls ans) = visitDeclsEmits decls $ visitAtom ans
 -- constant-foldable after inlining don't count towards it.
 ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
 ulExpr expr = case expr of
-  PrimOp (Hof (For Fwd ixDict body)) ->
-    case ixDict of
+  PrimOp (Hof (TypedHof _ (For Fwd ixTy body))) ->
+    case ixTypeDict ixTy of
       IxDictRawFin (IdxRepVal n) -> do
         (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
         -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
@@ -265,8 +265,8 @@ ulExpr expr = case expr of
             _ -> error "Expected `for` body to be a lambda expression"
           False -> do
             inc bodyCost
-            ixDict' <- visitGeneric ixDict
-            emitExpr $ PrimOp $ Hof $ For Fwd ixDict' body'
+            ixTy' <- visitGeneric ixTy
+            emitHof $ For Fwd ixTy' body'
       _ -> nothingSpecial
   -- Avoid unrolling loops with large table literals
   TabCon _ _ els -> inc (length els) >> nothingSpecial
@@ -311,7 +311,7 @@ hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
 licmExpr = \case
-  PrimOp (DAMOp (Seq dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+  PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
     ix' <- substM ix
     dests' <- mapM visitAtom dests
     let numCarriesOriginal = length dests'
@@ -326,7 +326,7 @@ licmExpr = \case
     -- Append the destinations of hoisted Allocs as loop carried values.
     let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
     let carryTy = getType dests''
-    let lbTy = case ixTyFromDict ix' of IxType ixTy _ -> PairTy ixTy carryTy
+    let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
     body' <- withFreshBinder noHint lbTy \lb' -> do
@@ -336,8 +336,8 @@ licmExpr = \case
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
       block <- applySubst s bodyAbs >>= makeBlockFromDecls
       return $ UnaryLamExpr lb' block
-    emitExpr $ PrimOp $ DAMOp $ Seq dir ix' dests'' body'
-  PrimOp (Hof (For dir ix (LamExpr (UnaryNest b) body))) -> do
+    emitSeq dir ix' dests'' body'
+  PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
     ix' <- substM ix
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
       Block _ decls ans <- buildBlock $ visitBlockEmits body
@@ -348,7 +348,7 @@ licmExpr = \case
     body' <- withFreshBinder noHint ixTy \i -> do
       block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
       return $ UnaryLamExpr i block
-    emitExpr $ PrimOp $ Hof $ For dir ix' body'
+    emitHof $ For dir ix' body'
   expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls

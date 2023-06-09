@@ -928,7 +928,7 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
     VectorOp op -> prettyPrec op
     DAMOp op -> prettyPrec op
     UserEffectOp op -> prettyPrec op
-    Hof hof -> prettyPrec hof
+    Hof (TypedHof _ hof) -> prettyPrec hof
     RefOp ref eff -> atPrec LowestPrec case eff of
       MAsk        -> "ask" <+> pApp ref
       MExtend _ x -> "extend" <+> pApp ref <+> pApp x
@@ -987,14 +987,14 @@ instance IRRep r => PrettyPrec (Hof r n) where
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
   prettyPrec op = atPrec LowestPrec case op of
-    Seq ann d c lamExpr -> case lamExpr of
+    Seq _ ann d c lamExpr -> case lamExpr of
       UnaryLamExpr b body -> do
         let rawFinPretty = case d of
-              IxDictRawFin n -> parens $ "RawFin" <+> p n
+              IxType _ (IxDictRawFin n) -> parens $ "RawFin" <+> p n
               _ -> mempty
         "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
       _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
-    RememberDest x y    -> "rememberDest" <+> pArg x <+> pArg y
+    RememberDest _ x y    -> "rememberDest" <+> pArg x <+> pArg y
     Place r v -> pApp r <+> "r:=" <+> pApp v
     Freeze r  -> "freeze" <+> pApp r
     AllocDest ty -> "alloc" <+> pApp ty

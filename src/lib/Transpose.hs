@@ -263,7 +263,7 @@ transposeOp op ct = case op of
         void $ emitEff $ MPut zero
       IndexRef _ _ -> notImplemented
       ProjRef _ _  -> notImplemented
-  Hof hof       -> transposeHof hof ct
+  Hof (TypedHof _ hof) -> transposeHof hof ct
   MiscOp miscOp   -> transposeMiscOp miscOp ct
   UnOp  FNeg x    -> transposeAtom x =<< neg ct
   UnOp  _    _    -> notLinear
@@ -324,9 +324,9 @@ transposeAtom atom ct = case atom of
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
 transposeHof hof ct = case hof of
-  For ann d lam -> do
+  For ann ixTy' lam -> do
     UnaryLamExpr b  body <- return lam
-    ixTy <- ixTyFromDict <$> substNonlin d
+    ixTy <- substNonlin ixTy'
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (Var i)
       extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeBlock body ctElt
@@ -340,7 +340,7 @@ transposeHof hof ct = case hof of
       return UnitVal
     transposeAtom s cts
   RunReader r (BinaryLamExpr hB refB body) -> do
-    accumTy <- getReferentTy =<< substNonlin (EmptyAbs $ PairB hB refB)
+    accumTy <- substNonlin $ getType r
     baseMonoid <- tangentBaseMonoidFor accumTy
     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
       extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $

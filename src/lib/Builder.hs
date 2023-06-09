@@ -75,6 +75,14 @@ emitExpr :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
 emitExpr expr = Var <$> emit expr
 {-# INLINE emitExpr #-}
 
+emitHof :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
+emitHof hof = mkTypedHof hof >>= emitOp
+
+mkTypedHof :: (EnvReader m, IRRep r) => Hof r n -> m n (TypedHof r n)
+mkTypedHof hof = do
+  effTy <- effTyOfHof hof
+  return $ TypedHof effTy hof
+
 emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
 emitUnOp op x = emitOp $ UnOp op x
 {-# INLINE emitUnOp #-}
@@ -816,7 +824,7 @@ buildForAnn hint ann (IxType iTy ixDict) body = do
     let v = binderVar b
     body' <- buildBlock $ body $ sink v
     return $ LamExpr (UnaryNest b) body'
-  emitExpr $ PrimOp $ Hof $ For ann ixDict lam
+  emitHof $ For ann (IxType iTy ixDict) lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
          => NameHint -> Direction -> IxType r n
@@ -846,7 +854,7 @@ emitRunWriter
   -> m n (Atom r n)
 emitRunWriter hint accTy bm body = do
   lam <- buildEffLam hint accTy \h ref -> body h ref
-  emitExpr $ PrimOp $ Hof $ RunWriter Nothing bm lam
+  emitHof $ RunWriter Nothing bm lam
 
 emitRunState
   :: (Emits n, ScopableBuilder r m)
@@ -856,7 +864,7 @@ emitRunState
 emitRunState hint initVal body = do
   stateTy <- return $ getType initVal
   lam <- buildEffLam hint stateTy \h ref -> body h ref
-  emitExpr $ PrimOp $ Hof $ RunState Nothing initVal lam
+  emitHof $ RunState Nothing initVal lam
 
 emitRunReader
   :: (Emits n, ScopableBuilder r m)
@@ -866,7 +874,21 @@ emitRunReader
 emitRunReader hint r body = do
   rTy <- return $ getType r
   lam <- buildEffLam hint rTy \h ref -> body h ref
-  emitExpr $ PrimOp $ Hof $ RunReader r lam
+  emitHof $ RunReader r lam
+
+emitSeq :: (Emits n, ScopableBuilder SimpIR m)
+        => Direction -> IxType SimpIR n -> Atom SimpIR n -> LamExpr SimpIR n
+        -> m n (Atom SimpIR n)
+emitSeq d t x f = do
+  op <- mkSeq d t x f
+  emitExpr $ PrimOp $ DAMOp op
+
+mkSeq :: EnvReader m
+      => Direction -> IxType SimpIR n -> Atom SimpIR n -> LamExpr SimpIR n
+      -> m n (DAMOp SimpIR n)
+mkSeq d t x f = do
+  effTy <- functionEffs f
+  return $ Seq effTy d t x f
 
 buildRememberDest :: (Emits n, ScopableBuilder SimpIR m)
   => NameHint -> SAtom n
@@ -875,7 +897,8 @@ buildRememberDest :: (Emits n, ScopableBuilder SimpIR m)
 buildRememberDest hint dest cont = do
   ty <- return $ getType dest
   doit <- buildUnaryLamExpr hint ty cont
-  emitExpr $ PrimOp $ DAMOp $ RememberDest dest doit
+  effs <- functionEffs doit
+  emitExpr $ PrimOp $ DAMOp $ RememberDest effs dest doit
 
 -- === vector space (ish) type class ===
 
@@ -1190,7 +1213,7 @@ ptrOffset x i = emitOp $ MemOp $ PtrOffset x i
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unsafePtrLoad x = do
   body <- liftEmitBuilder $ buildBlock $ emitOp . MemOp . PtrLoad =<< sinkM x
-  emitExpr $ PrimOp $ Hof $ RunIO body
+  emitHof $ RunIO body
 
 mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Atom r n -> Atom r n -> m n (PrimOp r n)
 mkIndexRef ref i = do
@@ -1320,7 +1343,7 @@ emitWhile :: (Emits n, ScopableBuilder r m)
           -> m n ()
 emitWhile cont = do
   body <- buildBlock cont
-  void $ emit $ PrimOp $ Hof $ While body
+  void $ emitHof $ While body
 
 -- Dex implementation, for reference
 -- def whileMaybe (eff:Effects) -> (body: Unit -> {|eff} (Maybe Word8)) : {|eff} Maybe Unit =

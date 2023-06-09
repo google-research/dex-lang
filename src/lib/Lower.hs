@@ -111,7 +111,12 @@ instance Visitor (LowerM i o) SimpIR i o where
 lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
 lowerExpr expr = emitExpr =<< case expr of
   TabCon Nothing ty els -> lowerTabCon Nothing ty els
-  PrimOp (Hof (For dir ixDict body)) -> lowerFor Nothing dir ixDict body
+  PrimOp (Hof (TypedHof (EffTy _ resultTy) (For dir ixDict body))) -> do
+    resultTy' <- substM resultTy
+    lowerFor resultTy' Nothing dir ixDict body
+  -- this case is important because this pass changes effects
+  PrimOp (Hof (TypedHof _ hof)) ->
+    PrimOp . Hof <$> (visitGeneric hof >>= mkTypedHof)
   Case e alts (EffTy _ ty) -> lowerCase Nothing e alts ty
   _ -> visitGeneric expr
 
@@ -121,18 +126,18 @@ lowerBlock = visitBlockEmits
 type Dest = Atom
 
 lowerFor
-  :: Emits o => Maybe (Dest SimpIR o) -> ForAnn -> IxDict SimpIR i -> LamExpr SimpIR i
+  :: Emits o
+  => SType o -> Maybe (Dest SimpIR o) -> ForAnn -> IxType SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
-lowerFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
-  ansTy <- substM $ getType $ For dir ixDict $ lam
-  ixDict' <- substM ixDict
+lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
+  ixTy' <- substM ixTy
   ty' <- substM ty
   case isSingletonType ansTy of
     True -> do
       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
         (i, _) <- fromPair $ Var b'
         extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
-      void $ emitOp $ DAMOp $ Seq dir ixDict' UnitVal body'
+      void $ emitSeq dir ixTy' UnitVal body'
       Atom . fromJust <$> singletonTypeVal ansTy
     False -> do
       initDest <- ProdVal . (:[]) <$> case maybeDest of
@@ -144,10 +149,9 @@ lowerFor maybeDest dir ixDict lam@(UnaryLamExpr (ib:>ty) body) = do
         dest <- normalizeProj (ProjectProduct 0) destProd
         idest <- emitOp =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      let seqHof = DAMOp $ Seq dir ixDict' initDest body'
-      ans <- emitOp seqHof >>= getProj 0
+      ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
       return $ PrimOp $ DAMOp $ Freeze ans
-lowerFor _ _ _ _ = error "expected a unary lambda expression"
+lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
@@ -281,13 +285,23 @@ traverseDeclNestWithDestS destMap s = \case
 lowerExprWithDest :: forall i o. Emits o => Maybe (ProjDest o) -> SExpr i -> LowerM i o (SExpr o)
 lowerExprWithDest dest expr = case expr of
   TabCon Nothing ty els -> lowerTabCon tabDest ty els
-  PrimOp (Hof (For dir ixDict body)) -> lowerFor tabDest dir ixDict body
-  PrimOp (Hof (RunWriter Nothing m body)) -> traverseRWS body \ref' body' -> do
-    m' <- visitGeneric m
-    return $ RunWriter ref' m' body'
-  PrimOp (Hof (RunState Nothing s body)) -> traverseRWS body \ref' body' -> do
-    s' <- visitAtom s
-    return $ RunState ref' s' body'
+  PrimOp (Hof (TypedHof (EffTy _ ansTy) (For dir ixDict body))) -> do
+    ansTy' <- substM ansTy
+    lowerFor ansTy' tabDest dir ixDict body
+  PrimOp (Hof (TypedHof (EffTy _ ty) (RunWriter Nothing m body))) -> do
+    PairTy _ ansTy <- visitType ty
+    traverseRWS ansTy body \ref' body' -> do
+      m' <- visitGeneric m
+      return $ RunWriter ref' m' body'
+  PrimOp (Hof (TypedHof (EffTy _ ty) (RunState Nothing s body))) -> do
+    PairTy _ ansTy <- visitType ty
+    traverseRWS ansTy body \ref' body' -> do
+      s' <- visitAtom s
+      return $ RunState ref' s' body'
+  -- this case is important because this pass changes effects
+  PrimOp (Hof (TypedHof _ hof)) -> do
+    hof' <- PrimOp . Hof <$> (visitGeneric hof >>= mkTypedHof)
+    placeGeneric hof'
   Case e alts (EffTy _ ty) -> case dest of
     Nothing -> lowerCase Nothing e alts ty
     Just (FullDest d) -> lowerCase (Just d) e alts ty
@@ -299,32 +313,33 @@ lowerExprWithDest dest expr = case expr of
   where
     tabDest = dest <&> \case FullDest d -> d; ProjDest _ _ -> error "unexpected projection"
 
-    generic = do
-      expr' <- visitGeneric expr
+    generic = visitGeneric expr >>= placeGeneric
+
+    placeGeneric e = do
       case dest of
-        Nothing -> return expr'
+        Nothing -> return e
         Just d  -> do
-          ans <- Var <$> emit expr'
+          ans <- Var <$> emit e
           place d ans
           return $ Atom ans
 
     traverseRWS
-      :: LamExpr SimpIR i
+      :: SType o -> LamExpr SimpIR i
       -> (Maybe (Dest SimpIR o) -> LamExpr SimpIR o -> LowerM i o (Hof SimpIR o))
       -> LowerM i o (SExpr o)
-    traverseRWS (LamExpr (BinaryNest hb rb) body) mkHof = do
+    traverseRWS referentTy (LamExpr (BinaryNest hb rb) body) cont = do
       unpackRWSDest dest >>= \case
         Nothing -> generic
         Just (bodyDest, refDest) -> do
-          let RefTy _ ty = binderType rb
-          ty' <- visitType $ ignoreHoistFailure $ hoist hb ty
-          liftM (PrimOp . Hof) $ mkHof refDest =<<
-            buildEffLam (getNameHint rb) ty' \hb' rb' ->
+          hof <- cont refDest =<<
+            buildEffLam (getNameHint rb) referentTy \hb' rb' ->
               extendRenamer (hb@>atomVarName hb' <.> rb@>atomVarName rb') do
                 case bodyDest of
                   Nothing -> lowerBlock body
                   Just bd -> lowerBlockWithDest (sink bd) body
-    traverseRWS _ _ = error "Expected a binary lambda expression"
+          PrimOp . Hof <$> mkTypedHof hof
+
+    traverseRWS _ _ _ = error "Expected a binary lambda expression"
 
     unpackRWSDest = \case
       Nothing -> return Nothing
@@ -336,7 +351,6 @@ lowerExprWithDest dest expr = case expr of
         ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
         ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
         ProjDest _ _ -> return Nothing
-
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
@@ -425,13 +439,14 @@ vectorizeLoopsRec frag nest =
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
-        PrimOp (DAMOp (Seq dir (IxDictRawFin (IdxRepVal n)) dest@(ProdVal [_]) body))
+        PrimOp (DAMOp (Seq _ dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest@(ProdVal [_]) body))
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
               let vn = n `div` loopWidth
               body' <- vectorizeSeq loopWidth frag body
               dest' <- applyRename frag dest
-              emit $ PrimOp $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal vn)) dest' body')
+              seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
+              emit $ PrimOp $ DAMOp seqOp)
             `catchErr` \errs -> do
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
@@ -439,7 +454,8 @@ vectorizeLoopsRec frag nest =
                 modify (<> errs')
                 dest' <- applyRename frag dest
                 body' <- applyRename frag body
-                emit $ PrimOp $ DAMOp $ Seq dir (IxDictRawFin (IdxRepVal n)) dest' body'
+                seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
+                emit $ PrimOp $ DAMOp seqOp
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> atomVarName v) rest
 
@@ -587,13 +603,13 @@ vectorizePrimOp op = case op of
   -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
   -- being picky about the IO-inducing ops it supports, and expect it to
   -- complain about FFI calls and the like.
-  Hof (RunIO body) -> do
+  Hof (TypedHof _ (RunIO body)) -> do
   -- TODO: buildBlockAux?
     Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
       VVal vy y <- vectorizeBlock body
       PairE (LiftE vy) <$> withType y
     body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
-    VVal vy . Var <$> emit (PrimOp $ Hof (RunIO body'))
+    VVal vy <$> emitHof (RunIO body')
   _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
 vectorizeType :: SType i -> VectorizeM i o (SType o)

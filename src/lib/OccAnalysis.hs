@@ -273,11 +273,16 @@ instance HasOCC SBlock where
   occ a (Block ann decls ans) = case (ann, decls) of
     (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> occ a ans
     (NoBlockAnn      , _    ) -> error "should be unreachable"
-    (BlockAnn (EffTy effs ty), _    ) -> do
+    (BlockAnn effTy, _    ) -> do
       Abs decls' ans' <- occNest a decls ans
-      ty' <- occTy ty
-      countFreeVarsAsOccurrences effs
-      return $ Block (BlockAnn (EffTy effs ty')) decls' ans'
+      effTy' <- occ a effTy
+      return $ Block (BlockAnn effTy') decls' ans'
+
+instance HasOCC (EffTy SimpIR) where
+  occ _ (EffTy effs ty) = do
+    ty' <- occTy ty
+    countFreeVarsAsOccurrences effs
+    return $ EffTy effs ty'
 
 data ElimResult (n::S) where
   ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
@@ -392,6 +397,9 @@ occurrenceAndSummary atom = do
   atom' <- occ accessOnce atom
   ix <- summary atom'
   return (ix, atom')
+
+instance HasOCC (TypedHof SimpIR) where
+  occ a (TypedHof effTy hof) = TypedHof <$> occ a effTy <*> occ a hof
 
 instance HasOCC (Hof SimpIR) where
   occ a hof = case hof of

@@ -104,8 +104,8 @@ tryAsDataAtom atom = do
       notData = error $ "Not runtime-representable data: " ++ pprint atom
 
 forceTabLam :: Emits n => TabLamExpr n -> SimplifyM i n (SAtom n)
-forceTabLam (PairE d (Abs (b:>ixTy) ab)) =
-  buildFor (getNameHint b) Fwd (IxType ixTy d) \v -> do
+forceTabLam (PairE ixTy (Abs b ab)) =
+  buildFor (getNameHint b) Fwd ixTy \v -> do
     Abs decls result <- applyRename (b@>(atomVarName v)) ab
     result' <- emitDecls decls result
     toDataAtomIgnoreRecon result'
@@ -729,7 +729,9 @@ buildSimplifiedBlock cont = do
 simplifyOp :: Emits o => NameHint -> PrimOp CoreIR i -> SimplifyM i o (CAtom o)
 simplifyOp hint op = case op of
   UserEffectOp _ -> error "not implemented"
-  Hof hof -> simplifyHof hint hof
+  Hof (TypedHof (EffTy _ ty) hof) -> do
+    ty' <- substM ty
+    simplifyHof hint ty' hof
   MemOp    op' -> simplifyGenericOp op'
   VectorOp op' -> simplifyGenericOp op'
   RefOp ref eff -> do
@@ -803,32 +805,30 @@ applyDictMethod resultTy d i methodArgs = do
         (UnsafeFromOrdinal, [ix]) -> return $ NewtypeCon (FinCon n) ix
         _ -> error "bad ix args"
 
-simplifyHof :: Emits o => NameHint -> Hof CoreIR i -> SimplifyM i o (CAtom o)
-simplifyHof _hint hof = case hof of
-  For d ixDict lam -> do
+simplifyHof :: Emits o => NameHint -> CType o -> Hof CoreIR i -> SimplifyM i o (CAtom o)
+simplifyHof _hint resultTy = \case
+  For d ixTypeCore' lam -> do
     (lam', Abs (UnaryNest bIx) recon) <- simplifyLam lam
-    ixTypeCore <- ixTyFromDict <$> substM ixDict
-    IxType ixTy ixDict' <- simplifyIxType ixTypeCore
-    ans <- emitExpr $ PrimOp $ Hof $ For d ixDict' lam'
+    ixTypeCore <- substM ixTypeCore'
+    ixTypeSimp <- simplifyIxType ixTypeCore
+    ans <- emitHof $ For d ixTypeSimp lam'
     case recon of
-      CoerceRecon _ -> do
-        resultTy <- substM $ getType $ Hof hof
-        liftSimpAtom resultTy ans
+      CoerceRecon _ -> liftSimpAtom resultTy ans
       LamRecon (Abs bsClosure reconResult) -> do
-        TabPi resultTy <- substM $ getType $ Hof hof
-        liftM (SimpInCore . TabLam resultTy) $
-          PairE ixDict' <$> buildAbs noHint ixTy \i -> buildScoped do
+        TabPi resultTabTy <- return resultTy
+        liftM (SimpInCore . TabLam resultTabTy) $
+          PairE ixTypeSimp <$> buildAbs noHint (ixTypeType ixTypeSimp) \i -> buildScoped do
             i' <- sinkM i
             xs <- unpackTelescope bsClosure =<< tabApp (sink ans) (Var i')
             applySubst (bIx@>Rename (atomVarName i') <.> bsClosure @@> map SubstVal xs) reconResult
   While body -> do
-    SimplifiedBlock body' (CoerceRecon resultTy) <- buildSimplifiedBlock $ simplifyBlock body
-    result <- emitOp (Hof $ While body')
+    SimplifiedBlock body' (CoerceRecon _) <- buildSimplifiedBlock $ simplifyBlock body
+    result <- emitHof $ While body'
     liftSimpAtom resultTy result
   RunReader r lam -> do
     r' <- simplifyDataAtom r
     (lam', Abs b recon) <- simplifyLam lam
-    ans <- emitOp $ Hof $ RunReader r' lam'
+    ans <- emitHof $ RunReader r' lam'
     let recon' = ignoreHoistFailure $ hoist b recon
     applyRecon recon' ans
   RunWriter Nothing (BaseMonoid e combine) lam -> do
@@ -837,8 +837,7 @@ simplifyHof _hint hof = case hof of
     e' <- simplifyDataAtom e
     (combine', CoerceReconAbs) <- simplifyLam combine
     (lam', Abs b recon) <- simplifyLam lam
-    let hof' = Hof $ RunWriter Nothing (BaseMonoid e' combine') lam'
-    (ans, w) <- fromPair =<< emitOp hof'
+    (ans, w) <- fromPair =<< emitHof (RunWriter Nothing (BaseMonoid e' combine') lam')
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
     w' <- liftSimpAtom wTy' w
@@ -847,7 +846,7 @@ simplifyHof _hint hof = case hof of
   RunState Nothing s lam -> do
     (s', sTy) <- toDataAtom =<< simplifyAtom s
     (lam', Abs b recon) <- simplifyLam lam
-    resultPair <- emitOp $ Hof $ RunState Nothing s' lam'
+    resultPair <- emitHof $ RunState Nothing s' lam'
     (ans, sOut) <- fromPair resultPair
     let recon' = ignoreHoistFailure $ hoist b recon
     ans' <- applyRecon recon' ans
@@ -856,11 +855,11 @@ simplifyHof _hint hof = case hof of
   RunState _ _ _ -> error "Shouldn't see a RunState with a dest in Simplify"
   RunIO body -> do
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
-    ans <- emitOp $ Hof $ RunIO body'
+    ans <- emitHof $ RunIO body'
     applyRecon recon ans
   RunInit body -> do
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
-    ans <- emitOp $ Hof $ RunInit body'
+    ans <- emitHof $ RunInit body'
     applyRecon recon ans
   Linearize lam x -> do
     x' <- simplifyDataAtom x
@@ -869,15 +868,14 @@ simplifyHof _hint hof = case hof of
     (lam', recon) <- simplifyLam lam
     CoerceReconAbs <- return recon
     (result, linFun) <- liftDoubleBuilderToSimplifyM $ linearize lam' x'
-    PairTy resultTy linFunTy <- substM $ getType $ Hof hof
-    result' <- liftSimpAtom resultTy result
+    PairTy lamResultTy linFunTy <- return resultTy
+    result' <- liftSimpAtom lamResultTy result
     linFun' <- liftSimpFun linFunTy linFun
     return $ PairVal result' linFun'
   Transpose lam x -> do
     (lam', CoerceReconAbs) <- simplifyLam lam
     x' <- simplifyDataAtom x
     result <- transpose lam' x'
-    resultTy <- substM $ getType $ Hof hof
     liftSimpAtom resultTy result
   CatchException _ body-> do
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyBlock body
@@ -1083,15 +1081,15 @@ exceptToMaybeExpr expr = case expr of
     x' <- substM x
     let ty = getType x'
     return $ JustAtom ty x'
-  PrimOp (Hof (For ann d (UnaryLamExpr b body))) -> do
-    ixTy <- ixTyFromDict <$> substM d
+  PrimOp (Hof (TypedHof _ (For ann ixTy' (UnaryLamExpr b body)))) -> do
+    ixTy <- substM ixTy'
     maybes <- buildForAnn (getNameHint b) ann ixTy \i ->
       extendSubst (b@>Rename (atomVarName i)) $ exceptToMaybeBlock body
     catMaybesE maybes
   PrimOp (MiscOp (ThrowException _)) -> do
     ty <- substM $ getType expr
     return $ NothingAtom ty
-  PrimOp (Hof (RunState Nothing s lam)) -> do
+  PrimOp (Hof (TypedHof _ (RunState Nothing s lam))) -> do
     s' <- substM s
     BinaryLamExpr h ref body <- return lam
     result  <- emitRunState noHint s' \h' ref' ->
@@ -1102,9 +1100,9 @@ exceptToMaybeExpr expr = case expr of
     emitMaybeCase maybeAns (MaybeTy a)
        (return $ NothingAtom $ sink a)
        (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink newState))
-  PrimOp (Hof (RunWriter Nothing monoid (BinaryLamExpr h ref body))) -> do
+  PrimOp (Hof (TypedHof (EffTy _ resultTy) (RunWriter Nothing monoid (BinaryLamExpr h ref body)))) -> do
     monoid' <- substM monoid
-    accumTy <- substM =<< (getReferentTy $ EmptyAbs $ PairB h ref)
+    PairTy _ accumTy <- substM resultTy
     result <- emitRunWriter noHint accumTy monoid' \h' ref' ->
       extendSubst (h @> Rename (atomVarName h') <.> ref @> Rename (atomVarName ref')) $
         exceptToMaybeBlock body
@@ -1113,7 +1111,7 @@ exceptToMaybeExpr expr = case expr of
     emitMaybeCase maybeAns (MaybeTy a)
       (return $ NothingAtom $ sink a)
       (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink accumResult))
-  PrimOp (Hof (While body)) -> runMaybeWhile $ exceptToMaybeBlock body
+  PrimOp (Hof (TypedHof _ (While body))) -> runMaybeWhile $ exceptToMaybeBlock body
   _ -> do
     expr' <- substM expr
     case hasExceptions expr' of
