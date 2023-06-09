@@ -459,17 +459,33 @@ vectorizeLoopsRec frag nest =
         _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
       vectorizeLoopsRec (frag <.> b @> atomVarName v) rest
 
-atMostInitEffect :: IRRep r => EffectRow r n -> Bool
-atMostInitEffect scrutinee = case scrutinee of
-  Pure -> True
-  OneEffect InitEffect -> True
-  _ -> False
+-- Vectorizing a loop with an effect is safe when the operation reordering
+-- produced by vectorization doesn't change the semantics.  This is guaranteed
+-- to happen when:
+-- - It's the Init effect (because the writes are non-aliasing), or
+-- - It's the Reader effect, or
+-- - Every reference in the effect is accessed in non-aliasing
+--   fashion across iterations (e.g., for i. ... ref!i ...), or
+-- - It's a Writer effect with a commutative monoid, or
+-- - It's a Writer effect and the body writes to each set of
+--   potentially overlapping references in scope at most once
+--   (and the vector operations have in-order reductions
+--   available)
+-- - The Exception effect should have been transformed away by now
+-- - The IO effect is in general not safe
+-- This check doesn't have enough information to test the above,
+-- but we crudely approximate for now.
+vectorSafeEffect :: EffectRow SimpIR n -> Bool
+vectorSafeEffect (EffectRow effs NoTail) = all safe $ eSetToList effs where
+  safe InitEffect = True
+  safe (RWSEffect Reader _) = True
+  safe _ = False
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
 vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
-  if atMostInitEffect (getEffects body)
+  if vectorSafeEffect (getEffects body)
     then do
       (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
@@ -496,9 +512,11 @@ vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
 vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
-  VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
-  deriving ( Functor, Applicative, Monad, Fallible, MonadFail, SubstReader VSubstValC
-           , Builder SimpIR, EnvReader, EnvExtender, ScopeReader, ScopableBuilder SimpIR)
+  VectorizeM { runVectorizeM ::
+    SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
+  deriving ( Functor, Applicative, Monad, Fallible, MonadFail
+           , SubstReader VSubstValC , Builder SimpIR, EnvReader, EnvExtender
+           , ScopeReader, ScopableBuilder SimpIR)
 
 getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
