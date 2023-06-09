@@ -162,26 +162,29 @@ def rosenbrock(coord:(Fin 2)=>Float) -> Float =
   y = coord[1@_]
   pow (1 - x) 2 + 100 * pow (y - x * x) 2
 
--- %bench "rosenbrock"
+%bench "rosenbrock"
 bfgs_minimize rosenbrock [10., 10.] eye (\f. backtracking_line_search 15 f) 0.001 100
+> BFGSresults(8.668621e-13, [0.9999993, 0.9999985], 2.538457e-05, 41)
+>
+> rosenbrock
+> Compile time: 618.962 ms
+> Run time:     57.489 us 	(based on 1 run)
 
-def multiclass_logistic_loss(xs: n=>d=>Float, ys: n=>Nat, w: (d, m)=>Float) -> Float given (n|Ix, d|Ix, m|Ix) =
+def multiclass_logistic_loss(xs: n=>d=>Float, ys: n=>m, w: (d, m)=>Float) -> Float given (n|Ix, d|Ix, m|Ix) =
   w_arr = for i:d. for j:m. w[(i, j)]
   logits = xs ** w_arr
-  logit_at_label = for i. logits[i, ys[i]@_]
+  logit_at_label = for i. logits[i, ys[i]]
   per_example_loss = for i. logsumexp logits[i] - logit_at_label[i]
   mean(per_example_loss)
 
 def multiclass_logreg(
   xs:n=>d=>Float,
-  ys:n=>Nat,
-  num_classes:Nat,
+  ys:n=>m,
   maxiter:Nat,
   maxls:Nat,
-  tol:Float) -> Float given (n|Ix, d|Ix)=
-  m = Fin num_classes
-  w0 = for i:(d, m). 0.
+  tol:Float) -> Float given (n|Ix, d|Ix, m|Ix)=
   ob_fun = \v. multiclass_logistic_loss xs ys v
+  w0 = zero
   res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search maxls f) tol maxiter 
   res.fval
 
@@ -194,15 +197,5 @@ def multiclass_logreg_int(
   maxiter:Int,
   maxls:Int,
   tol:Float) -> Float given (n, d) =
-  multiclass_logreg xs (for i. i32_to_n ys[i]) (i32_to_n num_classes) (i32_to_n maxiter) (i32_to_n maxls) tol
-
-N = Fin 10
-D = Fin 5
-
-def run_logreg(x:Int) -> Float =
-  xs:N=>D=>Float = for i:N. for j:D. rand (ixkey (new_key 0) (i, j))
-  ys:N=>Nat = [0, 1, 2, 0, 1, 2, 0, 1, 2, 0]
-  multiclass_logreg xs ys 3 100 15 0.001
-
-%bench "log reg"
-run_logreg 0
+  y_ind = Fin (i32_to_n num_classes)
+  multiclass_logreg xs (for i. i32_to_n ys[i] @ y_ind) (i32_to_n maxiter) (i32_to_n maxls) tol
