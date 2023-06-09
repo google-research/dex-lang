@@ -876,7 +876,7 @@ data EffectRow (r::IR) (n::S) =
 
 data EffectRowTail (r::IR) (n::S) where
   EffectRowTail :: AtomVar CoreIR n -> EffectRowTail CoreIR n
-  NoTail        ::                      EffectRowTail r n
+  NoTail        ::                     EffectRowTail r n
 deriving instance IRRep r => Show (EffectRowTail r n)
 deriving instance IRRep r => Eq   (EffectRowTail r n)
 deriving via WrapE (EffectRowTail r) n instance IRRep r => Generic (EffectRowTail r n)
