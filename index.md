@@ -33,6 +33,7 @@
 - [examples/dither.dx](examples/dither.html) Dither.dx
 - [examples/mcts.dx](examples/mcts.html) Monte Carlo Tree Search
 - [examples/md.dx](examples/md.html) Molecular Dynamics in Dex
+- [examples/bfgs.dx](examples/bfgs.html) BFGS optimizer
 - [examples/levenshtein-distance.dx](examples/levenshtein-distance.html) Levenshtein Distance
 
 ## Libraries

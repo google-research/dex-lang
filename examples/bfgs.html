@@ -1,0 +1,505 @@
+<!DOCTYPE HTML>
+<html><head><meta charset="UTF-8"><style type="text/css">/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  display: flex;
+  justify-content: space-between;
+  overflow-x: hidden;
+
+  --main-width: 50rem;
+  --nav-width: 20rem;
+}
+
+@media (max-width: 70rem) {
+    /*For narrow screens hide nav and enable horizontal scrolling */
+    nav {display: none;}
+    body {overflow-x: auto;}
+}
+
+nav {/* this actually just holds space for #navbar, which is fixed */
+  min-width: var(--nav-width);
+  max-width: var(--nav-width);
+}
+#navbar {
+  position: fixed;
+  height: 100vh;
+  width: var(--nav-width);
+  overflow-y: scroll;
+  border-right: 1px solid firebrick;
+}
+#navbar:before {
+  content: "Contents";
+  font-weight: bold;
+}
+nav ol {
+  list-style-type:none;
+  padding-left: 1rem;
+}
+
+#main-output {
+  max-width: var(--main-width);
+  margin: auto;
+}
+
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+code {
+  background-color: #F0F0F0;
+}
+
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
+.prose-block {
+  line-height: 140%;
+}
+
+.err-block {
+  font-weight: bold;
+  color: #B22222;
+  border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
+}
+
+.comment {
+  color: #808080;
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #E07000;
+}
+
+.type-name {
+  color: #A80000;
+}
+
+.iso-sugar {
+  color: #25BBA7;
+}
+</style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
+
+var katexOptions = {
+    delimiters: [
+        {left: &quot;$$&quot;, right: &quot;$$&quot;, display: true},
+        {left: &quot;\\[&quot;, right: &quot;\\]&quot;, display: true},
+        {left: &quot;$&quot;, right: &quot;$&quot;, display: false},
+        {left: &quot;\\(&quot;, right: &quot;\\)&quot;, display: false}
+    ],
+    // Enable commands that load resources or change HTML attributes
+    // (e.g. hyperlinks): https://katex.org/docs/security.html.
+    trust: true
+};
+
+var cells = {};
+
+function append_contents(key, contents) {
+    if (key in cells) {
+        var cur_cells = cells[key];
+    } else {
+        var cell = document.createElement(&quot;div&quot;);
+        cell.className = &quot;cell&quot;;
+        cells[key] = [cell];
+        var cur_cells = [cell];
+    }
+    for (var i = 0; i &lt; contents.length; i++) {
+        for (var j = 0; j &lt; cur_cells.length; j++) {
+            var node = lookup_address(cur_cells[j], contents[i][0])
+            node.innerHTML += contents[i][1];
+        }
+    }
+}
+
+function lookup_address(cell, address) {
+    var node = cell
+    for (i = 0; i &lt; address.length; i++) {
+        node = node.children[address[i]]
+    }
+    return node
+}
+
+function renderLaTeX() {
+    // Render LaTeX equations in prose blocks via KaTeX, if available.
+    // Skip rendering if KaTeX is unavailable.
+    if (typeof renderMathInElement == &#39;undefined&#39;) {
+        return;
+    }
+    // Render LaTeX equations in prose blocks via KaTeX.
+    var proseBlocks = document.querySelectorAll(&quot;.prose-block&quot;);
+    Array.from(proseBlocks).map((proseBlock) =&gt;
+        renderMathInElement(proseBlock, katexOptions)
+    );
+}
+
+/**
+ * Rendering the Table of Contents / Navigation Bar
+ * 2 key functions
+ *  - `updateNavigation()` which inserts/updates the navigation bar
+ *  - and it&#39;s helper `extractStructure()` which extracts the structure of the page
+ *    and adds ids to heading elements.
+*/
+function updateNavigation() {
+    function navItemList(struct) {
+        var listEle = document.createElement(&#39;ol&#39;)
+        struct.children.forEach(childStruct=&gt;
+            listEle.appendChild(navItem(childStruct))
+        );
+        return listEle;
+    }
+    function navItem(struct) {
+        var a = document.createElement(&#39;a&#39;);
+        a.appendChild(document.createTextNode(struct.text));
+        a.title = struct.text;
+        a.href = &quot;#&quot;+struct.id;
+
+        var ele = document.createElement(&#39;li&#39;)
+        ele.appendChild(a)
+        ele.appendChild(navItemList(struct));
+        return ele;
+    }
+
+    var navbarEle = document.getElementById(&quot;navbar&quot;)
+    if (navbarEle === null) {  // create it
+        navbarEle = document.createElement(&quot;div&quot;);
+        navbarEle.id=&quot;navbar&quot;;
+        navOuterEle = document.createElement(&quot;nav&quot;)
+        navOuterEle.appendChild(navbarEle);
+        document.body.prepend(navOuterEle);
+    }
+
+    navbarEle.innerHTML = &quot;&quot;
+    var structure = extractStructure()
+    navbarEle.appendChild(navItemList(structure));
+}
+
+function extractStructure() { // Also sets ids on h1,h2,...
+    var headingsNodes = document.querySelectorAll(&quot;h1, h2, h3, h4, h5, h6&quot;);
+    // For now we are just fulling going to regenerate the structure each time
+    // Might be better if we made minimal changes, but 🤷
+
+    // Extract the structure of the document
+    var structure = {children:[]}
+    var active = [structure.children];
+    headingsNodes.forEach(
+        function(currentValue, currentIndex) {
+            currentValue.id = &quot;s-&quot; + currentIndex;
+            var currentLevel = parseInt(currentValue.nodeName[1]);
+
+            // Insert dummy levels up for any levels that are skipped
+            for (var i=active.length; i &lt; currentLevel; i++) {
+                var dummy = {id: &quot;&quot;, text: &quot;&quot;, children: []}
+                active.push(dummy.children);
+                var parentList = active[i-1]
+                parentList.push(dummy);
+            }
+            // delete this level and everything after
+            active.splice(currentLevel, active.length);
+
+            var currentStructure = {
+                id: currentValue.id,
+                text: currentValue.textContent,
+                children: [],
+            };
+            active.push(currentStructure.children);
+
+            var parentList = active[active.length-2]
+            parentList.push(currentStructure);
+        },
+    );
+    return structure;
+}
+
+/**
+ * HTML rendering mode.
+ * Static rendering is used for static HTML pages.
+ * Dynamic rendering is used for dynamic HTML pages via `dex web`.
+ *
+ * @enum {string}
+ */
+var RENDER_MODE = Object.freeze({
+  STATIC: &quot;static&quot;,
+  DYNAMIC: &quot;dynamic&quot;,
+})
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX();
+        updateNavigation();
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource(&quot;/getnext&quot;);
+        source.onmessage = function(event) {
+            var body = document.getElementById(&quot;main-output&quot;);
+            var msg = JSON.parse(event.data);
+            if (msg == &quot;start&quot;) {
+                body.innerHTML = &quot;&quot;;
+                cells = {}
+                return
+            }
+            var order    = msg[0];
+            var contents = msg[1];
+            for (var i = 0; i &lt; contents.length; i++) {
+                append_contents(contents[i][0], contents[i][1]);
+            }
+            if (order != null) {
+                var new_cells = {};
+                body.innerHTML = &quot;&quot;;
+                for (var i = 0; i &lt; order.val.length; i++) {
+                    var key = order.val[i]
+                    var cur_cells = cells[key]
+                    if (cur_cells.length == 0) {
+                        var cur_cell = new_cells[key][0].cloneNode(true)
+                    } else {
+                        var cur_cell = cur_cells.pop()
+                        if (key in new_cells) {
+                            new_cells[key].push(cur_cell);
+                        } else {
+                            new_cells[key] = [cur_cell];
+                        }
+                    }
+                    body.appendChild(cur_cell);
+                }
+                Object.assign(cells, new_cells);
+            }
+            renderLaTeX();
+            updateNavigation();
+        };
+    }
+}
+render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div class="cell"><div class="code-block"></div></div><div class="cell"><div class="prose-block"><h1>BFGS optimizer</h1>
+<p>The BFGS method is a quasi-Newton algorithm for solving unconstrained nonlinear
+optimization problems. A BFGS iteration entails computing a line search
+direction based on the gradient and Hessian approximation, finding a new point
+in the line search direction that satisfies the Wolfe conditions, and updating
+the Hessian approximation at the new point. This implementation is based on
+BFGS as described in Nocedal, Jorge; Wright, Stephen J. (2006), Numerical
+Optimization (2nd ed).</p>
+</div></div><div class="cell"><div class="prose-block"><p>This example demonstrates Dex's ability to do fast, stateful loops with a
+statically unknown number of iterations. See <code>benchmarks/bfgs.py</code> for a
+comparison with Jaxopt BFGS on a multiclass logistic regression problem.</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> outer_product(x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> (n<span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="command">:m</span><span class="symbol">.</span> x[i]<span class="symbol">*</span> y[j]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> zoom(
+  f_line<span class="symbol">:</span> (<span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>
+  a_lo_init<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span> 
+  a_hi_init<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span>
+  c1<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">,</span>
+  c2<span class="symbol">:</span><span class="type-name">Float</span>
+) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="comment">-- Zoom line search helper; Algorithm 3.6 from Nocedal and Wright (2006).
+</span>
+  f0 <span class="symbol">=</span> f_line 0<span class="symbol">.</span>
+  g0 <span class="symbol">=</span> grad f_line 0<span class="symbol">.</span>
+
+  a_hi_ref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state a_hi_init
+  a_lo_ref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state a_lo_init
+  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    a_lo <span class="symbol">=</span> get a_lo_ref
+    a_hi <span class="symbol">=</span> get a_hi_ref
+
+    <span class="symbol">--</span><span class="type-name">Find</span> a trial step length between a_lo and a_hi<span class="symbol">.</span>
+    a_i <span class="symbol">=</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> (a_lo <span class="symbol">+</span> a_hi)
+
+    <span class="keyword">if</span> (a_hi <span class="symbol">-</span> a_lo) <span class="symbol">&lt;</span> 0<span class="symbol">.</span>000001  <span class="comment">-- The line search failed.
+</span>      <span class="keyword">then</span> <span class="type-name">Done</span> a_i
+      <span class="keyword">else</span>
+        f_ai <span class="symbol">=</span> f_line a_i
+        <span class="keyword">if</span> f_ai <span class="symbol">&gt;</span> (f0 <span class="symbol">+</span> c1 <span class="symbol">*</span> a_i <span class="symbol">*</span> g0) <span class="symbol">||</span> f_ai <span class="symbol">&gt;=</span> f_line a_lo
+          <span class="keyword">then</span> 
+            a_hi_ref <span class="symbol">:=</span> a_i
+            <span class="type-name">Continue</span>
+          <span class="keyword">else</span>
+            g_i <span class="symbol">=</span> grad f_line a_i
+            <span class="keyword">if</span> abs g_i <span class="symbol">&lt;=</span> (<span class="symbol">-</span>c2 <span class="symbol">*</span> g0)
+              <span class="keyword">then</span> <span class="type-name">Done</span> a_i
+              <span class="keyword">else</span>
+                <span class="keyword">if</span> g_i <span class="symbol">*</span> (a_hi <span class="symbol">-</span> a_lo) <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>
+                  <span class="keyword">then</span> a_hi_ref <span class="symbol">:=</span> a_lo
+                a_lo_ref <span class="symbol">:=</span> a_i
+                <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> zoom_line_search(
+  maxiter<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span>
+  f<span class="symbol">:</span> (<span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span>
+  ) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="symbol">--</span><span class="type-name">Algorithm</span> 3<span class="symbol">.</span>5 from <span class="type-name">Nocedal</span> and <span class="type-name">Wright</span> (2006)<span class="symbol">.</span>
+  c1 <span class="symbol">=</span> 0<span class="symbol">.</span>0001
+  c2 <span class="symbol">=</span> 0<span class="symbol">.</span>9
+  a_max <span class="symbol">=</span> 1<span class="symbol">.</span>
+
+  f_0 <span class="symbol">=</span> f 0<span class="symbol">.</span>
+  g_0 <span class="symbol">=</span> grad f 0<span class="symbol">.</span>
+
+  a_ref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state 0<span class="symbol">.</span>5
+  a_ref_last <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state 0<span class="symbol">.</span>
+
+  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    a_i <span class="symbol">=</span> get a_ref
+    a_last <span class="symbol">=</span> get a_ref_last
+    f_i <span class="symbol">=</span> f a_i
+    <span class="keyword">if</span> i <span class="symbol">&gt;=</span> maxiter <span class="symbol">||</span> f_i <span class="symbol">&gt;</span> (f_0 <span class="symbol">+</span> c1 <span class="symbol">*</span> a_i <span class="symbol">*</span> g_0) <span class="symbol">||</span> (f_i <span class="symbol">&gt;=</span> f a_last <span class="symbol">&amp;&amp;</span> i <span class="symbol">&gt;</span> 0)
+      <span class="keyword">then</span> <span class="type-name">Done</span> (zoom f a_last a_i c1 c2)
+      <span class="keyword">else</span>
+        g_i <span class="symbol">=</span> grad f a_i
+        <span class="keyword">if</span> abs g_i <span class="symbol">&lt;=</span> (<span class="symbol">-</span>c2 <span class="symbol">*</span> g_0)
+          <span class="keyword">then</span> <span class="type-name">Done</span> a_i
+          <span class="keyword">else</span>
+            <span class="keyword">if</span> g_i <span class="symbol">&gt;=</span> 0<span class="symbol">.</span>
+              <span class="keyword">then</span> <span class="type-name">Done</span> (zoom f a_i a_last c1 c2)
+              <span class="keyword">else</span> 
+                a_ref_last <span class="symbol">:=</span> a_i
+                a_ref <span class="symbol">:=</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> (a_i <span class="symbol">+</span> a_max)
+                <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> backtracking_line_search(
+  maxiter<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span>
+  f<span class="symbol">:</span> (<span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span>
+  ) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="comment">-- Algorithm 3.1 in Nocedal and Wright (2006).
+</span>  a_init <span class="symbol">=</span> 1<span class="symbol">.</span> 
+  f_0 <span class="symbol">=</span> f 0<span class="symbol">.</span>
+  g_0 <span class="symbol">=</span> grad f 0<span class="symbol">.</span>
+  rho <span class="symbol">=</span> 0<span class="symbol">.</span>5
+  c <span class="symbol">=</span> 0<span class="symbol">.</span>0001
+
+  a_ref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state a_init
+  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    a_i <span class="symbol">=</span> get a_ref
+    <span class="keyword">if</span> f a_i <span class="symbol">&lt;=</span> (f_0 <span class="symbol">+</span> c <span class="symbol">*</span> a_i <span class="symbol">*</span> g_0) <span class="symbol">||</span> i <span class="symbol">&gt;=</span> maxiter
+      <span class="keyword">then</span> <span class="type-name">Done</span> a_i
+      <span class="keyword">else</span>
+        a_ref <span class="symbol">:=</span> a_i <span class="symbol">*</span> rho
+        <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">struct</span> <span class="type-name">BFGSresults</span>(n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span> 
+  fval <span class="symbol">:</span> <span class="type-name">Float</span>
+  x_opt<span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)
+  error<span class="symbol">:</span> <span class="type-name">Float</span> 
+  num_iter<span class="symbol">:</span> <span class="type-name">Nat</span>
+</div></div><div class="cell"><div class="code-block">  
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> bfgs_minimize(
+  f<span class="symbol">:</span> (n<span class="symbol">=&gt;</span><span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>                 <span class="symbol">--</span><span class="type-name">Objective</span> function<span class="symbol">.</span>
+  x0<span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>                       <span class="symbol">--</span><span class="type-name">Initial</span> point<span class="symbol">.</span>
+  <span class="type-name">H0</span><span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>                    <span class="symbol">--</span><span class="type-name">Initial</span> inverse <span class="type-name">Hessian</span> approximation<span class="symbol">.</span>
+  linesearch<span class="symbol">:</span> ((<span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span>)<span class="symbol">-&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>  <span class="symbol">--</span><span class="type-name">Line</span> search that returns a step size<span class="symbol">.</span>
+  tol<span class="symbol">:</span> <span class="type-name">Float</span><span class="symbol">,</span>                         <span class="symbol">--</span><span class="type-name">Convergence</span> tolerance (<span class="keyword">of</span> the gradient <span class="type-name">L2</span> norm)<span class="symbol">.</span>
+  maxiter<span class="symbol">:</span> <span class="type-name">Nat</span>                        <span class="symbol">--</span><span class="type-name">Maximum</span> number <span class="keyword">of</span> <span class="type-name">BFGS</span> iterations<span class="symbol">.</span>
+  ) <span class="symbol">-&gt;</span> <span class="type-name">BFGSresults</span> n <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>             
+  <span class="comment">-- Algorithm 6.1 in Nocedal and Wright (2006).
+</span>
+  xref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state x0 
+  <span class="type-name">Href</span> <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state <span class="type-name">H0</span>
+  gref <span class="symbol">&lt;-</span> <span class="keyword">with</span>_state (grad f x0)
+
+  iter <span class="symbol">\</span>i<span class="symbol">.</span>
+    x <span class="symbol">=</span> get xref
+    g <span class="symbol">=</span> get gref
+    grad_norm <span class="symbol">=</span> sqrt <span class="symbol">$</span> sum <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">.</span> g[i] <span class="symbol">*</span> g[i]
+
+    <span class="keyword">if</span> grad_norm <span class="symbol">&lt;</span> tol <span class="symbol">||</span> i <span class="symbol">&gt;=</span> maxiter
+      <span class="keyword">then</span> <span class="type-name">Done</span> <span class="type-name">BFGSresults</span>(f x<span class="symbol">,</span> x<span class="symbol">,</span> grad_norm<span class="symbol">,</span> i)
+      <span class="keyword">else</span>
+        <span class="type-name">H</span> <span class="symbol">=</span> get <span class="type-name">Href</span>
+        search_direction <span class="symbol">=</span> <span class="symbol">-</span><span class="type-name">H</span><span class="symbol">**.</span>g
+        f_line <span class="symbol">=</span> <span class="symbol">\</span>s<span class="symbol">:</span><span class="type-name">Float</span><span class="symbol">.</span> f (x <span class="symbol">+</span> s <span class="symbol">.*</span> search_direction)
+        step_size <span class="symbol">=</span> linesearch f_line 
+        x_diff <span class="symbol">=</span> step_size <span class="symbol">.*</span> search_direction
+        x_next <span class="symbol">=</span> x <span class="symbol">+</span> x_diff
+        g_next <span class="symbol">=</span> grad f x_next
+        grad_diff <span class="symbol">=</span> g_next <span class="symbol">-</span> g
+
+        <span class="comment">-- Update the inverse Hessian approximation.
+</span>        rho_inv <span class="symbol">=</span> vdot grad_diff x_diff
+        <span class="keyword">if</span> not (rho_inv <span class="symbol">==</span> 0<span class="symbol">.</span>)
+            <span class="keyword">then</span>
+                rho <span class="symbol">=</span> 1<span class="symbol">.</span> <span class="symbol">/</span> rho_inv
+                y <span class="symbol">=</span> (eye <span class="symbol">-</span> rho <span class="symbol">.*</span> outer_product x_diff grad_diff)
+                <span class="type-name">Href</span> <span class="symbol">:=</span> y <span class="symbol">**</span> <span class="type-name">H</span> <span class="symbol">**</span> (transpose y) <span class="symbol">+</span> rho <span class="symbol">.*</span> outer_product x_diff x_diff
+        
+        xref <span class="symbol">:=</span> x_next
+        gref <span class="symbol">:=</span> g_next
+        <span class="type-name">Continue</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rosenbrock(coord<span class="symbol">:</span>(<span class="type-name">Fin</span> 2)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="symbol">=</span>
+  <span class="symbol">--</span><span class="type-name">A</span> standard optimization test <span class="keyword">case</span>; the optimum is (1<span class="symbol">,</span> 1)<span class="symbol">.</span>
+  x <span class="symbol">=</span> coord[0<span class="symbol">@</span>_]
+  y <span class="symbol">=</span> coord[1<span class="symbol">@</span>_]
+  pow (1 <span class="symbol">-</span> x) 2 <span class="symbol">+</span> 100 <span class="symbol">*</span> pow (y <span class="symbol">-</span> x <span class="symbol">*</span> x) 2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">%bench &quot;rosenbrock&quot;
+bfgs_minimize rosenbrock [10<span class="symbol">.,</span> 10<span class="symbol">.</span>] eye (<span class="symbol">\</span>f<span class="symbol">.</span> backtracking_line_search 15 f) 0<span class="symbol">.</span>001 100
+</div><div class="result-block">BFGSresults(1.741236e-11, [0.9999971, 0.9999939], 0.0001280856, 46)</div><div class="result-block">
+rosenbrock
+Compile time: 916.356 ms
+Run time:     12.651 us 	(based on 78741 runs)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multiclass_logistic_loss(xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span> ys<span class="symbol">:</span> n<span class="symbol">=&gt;</span>m<span class="symbol">,</span> w<span class="symbol">:</span> (d<span class="symbol">,</span> m)<span class="symbol">=&gt;</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>) <span class="symbol">=</span>
+  w_arr <span class="symbol">=</span> <span class="keyword">for</span> i<span class="command">:d</span><span class="symbol">.</span> <span class="keyword">for</span> j<span class="command">:m</span><span class="symbol">.</span> w[(i<span class="symbol">,</span> j)]
+  logits <span class="symbol">=</span> xs <span class="symbol">**</span> w_arr
+  logit_at_label <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> logits[i<span class="symbol">,</span> ys[i]]
+  per_example_loss <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> logsumexp logits[i] <span class="symbol">-</span> logit_at_label[i]
+  mean(per_example_loss)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multiclass_logreg(
+  xs<span class="command">:n</span><span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>
+  ys<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">,</span>
+  maxiter<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span>
+  maxls<span class="symbol">:</span><span class="type-name">Nat</span><span class="symbol">,</span>
+  tol<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> d<span class="symbol">|</span><span class="type-name">Ix</span><span class="symbol">,</span> m<span class="symbol">|</span><span class="type-name">Ix</span>)<span class="symbol">=</span>
+  ob_fun <span class="symbol">=</span> <span class="symbol">\</span>v<span class="symbol">.</span> multiclass_logistic_loss xs ys v
+  w0 <span class="symbol">=</span> zero
+  res <span class="symbol">=</span> bfgs_minimize ob_fun w0 eye (<span class="symbol">\</span>f<span class="symbol">.</span> zoom_line_search maxls f) tol maxiter 
+  res<span class="symbol">.</span>fval
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Define a version of `multiclass_logreg` with Int instead of Nat labels, callable from Python 
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- (see benchmarks/bfgs.py).
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> multiclass_logreg_int(
+  xs<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span>(<span class="type-name">Fin</span> d)<span class="symbol">=&gt;</span><span class="type-name">Float</span><span class="symbol">,</span>
+  ys<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">=&gt;</span><span class="type-name">Int</span><span class="symbol">,</span>
+  num_classes<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span>
+  maxiter<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span>
+  maxls<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">,</span>
+  tol<span class="symbol">:</span><span class="type-name">Float</span>) <span class="symbol">-&gt;</span> <span class="type-name">Float</span> <span class="keyword">given</span> (n<span class="symbol">,</span> d) <span class="symbol">=</span>
+  y_ind <span class="symbol">=</span> <span class="type-name">Fin</span> (i32_to_n num_classes)
+  multiclass_logreg xs (<span class="keyword">for</span> i<span class="symbol">.</span> i32_to_n ys[i] <span class="symbol">@</span> y_ind) (i32_to_n maxiter) (i32_to_n maxls) tol
+</div></div></div></body></html>
