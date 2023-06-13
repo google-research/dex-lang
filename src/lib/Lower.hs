@@ -395,7 +395,8 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
          (StateT1 (LiftE Errs) (BuilderT SimpIR FallibleM))) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (LiftE Word32 o)
            , MonadState (LiftE Errs o), Fallible, ScopeReader, EnvReader
-           , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable )
+           , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
+           , SubstReader Name)
 
 vectorizeLoopsBlock :: (EnvReader m)
   => Word32 -> DestBlock n
@@ -403,8 +404,7 @@ vectorizeLoopsBlock :: (EnvReader m)
 vectorizeLoopsBlock vectorByteWidth (Abs destb body) = liftEnvReaderM do
   refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
     (block', errs) <- liftTopVectorizeM vectorByteWidth $ buildBlock do
-      s <- vectorizeLoopsRec emptyInFrag decls
-      applyRename s ans
+      vectorizeLoopsDecls decls $ renameM ans
     return $ (Abs d block', errs)
 {-# SCC vectorizeLoopsBlock #-}
 
@@ -416,12 +416,12 @@ liftTopVectorizeM vectorByteWidth action = do
       runSubstReaderT idSubst $ runTopVectorizeM action
   case runFallibleM fallible of
     -- The failure case should not occur: vectorization errors should have been
-    -- caught inside `vectorizeLoopsRec` (and should have been added to the
+    -- caught inside `vectorizeLoopsDecls` (and should have been added to the
     -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
     Failure errs -> error $ pprint errs
     Success (a, (LiftE errs)) -> return $ (a, errs)
 
-vectorizeLoops  :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
+vectorizeLoops :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
 vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
   case popNest bsDestB of
     Just (PairB bs b) ->
@@ -442,15 +442,14 @@ prependCtxToErrs :: ErrCtx -> Errs -> Errs
 prependCtxToErrs ctx (Errs errs) =
   Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx <> ctx') msg) errs
 
-vectorizeLoopsRec :: (Ext i o, Emits o)
-                  => SubstFrag Name i i' o -> Nest SDecl i' i''
-                  -> TopVectorizeM i o (SubstFrag Name i i'' o)
-vectorizeLoopsRec frag nest =
+vectorizeLoopsDecls :: (Emits o)
+  => Nest SDecl i i' -> TopVectorizeM i' o a -> TopVectorizeM i o a
+vectorizeLoopsDecls nest cont =
   case nest of
-    Empty -> return frag
+    Empty -> cont
     Nest (Let b (DeclBinding ann expr)) rest -> do
       LiftE vectorByteWidth <- ask
-      expr' <- applyRename frag expr
+      expr' <- renameM expr
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
       v <- case expr of
@@ -458,21 +457,22 @@ vectorizeLoopsRec frag nest =
           | n `mod` loopWidth == 0 -> (do
               Distinct <- getDistinct
               let vn = n `div` loopWidth
-              body' <- vectorizeSeq loopWidth frag body
-              dest' <- applyRename frag dest
+              body' <- vectorizeSeq loopWidth body
+              dest' <- renameM dest
               seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
               emit $ PrimOp $ DAMOp seqOp)
             `catchErr` \errs -> do
-                let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
+                let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
                     errs' = prependCtxToErrs ctx errs
                 modify (<> LiftE errs')
-                dest' <- applyRename frag dest
-                body' <- applyRename frag body
+                dest' <- renameM dest
+                body' <- renameM body
                 seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
                 emit $ PrimOp $ DAMOp seqOp
-        _ -> emitDecl (getNameHint b) ann =<< applyRename frag expr
-      vectorizeLoopsRec (frag <.> b @> atomVarName v) rest
+        _ -> emitDecl (getNameHint b) ann =<< renameM expr
+      extendSubst (b @> atomVarName v) $
+        vectorizeLoopsDecls rest cont
 
 -- Vectorizing a loop with an effect is safe when the operation reordering
 -- produced by vectorization doesn't change the semantics.  This is guaranteed
@@ -496,35 +496,25 @@ vectorSafeEffect (EffectRow effs NoTail) = all safe $ eSetToList effs where
   safe (RWSEffect Reader _) = True
   safe _ = False
 
-vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
-             => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
-             -> TopVectorizeM i o (LamExpr SimpIR o)
-vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
+vectorizeSeq :: Word32 -> LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
+vectorizeSeq loopWidth (UnaryLamExpr (b:>ty) body) = do
   if vectorSafeEffect (getEffects body)
     then do
       (_, ty') <- case ty of
         ProdTy [ixTy, ref] -> do
-          ixTy' <- applyRename frag ixTy
-          ref' <- applyRename frag ref
+          ixTy' <- renameM ixTy
+          ref' <- renameM ref
           return (ixTy', ProdTy [IdxRepTy, ref'])
         _ -> error "Unexpected seq binder type"
-      result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
-        buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
+      liftVectorizeM loopWidth $
+        buildUnaryLamExpr (getNameHint b) ty' \ci -> do
           -- XXX: we're assuming `Fin n` here
           (viOrd, dest) <- fromPair $ Var ci
           iOrd <- imul viOrd $ IdxRepVal loopWidth
-          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)
-          runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
-      case runReaderT (fromFallibleM result) mempty of
-        Success s -> return s
-        Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
+          extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)) $
+            vectorizeBlock body $> UnitVal
     else throwVectErr "Effectful loop vectorization not implemented!"
-  where
-    iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
-    iSubst v = case lookupSubstFragProjected frag v of
-      Left v'  -> sink $ VRename v'
-      Right v' -> sink $ VRename v'
-vectorizeSeq _ _ _ = error "expected a unary lambda expression"
+vectorizeSeq _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
@@ -532,6 +522,18 @@ newtype VectorizeM i o a =
   deriving ( Functor, Applicative, Monad, Fallible, MonadFail
            , SubstReader VSubstValC , Builder SimpIR, EnvReader, EnvExtender
            , ScopeReader, ScopableBuilder SimpIR)
+
+liftVectorizeM :: (SubstReader Name m, EnvReader (m i), Fallible (m i o))
+  => Word32 -> VectorizeM i o a -> m i o a
+liftVectorizeM loopWidth action = do
+  subst <- getSubst
+  act <- liftBuilderT $ runSubstReaderT (newSubst $ vSubst subst) $ runVectorizeM action
+  let fallible = flip runReaderT loopWidth act
+  case runFallibleM fallible of
+    Success a -> return a
+    Failure errs -> throwErrs errs  -- re-raise inside ambient monad
+  where
+    vSubst subst val = VRename $ subst ! val
 
 getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
