@@ -15,11 +15,10 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
-import QueryType
+import QueryTypePure
 import Util (enumerate)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
@@ -78,50 +77,49 @@ showAnyRec atom = case getType atom of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
     void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
-  NewtypeTyCon tc -> case tc of
-    Fin _ -> rec =<< unwrapNewtype atom
-    Nat -> do
-      n <- unwrapNewtype atom
-      -- Cast to Int so that it prints in decimal instead of hex
-      let intTy = TC (BaseType (Scalar Int64Type))
-      emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
-    EffectRowKind    -> printAsConstant
-    -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
-      emitCharLit '"'
-      emitCharTab charTab
-      emitCharLit '"'
-    UserADTType tySourceName defName params -> do
-      def <- lookupTyCon defName
-      conDefs <- instantiateTyConDef def params
-      case conDefs of
-        ADTCons [con] -> showDataCon con =<< unwrapNewtype atom
-        ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
-          showDataCon (sink $ cons !! i) arg
-          return UnitVal
-        StructFields fields -> do
-          emitLit tySourceName
-          parens do
-            sepBy ", " $ (enumerate fields) <&> \(i, _) ->
-              rec =<< projectStruct i atom
-      where
-        showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
-        showDataCon (DataConDef sn _ _ projss) arg = do
-          case projss of
-            [] -> emitLit sn
-            _ -> parens do
-              emitLit (sn ++ " ")
-              sepBy " " $ projss <&> \projs ->
-                -- we use `init` to strip off the `UnwrapCompoundNewtype` since
-                -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+  -- NewtypeTyCon tc -> case tc of
+  --   Fin _ -> rec =<< unwrapNewtype atom
+  --   Nat -> do
+  --     n <- unwrapNewtype atom
+  --     -- Cast to Int so that it prints in decimal instead of hex
+  --     let intTy = TC (BaseType (Scalar Int64Type))
+  --     emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
+  --   EffectRowKind    -> printAsConstant
+  --   -- hack to print strings nicely. TODO: make `Char` a newtype
+  --   UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
+  --     charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+  --     emitCharLit '"'
+  --     emitCharTab charTab
+  --     emitCharLit '"'
+  --   UserADTType tySourceName defName params -> do
+  --     def <- lookupTyCon defName
+  --     conDefs <- instantiateTyConDef def params
+  --     case conDefs of
+  --       ADTCons [con] -> showDataCon con =<< unwrapNewtype atom
+  --       ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
+  --         showDataCon (sink $ cons !! i) arg
+  --         return UnitVal
+  --       StructFields fields -> do
+  --         emitLit tySourceName
+  --         parens do
+  --           sepBy ", " $ (enumerate fields) <&> \(i, _) ->
+  --             rec =<< projectStruct i atom
+  --     where
+  --       showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
+  --       showDataCon (DataConDef sn _ _ projss) arg = do
+  --         case projss of
+  --           [] -> emitLit sn
+  --           _ -> parens do
+  --             emitLit (sn ++ " ")
+  --             sepBy " " $ projss <&> \projs ->
+  --               -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+  --               -- we're already under the case alternative
+  --               rec =<< normalizeNaryProj (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
@@ -161,19 +159,20 @@ withBuffer
   :: Emits n
   => (forall l . (Emits l, DExt n l) => CAtom l -> BuilderM CoreIR l ())
   -> BuilderM CoreIR n (CAtom n)
-withBuffer cont = do
-  lam <- withFreshBinder "h" (TC HeapType) \h -> do
-    bufTy <- bufferTy (Var $ binderVar h)
-    withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
-      body <- buildBlock do
-        cont $ sink $ Var $ binderVar b
-        return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
-      let piTy = CorePiType ExplicitApp piBinders $ EffTy eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
-      return $ Lam $ CoreLamExpr piTy lam
-  applyPreludeFunction "with_stack_internal" [lam]
+withBuffer cont = undefined
+-- withBuffer cont = do
+--   lam <- withFreshBinder "h" (TC HeapType) \h -> do
+--     bufTy <- bufferTy (Var $ binderVar h)
+--     withFreshBinder "buf" bufTy \b -> do
+--       let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
+--       body <- buildBlock do
+--         cont $ sink $ Var $ binderVar b
+--         return UnitVal
+--       let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
+--       let piTy = CorePiType ExplicitApp piBinders $ EffTy eff UnitTy
+--       let lam = LamExpr (BinaryNest h b) body
+--       return $ Lam $ CoreLamExpr piTy lam
+--   applyPreludeFunction "with_stack_internal" [lam]
 
 bufferTy :: EnvReader m => CAtom n -> m n (CType n)
 bufferTy h = do
@@ -182,11 +181,12 @@ bufferTy h = do
 
 -- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
-extendBuffer buf tab = do
-  RefTy h _ <- return $ getType buf
-  TabTy d (_:>t) _ <- return $ getType tab
-  n <- applyIxMethodCore Size (IxType t d) []
-  void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
+extendBuffer buf tab = undefined
+-- extendBuffer buf tab = do
+--   RefTy h _ <- return $ getType buf
+--   TabTy d (_:>t) _ <- return $ getType tab
+--   n <- applyIxMethodCore Size (IxType t d) []
+--   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
 pushBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
@@ -199,19 +199,20 @@ stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
-finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
+finTabTyCore :: (CBuilder m, Emits n) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = do
   d <- mkDictAtom $ IxFin n
   return $ IxType (FinTy n) (IxDictAtom d) ==> eltTy
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
-getPreludeFunction sourceName = do
-  lookupSourceMap sourceName >>= \case
-    Just uvar -> case uvar of
-      UAtomVar v -> Var <$> toAtomVar v
-      _ -> notfound
-    Nothing -> notfound
- where notfound = error $ "Function not defined: " ++ sourceName
+getPreludeFunction sourceName = undefined
+-- getPreludeFunction sourceName = do
+--   lookupSourceMap sourceName >>= \case
+--     Just uvar -> case uvar of
+--       UAtomVar v -> Var <$> toAtomVar v
+--       _ -> notfound
+--     Nothing -> notfound
+--  where notfound = error $ "Function not defined: " ++ sourceName
 
 applyPreludeFunction :: (Emits n, CBuilder m) => String -> [CAtom n] -> m n (CAtom n)
 applyPreludeFunction name args = do
@@ -235,11 +236,12 @@ forEachTabElt
   => CAtom n
   -> (forall l. (Emits l, DExt n l) => CAtom l -> CAtom l -> m l ())
   -> m n ()
-forEachTabElt tab cont = do
-  TabTy d (_:>t) _ <- return $ getType tab
-  let ixTy = IxType t d
-  void $ buildFor "i" Fwd ixTy \i -> do
-    x <- tabApp (sink tab) (Var i)
-    i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]
-    cont i' x
-    return $ UnitVal
+forEachTabElt tab cont = undefined
+-- forEachTabElt tab cont = do
+--   TabTy d (_:>t) _ <- return $ getType tab
+--   let ixTy = IxType t d
+--   void $ buildFor "i" Fwd ixTy \i -> do
+--     x <- tabApp (sink tab) (Var i)
+--     i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]
+--     cont i' x
+--     return $ UnitVal

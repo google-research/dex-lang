@@ -8,7 +8,7 @@
 
 module Lower
   ( lowerFullySequential, lowerFullySequentialNoDest
-  , vectorizeLoops, DestLamExpr, DestBlock
+  , vectorizeLoops, DestLamExpr, DestBlock, isSingletonType, singletonTypeVal
   ) where
 
 import Prelude hiding (abs, id, (.))
@@ -26,16 +26,17 @@ import Builder
 import Core
 import Err
 import Imp
-import CheapReduction
 import IRVariants
 import MTL1
 import Name
 import Subst
 import PPrint
-import QueryType
+import QueryTypePure
 import Types.Core
+import Types.Imp
 import Types.Primitives
 import Util (enumerate, foldMapM)
+import Visit
 
 -- === For loop resolution ===
 
@@ -76,13 +77,14 @@ lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
     return $ LamExpr (bs' >>> UnaryNest b) body''
 
 lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock n)
-lowerFullySequentialBlock b = liftAtomSubstBuilder do
-  resultDestTy <- RawRefTy <$> substM (getType b)
-  withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
-    Abs destBinder <$> buildBlock do
-      let dest = Var $ sink $ binderVar destBinder
-      lowerBlockWithDest dest b $> UnitVal
-{-# SCC lowerFullySequentialBlock #-}
+lowerFullySequentialBlock b = undefined
+-- lowerFullySequentialBlock b = liftAtomSubstBuilder do
+--   resultDestTy <- RawRefTy <$> substM (getType b)
+--   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
+--     Abs destBinder <$> buildBlock do
+--       dest <- Var <$> binderVar destBinder
+--       lowerBlockWithDest dest b $> UnitVal
+-- {-# SCC lowerFullySequentialBlock #-}
 
 lowerFullySequentialNoDest :: EnvReader m => SLam n -> m n (SLam n)
 lowerFullySequentialNoDest (LamExpr bs body) = liftEnvReaderM $ do
@@ -129,77 +131,80 @@ lowerFor
   :: Emits o
   => SType o -> Maybe (Dest SimpIR o) -> ForAnn -> IxType SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
-lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
-  ixTy' <- substM ixTy
-  ty' <- substM ty
-  case isSingletonType ansTy of
-    True -> do
-      body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
-        (i, _) <- fromPair $ Var b'
-        extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
-      void $ emitSeq dir ixTy' UnitVal body'
-      Atom . fromJust <$> singletonTypeVal ansTy
-    False -> do
-      initDest <- ProdVal . (:[]) <$> case maybeDest of
-        Just  d -> return d
-        Nothing -> emitOp $ DAMOp $ AllocDest ansTy
-      let destTy = getType initDest
-      body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
-        (i, destProd) <- fromPair $ Var b'
-        dest <- normalizeProj (ProjectProduct 0) destProd
-        idest <- emitOp =<< mkIndexRef dest i
-        extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
-      return $ PrimOp $ DAMOp $ Freeze ans
-lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
+lowerFor = undefined
+-- lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
+--   ixTy' <- substM ixTy
+--   ty' <- substM ty
+--   case isSingletonType ansTy of
+--     True -> do
+--       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
+--         (i, _) <- fromPair $ Var b'
+--         extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
+--       void $ emitSeq dir ixTy' UnitVal body'
+--       Atom . fromJust <$> singletonTypeVal ansTy
+--     False -> do
+--       initDest <- ProdVal . (:[]) <$> case maybeDest of
+--         Just  d -> return d
+--         Nothing -> emitOp $ DAMOp $ AllocDest ansTy
+--       let destTy = getType initDest
+--       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
+--         (i, destProd) <- fromPair $ Var b'
+--         dest <- normalizeProj (ProjectProduct 0) destProd
+--         idest <- emitOp =<< mkIndexRef dest i
+--         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
+--       ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
+--       return $ PrimOp $ DAMOp $ Freeze ans
+-- lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
-lowerTabCon maybeDest tabTy elems = do
-  tabTy'@(TabPi (TabPiType dict (_:>t) _)) <- substM tabTy
-  dest <- case maybeDest of
-    Just  d -> return d
-    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
-  Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
-    buildBlock $ unsafeFromOrdinal (sink $ IxType t dict) $ Var $ sink ord
-  -- This is emitting a chain of RememberDest ops to force `dest` to be used
-  -- linearly, and to force reads of the `Freeze dest'` result not to be
-  -- reordered in front of the writes.
-  -- TODO: We technically don't need to sequentialize the writes, since the
-  -- slices are all independent of each other.  Do we need a new `JoinDests`
-  -- operation to represent that pattern?
-  let go incoming_dest [] = return incoming_dest
-      go incoming_dest ((ord, e):rest) = do
-        i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
-          lowerBlock ufoBlock
-        carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
-          idest <- indexRef (Var local_dest) (sink i)
-          place (FullDest idest) =<< visitAtom e
-          return UnitVal
-        go carried_dest rest
-  dest' <- go dest (enumerate elems)
-  return $ PrimOp $ DAMOp $ Freeze dest'
+lowerTabCon maybeDest tabTy elems = undefined
+-- lowerTabCon maybeDest tabTy elems = do
+--   tabTy'@(TabPi (TabPiType dict (_:>t) _)) <- substM tabTy
+--   dest <- case maybeDest of
+--     Just  d -> return d
+--     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
+--   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
+--     buildBlock $ unsafeFromOrdinal (sink $ IxType t dict) $ Var $ sink ord
+--   -- This is emitting a chain of RememberDest ops to force `dest` to be used
+--   -- linearly, and to force reads of the `Freeze dest'` result not to be
+--   -- reordered in front of the writes.
+--   -- TODO: We technically don't need to sequentialize the writes, since the
+--   -- slices are all independent of each other.  Do we need a new `JoinDests`
+--   -- operation to represent that pattern?
+--   let go incoming_dest [] = return incoming_dest
+--       go incoming_dest ((ord, e):rest) = do
+--         i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
+--           lowerBlock ufoBlock
+--         carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
+--           idest <- indexRef (Var local_dest) (sink i)
+--           place (FullDest idest) =<< visitAtom e
+--           return UnitVal
+--         go carried_dest rest
+--   dest' <- go dest (enumerate elems)
+--   return $ PrimOp $ DAMOp $ Freeze dest'
 
 lowerCase :: Emits o
   => Maybe (Dest SimpIR o) -> SAtom i -> [Alt SimpIR i] -> SType i
   -> LowerM i o (SExpr o)
-lowerCase maybeDest scrut alts resultTy = do
-  resultTy' <- substM resultTy
-  dest <- case maybeDest of
-    Just  d -> return d
-    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest resultTy'
-  scrut' <- visitAtom scrut
-  dest' <- buildRememberDest "case_dest" dest \local_dest -> do
-    alts' <- forM alts \(Abs (b:>ty) body) -> do
-      ty' <- substM ty
-      buildAbs (getNameHint b) ty' \b' ->
-        extendSubst (b @> Rename (atomVarName b')) $
-          buildBlock do
-            lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
-    eff' <- foldMapM (pure . getEffects) alts'
-    void $ emitExpr $ Case (sink scrut') alts' (EffTy eff' UnitTy)
-    return UnitVal
-  return $ PrimOp $ DAMOp $ Freeze dest'
+lowerCase maybeDest scrut alts resultTy = undefined
+-- lowerCase maybeDest scrut alts resultTy = do
+--   resultTy' <- substM resultTy
+--   dest <- case maybeDest of
+--     Just  d -> return d
+--     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest resultTy'
+--   scrut' <- visitAtom scrut
+--   dest' <- buildRememberDest "case_dest" dest \local_dest -> do
+--     alts' <- forM alts \(Abs (b:>ty) body) -> do
+--       ty' <- substM ty
+--       buildAbs (getNameHint b) ty' \b' ->
+--         extendSubst (b @> Rename (atomVarName b')) $
+--           buildBlock do
+--             lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
+--     eff' <- foldMapM (pure . getEffects) alts'
+--     void $ emitExpr $ Case (sink scrut') alts' (EffTy eff' UnitTy)
+--     return UnitVal
+--   return $ PrimOp $ DAMOp $ Freeze dest'
 
 -- Destination-passing traversals
 --
@@ -241,12 +246,13 @@ lookupDest = flip lookupNameMap
 --
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
-decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
-  ProjectElt _ p x -> do
-    (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
-  _ -> return Nothing
+decomposeDest dest = undefined
+-- decomposeDest dest = \case
+--   Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
+--   ProjectElt _ p x -> do
+--     (ps, v) <- return $ asNaryProj p x
+--     return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
+--   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
 lowerBlockWithDest dest (Block _ decls ans) = do
@@ -353,11 +359,12 @@ lowerExprWithDest dest expr = case expr of
         ProjDest _ _ -> return Nothing
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
-place pd x = case pd of
-  FullDest d   -> void $ emitOp $ DAMOp $ Place d x
-  ProjDest p d -> do
-    x' <- normalizeNaryProj (NE.toList p) x
-    void $ emitOp $ DAMOp $ Place d x'
+place pd x = undefined
+-- place pd x = case pd of
+--   FullDest d   -> void $ emitOp $ DAMOp $ Place d x
+--   ProjDest p d -> do
+--     x' <- normalizeNaryProj (NE.toList p) x
+--     void $ emitOp $ DAMOp $ Place d x'
 
 -- === Vectorization ===
 
@@ -468,32 +475,33 @@ atMostInitEffect scrutinee = case scrutinee of
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
              -> TopVectorizeM o (LamExpr SimpIR o)
-vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
-  if atMostInitEffect (getEffects body)
-    then do
-      (_, ty') <- case ty of
-        ProdTy [ixTy, ref] -> do
-          ixTy' <- applyRename frag ixTy
-          ref' <- applyRename frag ref
-          return (ixTy', ProdTy [IdxRepTy, ref'])
-        _ -> error "Unexpected seq binder type"
-      result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
-        buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
-          -- XXX: we're assuming `Fin n` here
-          (viOrd, dest) <- fromPair $ Var ci
-          iOrd <- imul viOrd $ IdxRepVal loopWidth
-          let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)
-          runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
-      case runReaderT (fromFallibleM result) mempty of
-        Success s -> return s
-        Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
-    else throwVectErr "Effectful loop vectorization not implemented!"
-  where
-    iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
-    iSubst v = case lookupSubstFragProjected frag v of
-      Left v'  -> sink $ VRename v'
-      Right v' -> sink $ VRename v'
-vectorizeSeq _ _ _ = error "expected a unary lambda expression"
+vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = undefined
+-- vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
+--   if atMostInitEffect (getEffects body)
+--     then do
+--       (_, ty') <- case ty of
+--         ProdTy [ixTy, ref] -> do
+--           ixTy' <- applyRename frag ixTy
+--           ref' <- applyRename frag ref
+--           return (ixTy', ProdTy [IdxRepTy, ref'])
+--         _ -> error "Unexpected seq binder type"
+--       result <- liftM (`runReaderT` loopWidth) $ liftBuilderT $
+--         buildUnaryLamExpr (getNameHint b) (sink ty') \ci -> do
+--           -- XXX: we're assuming `Fin n` here
+--           (viOrd, dest) <- fromPair $ Var ci
+--           iOrd <- imul viOrd $ IdxRepVal loopWidth
+--           let s = newSubst iSubst <>> b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)
+--           runSubstReaderT s $ runVectorizeM $ vectorizeBlock body $> UnitVal
+--       case runReaderT (fromFallibleM result) mempty of
+--         Success s -> return s
+--         Failure errs -> throwErrs errs  -- re-raise inside `TopVectorizeM`
+--     else throwVectErr "Effectful loop vectorization not implemented!"
+--   where
+--     iSubst :: (Color c, DExt o o') => Name c i' -> VSubstValC c o'
+--     iSubst v = case lookupSubstFragProjected frag v of
+--       Left v'  -> sink $ VRename v'
+--       Right v' -> sink $ VRename v'
+-- vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM :: SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
@@ -518,20 +526,29 @@ vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
 vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
-    TabApp _ tbl [ix] -> do
-      VVal Uniform tbl' <- vectorizeAtom tbl
-      VVal Contiguous ix' <- vectorizeAtom ix
-      case getType tbl' of
-        TabTy _ tb a -> do
-          vty <- getVectorType =<< case hoist tb a of
-            HoistSuccess a' -> return a'
-            HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
-          VVal Varying <$> emitOp (VectorOp $ VectorIdx tbl' ix' vty)
-        tblTy -> do
-          throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
+    -- TabApp _ tbl [ix] -> do
+    --   VVal Uniform tbl' <- vectorizeAtom tbl
+    --   VVal Contiguous ix' <- vectorizeAtom ix
+    --   case getType tbl' of
+    --     TabTy _ tb a -> do
+    --       vty <- getVectorType =<< case hoist tb a of
+    --         HoistSuccess a' -> return a'
+    --         HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
+    --       VVal Varying <$> emitOp (VectorOp $ VectorIdx tbl' ix' vty)
+    --     tblTy -> do
+    --       throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
     Atom atom -> vectorizeAtom atom
     PrimOp op -> vectorizePrimOp op
-    _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
+    -- Vectors of base newtypes are already newtype-stripped.
+    -- ProjectElt _ (ProjectProduct i) x -> do
+    --   VVal vv x' <- vectorizeAtom x
+    --   ov <- case vv of
+    --     ProdStability sbs -> return $ sbs !! i
+    --     _ -> throwVectErr "Invalid projection"
+    --   x'' <- normalizeProj (ProjectProduct i) x'
+    --   return $ VVal ov x''
+    -- ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
+    -- _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
 
 vectorizeDAMOp :: Emits o => DAMOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeDAMOp op =
@@ -549,21 +566,22 @@ vectorizeDAMOp op =
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
 vectorizeRefOp :: Emits o => SAtom i -> RefOp SimpIR i -> VectorizeM i o (VAtom o)
-vectorizeRefOp ref' op =
-  case op of
-    IndexRef _ i' -> do
-      VVal Uniform ref <- vectorizeAtom ref'
-      VVal Contiguous i <- vectorizeAtom i'
-      case getType ref of
-        TC (RefType _ (TabTy _ tb a)) -> do
-          vty <- getVectorType =<< case hoist tb a of
-            HoistSuccess a' -> return a'
-            HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
-          VVal Contiguous <$> emitOp (VectorOp $ VectorSubref ref i vty)
-        refTy -> do
-          throwVectErr do
-            "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
-    _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
+vectorizeRefOp ref' op = undefined
+-- vectorizeRefOp ref' op =
+--   case op of
+--     IndexRef _ i' -> do
+--       VVal Uniform ref <- vectorizeAtom ref'
+--       VVal Contiguous i <- vectorizeAtom i'
+--       case getType ref of
+--         TC (RefType _ (TabTy _ tb a)) -> do
+--           vty <- getVectorType =<< case hoist tb a of
+--             HoistSuccess a' -> return a'
+--             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
+--           VVal Contiguous <$> emitOp (VectorOp $ VectorSubref ref i vty)
+--         refTy -> do
+--           throwVectErr do
+--             "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
+--     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
 
 vectorizePrimOp :: Emits o => PrimOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizePrimOp op = case op of
@@ -608,7 +626,7 @@ vectorizePrimOp op = case op of
     Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
       VVal vy y <- vectorizeBlock body
       PairE (LiftE vy) <$> withType y
-    body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
+    body' <- absToBlock =<< computeAbsEffects (WithDecls decls yWithTy)
     VVal vy <$> emitHof (RunIO body')
   _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
@@ -623,15 +641,6 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     Var v -> lookupSubstM (atomVarName v) >>= \case
       VRename v' -> VVal Uniform . Var <$> toAtomVar v'
       v' -> return v'
-    -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt _ (ProjectProduct i) x -> do
-      VVal vv x' <- vectorizeAtom x
-      ov <- case vv of
-        ProdStability sbs -> return $ sbs !! i
-        _ -> throwVectErr "Invalid projection"
-      x'' <- normalizeProj (ProjectProduct i) x'
-      return $ VVal ov x''
-    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -741,3 +750,37 @@ getNarrowestTypeByteWidth x = do
   if result == maxWord32
     then return 1
     else return result
+
+-- === singleton types ===
+
+-- The following implementation should be valid:
+--   isSingletonType :: EnvReader m => Type n -> m n Bool
+--   isSingletonType ty =
+--     singletonTypeVal ty >>= \case
+--       Nothing -> return False
+--       Just _  -> return True
+-- But a separate implementation doesn't have to go under binders,
+-- because it doesn't have to reconstruct the singleton value (which
+-- may be type annotated and whose type may refer to names).
+
+isSingletonType :: Type SimpIR n -> Bool
+isSingletonType topTy = undefined
+-- isSingletonType topTy = isJust $ checkIsSingleton topTy
+--   where
+--     checkIsSingleton :: Type r n -> Maybe ()
+--     checkIsSingleton ty = case ty of
+--       TabPi (TabPiType _ _ body) -> checkIsSingleton body
+--       TC (ProdType tys) -> mapM_ checkIsSingleton tys
+--       _ -> Nothing
+
+singletonTypeVal :: (EnvReader m)
+  => Type SimpIR n -> m n (Maybe (Atom SimpIR n))
+singletonTypeVal ty = do
+  tree <- typeToTree ty
+  if length tree == 0 then do
+    -- The tree has 0 of these if the type is empty
+    let tree' = fmap (const $ ILit $ Int32Lit 0) tree
+    return $ Just $ RepValAtom $ RepVal ty tree'
+  else
+    return Nothing
+{-# INLINE singletonTypeVal #-}

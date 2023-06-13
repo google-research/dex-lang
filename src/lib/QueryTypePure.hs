@@ -24,16 +24,6 @@ isPure e = case getEffects e of
 
 -- === querying types implementation ===
 
-instance IRRep r => HasType r (AtomBinding r) where
-  getType = \case
-    LetBound    (DeclBinding _ e)  -> getType e
-    MiscBound   ty                 -> ty
-    SolverBound (InfVarBound ty _) -> ty
-    SolverBound (SkolemBound ty)   -> ty
-    NoinlineFun ty _               -> ty
-    TopDataBound (RepVal ty _)     -> ty
-    FFIFunBound piTy _ -> Pi piTy
-
 litType :: LitVal -> BaseType
 litType v = case v of
   Int64Lit   _ -> Scalar Int64Type
@@ -78,7 +68,6 @@ instance IRRep r => HasType r (Atom r) where
     DictCon ty _ -> ty
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
     DictHole _ ty _ -> ty
     TypeAsAtom ty -> getType ty
@@ -92,7 +81,6 @@ instance IRRep r => HasType r (Type r) where
     TC _        -> TyKind
     DictTy _    -> TyKind
     TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -117,10 +105,10 @@ instance IRRep r => HasType r (Con r) where
     SumCon tys _ _ -> SumTy tys
     HeapVal        -> TC HeapType
 
-getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
+getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> TypeBlock CoreIR n
 getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
+getSuperclassType bsAbove (Nest b@(_:>ty) bs) = \case
+  0 -> ignoreHoistFailure $ hoist bsAbove ty
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
 instance IRRep r => HasType r (Expr r) where
@@ -133,6 +121,7 @@ instance IRRep r => HasType r (Expr r) where
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    ProjectElt t _ _ -> t
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -214,7 +203,7 @@ rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+    DepPairTy $ DepPairType ExplicitDepPair (b:>WithoutDecls IdxRepTy) (WithoutDecls tabTy)
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
@@ -223,18 +212,18 @@ rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
   => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
-typesAsBinderNest types body = toConstBinderNest types body
+typesAsBinderNest types body = toConstBinderNest (WithoutDecls <$> types) body
 
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
   Abs bs (PairE eff' resultTy') -> do
     let bs' = fmapNest (WithExpl Explicit) bs
-    CorePiType ExplicitApp bs' $ EffTy eff' resultTy'
+    CorePiType ExplicitApp bs' $ WithoutDecls (EffTy eff' resultTy')
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType d (b:>t) resultTy'
+    Abs b resultTy' -> TabPiType d (b:>WithoutDecls t) (WithoutDecls resultTy')
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b
@@ -253,10 +242,18 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
   IxDictRawFin _ -> IdxRepTy
   IxDictSpecialized n _ _ -> n
 
-instance IRRep r => HasType r (Block r) where
-  getType (Block NoBlockAnn Empty result) = getType result
-  getType (Block (BlockAnn (EffTy _ ty)) _ _) = ty
-  getType _ = error "impossible"
+getLamExprType :: IRRep r => LamExpr r n -> PiType r n
+getLamExprType (LamExpr bs body) = undefined
+  -- PiType bs (EffTy (getEffects body) (getType body))
+
+getDestLamExprType :: LamExpr SimpIR n -> PiType SimpIR n
+getDestLamExprType (LamExpr bsRefB body) = undefined
+-- getDestLamExprType (LamExpr bsRefB body) =
+--   case popNest bsRefB of
+--     Just (PairB bs (bDest:>RawRefTy ansTy)) -> do
+--       let resultEffs = ignoreHoistFailure $ hoist bDest $ getEffects body
+--       PiType bs $ EffTy resultEffs ansTy
+--     _ -> error "expected trailing dest binder"
 
 -- === querying effects implementation ===
 
@@ -270,6 +267,7 @@ instance IRRep r => HasEffects (Expr r) r where
     TabCon _ _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
+    ProjectElt _ _ _ -> Pure
 
 instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr
@@ -317,14 +315,4 @@ instance IRRep r => HasEffects (PrimOp r) r where
       AllocDest _ -> Pure -- is this correct?
       Freeze _    -> Pure -- is this correct?
     Hof (TypedHof (EffTy eff _) _) -> eff
-  {-# INLINE getEffects #-}
-
-
-instance IRRep r => HasEffects (Block r) r where
-  getEffects (Block (BlockAnn (EffTy effs _)) _ _) = effs
-  getEffects (Block NoBlockAnn _ _) = Pure
-  {-# INLINE getEffects #-}
-
-instance IRRep r => HasEffects (Alt r) r where
-  getEffects (Abs bs body) = ignoreHoistFailure $ hoist bs (getEffects body)
   {-# INLINE getEffects #-}

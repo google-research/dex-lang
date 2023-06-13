@@ -17,15 +17,14 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
-import Imp
+import Lower
 import IRVariants
 import MTL1
 import Name
 import Subst
 import {-# SOURCE #-} Simplify (linearizeTopFun)
 import PPrint
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives
 import Util (bindM2, enumerate)
@@ -186,30 +185,30 @@ getTangentArgTys topVs = go mempty topVs where
   go :: (Fallible1 m, EnvExtender m)
      => EMap SAtomName SAtomVar n -> [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
   go _ [] = return $ EmptyAbs Empty
-  go heapMap (v:vs) = case getType v of
-    -- This is a hack to handle heaps/references. They normally come in pairs
-    -- like this, but there's nothing to prevent users writing programs that
-    -- sling around heap variables by themselves. We should try to do something
-    -- better...
-    TC HeapType -> do
-      withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
-        let newHeapMap = sink heapMap <> eMapSingleton (sink (atomVarName v)) (binderVar hb)
-        Abs bs UnitE <- go newHeapMap $ sinkList vs
-        return $ EmptyAbs $ Nest hb bs
-    RefTy (Var h) referentTy -> do
-      case lookupEMap heapMap (atomVarName h) of
-        Nothing -> error "shouldn't happen?"
-        Just h' -> do
-          tt <- tangentType referentTy
-          let refTy = RefTy (Var h') tt
-          withFreshBinder (getNameHint v) refTy \refb -> do
-            Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-            return $ EmptyAbs $ Nest refb bs
-    ty -> do
-      tt <- tangentType ty
-      withFreshBinder (getNameHint v) tt \b -> do
-        Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-        return $ EmptyAbs $ Nest b bs
+  -- go heapMap (v:vs) = case getType v of
+  --   -- This is a hack to handle heaps/references. They normally come in pairs
+  --   -- like this, but there's nothing to prevent users writing programs that
+  --   -- sling around heap variables by themselves. We should try to do something
+  --   -- better...
+  --   TC HeapType -> do
+  --     withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
+  --       let newHeapMap = sink heapMap <> eMapSingleton (sink (atomVarName v)) (binderVar hb)
+  --       Abs bs UnitE <- go newHeapMap $ sinkList vs
+  --       return $ EmptyAbs $ Nest hb bs
+  --   RefTy (Var h) referentTy -> do
+  --     case lookupEMap heapMap (atomVarName h) of
+  --       Nothing -> error "shouldn't happen?"
+  --       Just h' -> do
+  --         tt <- tangentType referentTy
+  --         let refTy = RefTy (Var h') tt
+  --         withFreshBinder (getNameHint v) refTy \refb -> do
+  --           Abs bs UnitE <- go (sink heapMap) $ sinkList vs
+  --           return $ EmptyAbs $ Nest refb bs
+  --   ty -> do
+  --     tt <- tangentType ty
+  --     withFreshBinder (getNameHint v) tt \b -> do
+  --       Abs bs UnitE <- go (sink heapMap) $ sinkList vs
+  --       return $ EmptyAbs $ Nest b bs
 
 class ReconFunctor (f :: E -> E) where
   capture
@@ -290,28 +289,30 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
 linearizeLam :: SLam n -> [Active] -> DoubleBuilder SimpIR n (SLam n, SLam n)
-linearizeLam (LamExpr bs body) actives = runPrimalMInit do
-  refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = nestToAtomVars bs'
-    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
-      True  -> return $ Just v
-      False -> return $ Nothing
-    (body', linLamAbs) <- extendActivePrimalss activeVs do
-      linearizeBlockDefuncGeneral emptyOutFrag body
-    let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
-    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
-      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
-      withFreshBinder "t" tangentTy \bTangent -> do
-        tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderVar bTangent
-          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> bsTangent @@> map (SubstVal . sink) ts
-          emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
-    return (primalFun, tangentFun)
+linearizeLam (LamExpr bs body) actives = undefined
+-- linearizeLam (LamExpr bs body) actives = runPrimalMInit do
+--   refreshBinders bs \bs' frag -> extendSubst frag do
+--     let allPrimals = nestToAtomVars bs'
+--     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+--       True  -> return $ Just v
+--       False -> return $ Nothing
+--     (body', linLamAbs) <- extendActivePrimalss activeVs do
+--       linearizeBlockDefuncGeneral emptyOutFrag body
+--     let primalFun = LamExpr bs' body'
+--     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
+--     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+--       xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
+--       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+--       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+--       withFreshBinder "t" tangentTy \bTangent -> do
+--         tangentBody' <- buildBlock do
+--           tTup <- Var <$> binderVar bTangent
+--           ts <- getUnpacked tTup
+--           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+--                         <.> bsTangent @@> map (SubstVal . sink) ts
+--           emitBlock =<< applySubst substFrag tangentBody
+--         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
+--     return (primalFun, tangentFun)
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
@@ -333,12 +334,6 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   PtrVar _ _      -> emitZeroT
-  ProjectElt _ i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
@@ -427,6 +422,12 @@ linearizeExpr expr = case expr of
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon Nothing (sink ty') xs'
+  ProjectElt _ i x -> do
+    WithTangent x' tx <- linearizeAtom x
+    xi <- proj i x'
+    return $ WithTangent xi do
+      t <- tx
+      proj i t
 
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
@@ -624,7 +625,7 @@ linearizeHof hof = case hof of
     WithTangent sInit' sLin <- linearizeAtom sInit
     (lam', recon) <- linearizeEffectFun State lam
     (primalAux, sFinal) <- fromPair =<< emitHof (RunState Nothing sInit' lam')
-    referentTy <- return $ snd $ getTypeRWSAction lam'
+    referentTy <- snd <$> getTypeRWSAction lam'
     (primal, linLam) <- reconstruct primalAux recon
     return $ WithTangent (PairVal primal sFinal) do
       sLin' <- sLin
@@ -639,7 +640,7 @@ linearizeHof hof = case hof of
     (lam', recon) <- linearizeEffectFun Writer lam
     (primalAux, wFinal) <- fromPair =<< emitHof (RunWriter Nothing bm' lam')
     (primal, linLam) <- reconstruct primalAux recon
-    referentTy <- return $ snd $ getTypeRWSAction lam'
+    referentTy <- snd <$> getTypeRWSAction lam'
     return $ WithTangent (PairVal primal wFinal) do
       bm'' <- sinkM bm'
       tt <- tangentType $ sink referentTy
@@ -656,22 +657,23 @@ linearizeHof hof = case hof of
   _ -> error $ "not implemented: " ++ pprint hof
 
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
-linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  withFreshBinder noHint (TC HeapType) \h -> do
-    bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
-    withFreshBinder noHint bTy \b -> do
-      let ref = binderVar b
-      hVar <- sinkM $ binderVar h
-      (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
-        -- TODO: maybe we should check whether we need to extend the active effects
-        extendActiveEffs (RWSEffect rws (Var hVar)) do
-          linearizeBlockDefunc body
-      -- TODO: this assumes that references aren't returned. Our type system
-      -- ensures that such references can never be *used* once the effect runner
-      -- returns, but technically it's legal to return them.
-      let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr h b body', linLam')
-linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
+linearizeEffectFun rws (BinaryLamExpr hB refB body) = undefined
+-- linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
+--   withFreshBinder noHint (TC HeapType) \h -> do
+--     bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
+--     withFreshBinder noHint bTy \b -> do
+--       let ref = binderVar b
+--       hVar <- sinkM $ binderVar h
+--       (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
+--         -- TODO: maybe we should check whether we need to extend the active effects
+--         extendActiveEffs (RWSEffect rws (Var hVar)) do
+--           linearizeBlockDefunc body
+--       -- TODO: this assumes that references aren't returned. Our type system
+--       -- ensures that such references can never be *used* once the effect runner
+--       -- returns, but technically it's legal to return them.
+--       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
+--       return (BinaryLamExpr h b body', linLam')
+-- linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))

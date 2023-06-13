@@ -23,7 +23,7 @@ import Core
 import Err
 import IRVariants
 import Name
-import QueryType
+import QueryTypePure
 import Simplify
 import Subst hiding (Rename)
 import TopLevel
@@ -101,20 +101,22 @@ liftExportSigM cont = do
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
-corePiToExportSig cc (CorePiType _ tbs (EffTy effs resultTy)) = do
-    case effs of
-      Pure -> return ()
-      _    -> throw TypeErr "Only pure functions can be exported"
-    goArgs cc Empty [] tbs resultTy
+corePiToExportSig cc (CorePiType _ tbs _) = undefined
+-- corePiToExportSig cc (CorePiType _ tbs (EffTy effs resultTy)) = do
+--     case effs of
+--       Pure -> return ()
+--       _    -> throw TypeErr "Only pure functions can be exported"
+--     goArgs cc Empty [] tbs resultTy
 
 simpPiToExportSig :: CallingConvention
   -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
-simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
-  case effs of
-    Pure -> return ()
-    _    -> throw TypeErr "Only pure functions can be exported"
-  bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
-  goArgs cc Empty [] bs' resultTy
+simpPiToExportSig cc _ = undefined
+-- simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
+--   case effs of
+--     Pure -> return ()
+--     _    -> throw TypeErr "Only pure functions can be exported"
+--   bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
+--   goArgs cc Empty [] bs' resultTy
 
 goArgs :: (IRRep r)
   => CallingConvention
@@ -123,37 +125,39 @@ goArgs :: (IRRep r)
   -> Nest (WithExpl (Binder r)) i i'
   -> Type r i'
   -> ExportSigM r i o' (ExportedSignature o)
-goArgs cc argSig argVs piBs piRes = case piBs of
-  Empty -> goResult piRes \resSig ->
-    return $ ExportedSignature argSig resSig $ case cc of
-      StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
-      XLACC      -> []
-      _ -> error $ "calling convention not supported: " ++ show cc
-  Nest (WithExpl expl (b:>ty)) bs -> do
-    ety <- toExportType ty
-    withFreshBinder (getNameHint b) ety \(v:>_) ->
-      extendSubst (b @> Rename (binderName v)) $ do
-        vis <- case expl of
-          Explicit    -> return ExplicitArg
-          Inferred _ _ -> return ImplicitArg
-        goArgs cc (argSig >>> Nest (ExportArg vis (v:>ety)) Empty)
-               ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs piRes
+goArgs cc argSig argVs piBs piRes = undefined
+-- goArgs cc argSig argVs piBs piRes = case piBs of
+--   Empty -> goResult piRes \resSig ->
+--     return $ ExportedSignature argSig resSig $ case cc of
+--       StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
+--       XLACC      -> []
+--       _ -> error $ "calling convention not supported: " ++ show cc
+--   Nest (WithExpl expl (b:>ty)) bs -> do
+--     ety <- toExportType ty
+--     withFreshBinder (getNameHint b) ety \(v:>_) ->
+--       extendSubst (b @> Rename (binderName v)) $ do
+--         vis <- case expl of
+--           Explicit    -> return ExplicitArg
+--           Inferred _ _ -> return ImplicitArg
+--         goArgs cc (argSig >>> Nest (ExportArg vis (v:>ety)) Empty)
+--                ((fromListE $ sink $ ListE argVs) ++ [binderName v]) bs piRes
 
 goResult :: IRRep r => Type r i
          -> (forall o'. DExt o o' =>
              Nest ExportResult o o' -> ExportSigM r i o' a)
          -> ExportSigM r i o a
-goResult ty cont = case ty of
-  ProdTy [one] ->
-    goResult one cont
-  ProdTy (lty:rest) ->
-    goResult lty \lres ->
-      goResult (ProdTy rest) \rres ->
-        cont $ lres >>> rres
-  _ -> do
-    ety <- toExportType ty
-    withFreshBinder noHint ety \(b:>_) -> do
-      cont $ Nest (ExportResult (b:>ety)) Empty
+goResult ty cont = undefined
+-- goResult ty cont = case ty of
+--   ProdTy [one] ->
+--     goResult one cont
+--   ProdTy (lty:rest) ->
+--     goResult lty \lres ->
+--       goResult (ProdTy rest) \rres ->
+--         cont $ lres >>> rres
+--   _ -> do
+--     ety <- toExportType ty
+--     withFreshBinder noHint ety \(b:>_) -> do
+--       cont $ Nest (ExportResult (b:>ety)) Empty
 
 toExportType :: IRRep r => Type r i -> ExportSigM r i o (ExportType o)
 toExportType ty = case ty of
@@ -167,32 +171,33 @@ toExportType ty = case ty of
 {-# INLINE toExportType #-}
 
 parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
-parseTabTy = go []
-  where
-    go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
-      -> ExportSigM r i o (Maybe (ExportType o))
-    go shape = \case
-      BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
-      NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy d (b:>ixty) a -> do
-        maybeN <- case IxType ixty d of
-          (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
-          (IxType _ (IxDictRawFin n)) -> return $ Just n
-          _ -> return Nothing
-        maybeDim <- case maybeN of
-          Just (Var v)    -> do
-            s <- getSubst
-            let (Rename v') = s ! atomVarName v
-            return $ Just (ExportDimVar v')
-          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
-          Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
-          _        -> return Nothing
-        case maybeDim of
-          Just dim -> case hoist b a of
-            HoistSuccess a' -> go (shape ++ [dim]) a'
-            HoistFailure _  -> return Nothing
-          Nothing -> return Nothing
-      _ -> return Nothing
+parseTabTy = undefined
+-- parseTabTy = go []
+--   where
+--     go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
+--       -> ExportSigM r i o (Maybe (ExportType o))
+--     go shape = \case
+--       BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
+--       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+--       TabTy d (b:>ixty) a -> do
+--         maybeN <- case IxType ixty d of
+--           (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
+--           (IxType _ (IxDictRawFin n)) -> return $ Just n
+--           _ -> return Nothing
+--         maybeDim <- case maybeN of
+--           Just (Var v)    -> do
+--             s <- getSubst
+--             let (Rename v') = s ! atomVarName v
+--             return $ Just (ExportDimVar v')
+--           Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+--           Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
+--           _        -> return Nothing
+--         case maybeDim of
+--           Just dim -> case hoist b a of
+--             HoistSuccess a' -> go (shape ++ [dim]) a'
+--             HoistFailure _  -> return Nothing
+--           Nothing -> return Nothing
+--       _ -> return Nothing
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 

@@ -15,7 +15,7 @@ import IRVariants
 import Name
 import JAX.Concrete
 import Subst
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives qualified as P
 

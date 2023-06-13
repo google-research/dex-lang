@@ -15,7 +15,6 @@ module Imp
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
   , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
   , computeOffset, getIExprInterpretation
-  , isSingletonType, singletonTypeVal
   ) where
 
 import Prelude hiding ((.), id)
@@ -32,7 +31,6 @@ import qualified Control.Monad.State.Strict as MTL
 
 import Algebra
 import Builder
-import CheapReduction
 import CheckType (CheckableE (..))
 import Core
 import Err
@@ -40,7 +38,7 @@ import IRVariants
 import MTL1
 import Name
 import Subst
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Imp
 import Types.Primitives
@@ -50,31 +48,32 @@ import Util (forMFilter, Tree (..), zipTrees, enumerate)
 -- argument a reference to the result.
 toImpFunction :: EnvReader m
   => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
-toImpFunction cc lam = do
-  (LamExpr bsAndRefB body) <- return lam
-  PairB bs destB <- case popNest bsAndRefB of
-    Just bsAndRefB' -> return bsAndRefB'
-    Nothing -> error "expected a trailing reference binder"
-  ty <- return $ getDestLamExprType lam
-  impArgTys <- getNaryLamImpArgTypesWithCC cc ty
-  liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
-    case cc of
-      EntryFunCC _ -> do
-        argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
-        extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          dest <- case binderType destB of
-            RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
-            _ -> error "Expected a reference type for body destination"
-          extendSubst (destB @> SubstVal (destToAtom dest)) do
-            void $ translateBlock body
-          resultAtom <- loadAtom dest
-          repValToList <$> atomToRepVal resultAtom
-      _ -> do
-        (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
-        extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          extendSubst (destB @> SubstVal (destToAtom (sink resultDest))) do
-            void $ translateBlock body
-            return []
+toImpFunction cc lam = undefined
+-- toImpFunction cc lam = do
+--   (LamExpr bsAndRefB body) <- return lam
+--   PairB bs destB <- case popNest bsAndRefB of
+--     Just bsAndRefB' -> return bsAndRefB'
+--     Nothing -> error "expected a trailing reference binder"
+--   ty <- return $ getDestLamExprType lam
+--   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
+--   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
+--     case cc of
+--       EntryFunCC _ -> do
+--         argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
+--         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
+--           dest <- case binderType destB of
+--             RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
+--             _ -> error "Expected a reference type for body destination"
+--           extendSubst (destB @> SubstVal (destToAtom dest)) do
+--             void $ translateBlock body
+--           resultAtom <- loadAtom dest
+--           repValToList <$> atomToRepVal resultAtom
+--       _ -> do
+--         (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
+--         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
+--           extendSubst (destB @> SubstVal (destToAtom (sink resultDest))) do
+--             void $ translateBlock body
+--             return []
 
 getNaryLamImpArgTypesWithCC :: EnvReader m
   => CallingConvention -> PiType SimpIR n -> m n [BaseType]
@@ -117,27 +116,29 @@ interpretImpArgsWithCC _ t xsAll = interpretImpArgsWithDest t xsAll
 
 getNaryLamImpArgTypes :: EnvReader m
   => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
-getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
-  go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (PiType bs effTy) = case bs of
-    Nest piB rest -> do
-      ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (PiType rest effTy)) \_ restPi -> do
-        (argTys, resultTys) <- go restPi
-        return (ts:argTys, resultTys)
-    Empty -> ([],) <$> getDestBaseTypes (etTy effTy)
+getNaryLamImpArgTypes t = undefined
+-- getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
+--   go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
+--   go (PiType bs effTy) = case bs of
+--     Nest piB rest -> do
+--       ts <- getRepBaseTypes $ binderType piB
+--       refreshAbs (Abs piB (PiType rest effTy)) \_ restPi -> do
+--         (argTys, resultTys) <- go restPi
+--         return (ts:argTys, resultTys)
+--     Empty -> ([],) <$> getDestBaseTypes (etTy effTy)
 
 interpretImpArgsWithDest :: EnvReader m
   => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
-interpretImpArgsWithDest t xs = do
-  (PiType bs (EffTy _ resultTy)) <- return t
-  (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
-  resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
-  (destTree, xsRest) <- listToTree resultTy' xsLeft
-  case xsRest of
-    [] -> return ()
-    _  -> error "Shouldn't have any Imp arguments left"
-  return (args, Dest resultTy' destTree)
+interpretImpArgsWithDest t xs = undefined
+-- interpretImpArgsWithDest t xs = do
+--   (PiType bs (EffTy _ resultTy)) <- return t
+--   (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
+--   resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
+--   (destTree, xsRest) <- listToTree resultTy' xsLeft
+--   case xsRest of
+--     [] -> return ()
+--     _  -> error "Shouldn't have any Imp arguments left"
+--   return (args, Dest resultTy' destTree)
 
 interpretImpArgs :: EnvReader m
   => EmptyAbs (Nest SBinder) n -> [IExpr n] -> m n [SAtom n]
@@ -149,18 +150,19 @@ interpretImpArgs t args = do
 
 _interpretImpArgs :: EnvReader m
   => EmptyAbs (Nest SBinder) n -> [IExpr n] -> m n ([SAtom n], [IExpr n])
-_interpretImpArgs t args =
-  liftEnvReaderM $ runSubstReaderT idSubst $ go t args where
-    go :: EmptyAbs (Nest SBinder) i -> [IExpr o]
-       -> SubstReaderT AtomSubstVal EnvReaderM i o ([SAtom o], [IExpr o])
-    go (Abs bs UnitE) xs = case bs of
-      Nest (b:>argTy) rest -> do
-        argTy' <- substM argTy
-        (argTree, xsRest) <- listToTree argTy' xs
-        arg <- repValAtom $ RepVal argTy' argTree
-        (args', xsLeft) <- extendSubst (b @> SubstVal arg) $ go (EmptyAbs rest) xsRest
-        return (arg:args', xsLeft)
-      Empty -> return ([], xs)
+_interpretImpArgs t args = undefined
+-- _interpretImpArgs t args =
+--   liftEnvReaderM $ runSubstReaderT idSubst $ go t args where
+--     go :: EmptyAbs (Nest SBinder) i -> [IExpr o]
+--        -> SubstReaderT AtomSubstVal EnvReaderM i o ([SAtom o], [IExpr o])
+--     go (Abs bs UnitE) xs = case bs of
+--       Nest (b:>argTy) rest -> do
+--         argTy' <- substM argTy
+--         (argTree, xsRest) <- listToTree argTy' xs
+--         arg <- repValAtom $ RepVal argTy' argTree
+--         (args', xsLeft) <- extendSubst (b @> SubstVal arg) $ go (EmptyAbs rest) xsRest
+--         return (arg:args', xsLeft)
+--       Empty -> return ([], xs)
 
 -- === ImpM monad ===
 
@@ -296,7 +298,9 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
-      DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
+      DexTopFun _ _ _ _ -> do
+        dest <- allocDest resultTy
+        emitCall dest f $ toList xs
       FFITopFun _ _ -> do
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
         results <- impCall f scalarArgs
@@ -307,29 +311,29 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
   PrimOp op -> toImpOp op
-  Case e alts (EffTy _ unitResultTy) -> do
-    e' <- substM e
-    case unitResultTy of
-      UnitTy -> return ()
-      _ -> error $ "Unexpected returning Case in Imp " ++ pprint expr
-    case trySelectBranch e' of
-      Just (con, arg) -> do
-        Abs b body <- return $ alts !! con
-        extendSubst (b @> SubstVal arg) $ translateBlock body
-      Nothing -> do
-        RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
-        ts <- caseAltsBinderTys sumTy
-        tag' <- repValAtom $ RepVal TagRepTy tag
-        xss' <- zipWithM (\t x -> repValAtom $ RepVal t x) ts xss
-        go tag' xss'
-        where
-          go tag xss = do
-            tag' <- fromScalarAtom tag
-            emitSwitch tag' (zip xss alts) $
-              \(xs, Abs b body) ->
-                 extendSubst (b @> SubstVal (sink xs)) $
-                   void $ translateBlock body
-            return UnitVal
+  -- Case e alts (EffTy _ unitResultTy) -> do
+  --   e' <- substM e
+  --   case unitResultTy of
+  --     UnitTy -> return ()
+  --     _ -> error $ "Unexpected returning Case in Imp " ++ pprint expr
+  --   case trySelectBranch e' of
+  --     Just (con, arg) -> do
+  --       Abs b body <- return $ alts !! con
+  --       extendSubst (b @> SubstVal arg) $ translateBlock body
+  --     Nothing -> do
+  --       RepVal sumTy (Branch (tag:xss)) <- atomToRepVal e'
+  --       ts <- caseAltsBinderTys sumTy
+  --       tag' <- repValAtom $ RepVal TagRepTy tag
+  --       xss' <- zipWithM (\t x -> repValAtom $ RepVal t x) ts xss
+  --       go tag' xss'
+  --       where
+  --         go tag xss = do
+  --           tag' <- fromScalarAtom tag
+  --           emitSwitch tag' (zip xss alts) $
+  --             \(xs, Abs b body) ->
+  --                extendSubst (b @> SubstVal (sink xs)) $
+  --                  void $ translateBlock body
+  --           return UnitVal
   TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
 
 toImpRefOp :: Emits o
@@ -357,28 +361,29 @@ toImpRefOp refDest' m = do
     liftMonoidCombine :: Emits o
       => (Dest o) -> SType o -> LamExpr SimpIR o
       -> SAtom o -> SAtom o -> SubstImpM n o ()
-    liftMonoidCombine accDest accTy bc x y = do
-      LamExpr (Nest (_:>baseTy) _) _ <- return bc
-      alphaEq accTy baseTy >>= \case
-        -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
-        True -> do
-          BinaryLamExpr xb yb body <- return bc
-          body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
-          ans <- liftBuilderImp $ emitBlock (sink body')
-          storeAtom accDest ans
-        False -> case accTy of
-          TabTy d (b:>t) eltTy -> do
-            let ixTy = IxType t d
-            n <- indexSetSizeImp ixTy
-            emitLoop noHint Fwd n \i -> do
-              idx <- unsafeFromOrdinalImp (sink ixTy) i
-              xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
-              yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
-              eltTy' <- applySubst (b@>SubstVal idx) eltTy
-              ithDest <- indexDest (sink accDest) idx
-              liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
-          _ -> error $ "Base monoid type mismatch: can't lift " ++
-                 pprint baseTy ++ " to " ++ pprint accTy
+    liftMonoidCombine = undefined
+    -- liftMonoidCombine accDest accTy bc x y = do
+    --   LamExpr (Nest (_:>baseTy) _) _ <- return bc
+    --   alphaEq accTy baseTy >>= \case
+    --     -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
+    --     True -> do
+    --       BinaryLamExpr xb yb body <- return bc
+    --       body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
+    --       ans <- liftBuilderImp $ emitBlock (sink body')
+    --       storeAtom accDest ans
+    --     False -> case accTy of
+    --       TabTy d (b:>t) eltTy -> do
+    --         let ixTy = IxType t d
+    --         n <- indexSetSizeImp ixTy
+    --         emitLoop noHint Fwd n \i -> do
+    --           idx <- unsafeFromOrdinalImp (sink ixTy) i
+    --           xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
+    --           yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
+    --           eltTy' <- applySubst (b@>SubstVal idx) eltTy
+    --           ithDest <- indexDest (sink accDest) idx
+    --           liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
+    --       _ -> error $ "Base monoid type mismatch: can't lift " ++
+    --              pprint baseTy ++ " to " ++ pprint accTy
 
 toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
@@ -574,22 +579,23 @@ toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
     RunInit body -> translateBlock body
     where
       liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
-      liftMonoidEmpty accDest accTy x = do
-        xTy <- return $ getType x
-        alphaEq xTy accTy >>= \case
-          True -> storeAtom accDest x
-          False -> case accTy of
-            TabTy d (b:>t) eltTy -> do
-              let ixTy = IxType t d
-              n <- indexSetSizeImp ixTy
-              emitLoop noHint Fwd n \i -> do
-                idx <- unsafeFromOrdinalImp (sink ixTy) i
-                x' <- sinkM x
-                eltTy' <- applySubst (b@>SubstVal idx) eltTy
-                ithDest <- indexDest (sink accDest) idx
-                liftMonoidEmpty ithDest eltTy' x'
-            _ -> error $ "Base monoid type mismatch: can't lift " ++
-                  pprint xTy ++ " to " ++ pprint accTy
+      liftMonoidEmpty = undefined
+      -- liftMonoidEmpty accDest accTy x = do
+      --   xTy <- return $ getType x
+      --   alphaEq xTy accTy >>= \case
+      --     True -> storeAtom accDest x
+      --     False -> case accTy of
+      --       TabTy d (b:>t) eltTy -> do
+      --         let ixTy = IxType t d
+      --         n <- indexSetSizeImp ixTy
+      --         emitLoop noHint Fwd n \i -> do
+      --           idx <- unsafeFromOrdinalImp (sink ixTy) i
+      --           x' <- sinkM x
+      --           eltTy' <- applySubst (b@>SubstVal idx) eltTy
+      --           ithDest <- indexDest (sink accDest) idx
+      --           liftMonoidEmpty ithDest eltTy' x'
+      --       _ -> error $ "Base monoid type mismatch: can't lift " ++
+      --             pprint xTy ++ " to " ++ pprint accTy
 
 -- === Runtime representation of values and refs ===
 
@@ -692,25 +698,26 @@ elemTypeToBaseType = \case
   where hostPtrTy ty = PtrType (CPU, ty)
 
 typeToTree :: EnvReader m => SType n -> m n (Tree (LeafType n))
-typeToTree tyTop = return $ go REmpty tyTop
- where
-  go :: RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (LeafType n)
-  go ctx = \case
-    BaseTy b -> Leaf $ LeafType (unRNest ctx) b
-    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy
-    RefTy _ t -> go (RNest ctx RefCtx) t
-    DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
-      let tree1 = rec t1
-      let tree2 = go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2
-      Branch [tree1, tree2]
-    ProdTy ts -> Branch $ map rec ts
-    SumTy ts -> do
-      let tag = rec TagRepTy
-      let xs = map rec ts
-      Branch $ tag:xs
-    TC HeapType -> Branch []
-    ty -> error $ "not implemented " ++ pprint ty
-    where rec = go ctx
+typeToTree tyTop = undefined
+-- typeToTree tyTop = return $ go REmpty tyTop
+--  where
+--   go :: RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (LeafType n)
+--   go ctx = \case
+--     BaseTy b -> Leaf $ LeafType (unRNest ctx) b
+--     TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy
+--     RefTy _ t -> go (RNest ctx RefCtx) t
+--     DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
+--       let tree1 = rec t1
+--       let tree2 = go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2
+--       Branch [tree1, tree2]
+--     ProdTy ts -> Branch $ map rec ts
+--     SumTy ts -> do
+--       let tag = rec TagRepTy
+--       let xs = map rec ts
+--       Branch $ tag:xs
+--     TC HeapType -> Branch []
+--     ty -> error $ "not implemented " ++ pprint ty
+--     where rec = go ctx
 
 traverseScalarRepTys :: EnvReader m => SType n -> (LeafType n -> m n a) -> m n (Tree a)
 traverseScalarRepTys ty f = traverse f =<< typeToTree ty
@@ -726,41 +733,42 @@ storeRepVal (Dest _ destTree) repVal@(RepVal _ valTree) = do
 -- Like `typeToTree`, but when we additionally have the value, we can populate
 -- the existentially-hidden fields.
 valueToTree :: EnvReader m => SRepVal n -> m n (Tree (LeafType n))
-valueToTree (RepVal tyTop valTop) = do
-  go REmpty tyTop valTop
- where
-  go :: EnvReader m => RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (IExpr n)
-     -> m n (Tree (LeafType n))
-  go ctx ty val = case ty of
-    BaseTy b -> return $ Leaf $ LeafType (unRNest ctx) b
-    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy val
-    RefTy _ t -> go (RNest ctx RefCtx) t val
-    DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
-      Branch [v1, v2] -> do
-        case allDepPairCtxs (unRNest ctx) of
-          Just UnitB -> do
-            tree1 <- rec t1 v1
-            x <- repValAtom $ RepVal t1 v1
-            t2' <- applySubst (b@>SubstVal x) t2
-            tree2 <- go (RNest ctx (DepPairCtx NothingB )) t2' v2
-            return $ Branch [tree1, tree2]
-          Nothing -> do
-            tree1 <- rec t1 v1
-            tree2 <- go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2 v2
-            return $ Branch [tree1, tree2]
-      _ -> error "expected a branch"
-    ProdTy ts -> case val of
-      Branch vals -> Branch <$> zipWithM rec ts vals
-      _ -> error "expected a branch"
-    SumTy ts -> case val of
-      Branch (tagVal:vals) -> do
-        tag <- rec TagRepTy tagVal
-        results <- zipWithM rec ts vals
-        return $ Branch $ tag : results
-      _ -> error "expected a branch"
-    _ -> error $ "not implemented " ++ pprint ty
-    where rec = go ctx
-{-# INLINE valueToTree #-}
+valueToTree (RepVal tyTop valTop) = undefined
+-- valueToTree (RepVal tyTop valTop) = do
+--   go REmpty tyTop valTop
+--  where
+--   go :: EnvReader m => RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (IExpr n)
+--      -> m n (Tree (LeafType n))
+--   go ctx ty val = case ty of
+--     BaseTy b -> return $ Leaf $ LeafType (unRNest ctx) b
+--     TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy val
+--     RefTy _ t -> go (RNest ctx RefCtx) t val
+--     DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
+--       Branch [v1, v2] -> do
+--         case allDepPairCtxs (unRNest ctx) of
+--           Just UnitB -> do
+--             tree1 <- rec t1 v1
+--             x <- repValAtom $ RepVal t1 v1
+--             t2' <- applySubst (b@>SubstVal x) t2
+--             tree2 <- go (RNest ctx (DepPairCtx NothingB )) t2' v2
+--             return $ Branch [tree1, tree2]
+--           Nothing -> do
+--             tree1 <- rec t1 v1
+--             tree2 <- go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2 v2
+--             return $ Branch [tree1, tree2]
+--       _ -> error "expected a branch"
+--     ProdTy ts -> case val of
+--       Branch vals -> Branch <$> zipWithM rec ts vals
+--       _ -> error "expected a branch"
+--     SumTy ts -> case val of
+--       Branch (tagVal:vals) -> do
+--         tag <- rec TagRepTy tagVal
+--         results <- zipWithM rec ts vals
+--         return $ Branch $ tag : results
+--       _ -> error "expected a branch"
+--     _ -> error $ "not implemented " ++ pprint ty
+--     where rec = go ctx
+-- {-# INLINE valueToTree #-}
 
 allDepPairCtxs :: TypeCtx SimpIR n l -> Maybe (UnitB n l)
 allDepPairCtxs ctx = case splitLeadingDepPairs ctx of
@@ -877,21 +885,6 @@ atomToRepVal x = RepVal (getType x) <$> go x where
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
     PtrVar ty p -> return $ Leaf $ IPtrVar p ty
-    ProjectElt _ p val -> do
-      (ps, v) <- return $ asNaryProj p val
-      lookupAtomName (atomVarName v) >>= \case
-        TopDataBound (RepVal _ tree) -> applyProjection (toList ps) tree
-        _ -> error "should only be projecting a data atom"
-      where
-        applyProjection :: [Projection] -> Tree (IExpr n) -> SubstImpM i n (Tree (IExpr n))
-        applyProjection [] t = return t
-        applyProjection (i:is) t = do
-          t' <- applyProjection is t
-          case i of
-            UnwrapNewtype -> error "impossible"
-            ProjectProduct idx    -> case t' of
-              Branch ts -> return $ ts !! idx
-              _ -> error "should only be projecting a branch"
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
 -- from the dest. This version is not that. It just lifts a dest into an atom of
@@ -1003,16 +996,17 @@ buildGarbageVal ty =
 -- === Operations on dests ===
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
-indexDest (Dest destValTy@(TabTy d (b:>t) eltTy) tree) i = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp (IxType t d) i
-  leafTys <- typeToTree destValTy
-  Dest eltTy' <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
-    BufferType ixStruct _ <- return $ getRefBufferType leafTy
-    offset <- computeOffsetImp ixStruct ord
-    impOffset ptr offset
-indexDest _ _ = error "expected a reference to a table"
-{-# INLINE indexDest #-}
+indexDest (Dest destValTy@(TabTy d (b:>t) eltTy) tree) i = undefined
+-- indexDest (Dest destValTy@(TabTy d (b:>t) eltTy) tree) i = do
+--   eltTy' <- applySubst (b@>SubstVal i) eltTy
+--   ord <- ordinalImp (IxType t d) i
+--   leafTys <- typeToTree destValTy
+--   Dest eltTy' <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
+--     BufferType ixStruct _ <- return $ getRefBufferType leafTy
+--     offset <- computeOffsetImp ixStruct ord
+--     impOffset ptr offset
+-- indexDest _ _ = error "expected a reference to a table"
+-- {-# INLINE indexDest #-}
 
 -- TODO: direct n-ary version for efficiency?
 naryIndexRepVal :: Emits n => RepVal SimpIR n -> [SAtom n] -> SubstImpM i n (RepVal SimpIR n)
@@ -1026,22 +1020,23 @@ naryIndexRepVal x (ix:ixs) = do
 indexRepValParam :: Emits n
   => RepVal SimpIR n -> SAtom n -> (IExpr n -> SubstImpM i n (IExpr n))
   -> SubstImpM i n (RepVal SimpIR n)
-indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp (IxType t d) i
-  leafTys <- typeToTree tabTy
-  vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
-    BufferPtr (BufferType ixStruct _) <- return $ getIExprInterpretation leafTy
-    offset <- computeOffsetImp ixStruct ord
-    ptr' <- impOffset ptr offset
-    -- we represent scalars by value, not by reference, so we do a load
-    -- if this is the last index in the table nest.
-    case ixStruct of
-      EmptyAbs (Nest _ Empty) -> func ptr' >>= load
-      _                       -> func ptr'
-  return $ RepVal eltTy' vals'
-indexRepValParam _ _ _ = error "expected table type"
-{-# INLINE indexRepValParam #-}
+indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func = undefined
+-- indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func = do
+--   eltTy' <- applySubst (b@>SubstVal i) eltTy
+--   ord <- ordinalImp (IxType t d) i
+--   leafTys <- typeToTree tabTy
+--   vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
+--     BufferPtr (BufferType ixStruct _) <- return $ getIExprInterpretation leafTy
+--     offset <- computeOffsetImp ixStruct ord
+--     ptr' <- impOffset ptr offset
+--     -- we represent scalars by value, not by reference, so we do a load
+--     -- if this is the last index in the table nest.
+--     case ixStruct of
+--       EmptyAbs (Nest _ Empty) -> func ptr' >>= load
+--       _                       -> func ptr'
+--   return $ RepVal eltTy' vals'
+-- indexRepValParam _ _ _ = error "expected table type"
+-- {-# INLINE indexRepValParam #-}
 
 indexRepVal :: Emits n
   => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
@@ -1088,46 +1083,51 @@ computeOffsetImp idxs ixOrd = do
   fromScalarAtom result
 
 computeElemCount :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
-computeElemCount (EmptyAbs Empty) =
-  -- XXX: this optimization is important because we don't want to emit any decls
-  -- in the case that we don't have any indices. The more general path will
-  -- still compute `1`, but it might emit decls along the way.
-  return $ IdxRepVal 1
-computeElemCount idxNest' = do
-  let (idxList, idxNest) = indexStructureSplit idxNest'
-  sizes <- forM idxList indexSetSize
-  listSize <- foldM imul (IdxRepVal 1) sizes
-  nestSize <- elemCountPoly idxNest
-  imul listSize nestSize
+computeElemCount = undefined
+-- computeElemCount (EmptyAbs Empty) =
+--   -- XXX: this optimization is important because we don't want to emit any decls
+--   -- in the case that we don't have any indices. The more general path will
+--   -- still compute `1`, but it might emit decls along the way.
+--   return $ IdxRepVal 1
+-- computeElemCount idxNest' = do
+--   let (idxList, idxNest) = indexStructureSplit idxNest'
+--   sizes <- forM idxList indexSetSize
+--   listSize <- foldM imul (IdxRepVal 1) sizes
+--   nestSize <- elemCountPoly idxNest
+--   imul listSize nestSize
 
 elemCountPoly :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
-elemCountPoly (Abs bs UnitE) = case bs of
-  Empty -> return $ IdxRepVal 1
-  Nest b@(PairB (LiftB d) (_:>t)) rest -> do
-   curSize <- indexSetSize $ IxType t d
-   restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
-   sumUsingPolysImp curSize restSizes
+elemCountPoly (Abs bs UnitE) = undefined
+-- elemCountPoly (Abs bs UnitE) = case bs of
+--   Empty -> return $ IdxRepVal 1
+--   Nest b@(PairB (LiftB d) (_:>t)) rest -> do
+--    curSize <- indexSetSize $ IxType t d
+--    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
+--    sumUsingPolysImp curSize restSizes
 
 computeSizeGivenOrdinal
   :: EnvReader m
   => IxBinder SimpIR n l -> IndexStructure SimpIR l
   -> m n (Abs (Binder SimpIR) (Block SimpIR) n)
-computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = liftBuilder do
-  withFreshBinder noHint IdxRepTy \bOrdinal ->
-    Abs bOrdinal <$> buildBlock do
-      i <- unsafeFromOrdinal (sink $ IxType t d) $ Var $ sink $ binderVar bOrdinal
-      idxStruct' <- applySubst (b@>SubstVal i) idxStruct
-      elemCountPoly $ sink idxStruct'
+computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = undefined
+-- computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = liftBuilder do
+--   withFreshBinder noHint IdxRepTy \bOrdinal ->
+--     Abs bOrdinal <$> buildBlock do
+--       v <- binderVar bOrdinal
+--       i <- unsafeFromOrdinal (sink $ IxType t d) $ Var v
+--       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
+--       elemCountPoly $ sink idxStruct'
 
 -- Split the index structure into a prefix of non-dependent index types
 -- and a trailing nest of indices that can contain inter-dependencies.
 indexStructureSplit :: IndexStructure SimpIR n -> ([IxType SimpIR n], IndexStructure SimpIR n)
-indexStructureSplit (Abs Empty UnitE) = ([], EmptyAbs Empty)
-indexStructureSplit s@(Abs (Nest (PairB (LiftB d) b) rest) UnitE) =
-  case hoist b (EmptyAbs rest) of
-    HoistFailure _     -> ([], s)
-    HoistSuccess rest' -> (IxType (binderType b) d:ans1, ans2)
-      where (ans1, ans2) = indexStructureSplit rest'
+indexStructureSplit  = undefined
+-- indexStructureSplit (Abs Empty UnitE) = ([], EmptyAbs Empty)
+-- indexStructureSplit s@(Abs (Nest (PairB (LiftB d) b) rest) UnitE) =
+--   case hoist b (EmptyAbs rest) of
+--     HoistFailure _     -> ([], s)
+--     HoistSuccess rest' -> (IxType (binderType b) d:ans1, ans2)
+--       where (ans1, ans2) = indexStructureSplit rest'
 
 computeOffset :: forall n. Emits n
               => IndexStructure SimpIR n -> SAtom n -> SBuilderM n (SAtom n)
@@ -1157,7 +1157,7 @@ hoistDecls b block = do
   Abs hoistedDecls rest <- liftEnvReaderM $
     refreshAbs (Abs b block) \b' (Block _ decls result) ->
       hoistDeclsRec b' Empty decls result
-  ab <- emitDecls hoistedDecls rest
+  ab <- emitDecls $ WithDecls hoistedDecls rest
   refreshAbs ab \b'' blockAbs' ->
     Abs b'' <$> absToBlockInferringTypes blockAbs'
 {-# INLINE hoistDecls #-}
@@ -1200,17 +1200,15 @@ withFreshIBinder
   => NameHint -> IType
   -> (forall l. DExt n l => IBinder n l -> m l a)
   -> m n a
-withFreshIBinder hint ty cont = do
-  withFreshBinder hint (ImpNameBinding ty) \(b:>_) ->
-    cont $ IBinder b ty
-{-# INLINE withFreshIBinder #-}
+withFreshIBinder hint ty cont = undefined
+--   withFreshBinder hint (ImpNameBinding ty) \(b:>_) ->
+--     cont $ IBinder b ty
+-- {-# INLINE withFreshIBinder #-}
 
 emitCall
-  :: Emits n => PiType SimpIR n
+  :: Emits n => Dest n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall (PiType bs (EffTy _ resultTy)) f xs = do
-  resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
-  dest <- allocDest resultTy'
+emitCall dest f xs = do
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x
   destImp <- repValToList <$> atomToRepVal (destToAtom dest)
   let impArgs = concat argsImp ++ destImp
@@ -1449,39 +1447,6 @@ abstractLinktimeObjects f = do
   let funBs' =  zipWithNest funBs funTys \b ty -> IFunBinder b ty
   let ptrBs' =  zipWithNest ptrBs ptrTys \b ty -> PtrBinder  b ty
   return (ClosedImpFunction funBs' ptrBs' f', funVars, ptrVars)
-
--- === singleton types ===
-
--- The following implementation should be valid:
---   isSingletonType :: EnvReader m => Type n -> m n Bool
---   isSingletonType ty =
---     singletonTypeVal ty >>= \case
---       Nothing -> return False
---       Just _  -> return True
--- But a separate implementation doesn't have to go under binders,
--- because it doesn't have to reconstruct the singleton value (which
--- may be type annotated and whose type may refer to names).
-
-isSingletonType :: Type SimpIR n -> Bool
-isSingletonType topTy = isJust $ checkIsSingleton topTy
-  where
-    checkIsSingleton :: Type r n -> Maybe ()
-    checkIsSingleton ty = case ty of
-      TabPi (TabPiType _ _ body) -> checkIsSingleton body
-      TC (ProdType tys) -> mapM_ checkIsSingleton tys
-      _ -> Nothing
-
-singletonTypeVal :: (EnvReader m)
-  => Type SimpIR n -> m n (Maybe (Atom SimpIR n))
-singletonTypeVal ty = do
-  tree <- typeToTree ty
-  if length tree == 0 then do
-    -- The tree has 0 of these if the type is empty
-    let tree' = fmap (const $ ILit $ Int32Lit 0) tree
-    return $ Just $ RepValAtom $ RepVal ty tree'
-  else
-    return Nothing
-{-# INLINE singletonTypeVal #-}
 
 -- === type checking imp programs ===
 

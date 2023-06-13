@@ -169,6 +169,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ProjectElt _ idxs v) = atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -204,7 +205,7 @@ instance IRRep r => Pretty (Decl r n l) where
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
-  pretty (PiType bs (EffTy effs resultTy)) =
+  pretty (PiType bs (WithDecls decls (EffTy effs resultTy))) =
     (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
@@ -256,7 +257,6 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
     DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
@@ -272,8 +272,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -301,12 +299,13 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl bs (EffTy eff resultTy)) =
-    prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
-    where
-      prettyEff = case eff of
-        Pure -> space
-        _    -> space <> pretty eff <> space
+  pretty (CorePiType appExpl bs (WithDecls decls (EffTy eff resultTy))) = undefined
+  -- pretty (CorePiType appExpl bs (EffTy eff resultTy)) =
+  --   prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
+  --   where
+  --     prettyEff = case eff of
+  --       Pure -> space
+  --       _    -> space <> pretty eff <> space
 
 prettyBindersWithExpl :: forall b n l ann. PrettyB b
   => Nest (WithExpl b) n l -> Doc ann
@@ -329,17 +328,18 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (b:>ty) body) = let
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
-    prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
-        then parens $ p b <> ":" <> prettyTy
-        else prettyTy
-        where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
-    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+  pretty (TabPiType dict (b:>ty) body) = undefined
+  -- pretty (TabPiType dict (b:>ty) body) = let
+  --   prettyBody = case body of
+  --     Pi subpi -> pretty subpi
+  --     _ -> pLowest body
+  --   prettyBinder = case dict of
+  --     IxDictRawFin n -> if binderName b `isFreeIn` body
+  --       then parens $ p b <> ":" <> prettyTy
+  --       else prettyTy
+  --       where prettyTy = "RawFin" <+> p n
+  --     _ -> prettyBinderHelper (b:>ty) body
+  --   in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
@@ -1179,3 +1179,6 @@ instance Pretty Bin' where
   pretty FatArrow = "=>"
   pretty Pipe = "|"
   pretty CSEqual = "="
+
+instance Pretty (WithDecls r e n) where
+  pretty = undefined

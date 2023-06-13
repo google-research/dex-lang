@@ -49,7 +49,6 @@ import CheckType (checkTypesM)
 #endif
 import Core
 import ConcreteSyntax
-import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -65,7 +64,7 @@ import OccAnalysis
 import Optimize
 import PPrint (pprintCanonicalized)
 import Paths_dex  (getDataFileName)
-import QueryType
+import QueryTypePure
 import Runtime
 import Serialize (takePtrSnapshot, restorePtrSnapshot)
 import Simplify
@@ -277,7 +276,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
+      ty <- return $ getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
@@ -327,7 +326,7 @@ evalSourceBlock' mname block = case sbContents block of
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
+      ty <- sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -535,34 +534,35 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   Optimize   -> act x
 
 evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
-evalBlock typed = do
-  -- Be careful when adding new compilation passes here.  If you do, be sure to
-  -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
-  -- In most cases it should be easiest to add new passes to simpOptimizations or
-  -- loweredOptimizations, below, because those are reused in all three places.
-  checkEffects Pure typed
-  synthed <- checkPass SynthPass $ synthTopE typed
-  simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  SimplifiedBlock simp recon <- return simplifiedBlock
-  checkEffects Pure simp
-  NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
-  checkEffects Pure opt
-  simpResult <- case opt of
-    AtomicBlock result -> return result
-    _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
-      checkDestLam lowered
-      lOpt <- loweredOptimizations lowered
-      checkDestLam lOpt
-      cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
-      llvmOpt <- packageLLVMCallable impOpt
-      resultVals <- liftIO $ callEntryFun llvmOpt []
-      PiType bs (EffTy _ resultTy') <- return $ getDestLamExprType lOpt
-      let resultTy = ignoreHoistFailure $ hoist bs resultTy'
-      repValAtom =<< repValFromFlatList resultTy resultVals
-  applyReconTop recon simpResult
-{-# SCC evalBlock #-}
+evalBlock typed = undefined
+-- evalBlock typed = do
+--   -- Be careful when adding new compilation passes here.  If you do, be sure to
+--   -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
+--   -- In most cases it should be easiest to add new passes to simpOptimizations or
+--   -- loweredOptimizations, below, because those are reused in all three places.
+--   checkEffects Pure typed
+--   synthed <- checkPass SynthPass $ synthTopE typed
+--   simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
+--   SimplifiedBlock simp recon <- return simplifiedBlock
+--   checkEffects Pure simp
+--   NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
+--   checkEffects Pure opt
+--   simpResult <- case opt of
+--     AtomicBlock result -> return result
+--     _ -> do
+--       lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
+--       checkDestLam lowered
+--       lOpt <- loweredOptimizations lowered
+--       checkDestLam lOpt
+--       cc <- getEntryFunCC
+--       impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
+--       llvmOpt <- packageLLVMCallable impOpt
+--       resultVals <- liftIO $ callEntryFun llvmOpt []
+--       PiType bs (EffTy _ resultTy') <- return $ getDestLamExprType lOpt
+--       let resultTy = ignoreHoistFailure $ hoist bs resultTy'
+--       repValAtom =<< repValFromFlatList resultTy resultVals
+--   applyReconTop recon simpResult
+-- {-# SCC evalBlock #-}
 
 simpOptimizations :: Topper m => SLam n -> m n (SLam n)
 simpOptimizations simp = do
@@ -636,11 +636,12 @@ execUDecl mname decl = do
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
           applyRename (b@>atomVarName v) sm >>= emitSourceMap
-    UDeclResultBindPattern hint block (Abs bs sm) -> do
-      result <- evalBlock block
-      xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
+    UDeclResultBindPattern hint block (Abs bs sm) -> undefined
+    -- UDeclResultBindPattern hint block (Abs bs sm) -> do
+    --   result <- evalBlock block
+    --   xs <- unpackTelescope bs result
+    --   vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+    --   applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
@@ -754,7 +755,7 @@ checkPass name cont = do
 #endif
   return result
 
-checkEffects :: (Topper m, HasEffects e r, IRRep r) => EffectRow r n -> e n -> m n ()
+checkEffects :: (Topper m, HasEffects e r, IRRep r) => EffBlock r n -> e n -> m n ()
 checkEffects allowedEffs e = do
   let actualEffs = getEffects e
   checkExtends allowedEffs actualEffs
@@ -943,32 +944,33 @@ instance Generic TopStateEx where
       Distinct -> uncurry TopStateEx (to rep :: (Env UnsafeS, RuntimeEnv))
 
 getLinearizationType :: SymbolicZeros -> CType n -> EnvReaderT Except n (Int, Int, CType n)
-getLinearizationType zeros = \case
-  Pi (CorePiType ExplicitApp bs (EffTy Pure resultTy)) -> do
-    (numIs, numEs) <- getNumImplicits $ fst $ unzipExpls bs
-    refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
-      PairB _ bsE <- return $ splitNestAt numIs bs'
-      let explicitArgTys = nestToList (\b -> sink $ binderType b) bsE
-      argTanTys <- forM explicitArgTys \t -> maybeTangentType t >>= \case
-        Just tty -> case zeros of
-          InstantiateZeros -> return tty
-          SymbolicZeros    -> symbolicTangentTy tty
-        Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint t
-      resultTanTy <- maybeTangentType resultTy' >>= \case
-        Just rtt -> return rtt
-        Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
-      let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
-      let fullTy = CorePiType ExplicitApp bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
-      return (numIs, numEs, Pi fullTy)
-  _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
-  where
-    getNumImplicits :: Fallible m => [Explicitness] -> m (Int, Int)
-    getNumImplicits = \case
-      [] -> return (0, 0)
-      expl:expls -> do
-        (ni, ne) <- getNumImplicits expls
-        case expl of
-          Inferred _ _ -> return (ni + 1, ne)
-          Explicit -> case ni of
-            0 -> return (0, ne + 1)
-            _ -> throw TypeErr "All implicit args must precede implicit args"
+getLinearizationType zeros = undefined
+-- getLinearizationType zeros = \case
+--   Pi (CorePiType ExplicitApp bs (EffTy Pure resultTy)) -> do
+--     (numIs, numEs) <- getNumImplicits $ fst $ unzipExpls bs
+--     refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
+--       PairB _ bsE <- return $ splitNestAt numIs bs'
+--       let explicitArgTys = nestToList (\b -> sink $ binderType b) bsE
+--       argTanTys <- forM explicitArgTys \t -> maybeTangentType t >>= \case
+--         Just tty -> case zeros of
+--           InstantiateZeros -> return tty
+--           SymbolicZeros    -> symbolicTangentTy tty
+--         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint t
+--       resultTanTy <- maybeTangentType resultTy' >>= \case
+--         Just rtt -> return rtt
+--         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
+--       let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
+--       let fullTy = CorePiType ExplicitApp bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
+--       return (numIs, numEs, Pi fullTy)
+--   _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
+--   where
+--     getNumImplicits :: Fallible m => [Explicitness] -> m (Int, Int)
+--     getNumImplicits = \case
+--       [] -> return (0, 0)
+--       expl:expls -> do
+--         (ni, ne) <- getNumImplicits expls
+--         case expl of
+--           Inferred _ _ -> return (ni + 1, ne)
+--           Explicit -> case ni of
+--             0 -> return (0, ne + 1)
+--             _ -> throw TypeErr "All implicit args must precede implicit args"

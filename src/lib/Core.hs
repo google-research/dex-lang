@@ -379,20 +379,26 @@ refreshBinders
 refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 {-# INLINE refreshBinders #-}
 
+class ToTypeBlock (ty::E) (r::IR) | ty -> r where
+  toTypeBlock :: ty n -> TypeBlock r n
+
+instance ToTypeBlock (Type r) r where toTypeBlock = WithoutDecls
+instance ToTypeBlock (TypeBlock r) r where toTypeBlock = id
+
 withFreshBinder
-  :: (Color c, EnvExtender m, ToBinding binding c)
-  => NameHint -> binding n
-  -> (forall l. DExt n l => BinderP c binding n l -> m l a)
+  :: (EnvExtender m, ToTypeBlock ty r, IRRep r)
+  => NameHint -> ty n
+  -> (forall l. DExt n l => Binder r n l -> m l a)
   -> m n a
-withFreshBinder hint binding cont = do
+withFreshBinder hint t cont = do
   Abs b v <- freshNameM hint
-  refreshAbs (Abs (b:>binding) v) \b' _ -> cont b'
+  refreshAbs (Abs (b:>toTypeBlock t) v) \b' _ -> cont b'
 {-# INLINE withFreshBinder #-}
 
 withFreshBinders
-  :: (Color c, EnvExtender m, ToBinding binding c)
-  => [binding n]
-  -> (forall l. DExt n l => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
+  :: (EnvExtender m, ToTypeBlock ty r, IRRep r, SinkableE ty)
+  => [ty n]
+  -> (forall l. DExt n l => Nest (Binder r) n l -> [AtomName r l] -> m l a)
   -> m n a
 withFreshBinders [] cont = do
   Distinct <- getDistinct

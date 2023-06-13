@@ -12,7 +12,6 @@ import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
-import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -20,7 +19,8 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
-import QueryType
+import QueryTypePure
+import Visit
 
 -- === External API ===
 
@@ -239,7 +239,6 @@ instance HasOCC SAtom where
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
       return $ Var (AtomVar n ty')
-    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
     atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where
@@ -378,19 +377,20 @@ instance HasOCC SExpr where
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
 occAlt :: Access n -> IxExpr n -> Alt SimpIR n -> OCCM n (Alt SimpIR n)
-occAlt acc scrut alt = do
-  (Abs (b':>ty) body') <- refreshAbs alt \b@(nb:>_) body -> do
-    -- We use `unknown` here as a conservative approximation of the case binder
-    -- being the scrutinee with the top constructor removed.  If we statically
-    -- knew what that constructor was we could remove it, but I guess that
-    -- case-of-known-constructor optimization would have already eliminated this
-    -- case statement in that event.
-    scrutIx <- unknown $ sink scrut
-    extend nb scrutIx do
-      body' <- occ (sink acc) body
-      return $ Abs b body'
-  ty' <- occTy ty
-  return $ Abs (b':>ty') body'
+occAlt acc scrut alt = undefined
+-- occAlt acc scrut alt = do
+--   (Abs (b':>ty) body') <- refreshAbs alt \b@(nb:>_) body -> do
+--     -- We use `unknown` here as a conservative approximation of the case binder
+--     -- being the scrutinee with the top constructor removed.  If we statically
+--     -- knew what that constructor was we could remove it, but I guess that
+--     -- case-of-known-constructor optimization would have already eliminated this
+--     -- case statement in that event.
+--     scrutIx <- unknown $ sink scrut
+--     extend nb scrutIx do
+--       body' <- occ (sink acc) body
+--       return $ Abs b body'
+--   ty' <- occTy ty
+--   return $ Abs (b':>ty') body'
 
 occurrenceAndSummary :: SAtom n -> OCCM n (IxExpr n, SAtom n)
 occurrenceAndSummary atom = do
@@ -472,10 +472,11 @@ occWithBinder
   => Abs (Binder SimpIR) e n
   -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
   -> OCCM n a
-occWithBinder (Abs (b:>ty) body) cont = do
-  ty' <- occTy ty
-  refreshAbs (Abs (b:>ty') body) cont
-{-# INLINE occWithBinder #-}
+occWithBinder (Abs (b:>ty) body) cont = undefined
+-- occWithBinder (Abs (b:>ty) body) cont = do
+--   ty' <- occTy ty
+--   refreshAbs (Abs (b:>ty') body) cont
+-- {-# INLINE occWithBinder #-}
 
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
@@ -499,3 +500,6 @@ instance HasOCC (RefOp SimpIR) where
     IndexRef t i -> IndexRef <$> occTy t <*> occ accessOnce i
     ProjRef t i -> ProjRef <$> occTy t <*> pure i
   {-# INLINE occ #-}
+
+instance HasOCC (WithDecls r e) where
+  occ a _ = undefined
