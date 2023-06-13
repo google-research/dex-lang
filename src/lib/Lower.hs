@@ -388,28 +388,38 @@ instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
   prettyPrec (VRename v) = atPrec LowestPrec $ "Rename" <+> pretty v
 
-newtype TopVectorizeM (o::S) (a:: *) = TopVectorizeM
+newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
   { runTopVectorizeM ::
-      BuilderT SimpIR (ReaderT Word32 (StateT Errs FallibleM)) o a }
-  deriving ( Functor, Applicative, Monad, MonadFail, MonadReader Word32
-           , MonadState Errs, Fallible, ScopeReader, EnvReader
-           , EnvExtender, Builder SimpIR, Catchable )
+      SubstReaderT Name
+       (ReaderT1 (LiftE Word32)
+         (StateT1 (LiftE Errs) (BuilderT SimpIR FallibleM))) i o a }
+  deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (LiftE Word32 o)
+           , MonadState (LiftE Errs o), Fallible, ScopeReader, EnvReader
+           , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable )
 
 vectorizeLoopsBlock :: (EnvReader m)
   => Word32 -> DestBlock n
   -> m n (DestBlock n, Errs)
 vectorizeLoopsBlock vectorByteWidth (Abs destb body) = liftEnvReaderM do
   refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
-    vblock <- liftBuilderT $ buildBlock do
-                s <- runTopVectorizeM $ vectorizeLoopsRec emptyInFrag decls
-                applyRename s ans
-    case (runFallibleM . (`runStateT` mempty) . (`runReaderT` vectorByteWidth)) vblock of
-      -- The failure case should not occur: vectorization errors should have been
-      -- caught inside `vectorizeLoopsRec` (and should have been added to the
-      -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
-      Failure errs -> error $ pprint errs
-      Success (block', errs) -> return $ (Abs d block', errs)
+    (block', errs) <- liftTopVectorizeM vectorByteWidth $ buildBlock do
+      s <- vectorizeLoopsRec emptyInFrag decls
+      applyRename s ans
+    return $ (Abs d block', errs)
 {-# SCC vectorizeLoopsBlock #-}
+
+liftTopVectorizeM :: (EnvReader m)
+  => Word32 -> TopVectorizeM i i a -> m i (a, Errs)
+liftTopVectorizeM vectorByteWidth action = do
+  fallible <- liftBuilderT $
+    flip runStateT1 mempty $ runReaderT1 (LiftE vectorByteWidth) $
+      runSubstReaderT idSubst $ runTopVectorizeM action
+  case runFallibleM fallible of
+    -- The failure case should not occur: vectorization errors should have been
+    -- caught inside `vectorizeLoopsRec` (and should have been added to the
+    -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
+    Failure errs -> error $ pprint errs
+    Success (a, (LiftE errs)) -> return $ (a, errs)
 
 vectorizeLoops  :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
 vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
@@ -434,12 +444,12 @@ prependCtxToErrs ctx (Errs errs) =
 
 vectorizeLoopsRec :: (Ext i o, Emits o)
                   => SubstFrag Name i i' o -> Nest SDecl i' i''
-                  -> TopVectorizeM o (SubstFrag Name i i'' o)
+                  -> TopVectorizeM i o (SubstFrag Name i i'' o)
 vectorizeLoopsRec frag nest =
   case nest of
     Empty -> return frag
     Nest (Let b (DeclBinding ann expr)) rest -> do
-      vectorByteWidth <- ask
+      LiftE vectorByteWidth <- ask
       expr' <- applyRename frag expr
       narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
       let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
@@ -456,7 +466,7 @@ vectorizeLoopsRec frag nest =
                 let msg = "In `vectorizeLoopsRec`:\nExpr:\n" ++ pprint expr
                     ctx = mempty { messageCtx = [msg] }
                     errs' = prependCtxToErrs ctx errs
-                modify (<> errs')
+                modify (<> LiftE errs')
                 dest' <- applyRename frag dest
                 body' <- applyRename frag body
                 seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
@@ -488,7 +498,7 @@ vectorSafeEffect (EffectRow effs NoTail) = all safe $ eSetToList effs where
 
 vectorizeSeq :: forall i i' o. (Distinct o, Ext i o)
              => Word32 -> SubstFrag Name i i' o -> LamExpr SimpIR i'
-             -> TopVectorizeM o (LamExpr SimpIR o)
+             -> TopVectorizeM i o (LamExpr SimpIR o)
 vectorizeSeq loopWidth frag (UnaryLamExpr (b:>ty) body) = do
   if vectorSafeEffect (getEffects body)
     then do
