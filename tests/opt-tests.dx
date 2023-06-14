@@ -159,3 +159,13 @@ _ = for i:(Fin 256). xs[i] + 1
 -- CHECK-NEXT: vslice
 -- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
 -- CHECK: %iadd [[i]] [[ones]]
+
+%passes vect
+_ = with_reader 2 \ref.
+  for i:(Fin 256). xs[i] + ask(ref)
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[ref:v#[0-9]+]]:Int32 = ask
+-- CHECK: [[i:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: [[bcast:v#[0-9]+]]:<16xInt32> = vbroadcast [[ref]]
+-- CHECK: %iadd [[i]] [[bcast]]

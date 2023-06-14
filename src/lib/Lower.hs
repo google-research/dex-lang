@@ -398,15 +398,14 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
            , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
            , SubstReader Name)
 
-vectorizeLoopsBlock :: (EnvReader m)
-  => Word32 -> DestBlock n
-  -> m n (DestBlock n, Errs)
-vectorizeLoopsBlock vectorByteWidth (Abs destb body) = liftEnvReaderM do
-  refreshAbs (Abs destb body) \d (Block _ decls ans) -> do
-    (block', errs) <- liftTopVectorizeM vectorByteWidth $ buildBlock do
-      vectorizeLoopsDecls decls $ renameM ans
-    return $ (Abs d block', errs)
-{-# SCC vectorizeLoopsBlock #-}
+vectorizeLoops :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
+vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
+  case popNest bsDestB of
+    Just (PairB bs b) ->
+      refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
+        (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
+        return $ (LamExpr (bs' >>> UnaryNest b'') body'', errs)
+    Nothing -> error "expected a trailing dest binder"
 
 liftTopVectorizeM :: (EnvReader m)
   => Word32 -> TopVectorizeM i i a -> m i (a, Errs)
@@ -421,15 +420,6 @@ liftTopVectorizeM vectorByteWidth action = do
     Failure errs -> error $ pprint errs
     Success (a, (LiftE errs)) -> return $ (a, errs)
 
-vectorizeLoops :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
-vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
-  case popNest bsDestB of
-    Just (PairB bs b) ->
-      refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
-        (Abs b'' body'', errs) <- vectorizeLoopsBlock width body'
-        return $ (LamExpr (bs' >>> UnaryNest b'') body'', errs)
-    Nothing -> error "expected a trailing dest binder"
-
 addVectErrCtx :: Fallible m => String -> String -> m a -> m a
 addVectErrCtx name payload m =
   let ctx = mempty { messageCtx = ["In `" ++ name ++ "`:\n" ++ payload] }
@@ -442,37 +432,62 @@ prependCtxToErrs :: ErrCtx -> Errs -> Errs
 prependCtxToErrs ctx (Errs errs) =
   Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx <> ctx') msg) errs
 
+vectorizeLoopsDestBlock :: DestBlock i
+  -> TopVectorizeM i o (DestBlock o)
+vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
+  destTy' <- renameM destTy
+  withFreshBinder (getNameHint destb) destTy' \destb' -> do
+    extendRenamer (destb @> binderName destb') do
+      Abs destb' <$> buildBlock (vectorizeLoopsBlock body)
+{-# SCC vectorizeLoopsDestBlock #-}
+
+vectorizeLoopsBlock :: (Emits o)
+  => Block SimpIR i -> TopVectorizeM i o (SAtom o)
+vectorizeLoopsBlock (Block _ decls ans) =
+  vectorizeLoopsDecls decls $ renameM ans
+
 vectorizeLoopsDecls :: (Emits o)
   => Nest SDecl i i' -> TopVectorizeM i' o a -> TopVectorizeM i o a
 vectorizeLoopsDecls nest cont =
   case nest of
     Empty -> cont
     Nest (Let b (DeclBinding ann expr)) rest -> do
-      LiftE vectorByteWidth <- ask
-      expr' <- renameM expr
-      narrowestTypeByteWidth <- getNarrowestTypeByteWidth expr'
-      let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
-      v <- case expr of
-        PrimOp (DAMOp (Seq _ dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest@(ProdVal [_]) body))
-          | n `mod` loopWidth == 0 -> (do
-              Distinct <- getDistinct
-              let vn = n `div` loopWidth
-              body' <- vectorizeSeq loopWidth body
-              dest' <- renameM dest
-              seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
-              emit $ PrimOp $ DAMOp seqOp)
-            `catchErr` \errs -> do
-                let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
-                    ctx = mempty { messageCtx = [msg] }
-                    errs' = prependCtxToErrs ctx errs
-                modify (<> LiftE errs')
-                dest' <- renameM dest
-                body' <- renameM body
-                seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
-                emit $ PrimOp $ DAMOp seqOp
-        _ -> emitDecl (getNameHint b) ann =<< renameM expr
+      v <- emitDecl (getNameHint b) ann =<< vectorizeLoopsExpr expr
       extendSubst (b @> atomVarName v) $
         vectorizeLoopsDecls rest cont
+
+vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
+vectorizeLoopsExpr expr = do
+  LiftE vectorByteWidth <- ask
+  narrowestTypeByteWidth <- getNarrowestTypeByteWidth =<< renameM expr
+  let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
+  case expr of
+    PrimOp (DAMOp (Seq _ dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest@(ProdVal [_]) body))
+      | n `mod` loopWidth == 0 -> (do
+          Distinct <- getDistinct
+          let vn = n `div` loopWidth
+          body' <- vectorizeSeq loopWidth body
+          dest' <- renameM dest
+          seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
+          return $ PrimOp $ DAMOp seqOp)
+        `catchErr` \errs -> do
+            let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
+                ctx = mempty { messageCtx = [msg] }
+                errs' = prependCtxToErrs ctx errs
+            modify (<> LiftE errs')
+            dest' <- renameM dest
+            body' <- renameM body
+            seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
+            return $ PrimOp $ DAMOp seqOp
+    PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
+      item' <- renameM item
+      itemTy <- return $ getType item'
+      lam <- buildEffLam noHint itemTy \hb refb ->
+        extendRenamer (hb' @> atomVarName hb) do
+          extendRenamer (refb' @> atomVarName refb) do
+            vectorizeLoopsBlock body
+      PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
+    _ -> renameM expr
 
 -- Vectorizing a loop with an effect is safe when the operation reordering
 -- produced by vectorization doesn't change the semantics.  This is guaranteed
@@ -586,6 +601,11 @@ vectorizeDAMOp op =
 vectorizeRefOp :: Emits o => SAtom i -> RefOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeRefOp ref' op =
   case op of
+    MAsk -> do
+      -- TODO A contiguous reference becomes a vector load producing a varying
+      -- result.
+      VVal Uniform ref <- vectorizeAtom ref'
+      VVal Uniform <$> emitOp (RefOp ref MAsk)
     IndexRef _ i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
@@ -769,7 +789,7 @@ typeByteWidth ty = case ty of
 maxWord32 :: Word32
 maxWord32 = maxBound
 
-getNarrowestTypeByteWidth :: (Emits n, EnvReader m) => Expr SimpIR n -> m n Word32
+getNarrowestTypeByteWidth :: (EnvReader m) => Expr SimpIR n -> m n Word32
 getNarrowestTypeByteWidth x = do
   (_, LiftE result) <-  liftEnvReaderM $ runStateT1
     (runSubstReaderT idSubst $ runTypeWidthM $ visitExprNoEmits x) (LiftE maxWord32)
