@@ -233,5 +233,5 @@ spec = do
       makeSpanTree xs spanInfos `shouldBe` Just positionFilledSpanTree
 
     it "renders properly" do
-      let htmlText = treeToHtml' (T.pack xs) positionFilledSpanTree in
+      let htmlText = treeToHtml (T.pack xs) positionFilledSpanTree in
         renderHtml htmlText `shouldBe` renderedHtml
