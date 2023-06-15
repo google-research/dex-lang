@@ -77,6 +77,7 @@ import Types.Misc
 import Types.Primitives
 import Types.Source
 import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
+import Vectorize
 
 -- === top-level monad ===
 

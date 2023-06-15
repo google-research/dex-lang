@@ -98,6 +98,7 @@ library
                      , QueryType
                      , QueryTypePure
                      , Util
+                     , Vectorize
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval
