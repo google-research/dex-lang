@@ -560,9 +560,9 @@ instance Pretty Result where
 instance Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UBinder c n l) where
   prettyPrec b = atPrec ArgPrec case b of
-    UBindSource v -> p v
-    UIgnore       -> "_"
-    UBind v _     -> p v
+    UBindSource _ v -> p v
+    UIgnore         -> "_"
+    UBind _ v _     -> p v
 
 instance PrettyE e => Pretty (WithSrcE e n) where
   pretty (WithSrcE _ x) = p x
@@ -577,8 +577,8 @@ instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where
   prettyPrec (WithSrcB _ x) = prettyPrec x
 
 instance PrettyE e => Pretty (SourceNameOr e n) where
-  pretty (SourceName   v) = p v
-  pretty (InternalName v _) = p v
+  pretty (SourceName _ v) = p v
+  pretty (InternalName _ v _) = p v
 
 instance Pretty (SourceOrInternalName c n) where
   pretty (SourceOrInternalName sn) = p sn

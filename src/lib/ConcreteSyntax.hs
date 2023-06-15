@@ -27,9 +27,9 @@ import Data.Void
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 
-import Err
 import Lexing
 import Name
+import SourceInfo
 import Types.Core
 import Types.Source
 import Types.Primitives
@@ -88,19 +88,19 @@ interp_operator = \case
 
 pattern Binary :: Bin' -> Group -> Group -> Group
 pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
-  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc Nothing op) lhs rhs
+  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc emptySrcPosCtx op) lhs rhs
 
 pattern Prefix :: SourceName -> Group -> Group
 pattern Prefix op g <- (WithSrc _ (CPrefix op g)) where
-  Prefix op g = WithSrc Nothing $ CPrefix op g
+  Prefix op g = WithSrc emptySrcPosCtx $ CPrefix op g
 
 pattern Postfix :: SourceName -> Group -> Group
 pattern Postfix op g <- (WithSrc _ (CPostfix op g)) where
-  Postfix op g = WithSrc Nothing $ CPostfix op g
+  Postfix op g = WithSrc emptySrcPosCtx $ CPostfix op g
 
 pattern Identifier :: SourceName -> Group
 pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
-  Identifier name = WithSrc Nothing $ CIdentifier name
+  Identifier name = WithSrc emptySrcPosCtx $ CIdentifier name
 
 -- === Parser (top-level structure) ===
 
@@ -237,7 +237,7 @@ explicitCommand = do
   b <- cBlock <* eolf
   e <- case b of
     ExprBlock e -> return e
-    IndentedBlock decls -> return $ WithSrc Nothing $ CDo $ IndentedBlock decls
+    IndentedBlock decls -> return $ WithSrc emptySrcPosCtx $ CDo $ IndentedBlock decls
   return $ case (e, cmd) of
     (WithSrc _ (CIdentifier v), GetType) -> Misc $ GetNameType v
     _ -> Command cmd e
@@ -605,7 +605,7 @@ leafGroup :: Parser Group
 leafGroup = do
   leaf <- leafGroup'
   postOps <- many postfixGroup
-  return $ foldl (\accum (op, opLhs) -> joinSrc accum opLhs $ CBin (WithSrc Nothing op) accum opLhs) leaf postOps
+  return $ foldl (\accum (op, opLhs) -> joinSrc accum opLhs $ CBin (WithSrc emptySrcPosCtx op) accum opLhs) leaf postOps
  where
 
   leafGroup' :: Parser Group
@@ -751,23 +751,23 @@ unOpPost s = (s, Expr.Postfix $ unOp CPostfix s)
 unOp :: (SourceName -> Group -> Group') -> SourceName -> Parser (Group -> Group)
 unOp f s = do
   ((), pos) <- withPos $ sym $ fromString s
-  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (Just pos) grpPos) $ f s g
+  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (fromPos pos) grpPos) $ f s g
 
 binApp :: Bin' -> SrcPos -> Group -> Group -> Group
 binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
-  where f' = WithSrc (Just pos) f
+  where f' = WithSrc (fromPos pos) f
 
 withClausePostfix :: (SourceName, Expr.Operator Parser Group)
 withClausePostfix = ("with", op)
   where
     op = Expr.Postfix do
       rhs <- withClause
-      return \lhs -> WithSrc Nothing $ CWith lhs rhs  -- TODO: source info
+      return \lhs -> WithSrc emptySrcPosCtx $ CWith lhs rhs  -- TODO: source info
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
   (x, pos) <- withPos p
-  return $ WithSrc (Just pos) x
+  return $ WithSrc (fromPos pos) x
 
 joinSrc :: WithSrc a1 -> WithSrc a2 -> a3 -> WithSrc a3
 joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
@@ -776,13 +776,14 @@ joinSrc3 :: WithSrc a1 -> WithSrc a2 -> WithSrc a3 -> a4 -> WithSrc a4
 joinSrc3 (WithSrc p1 _) (WithSrc p2 _) (WithSrc p3 _) x =
   WithSrc (concatPos [p1, p2, p3]) x
 
-joinPos :: Maybe SrcPos -> Maybe SrcPos -> Maybe SrcPos
-joinPos Nothing p = p
-joinPos p Nothing = p
-joinPos (Just (l, h)) (Just (l', h')) = Just (min l l', max h h')
+joinPos :: SrcPosCtx -> SrcPosCtx -> SrcPosCtx
+joinPos (SrcPosCtx Nothing _) c@(SrcPosCtx _ _) = c
+joinPos c@(SrcPosCtx _ _) (SrcPosCtx Nothing _) = c
+joinPos (SrcPosCtx (Just (l, h)) spanId) (SrcPosCtx (Just (l', h')) _) =
+  SrcPosCtx (Just (min l l', max h h')) spanId
 
-concatPos :: [Maybe SrcPos] -> Maybe SrcPos
-concatPos [] = Nothing
+concatPos :: [SrcPosCtx] -> SrcPosCtx
+concatPos [] = error "concatPos: unexpected empty [SrcPosCtx]"
 concatPos (pos:rest) = foldl joinPos pos rest
 
 -- === primitive constructors and operators ===
