@@ -33,6 +33,17 @@ import Types.Primitives
 -- WATCH OUT! This vectorization assumes that all raw references represent
 -- destinations, and so no Place operations can cause write conflicts.
 
+-- Vectorization occurs as two main passes, which slightly ambiguous names
+-- - `vectorizeLoops`, in the `TopVectorizeM` monad, traverses the entire program
+--   looking for loops to vectorize
+-- - `vectorize`, in the `VectorizeM` monad, actually vectorizes a single loop
+--
+-- The inner `vectorize` pass may fail with `throwVectErr`.  The outer
+-- `vectorizeLoops` pass takes an error like that to mean that vectorization of
+-- this loop is not possible (rather than that there is an error in the user
+-- program), and falls back to leaving the scalar loop in place.
+
+
 -- TODO: Local vector values? We might want to pack short and pure for loops into vectors,
 -- to support things like float3 etc.
 data Stability
@@ -43,7 +54,7 @@ data Stability
   deriving (Eq, Show)
 
 data VSubstValC (c::C) (n::S) where
-  VVal   :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
+  VVal    :: Stability -> SAtom n -> VSubstValC (AtomNameC SimpIR) n
   VRename :: Name c n -> VSubstValC c n
 
 type VAtom = VSubstValC (AtomNameC SimpIR)
@@ -156,6 +167,15 @@ vectorizeLoopsExpr expr = do
           extendRenamer (refb' @> atomVarName refb) do
             vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
+    PrimOp (Hof (TypedHof _ (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
+      dest' <- renameM dest
+      monoid' <- renameM monoid
+      accTy <- return $ getType $ baseEmpty monoid'
+      lam <- buildEffLam noHint accTy \hb refb ->
+        extendRenamer (hb' @> atomVarName hb) do
+          extendRenamer (refb' @> atomVarName refb) do
+            vectorizeLoopsBlock body
+      PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
     _ -> renameM expr
 
 -- Vectorizing a loop with an effect is safe when the operation reordering
