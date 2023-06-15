@@ -260,6 +260,11 @@ anyM f xs = do
   conds <- mapM f xs
   return $ any id conds
 
+allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+allM f xs = do
+  conds <- mapM f xs
+  return $ all id conds
+
 fromMaybeM :: Monad m => Maybe a -> b -> (a -> m b) -> m b
 fromMaybeM optVal defaultVal cont = case optVal of
   Just x -> cont x
