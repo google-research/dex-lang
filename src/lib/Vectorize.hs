@@ -27,6 +27,7 @@ import PPrint
 import QueryType
 import Types.Core
 import Types.Primitives
+import Util (allM)
 
 -- === Vectorization ===
 
@@ -142,23 +143,24 @@ vectorizeLoopsExpr expr = do
   narrowestTypeByteWidth <- getNarrowestTypeByteWidth =<< renameM expr
   let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
   case expr of
-    PrimOp (DAMOp (Seq _ dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest@(ProdVal [_]) body))
+    PrimOp (DAMOp (Seq effs dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest body))
       | n `mod` loopWidth == 0 -> (do
-          Distinct <- getDistinct
-          let vn = n `div` loopWidth
-          body' <- vectorizeSeq loopWidth body
-          dest' <- renameM dest
-          seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
-          return $ PrimOp $ DAMOp seqOp)
+          safe <- vectorSafeEffect effs
+          if safe
+            then (do
+              Distinct <- getDistinct
+              let vn = n `div` loopWidth
+              body' <- vectorizeSeq loopWidth body
+              dest' <- renameM dest
+              seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
+              return $ PrimOp $ DAMOp seqOp)
+            else renameM expr)
         `catchErr` \errs -> do
             let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
                 ctx = mempty { messageCtx = [msg] }
                 errs' = prependCtxToErrs ctx errs
             modify (<> LiftE errs')
-            dest' <- renameM dest
-            body' <- renameM body
-            seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest' body'
-            return $ PrimOp $ DAMOp seqOp
+            renameM expr
     PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
       item' <- renameM item
       itemTy <- return $ getType item'
@@ -194,30 +196,27 @@ vectorizeLoopsExpr expr = do
 -- - The IO effect is in general not safe
 -- This check doesn't have enough information to test the above,
 -- but we crudely approximate for now.
-vectorSafeEffect :: EffectRow SimpIR n -> Bool
-vectorSafeEffect (EffectRow effs NoTail) = all safe $ eSetToList effs where
-  safe InitEffect = True
-  safe (RWSEffect Reader _) = True
-  safe _ = False
+vectorSafeEffect :: EffectRow SimpIR i -> TopVectorizeM i o Bool
+vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
+  safe InitEffect = return True
+  safe (RWSEffect Reader _) = return True
+  safe _ = return False
 
 vectorizeSeq :: Word32 -> LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
 vectorizeSeq loopWidth (UnaryLamExpr (b:>ty) body) = do
-  if vectorSafeEffect (getEffects body)
-    then do
-      (_, ty') <- case ty of
-        ProdTy [ixTy, ref] -> do
-          ixTy' <- renameM ixTy
-          ref' <- renameM ref
-          return (ixTy', ProdTy [IdxRepTy, ref'])
-        _ -> error "Unexpected seq binder type"
-      liftVectorizeM loopWidth $
-        buildUnaryLamExpr (getNameHint b) ty' \ci -> do
-          -- XXX: we're assuming `Fin n` here
-          (viOrd, dest) <- fromPair $ Var ci
-          iOrd <- imul viOrd $ IdxRepVal loopWidth
-          extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)) $
-            vectorizeBlock body $> UnitVal
-    else throwVectErr "Effectful loop vectorization not implemented!"
+  (_, ty') <- case ty of
+    ProdTy [ixTy, ref] -> do
+      ixTy' <- renameM ixTy
+      ref' <- renameM ref
+      return (ixTy', ProdTy [IdxRepTy, ref'])
+    _ -> error "Unexpected seq binder type"
+  liftVectorizeM loopWidth $
+    buildUnaryLamExpr (getNameHint b) ty' \ci -> do
+      -- XXX: we're assuming `Fin n` here
+      (viOrd, dest) <- fromPair $ Var ci
+      iOrd <- imul viOrd $ IdxRepVal loopWidth
+      extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)) $
+        vectorizeBlock body $> UnitVal
 vectorizeSeq _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
