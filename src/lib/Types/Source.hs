@@ -266,9 +266,7 @@ data UExpr' (n::S) =
  | UNatLit   Word64
  | UIntLit   Int
  | UFloatLit Double
-   deriving (Show, Generic, Typeable)
-
-deriving instance (Typeable n, forall h. Data h) => Data (UExpr' n)
+   deriving (Show, Generic)
 
 type UNamedArg (n::S) = (SourceName, UExpr n)
 type FieldName = WithSrc FieldName'
@@ -286,17 +284,11 @@ data ULamExpr (n::S) where
     -> UBlock l                           -- body
     -> ULamExpr n
 
-deriving instance (Typeable n, forall h. Data h) => Data (ULamExpr n)
-
 data UPiExpr (n::S) where
   UPiExpr :: Nest (WithExpl UOptAnnBinder) n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
 
-deriving instance (Typeable n, forall h. Data h) => Data (UPiExpr n)
-
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UOptAnnBinder n l -> UType l -> UTabPiExpr n
-
-deriving instance (Typeable n, forall h. Data h) => Data (UTabPiExpr n)
 
 data UDepPairType (n::S) where
   UDepPairType :: DepPairExplicitness -> UOptAnnBinder n l -> UType l -> UDepPairType n
@@ -309,12 +301,6 @@ data UDataDef (n::S) where
     -> Nest (WithExpl UOptAnnBinder) n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
-
-deriving instance (
-    Typeable n,
-    (forall l. Data (Nest (WithExpl UOptAnnBinder) n l)),
-    (forall l. Data (UDataDefTrail l))
-  ) => Data (UDataDef n)
 
 data UStructDef (n::S) where
   UStructDef
@@ -367,9 +353,6 @@ data UTopDecl (n::S) (l::S) where
     ->   [UEffectOpDef l']                -- operation definitions
     -> UBinder HandlerNameC n l           -- handler name
     -> UTopDecl n l
-  deriving (Typeable)
-
-deriving instance (Typeable n, Typeable l, forall h. Data h) => Data (UDecl n l)
 
 type UType = UExpr
 type UConstraint = UExpr
@@ -389,8 +372,6 @@ instance Store UResumePolicy
 
 data UForExpr (n::S) where
   UForExpr :: UOptAnnBinder n l -> UBlock l -> UForExpr n
-
-deriving instance (Typeable n, forall h. Data h) => Data (UForExpr n)
 
 type UMethodDef = WithSrcE UMethodDef'
 data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
@@ -428,8 +409,6 @@ data UPat' (n::S) (l::S) =
  | UPatTable (Nest UPat n l)
   deriving (Show, Generic)
 
-deriving instance (Typeable n, Typeable l, forall h. Data h) => Data (UPat' n l)
-
 pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
 
@@ -453,12 +432,10 @@ data WithSrc a = WithSrc SrcPosCtx a
   deriving (Show, Functor, Generic)
 
 data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
-  deriving (Show, Typeable, Generic)
-
-deriving instance (Typeable a, Typeable n, Data (a n)) => Data (WithSrcE a n)
+  deriving (Show, Generic)
 
 data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
-  deriving (Show, Typeable, Data, Generic)
+  deriving (Show, Data, Generic)
 
 class HasSrcPos a where
   srcPos :: a -> SrcPosCtx

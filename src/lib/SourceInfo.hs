@@ -32,7 +32,7 @@ type SrcPos = (Int, Int)
 type SpanId = Int
 
 data SrcPosCtx = SrcPosCtx (Maybe SrcPos) (Maybe SpanId)
-  deriving (Show, Eq, Generic, Data, Typeable)
+  deriving (Show, Eq, Generic, Data)
 instance Hashable SrcPosCtx
 instance Store SrcPosCtx
 
