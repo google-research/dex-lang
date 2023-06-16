@@ -304,6 +304,25 @@ liftVectorizeM loopWidth action = do
 getLoopWidth :: VectorizeM i o Word32
 getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
 
+-- TODO When needed, can code a variant of this that also returns the Stability
+-- of the value returned by the LamExpr.
+vectorizeLamExpr :: LamExpr SimpIR i -> [Stability]
+  -> VectorizeM i o (LamExpr SimpIR o)
+vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
+  (Empty, []) -> do
+    LamExpr Empty <$> buildBlock (do
+      vectorizeBlock body >>= \case
+        (VVal _ ans) -> return ans
+        (VRename v) -> Var <$> toAtomVar v)
+  (Nest (b:>ty) rest, (stab:stabs)) -> do
+    ty' <- vectorizeType ty
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      var <- toAtomVar $ binderName b'
+      extendSubst (b @> VVal stab (Var var)) do
+        LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
+        return $ LamExpr (Nest b' rest') body'
+  _ -> error "Zip error"
+
 vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)
 vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
   addVectErrCtx "vectorizeBlock" ("Block:\n" ++ pprint block) $
@@ -357,6 +376,21 @@ vectorizeRefOp ref' op =
       -- result.
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Uniform <$> emitOp (RefOp ref MAsk)
+    MExtend basemonoid' x' -> do
+      VVal refStab ref <- vectorizeAtom ref'
+      VVal xStab x <- vectorizeAtom x'
+      basemonoid <- case refStab of
+        Uniform -> case xStab of
+          Uniform -> vectorizeBaseMonoid basemonoid' Uniform Uniform
+          -- This case represents accumulating something loop-varying into a
+          -- loop-invariant accumulator, as e.g. sum.  We can implement that for
+          -- commutative monoids, but we would want to have started with private
+          -- accumulators (one per lane), and then reduce them with an
+          -- appropriate sequence of vector reduction intrinsics at the end.
+          _ -> throwVectErr $ "Vectorizing non-sliced accumulation not implemented"
+        Contiguous -> vectorizeBaseMonoid basemonoid' Varying xStab
+        s -> throwVectErr $ "Cannot vectorize reference with loop-varying stability " ++ show s
+      VVal Uniform <$> emitOp (RefOp ref $ MExtend basemonoid x)
     IndexRef _ i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
@@ -370,6 +404,20 @@ vectorizeRefOp ref' op =
           throwVectErr do
             "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
+
+vectorizeBaseMonoid :: Emits o => BaseMonoid SimpIR i -> Stability -> Stability
+  -> VectorizeM i o (BaseMonoid SimpIR o)
+vectorizeBaseMonoid (BaseMonoid empty combine) accStab xStab = do
+  -- TODO: This will probably create lots of vector broadcast of 0 instructions,
+  -- which will often be dead code because only the combine operation is
+  -- actually needed in that place.  We can (i) rely on LLVM to get rid of them,
+  -- (ii) get rid of them ourselves by running DCE on Imp (which is problematic
+  -- because we don't have the effect system at that point), or (iii) change the
+  -- IR to not require the empty element for MExtend operations, since they
+  -- don't use it.
+  empty' <- ensureVarying =<< vectorizeAtom empty
+  combine' <- vectorizeLamExpr combine [accStab, xStab]
+  return $ BaseMonoid empty' combine'
 
 vectorizePrimOp :: Emits o => PrimOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizePrimOp op = case op of
