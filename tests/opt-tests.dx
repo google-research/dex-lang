@@ -123,6 +123,8 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 "vectorization"
 -- CHECK-LABEL: vectorization
 
+"vectorizing int binary op"
+-- CHECK-LABEL: vectorizing int binary op
 %passes vect
 _ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
 -- CHECK: seq (RawFin 0x10)
@@ -132,6 +134,8 @@ _ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
 -- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
 -- CHECK: %iadd [[i2]] [[ones]]
 
+"vectorizing float binary op"
+-- CHECK-LABEL: vectorizing float binary op
 %passes vect
 _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 -- CHECK: seq (RawFin 0x10)
@@ -141,6 +145,8 @@ _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 -- CHECK: [[ones:v#[0-9]+]]:<16xFloat32> = vbroadcast 1.
 -- CHECK: %fadd [[i2]] [[ones]]
 
+"vectorizing float64 binary op, implies different width"
+-- CHECK-LABEL: vectorizing float64 binary op, implies different width
 %passes vect
 _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
 -- CHECK: seq (RawFin 0x20)
@@ -150,6 +156,8 @@ _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
 -- CHECK: [[ones:v#[0-9]+]]:<8xFloat64> = vbroadcast 1.
 -- CHECK: %fadd [[i2]] [[ones]]
 
+"vectorizing array reference"
+-- CHECK-LABEL: vectorizing array reference
 xs = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
 
 %passes vect
@@ -160,12 +168,25 @@ _ = for i:(Fin 256). xs[i] + 1
 -- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
 -- CHECK: %iadd [[i]] [[ones]]
 
+"vectorizing reader effect"
+-- CHECK-LABEL: vectorizing reader effect
 %passes vect
 _ = with_reader 2 \ref.
   for i:(Fin 256). xs[i] + ask(ref)
 -- CHECK: seq (RawFin 0x10)
 -- CHECK: [[ref:v#[0-9]+]]:Int32 = ask
--- CHECK: [[i:v#[0-9]+]]:<16xInt32> =
+-- CHECK: [[xi:v#[0-9]+]]:<16xInt32> =
 -- CHECK-NEXT: vslice
 -- CHECK: [[bcast:v#[0-9]+]]:<16xInt32> = vbroadcast [[ref]]
--- CHECK: %iadd [[i]] [[bcast]]
+-- CHECK: %iadd [[xi]] [[bcast]]
+
+"vectorizing independent writer effect"
+-- CHECK-LABEL: vectorizing independent writer effect
+%passes vect
+_ = yield_accum (AddMonoid Int32) \ref.
+  for i:(Fin 256). ref!i += xs[i]
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[refi:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[xi:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: extend [[refi]] [[xi]]
