@@ -103,13 +103,3 @@ code {
 .iso-sugar {
   color: #25BBA7;
 }
-
-/* Tooltips support */
-
-.code-span:hover {
-  background-color: rgb(200 200 240 / 0.4);
-}
-
-.code-span-leaf:hover {
-  background-color: rgb(255 255 0);
-}

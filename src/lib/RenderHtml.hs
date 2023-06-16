@@ -106,27 +106,21 @@ treeToHtml source' tree =
 
 treeToHtml' :: T.Text -> SpanTree -> Html
 treeToHtml' source' tree = case tree of
-  Span (_, _, spanId) children ->
+  Span (_, _, _) children ->
     let body' = foldMap (treeToHtml' source') children in
-    createSpan (Just spanId) body' ! spanClass
-  LeafSpan (l, r, spanId) ->
+    H.span body' ! spanClass
+  LeafSpan (l, r, _) ->
     let spanText = sliceText l r source' in
-    -- Note: only leaves need the code-span class.
-    createSpan (Just spanId) (highlightSyntax spanText) ! spanLeaf
+    H.span (highlightSyntax spanText) ! spanLeaf
   Trivia (l, r) ->
     let spanText = sliceText l r source' in
-    createSpan Nothing (highlightSyntax spanText)
-  where createSpan :: Maybe SpanId -> Html -> Html
-        createSpan spanId body' = case spanId of
-          Nothing -> H.span body'
-          Just id' -> H.span body' ! spanIdAttribute id'
-        spanIdAttribute :: SpanId -> Attribute
-        spanIdAttribute spanId =
-          At.id (stringValue (show spanId))
-        spanLeaf :: Attribute
-        spanLeaf = At.class_ "code-span-leaf"
-        spanClass :: Attribute
-        spanClass = At.class_ "code-span"
+    highlightSyntax spanText
+  where
+    spanClass :: Attribute
+    spanClass = At.class_ "code-span"
+
+    spanLeaf :: Attribute
+    spanLeaf = At.class_ "code-span-leaf"
 
 srcCtxsToSpanInfos :: SourceBlock -> [SrcPosCtx] -> [SpanPayload]
 srcCtxsToSpanInfos block ctxs =

@@ -193,15 +193,15 @@ overlappingSpansTree =
 renderedHtml :: String
 renderedHtml =
   concat [
-    "<span id=\"0\" class=\"code-span\"><span>0</span>",
-    "<span id=\"1\" class=\"code-span\">",
-    "<span id=\"2\" class=\"code-span-leaf\">1</span>",
-    "<span>23</span>",
-    "<span id=\"3\" class=\"code-span-leaf\">4</span>",
+    "<span class=\"code-span\">0",
+    "<span class=\"code-span\">",
+    "<span class=\"code-span-leaf\">1</span>",
+    "23",
+    "<span class=\"code-span-leaf\">4</span>",
     "</span>",
-    "<span>56</span>",
-    "<span id=\"4\" class=\"code-span-leaf\">78</span>",
-    "<span>9</span>",
+    "56",
+    "<span class=\"code-span-leaf\">78</span>",
+    "9",
     "</span>"
   ]
 
