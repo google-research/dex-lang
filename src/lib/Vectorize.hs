@@ -26,6 +26,7 @@ import Subst
 import PPrint
 import QueryType
 import Types.Core
+import Types.OpNames qualified as P
 import Types.Primitives
 import Util (allM)
 
@@ -69,12 +70,19 @@ instance PrettyPrec (VSubstValC c n) where
   prettyPrec (VVal s atom) = atPrec LowestPrec $ "@" <> viaShow s <+> pretty atom
   prettyPrec (VRename v) = atPrec LowestPrec $ "Rename" <+> pretty v
 
+data MonoidCommutes =
+    Commutes
+  | DoesNotCommute
+
+type CommuteMap = NameMap (AtomNameC SimpIR) MonoidCommutes
+
 newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
   { runTopVectorizeM ::
       SubstReaderT Name
-       (ReaderT1 (LiftE Word32)
-         (StateT1 (LiftE Errs) (BuilderT SimpIR FallibleM))) i o a }
-  deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (LiftE Word32 o)
+        (ReaderT1 CommuteMap
+          (ReaderT1 (LiftE Word32)
+            (StateT1 (LiftE Errs) (BuilderT SimpIR FallibleM)))) i o a }
+  deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (CommuteMap o)
            , MonadState (LiftE Errs o), Fallible, ScopeReader, EnvReader
            , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
            , SubstReader Name)
@@ -93,7 +101,8 @@ liftTopVectorizeM :: (EnvReader m)
 liftTopVectorizeM vectorByteWidth action = do
   fallible <- liftBuilderT $
     flip runStateT1 mempty $ runReaderT1 (LiftE vectorByteWidth) $
-      runSubstReaderT idSubst $ runTopVectorizeM action
+      runReaderT1 mempty $ runSubstReaderT idSubst $
+        runTopVectorizeM action
   case runFallibleM fallible of
     -- The failure case should not occur: vectorization errors should have been
     -- caught inside `vectorizeLoopsDecls` (and should have been added to the
@@ -112,6 +121,12 @@ throwVectErr msg = throwErr (Err MiscErr mempty msg)
 prependCtxToErrs :: ErrCtx -> Errs -> Errs
 prependCtxToErrs ctx (Errs errs) =
   Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx <> ctx') msg) errs
+
+askVectorByteWidth :: TopVectorizeM i o Word32
+askVectorByteWidth = TopVectorizeM $ SubstReaderT $ lift $ lift11 (fromLiftE <$> ask)
+
+extendCommuteMap :: AtomName SimpIR o -> MonoidCommutes -> TopVectorizeM i o a -> TopVectorizeM i o a
+extendCommuteMap name commutativity = local $ insertNameMap name commutativity
 
 vectorizeLoopsDestBlock :: DestBlock i
   -> TopVectorizeM i o (DestBlock o)
@@ -139,7 +154,7 @@ vectorizeLoopsDecls nest cont =
 
 vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
 vectorizeLoopsExpr expr = do
-  LiftE vectorByteWidth <- ask
+  vectorByteWidth <- askVectorByteWidth
   narrowestTypeByteWidth <- getNarrowestTypeByteWidth =<< renameM expr
   let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
   case expr of
@@ -169,16 +184,56 @@ vectorizeLoopsExpr expr = do
           extendRenamer (refb' @> atomVarName refb) do
             vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
-    PrimOp (Hof (TypedHof _ (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
+    PrimOp (Hof (TypedHof (EffTy _ ty)
+                 (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
       dest' <- renameM dest
       monoid' <- renameM monoid
-      accTy <- return $ getType $ baseEmpty monoid'
+      commutativity <- monoidCommutativity monoid'
+      PairTy _ accTy <- renameM ty
       lam <- buildEffLam noHint accTy \hb refb ->
         extendRenamer (hb' @> atomVarName hb) do
           extendRenamer (refb' @> atomVarName refb) do
-            vectorizeLoopsBlock body
+            extendCommuteMap (atomVarName hb) commutativity do
+              vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
     _ -> renameM expr
+
+-- Really we should check this by seeing whether there is an instance for a
+-- `Commutative` class, or something like that, but for now just pattern-match
+-- to detect scalar addition as the only monoid we recognize as commutative.
+monoidCommutativity :: (EnvReader m) => BaseMonoid SimpIR n -> m n MonoidCommutes
+monoidCommutativity monoid = case isAdditionMonoid monoid of
+  Just () -> return Commutes
+  Nothing -> return DoesNotCommute
+{-# INLINE monoidCommutativity #-}
+
+isAdditionMonoid :: BaseMonoid SimpIR n -> Maybe ()
+isAdditionMonoid monoid = do
+  BaseMonoid { baseEmpty = (Con (Lit l))
+             , baseCombine = BinaryLamExpr (b1:>_) (b2:>_) body } <- Just monoid
+  unless (_isZeroLit l) Nothing
+  PrimOp (BinOp op (Var b1') (Var b2')) <- exprBlock body
+  unless (op `elem` [P.IAdd, P.FAdd]) Nothing
+  case (binderName b1, atomVarName b1', binderName b2, atomVarName b2') of
+    -- Checking the raw names here because (i) I don't know how to convince the
+    -- name system to let me check the well-typed names (which is because b2
+    -- might shadow b1), and (ii) there are so few patterns that I can just
+    -- enumerate them.
+    (UnsafeMakeName n1, UnsafeMakeName n1', UnsafeMakeName n2, UnsafeMakeName n2') -> do
+      when (n1 == n2) Nothing
+      unless ((n1 == n1' && n2 == n2') || (n1 == n2' && n2 == n1')) Nothing
+      Just ()
+
+_isZeroLit :: LitVal -> Bool
+_isZeroLit = \case
+  Int64Lit 0 -> True
+  Int32Lit 0 -> True
+  Word8Lit 0 -> True
+  Word32Lit 0 -> True
+  Word64Lit 0 -> True
+  Float32Lit 0.0 -> True
+  Float64Lit 0.0 -> True
+  _ -> False
 
 -- Vectorizing a loop with an effect is safe when the operation reordering
 -- produced by vectorization doesn't change the semantics.  This is guaranteed
@@ -198,8 +253,16 @@ vectorizeLoopsExpr expr = do
 -- but we crudely approximate for now.
 vectorSafeEffect :: EffectRow SimpIR i -> TopVectorizeM i o Bool
 vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
+  safe :: Effect SimpIR i -> TopVectorizeM i o Bool
   safe InitEffect = return True
   safe (RWSEffect Reader _) = return True
+  safe (RWSEffect Writer (Var h)) = do
+    h' <- renameM $ atomVarName h
+    commuteMap <- ask
+    case lookupNameMap h' commuteMap of
+      Just Commutes -> return True
+      Just DoesNotCommute -> return False
+      Nothing -> error $ "Handle " ++ pprint h ++ " not present in commute map?"
   safe _ = return False
 
 vectorizeSeq :: Word32 -> LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
