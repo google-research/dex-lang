@@ -56,6 +56,8 @@ function attachHovertip(node) {
 function highlightNode(event, node) {
     event.stopPropagation();
     node.style.backgroundColor = "lightblue";
+    node.style.outlineColor = "lightblue";
+    node.style.outlineStyle = "solid";
     Array.from(node.children).map(function (child) {
         if (isCodeSpanOrLeaf(child)) {
             child.style.backgroundColor = "yellow";
@@ -71,6 +73,8 @@ function isCodeSpanOrLeaf(node) {
 function removeHighlighting(event, node) {
     event.stopPropagation();
     node.style.backgroundColor = null;
+    node.style.outlineColor = null;
+    node.style.outlineStyle = null;
     Array.from(node.children).map(function (child) {
         if (isCodeSpanOrLeaf(child)) {
           child.style.backgroundColor = null;
