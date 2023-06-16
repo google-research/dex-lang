@@ -104,16 +104,6 @@ code {
 .iso-sugar {
   color: #25BBA7;
 }
-
-/* Tooltips support */
-
-.code-span:hover {
-  background-color: rgb(200 200 240 / 0.4);
-}
-
-.code-span-leaf:hover {
-  background-color: rgb(255 255 0);
-}
 </style><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js"></script><script defer="" src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js" onload="// Copyright 2019 Google LLC
 //
 // Use of this source code is governed by a BSD-style
@@ -157,6 +147,41 @@ function lookup_address(cell, address) {
         node = node.children[address[i]]
     }
     return node
+}
+
+function renderHovertips() {
+    var spans = document.querySelectorAll(&quot;.code-span&quot;);
+    Array.from(spans).map((span) =&gt; attachHovertip(span));
+}
+
+function attachHovertip(node) {
+    node.addEventListener(&quot;mouseover&quot;, (event) =&gt; highlightNode(     event, node));
+    node.addEventListener(&quot;mouseout&quot; , (event) =&gt; removeHighlighting(event, node));
+}
+
+function highlightNode(event, node) {
+    event.stopPropagation();
+    node.style.backgroundColor = &quot;lightblue&quot;;
+    Array.from(node.children).map(function (child) {
+        if (isCodeSpanOrLeaf(child)) {
+            child.style.backgroundColor = &quot;yellow&quot;;
+        }
+    })
+}
+
+function isCodeSpanOrLeaf(node) {
+  return node.classList.contains(&quot;code-span&quot;) || node.classList.contains(&quot;code-span-leaf&quot;)
+
+}
+
+function removeHighlighting(event, node) {
+    event.stopPropagation();
+    node.style.backgroundColor = null;
+    Array.from(node.children).map(function (child) {
+        if (isCodeSpanOrLeaf(child)) {
+          child.style.backgroundColor = null;
+        }
+    })
 }
 
 function renderLaTeX() {
@@ -270,6 +295,7 @@ function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
         renderLaTeX();
+        renderHovertips();
         updateNavigation();
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
@@ -308,6 +334,7 @@ function render(renderMode) {
                 Object.assign(cells, new_cells);
             }
             renderLaTeX();
+            renderHovertips();
             updateNavigation();
         };
     }
@@ -329,14 +356,14 @@ render(RENDER_MODE.STATIC);"></script></head><body><div id="main-output"><div cl
 </div></div><div class="cell"><div class="prose-block"><p>$$\begin{rcases} a &amp;\text{if } b \\ c &amp;\text{if } d \end{rcases} \Rightarrow \dots$$</p>
 </div></div><div class="cell"><div class="prose-block"><h2>No LaTeX rendering in non-prose-blocks</h2>
 </div></div><div class="cell"><div class="prose-block"><p>LaTeX rendering should not occur in code blocks, nor in error output cells.</p>
-</div></div><div class="cell"><div class="code-block"><span id="0" class="code-span"><span id="1" class="code-span"><span><span class="keyword">def</span><span class="whitespace"> </span>array_sum(</span><span id="2" class="code-span"><span id="4" class="code-span-leaf">x</span><span id="3" class="code-span-leaf"><span class="symbol">:</span></span><span id="5" class="code-span"><span id="7" class="code-span-leaf">a</span><span id="6" class="code-span-leaf"><span class="symbol">=&gt;</span></span><span id="8" class="code-span-leaf"><span class="type-name">Int32</span></span></span></span><span></span><span>)<span class="whitespace"> </span><span class="symbol">-&gt;</span></span><span><span class="whitespace"> </span></span><span></span><span id="9" class="code-span-leaf"><span class="type-name">Int32</span></span><span><span class="whitespace"> </span></span><span><span class="keyword">given</span><span class="whitespace"> </span>(</span><span id="10" class="code-span"><span id="12" class="code-span-leaf">a</span><span id="11" class="code-span-leaf"><span class="symbol">|</span></span><span id="13" class="code-span-leaf"><span class="type-name">Ix</span></span></span><span></span><span>)<span class="whitespace"> </span><span class="symbol">=</span><span class="whitespace">
+</div></div><div class="cell"><div class="code-block"><span class="code-span"><span class="code-span"><span class="keyword">def</span><span class="whitespace"> </span>array_sum(<span class="code-span"><span class="code-span-leaf">x</span><span class="code-span-leaf"><span class="symbol">:</span></span><span class="code-span"><span class="code-span-leaf">a</span><span class="code-span-leaf"><span class="symbol">=&gt;</span></span><span class="code-span-leaf"><span class="type-name">Int32</span></span></span></span>)<span class="whitespace"> </span><span class="symbol">-&gt;</span><span class="whitespace"> </span><span class="code-span-leaf"><span class="type-name">Int32</span></span><span class="whitespace"> </span><span class="keyword">given</span><span class="whitespace"> </span>(<span class="code-span"><span class="code-span-leaf">a</span><span class="code-span-leaf"><span class="symbol">|</span></span><span class="code-span-leaf"><span class="type-name">Ix</span></span></span>)<span class="whitespace"> </span><span class="symbol">=</span><span class="whitespace">
   </span><span class="comment">-- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
 </span><span class="whitespace">  </span><span class="comment">-- Note: the incorrect usage of `with_state` below is intentional to verify
-</span><span class="whitespace">  </span><span class="comment">--       that `$ ... $` is not rendered as LaTeX in error output cells.</span></span><span><span class="whitespace">
-  </span></span><span id="14" class="code-span"><span id="15" class="code-span"><span></span><span id="17" class="code-span-leaf">snd</span><span><span class="whitespace"> </span></span><span></span><span id="16" class="code-span-leaf"><span class="symbol">$</span></span><span><span class="whitespace"> </span></span><span id="18" class="code-span"><span id="20" class="code-span"><span></span><span id="22" class="code-span-leaf"><span class="keyword">with</span>_state</span><span><span class="whitespace"> </span></span><span id="23" class="code-span"><span id="21" class="code-span-leaf"></span><span></span><span>0</span><span><span class="whitespace"> </span></span></span></span><span id="24" class="code-span"><span id="19" class="code-span-leaf"></span><span><span class="symbol">\</span></span><span id="25" class="code-span-leaf">acc</span><span></span><span><span class="symbol">.</span></span><span><span class="whitespace">
-    </span></span><span id="26" class="code-span"><span id="27" class="code-span"><span></span><span><span class="keyword">for</span></span><span><span class="whitespace"> </span></span><span id="28" class="code-span-leaf">i</span><span></span><span><span class="symbol">.</span></span><span><span class="whitespace">
-      </span></span><span id="29" class="code-span"><span id="30" class="code-span"><span></span><span id="32" class="code-span-leaf">acc</span><span><span class="whitespace"> </span></span><span></span><span id="31" class="code-span-leaf"><span class="symbol">:=</span></span><span><span class="whitespace"> </span></span><span id="33" class="code-span"><span id="35" class="code-span"><span>(</span><span id="36" class="code-span"><span></span><span id="38" class="code-span-leaf">get</span><span><span class="whitespace"> </span></span><span id="39" class="code-span"><span id="37" class="code-span-leaf"></span><span>acc</span></span></span><span></span><span>)</span><span><span class="whitespace"> </span></span></span><span></span><span id="34" class="code-span-leaf"><span class="symbol">+</span></span><span><span class="whitespace"> </span></span><span id="40" class="code-span"><span id="42" class="code-span-leaf">x</span><span id="43" class="code-span"><span>[</span><span id="44" class="code-span-leaf">i</span><span>]</span></span></span></span></span></span></span></span></span></span></span></span></span><span><span class="whitespace">
-</span></span></span></div><div class="err-block">Type error:
+</span><span class="whitespace">  </span><span class="comment">--       that `$ ... $` is not rendered as LaTeX in error output cells.</span><span class="whitespace">
+  </span><span class="code-span"><span class="code-span"><span class="code-span-leaf">snd</span><span class="whitespace"> </span><span class="code-span-leaf"><span class="symbol">$</span></span><span class="whitespace"> </span><span class="code-span"><span class="code-span"><span class="code-span-leaf"><span class="keyword">with</span>_state</span><span class="whitespace"> </span><span class="code-span"><span class="code-span-leaf"></span>0<span class="whitespace"> </span></span></span><span class="code-span"><span class="code-span-leaf"></span><span class="symbol">\</span><span class="code-span-leaf">acc</span><span class="symbol">.</span><span class="whitespace">
+    </span><span class="code-span"><span class="code-span"><span class="keyword">for</span><span class="whitespace"> </span><span class="code-span-leaf">i</span><span class="symbol">.</span><span class="whitespace">
+      </span><span class="code-span"><span class="code-span"><span class="code-span-leaf">acc</span><span class="whitespace"> </span><span class="code-span-leaf"><span class="symbol">:=</span></span><span class="whitespace"> </span><span class="code-span"><span class="code-span">(<span class="code-span"><span class="code-span-leaf">get</span><span class="whitespace"> </span><span class="code-span"><span class="code-span-leaf"></span>acc</span></span>)<span class="whitespace"> </span></span><span class="code-span-leaf"><span class="symbol">+</span></span><span class="whitespace"> </span><span class="code-span"><span class="code-span-leaf">x</span><span class="code-span">[<span class="code-span-leaf">i</span>]</span></span></span></span></span></span></span></span></span></span></span></span><span class="whitespace">
+</span></span></div><div class="err-block">Type error:
 Expected: (a.1, b)
   Actual: (a =&gt; ())
 (Solving for: [a.1, b])
