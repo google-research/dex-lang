@@ -201,6 +201,21 @@ vectorizeLoopsExpr expr = do
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
 -- to detect scalar addition as the only monoid we recognize as commutative.
+-- Potentially relevant ideas:
+-- - Store commutativity or lack of it as a bit on the BaseMonoid object (but
+--   get the bit from where?)
+-- - Paramterize runWriter by a user-specified flag saying whether the monoid is
+--   to be commutative; record that on the RunWriter Hof, and enforce it by
+--   type-checking.
+-- - Is there a way to automate checking for commutativity via the typeclass
+--   system so the user doesn't have to keep writing "commutative" all the time?
+-- - Or maybe make commutativity the default, and require an explicit annotation
+--   to opt out?  (Which mention in the type error)
+-- - Alternately, is there a way to parameterize the BaseMonoid class by a
+--   Commutativity bit, such that commutative instances implement the class
+--   parametrically in that bit, while not-known-to-be-commutative ones only
+--   implement the non-commutative version?
+--   - Will that bit be visible enough to the compiler to be picked up here?
 monoidCommutativity :: (EnvReader m) => BaseMonoid SimpIR n -> m n MonoidCommutes
 monoidCommutativity monoid = case isAdditionMonoid monoid of
   Just () -> return Commutes
