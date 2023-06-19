@@ -95,61 +95,46 @@ def gp(
     chol_cov = chol (gram + eye *. noise_var)
     MultivariateNormal loc chol_cov
 
-def gp_regress_matrix(
-  kernel: (a, a) -> Float,
-  xs: n=>a,
-  mean_fn: (a) -> Float,
-  noise_var: Float,
-  ys: n=> Float
-) -> ((m=>a) -> MultivariateNormal m) given (n|Ix, m|Ix, a) =
-    prior_gp = gp kernel xs mean_fn noise_var
-    -- How is prior_gp.loc incorporated?
-    k_inv_y = chol_solve prior_gp.chol_cov (ys - for i. mean_fn xs[i]) -- n
-    predictive_gp_fn = \xs_pred:m=>a.
-      k_star = for i j. kernel xs[i] xs_pred[j] -- n by m
-      loc = for i. sum for k. k_star[k, i] * k_inv_y[k] + mean_fn xs_pred[i]  -- m
-      gram_pred = for i j. kernel xs_pred[i] xs_pred[j]
-      s = for i. chol_solve prior_gp.chol_cov (transpose k_star)[i]  -- m by n
-      schur = gram_pred - for i j. sum for k. s[i, k] * s[j, k]
-      MultivariateNormal loc (chol schur)
-    predictive_gp_fn
-
 def gp_regress(
   kernel: (a, a) -> Float,
   xs: n=>a,
-  ys: n=>Float
-) -> ((a) -> (Float, Float)) given (n|Ix, a) =
-    noise_var = 0.0001
-    gram = for i j. kernel xs[i] xs[j]
-    c = chol (gram + eye *. noise_var)
-    alpha = chol_solve c ys
-    predict = \x.
-        k' = for i. kernel xs[i] x
-        mu = sum for i. alpha[i] * k'[i]
-        alpha' = chol_solve c k'
-        var = kernel x x + noise_var - sum for i. k'[i] * alpha'[i]
-        (mu, var)
-    predict
-
-gp_predict = gp_regress (\x y. rbf 0.2 x y) xs ys
-
-(gp_preds, vars) = unzip (map gp_predict xtest)
-
-:html show_plot $ xyc_plot xtest gp_preds (map sqrt vars)
-> <html output>
-
-:html show_plot $ xy_plot xtest vars
-> <html output>
+  ys: n=>Float,
+  mean_fn: (a) -> Float,
+  noise_var: Float
+) -> ((m=>a) -> MultivariateNormal m) given (n|Ix, m|Ix, a) =
+    prior_gram = for i j. kernel xs[i] xs[j]
+    prior_chol_cov = chol (prior_gram + eye *. noise_var)
+    k_inv_y = chol_solve prior_chol_cov (ys - for i. mean_fn xs[i])
+    predictive_gp_fn = \xs_pred:m=>a.
+      k_star = for i j. kernel xs[i] xs_pred[j]
+      loc = for i. sum for k. k_star[k, i] * k_inv_y[k] + mean_fn xs_pred[i]
+      gram_pred = for i j. kernel xs_pred[i] xs_pred[j]
+      s = for i. chol_solve prior_chol_cov (transpose k_star)[i]
+      schur = gram_pred - for i j. sum for k. s[i, k] * s[j, k]
+      MultivariateNormal loc (chol (schur + eye *. noise_var))
+    predictive_gp_fn
 
 def mean_fn(x:Float) -> Float = 0. * x
+gp_predict_fn : (Nxtest=>Float) -> MultivariateNormal Nxtest = gp_regress (\x y. rbf 0.2 x y) xs ys mean_fn 0.5
+gp_predict_test = gp_predict_fn xtest
+stddev_pred = lower_tri_diag gp_predict_test.chol_cov
+
+:html show_plot $ xyc_plot xtest gp_predict_test.loc stddev_pred
+> <html output>
+
+:html show_plot $ xy_plot xtest stddev_pred
+> <html output>
+
 
 N = Fin 10
 noise_std = 0.001
 [k3, k4, k5] = split_key (new_key 3)
-xs_obs : N=>Float = for i. rand (ixkey k3 i)
+xs_obs : N=>Float = for i. rand (ixkey k3 i) 
 ys_obs : N=>Float = for i. trueFun xs_obs[i] + noise_std * randn (ixkey k4 i)
 M = Fin 40
 xs_pred : M=>Float = for i. rand (ixkey k5 i)
-gprm_predict : (M=>Float) -> MultivariateNormal M = gp_regress_matrix (\x y. rbf 0.2 x y) xs_obs mean_fn 0.001 ys_obs
+gprm_predict : (M=>Float) -> MultivariateNormal M = gp_regress (\x y. rbf 0.2 x y) xs_obs ys_obs mean_fn 0.001
 pred_dist = gprm_predict xs_pred
-
+stddev_pred
+gp_predict_test.loc
+xtest
