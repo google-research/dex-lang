@@ -294,7 +294,7 @@ instance (BindsNames b, CheckableB r b) => CheckableB r (WithExpl b) where
   checkB (WithExpl expl b) cont = checkB b \b' -> cont (WithExpl expl b')
 
 typeCheckExpr :: (Typer m r, IRRep r) => EffectRow r o -> Expr r i -> m i o (Type r o)
-typeCheckExpr effs expr = case expr of
+typeCheckExpr effs expr = addContext ("Checking expr:\n" ++ pprint expr) case expr of
   App (EffTy _ reqTy) f xs -> do
     fTy <- getTypeE f
     checkApp effs fTy xs >>= checkAgainstGiven reqTy
@@ -607,11 +607,11 @@ typeCheckVectorOp = \case
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
     return ty'
   VectorSubref ref i ty -> do
-    RawRefTy (TabTy _ b (BaseTy (Scalar sbt))) <- getTypeE ref
+    RefTy heap (TabTy _ b (BaseTy (Scalar sbt))) <- getTypeE ref
     i |: binderType b
     ty'@(BaseTy (Vector _ sbt')) <- checkTypeE TyKind ty
     unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
-    return $ RawRefTy ty'
+    return $ RefTy heap ty'
 
 typeCheckUserEffect :: Typer m CoreIR => UserEffectOp i -> m i o (CType o)
 typeCheckUserEffect = \case
@@ -687,7 +687,7 @@ typeCheckPrimHof effs hof = addContext ("Checking HOF:\n" ++ pprint hof) case ho
     makePreludeMaybeTy ty >>= checkAgainstGiven reqTy
 
 typeCheckDAMOp :: forall r m i o . (Typer m r, IRRep r) => EffectRow r o -> DAMOp r i -> m i o (Type r o)
-typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ show op) case op of
+typeCheckDAMOp effs op = addContext ("Checking DAMOp:\n" ++ pprint op) case op of
   Seq effAnn _ ixTy' carry f -> do
     effAnn' <- renameM effAnn
     checkExtends effs effAnn'
