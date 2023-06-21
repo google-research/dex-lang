@@ -11,7 +11,6 @@ import Data.List.NonEmpty qualified as NE
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Name
 import Subst
@@ -19,6 +18,8 @@ import Occurrence hiding (Var)
 import Optimize
 import Types.Core
 import Types.Primitives
+import Visitor
+import QueryTypePure
 
 -- === External API ===
 
@@ -63,6 +64,16 @@ liftInlineM :: (EnvReader m) => InlineM n n a -> m n a
 liftInlineM act = liftBuilder $ runSubstReaderT idSubst $ runInlineM act
 {-# INLINE liftInlineM #-}
 
+extendInlineMSubst
+  :: BinderAndDecls SimpIR i i' -> SubstVal (InlineExpr) (AtomNameC SimpIR) o
+  -> InlineM i' o a -> InlineM i o a
+extendInlineMSubst = undefined
+
+extendInlineMSubstMany
+  :: Nest (BinderAndDecls SimpIR) i i' -> [SubstVal (InlineExpr) (AtomNameC SimpIR) o]
+  -> InlineM i' o a -> InlineM i o a
+extendInlineMSubstMany = undefined
+
 -- === Inliner ===
 
 data SizePreservationInfo =
@@ -89,7 +100,7 @@ inlineDeclsSubst = \case
   Nest (Let b (DeclBinding ann expr)) rest -> do
     if preInlineUnconditionally ann then do
       s <- getSubst
-      extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
+      extendSubst (b@>(SubstVal (SuspEx expr s))) $ inlineDeclsSubst rest
     else do
       expr' <- inlineExpr Stop expr >>= (liftEnvReaderM . peepholeExpr)
       -- If the inliner starts moving effectful expressions, it may become
@@ -116,11 +127,11 @@ inlineDeclsSubst = \case
         let substVal = case expr' of
              Atom (Var name') -> Rename $ atomVarName name'
              _ -> SubstVal (DoneEx expr')
-        extendSubst (b @> substVal) $ inlineDeclsSubst rest
+        extendSubst (b@>substVal) $ inlineDeclsSubst rest
       else do
         -- expr' can't be Atom (Var x) here
         name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
-        extendSubst (b @> Rename (atomVarName name')) do
+        extendSubst (b@>Rename (atomVarName name')) do
           -- TODO For now, this inliner does not do any conditional inlining.
           -- In order to do it, we would need to augment the environment at this
           -- point, associating name' to (expr', presInfo) so name' could be
@@ -216,7 +227,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body))))) = 1 + ixDepthBlock body
+    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ _ body))))) = 1 + ixDepthBlock body
     ixDepthExpr _ = 0
     ixDepthBlock :: Block SimpIR n -> Int
     ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
@@ -283,10 +294,6 @@ inlineExpr ctx = \case
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt _ i x -> do
-    let (idxs, v) = asNaryProj i x
-    ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
-    reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomVar i -> InlineM i o (e o)
@@ -321,15 +328,15 @@ instance Inlinable SLam where
       LamExpr bs' <$> (buildScopedAssumeNoDecls $ inline Stop body)
 
 withBinders
-  :: Nest SBinder i i'
-  -> (forall o'. DExt o o' => Nest SBinder o o' -> InlineM i' o' a)
+  :: Nest SBinderAndDecls i i'
+  -> (forall o'. DExt o o' => Nest SBinderAndDecls o o' -> InlineM i' o' a)
   -> InlineM i o a
 withBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-withBinders (Nest (b:>ty) bs) cont = do
-  ty' <- buildScopedAssumeNoDecls $ inline Stop ty
-  withFreshBinder (getNameHint b) ty' \b' ->
-    extendRenamer (b@>binderName b') do
-      withBinders bs \bs' -> cont $ Nest b' bs'
+-- withBinders (Nest (BD (b:>ty) ds) bs) cont = do
+--   ty' <- buildScopedAssumeNoDecls $ inline Stop ty
+--   withFreshBinder (getNameHint b) ty' \b' ->
+--     extendRenamer (b@>binderName b') do
+--       withBinders bs \bs' -> cont $ Nest b' bs'
 
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effTy)  =
@@ -393,8 +400,7 @@ reconstructTabApp ctx expr ixs =
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
       let ixsPref'' = [v | AtomVar v _ <- ixsPref']
       s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref''
-      dropSubst $ extendSubst moreSubst do
+      dropSubst $ extendInlineMSubstMany bs (map Rename ixsPref'') do
         -- Decision here.  These decls have already been processed by the
         -- inliner once, so their occurrence information is stale (and should
         -- have been erased).  Do we rerun occurrence analysis, or just complete
@@ -428,12 +434,13 @@ reconstructCase ctx scrutExpr alts resultTy effs =
       -- TODO Add join points to reduce code duplication (and repeated inlining)
       -- of the arms of the outer case
       resultTy' <- inline Stop resultTy
-      reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
-        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
+      reconstruct ctx =<< buildCase' sscrut resultTy' \i val -> do
+        Abs b' body' <- return $ salts !! i
+        ans <- betaReduce b' val body' >>= emitBlock
         buildCase ans (sink resultTy') \j jval -> do
           Abs b body <- return $ alts !! j
-          extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
-            inlineBlockEmits Stop body >>= emitExprToAtom)
+          extendInlineMSubst b (SubstVal $ DoneEx $ Atom jval) do
+            inlineBlockEmits Stop body >>= emitExprToAtom
     _ -> do
       -- Attempt case-of-known-constructor optimization
       -- I can't use `buildCase` here because I want to propagate the incoming
@@ -443,7 +450,7 @@ reconstructCase ctx scrutExpr alts resultTy effs =
       case trySelectBranch scrut of
         Just (i, val) -> do
           Abs b body <- return $ alts !! i
-          extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
+          extendInlineMSubst b (SubstVal $ DoneEx $ Atom val) do
             inlineBlockEmits ctx body
         Nothing -> do
           alts' <- mapM visitAlt alts

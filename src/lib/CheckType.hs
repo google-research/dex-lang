@@ -21,7 +21,6 @@ import Data.Maybe (isJust)
 import Data.Foldable (toList)
 import Data.Functor
 
-import CheapReduction
 import Core
 import Err
 import IRVariants
@@ -29,7 +28,7 @@ import MTL1
 import Name
 import Subst
 import PPrint ()
-import QueryType hiding (HasType)
+import QueryTypePure
 import Types.Core
 import Types.Imp
 import Types.Primitives

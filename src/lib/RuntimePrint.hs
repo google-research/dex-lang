@@ -15,11 +15,11 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
-import QueryType
+import Subst
+import QueryTypePure
 import Util (enumerate)
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
@@ -27,14 +27,14 @@ newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR
                  , Fallible, ScopeReader, MonadFail, EnvExtender, CBuilder, ScopableBuilder CoreIR)
 type Print n = Printer n ()
 
-showAny :: EnvReader m => Atom CoreIR n -> m n (Block CoreIR n)
+showAny :: EnvReader m => Atom CoreIR n -> m n (WithDecls CoreIR CAtom n)
 showAny x = liftPrinter $ showAnyRec (sink x)
 
 liftPrinter
   :: EnvReader m
   => (forall l. (DExt n l, Emits l) => Print l)
-  -> m n (CBlock n)
-liftPrinter cont = liftBuilder $ buildBlock $ withBuffer \buf ->
+  -> m n (WithDecls CoreIR CAtom n)
+liftPrinter cont = liftBuilder $ buildScoped $ withBuffer \buf ->
   runReaderT1 buf (runPrinter' cont)
 
 getBuffer :: Printer n (CAtom n)
@@ -78,7 +78,6 @@ showAnyRec atom = case getType atom of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -94,7 +93,7 @@ showAnyRec atom = case getType atom of
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+      charTab <- naryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
@@ -121,7 +120,7 @@ showAnyRec atom = case getType atom of
               sepBy " " $ projss <&> \projs ->
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+                rec =<< naryProj (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
@@ -166,12 +165,12 @@ withBuffer cont = do
     bufTy <- bufferTy (Var $ binderVar h)
     withFreshBinder "buf" bufTy \b -> do
       let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
-      body <- buildBlock do
+      Abs ds body <- buildBlock do
         cont $ sink $ Var $ binderVar b
         return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
+      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) (BD h Empty)) (WithExpl Explicit (BD b Empty))
       let piTy = CorePiType ExplicitApp piBinders $ EffTy eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
+      let lam = LamExpr (BinaryNest (BD h Empty) (BD b ds)) body
       return $ Lam $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
 
@@ -184,8 +183,8 @@ bufferTy h = do
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
   RefTy h _ <- return $ getType buf
-  TabTy d (_:>t) _ <- return $ getType tab
-  n <- applyIxMethodCore Size (IxType t d) []
+  TabPi t  <- return $ getType tab
+  n <- applyIxMethodCore Size (tabIxTy t) []
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
@@ -199,7 +198,7 @@ stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
-finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
+finTabTyCore :: (Fallible1 m, CBuilder m, Emits n) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = do
   d <- mkDictAtom $ IxFin n
   return $ IxType (FinTy n) (IxDictAtom d) ==> eltTy
@@ -236,10 +235,9 @@ forEachTabElt
   -> (forall l. (Emits l, DExt n l) => CAtom l -> CAtom l -> m l ())
   -> m n ()
 forEachTabElt tab cont = do
-  TabTy d (_:>t) _ <- return $ getType tab
-  let ixTy = IxType t d
-  void $ buildFor "i" Fwd ixTy \i -> do
+  TabPi t <- return $ getType tab
+  void $ buildForLike t \i -> do
     x <- tabApp (sink tab) (Var i)
-    i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]
+    i' <- applyIxMethodCore Ordinal (sink $ tabIxTy t) [Var i]
     cont i' x
     return $ UnitVal

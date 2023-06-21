@@ -201,6 +201,9 @@ instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) w
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann'))
     where ann' = withExtEvidence b $ sink ann
 
+instance IRRep r => BindsEnv (BinderAndDecls r) where
+  toEnvFrag (BD b ds) = toEnvFrag (PairB b ds)
+
 instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonDepNest r ann) where
   toEnvFrag (NonDepNest topBs topAnns) = toEnvFrag $ zipNest topBs topAnns
     where
@@ -430,14 +433,14 @@ liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
-  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
-    extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
+  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b ds body)))) ->
+    extend <|> (Just $ (1, LamExpr (Nest (BD b ds) Empty) body))
     where
       extend = do
         expr <- exprBlock body
         guard $ maxDepth > 1
         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
-        return (d + 1, LamExpr (Nest b bs) body2)
+        return (d + 1, LamExpr (Nest (BD b ds) bs) body2)
   _ -> Nothing
 
 mkConsListTy :: [Type r n] -> Type r n

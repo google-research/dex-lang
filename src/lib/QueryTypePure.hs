@@ -22,6 +22,9 @@ isPure e = case getEffects e of
   Pure -> True
   _    -> False
 
+getEffTy :: (HasType r e, HasEffects e r) => e n -> EffTy r n
+getEffTy e = EffTy (getEffects e) (getType e)
+
 -- === querying types implementation ===
 
 instance IRRep r => HasType r (AtomBinding r) where
@@ -78,7 +81,6 @@ instance IRRep r => HasType r (Atom r) where
     DictCon ty _ -> ty
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
     DictHole _ ty _ -> ty
     TypeAsAtom ty -> getType ty
@@ -92,7 +94,6 @@ instance IRRep r => HasType r (Type r) where
     TC _        -> TyKind
     DictTy _    -> TyKind
     TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -117,12 +118,6 @@ instance IRRep r => HasType r (Con r) where
     SumCon tys _ _ -> SumTy tys
     HeapVal        -> TC HeapType
 
-getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
-getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
-  i -> getSuperclassType (RNest bsAbove b) bs (i-1)
-
 instance IRRep r => HasType r (Expr r) where
   getType expr = case expr of
     App (EffTy _ ty) _ _ -> ty
@@ -133,6 +128,7 @@ instance IRRep r => HasType r (Expr r) where
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    ProjectElt t _ _ -> t
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -214,7 +210,7 @@ rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+    DepPairTy $ DepPairType ExplicitDepPair (BD (b:>IdxRepTy) Empty) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
@@ -222,8 +218,9 @@ rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
-  => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
-typesAsBinderNest types body = toConstBinderNest types body
+  => [Type r n] -> e n -> Abs (Nest (BinderAndDecls r)) e n
+typesAsBinderNest types body = case toConstBinderNest types body of
+  Abs bs e -> Abs (fmapNest (\b -> BD b Empty) bs) e
 
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
@@ -234,10 +231,13 @@ nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resu
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType d (b:>t) resultTy'
+    Abs b resultTy' -> TabPiType d (BD (b:>t) Empty) resultTy'
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b
+
+tabIxTy :: TabPiType r n -> IxType r n
+tabIxTy = undefined
 
 litFinIxTy :: Int -> IxType r n
 litFinIxTy n = finIxTy $ IdxRepVal $ fromIntegral n
@@ -318,7 +318,6 @@ instance IRRep r => HasEffects (PrimOp r) r where
       Freeze _    -> Pure -- is this correct?
     Hof (TypedHof (EffTy eff _) _) -> eff
   {-# INLINE getEffects #-}
-
 
 instance IRRep r => HasEffects (Block r) r where
   getEffects (Block (BlockAnn (EffTy effs _)) _ _) = effs

@@ -15,7 +15,7 @@ import IRVariants
 import Name
 import JAX.Concrete
 import Subst
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives qualified as P
 
@@ -42,7 +42,7 @@ simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
         simplifyEqns eqns do
           outs <- (map fst) <$> mapM simplifyAtom outvars
           return $ Con $ ProdCon $ outs
-      return $ LamExpr (invarsB >>> constvarsB) body
+      return $ makeLamExpr (fmapNest toBinderAndDecls (invarsB >>> constvarsB)) body
 
 simplifyJBinders
   :: Nest JBinder i i'

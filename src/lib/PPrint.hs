@@ -169,6 +169,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ProjectElt _ idxs v) = atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UserEffectOp n) where
@@ -186,7 +187,7 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
 prettyAlt :: IRRep r => Alt r n -> Doc ann
-prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
+prettyAlt (Abs b body) = undefined -- prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: Binder r n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p b
@@ -256,7 +257,6 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
     DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
@@ -272,8 +272,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -329,17 +327,17 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (b:>ty) body) = let
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
-    prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
-        then parens $ p b <> ":" <> prettyTy
-        else prettyTy
-        where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
-    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+  pretty = undefined
+    -- prettyBody = case body of
+    --   Pi subpi -> pretty subpi
+    --   _ -> pLowest body
+    -- prettyBinder = case dict of
+    --   IxDictRawFin n -> if binderName b `isFreeIn` body
+    --     then parens $ p b <> ":" <> prettyTy
+    --     else prettyTy
+    --     where prettyTy = "RawFin" <+> p n
+    --   _ -> prettyBinderHelper (b:>ty) body
+    -- in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
@@ -462,6 +460,9 @@ instance Pretty (DataConDefs n) where
 
 instance Pretty (RolePiBinder n l) where
   pretty (RolePiBinder _ b) = pretty b
+
+instance Pretty (BinderAndDecls r n l) where
+  pretty (BD b _) = undefined -- pretty b
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name _ repTy _) =
@@ -988,11 +989,11 @@ instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
   prettyPrec op = atPrec LowestPrec case op of
     Seq _ ann d c lamExpr -> case lamExpr of
-      UnaryLamExpr b body -> do
+      UnaryLamExpr b ds body -> do
         let rawFinPretty = case d of
               IxType _ (IxDictRawFin n) -> parens $ "RawFin" <+> p n
               _ -> mempty
-        "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+        "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p (BD b ds) <> ".") body
       _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
     RememberDest _ x y    -> "rememberDest" <+> pArg x <+> pArg y
     Place r v -> pApp r <+> "r:=" <+> pApp v
