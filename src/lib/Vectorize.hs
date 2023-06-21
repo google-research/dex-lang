@@ -28,7 +28,7 @@ import QueryType
 import Types.Core
 import Types.OpNames qualified as P
 import Types.Primitives
-import Util (allM)
+import Util (allM, zipWithZ)
 
 -- === Vectorization ===
 
@@ -152,6 +152,16 @@ vectorizeLoopsDecls nest cont =
       extendSubst (b @> atomVarName v) $
         vectorizeLoopsDecls rest cont
 
+vectorizeLoopsLamExpr :: LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
+vectorizeLoopsLamExpr (LamExpr bs body) = case bs of
+  Empty -> LamExpr Empty <$> buildBlock (vectorizeLoopsBlock body)
+  Nest (b:>ty) rest -> do
+    ty' <- renameM ty
+    withFreshBinder (getNameHint b) ty' \b' -> do
+      extendRenamer (b @> binderName b') do
+        LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
+        return $ LamExpr (Nest b' bs') body'
+
 vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
 vectorizeLoopsExpr expr = do
   vectorByteWidth <- askVectorByteWidth
@@ -175,7 +185,8 @@ vectorizeLoopsExpr expr = do
                 ctx = mempty { messageCtx = [msg] }
                 errs' = prependCtxToErrs ctx errs
             modify (<> LiftE errs')
-            renameM expr
+            recurSeq expr
+    PrimOp (DAMOp (Seq _ _ _ _ _)) -> recurSeq expr
     PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
       item' <- renameM item
       itemTy <- return $ getType item'
@@ -197,6 +208,15 @@ vectorizeLoopsExpr expr = do
               vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
     _ -> renameM expr
+  where
+    recurSeq :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
+    recurSeq (PrimOp (DAMOp (Seq effs dir ixty dest body))) = do
+      effs' <- renameM effs
+      ixty' <- renameM ixty
+      dest' <- renameM dest
+      body' <- vectorizeLoopsLamExpr body
+      return $ PrimOp $ DAMOp $ Seq effs' dir ixty' dest' body'
+    recurSeq _ = error "Impossible"
 
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
@@ -331,7 +351,8 @@ vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
         (VRename v) -> Var <$> toAtomVar v)
   (Nest (b:>ty) rest, (stab:stabs)) -> do
     ty' <- vectorizeType ty
-    withFreshBinder (getNameHint b) ty' \b' -> do
+    ty'' <- promoteTypeByStability ty' stab
+    withFreshBinder (getNameHint b) ty'' \b' -> do
       var <- toAtomVar $ binderName b'
       extendSubst (b @> VVal stab (Var var)) do
         LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
@@ -396,14 +417,16 @@ vectorizeRefOp ref' op =
       VVal xStab x <- vectorizeAtom x'
       basemonoid <- case refStab of
         Uniform -> case xStab of
-          Uniform -> vectorizeBaseMonoid basemonoid' Uniform Uniform
+          Uniform -> do
+            vectorizeBaseMonoid basemonoid' Uniform Uniform
           -- This case represents accumulating something loop-varying into a
           -- loop-invariant accumulator, as e.g. sum.  We can implement that for
           -- commutative monoids, but we would want to have started with private
           -- accumulators (one per lane), and then reduce them with an
           -- appropriate sequence of vector reduction intrinsics at the end.
           _ -> throwVectErr $ "Vectorizing non-sliced accumulation not implemented"
-        Contiguous -> vectorizeBaseMonoid basemonoid' Varying xStab
+        Contiguous -> do
+          vectorizeBaseMonoid basemonoid' Varying xStab
         s -> throwVectErr $ "Cannot vectorize reference with loop-varying stability " ++ show s
       VVal Uniform <$> emitOp (RefOp ref $ MExtend basemonoid x)
     IndexRef _ i' -> do
@@ -542,6 +565,15 @@ ensureVarying (VVal s val) = case s of
 ensureVarying (VRename v) = do
   x <- Var <$> toAtomVar v
   ensureVarying (VVal Uniform x)
+
+promoteTypeByStability :: SType o -> Stability -> VectorizeM i o (SType o)
+promoteTypeByStability ty = \case
+  Uniform -> return ty
+  Contiguous -> return ty
+  Varying -> getVectorType ty
+  ProdStability stabs -> case ty of
+    ProdTy elts -> ProdTy <$> zipWithZ promoteTypeByStability elts stabs
+    _ -> throw ZipErr "Type and stability"
 
 -- === computing byte widths ===
 

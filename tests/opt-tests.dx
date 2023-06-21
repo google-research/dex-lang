@@ -190,3 +190,24 @@ _ = yield_accum (AddMonoid Int32) \ref.
 -- CHECK: [[xi:v#[0-9]+]]:<16xInt32> =
 -- CHECK-NEXT: vslice
 -- CHECK: extend [[refi]] [[xi]]
+
+"vectorizing under an outer loop, like matmul"
+-- CHECK-LABEL: vectorizing under an outer loop, like matmul
+
+mat1 = for i:(Fin 32). for j:(Fin 32).
+  (n_to_i32 (ordinal i)) * (n_to_i32 (ordinal j)) + 1
+
+mat2 = for i:(Fin 32). for j:(Fin 32).
+  (n_to_i32 (ordinal i)) * (n_to_i32 (ordinal j)) + 7
+
+%passes vect
+_ = yield_accum (AddMonoid Int32) \result.
+  for k:(Fin 32).
+    for j:(Fin 32).
+      result!(3@(Fin 32))!j += mat1[3@_][k] * mat2[k][j]
+-- CHECK: seq (RawFin 0x2)
+-- CHECK: [[refj:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[mat2j:v#[0-9]+]]:<16xInt32> = vslice
+-- CHECK: [[mat1:v#[0-9]+]]:<16xInt32> = vbroadcast
+-- CHECK: [[prodj:v#[0-9]+]]:<16xInt32> = %imul [[mat1]] [[mat2j]]
+-- CHECK: extend [[refj]] [[prodj]]

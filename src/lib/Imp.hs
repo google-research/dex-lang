@@ -427,7 +427,7 @@ toImpVectorOp = \case
     -- VectorIdx requires that tbl' have a scalar element type, which is
     -- ultimately enforced by `Lower.getVectorType` barfing on non-scalars.
     tbl <- atomToRepVal tbl'
-    repValAtom =<< vectorIndexRepVal tbl i (toIVectorType vty)
+    repValAtom =<< vectorIndexRepVal tbl i vty
   VectorSubref ref i vty -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
@@ -1024,9 +1024,10 @@ naryIndexRepVal x (ix:ixs) = do
 
 -- TODO: de-dup with indexDest?
 indexRepValParam :: Emits n
-  => RepVal SimpIR n -> SAtom n -> (IExpr n -> SubstImpM i n (IExpr n))
-  -> SubstImpM i n (RepVal SimpIR n)
-indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func = do
+  => SRepVal n -> SAtom n -> (SType n -> SType n)
+  -> (IExpr n -> SubstImpM i n (IExpr n))
+  -> SubstImpM i n (SRepVal n)
+indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i tyFunc func = do
   eltTy' <- applySubst (b@>SubstVal i) eltTy
   ord <- ordinalImp (IxType t d) i
   leafTys <- typeToTree tabTy
@@ -1039,20 +1040,26 @@ indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i func =
     case ixStruct of
       EmptyAbs (Nest _ Empty) -> func ptr' >>= load
       _                       -> func ptr'
-  return $ RepVal eltTy' vals'
-indexRepValParam _ _ _ = error "expected table type"
+  -- `func` may have changed the types of the `vals'`.  The caller must also
+  -- supply `tyFunc` to reflect that change in the SType.
+  return $ RepVal (tyFunc eltTy') vals'
+indexRepValParam _ _ _ _ = error "expected table type"
 {-# INLINE indexRepValParam #-}
 
 indexRepVal :: Emits n
   => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
-indexRepVal rep i = indexRepValParam rep i return
+indexRepVal rep i = indexRepValParam rep i id return
 {-# INLINE indexRepVal #-}
 
 vectorIndexRepVal :: Emits n
-  => RepVal SimpIR n -> SAtom n -> IVectorType
+  => RepVal SimpIR n -> SAtom n -> SType n
   -> SubstImpM i n (RepVal SimpIR n)
-vectorIndexRepVal rep i vty = indexRepValParam rep i action where
-  action ptr = castPtrToVectorType ptr vty
+vectorIndexRepVal rep i vty =
+  -- Passing `const vty` here depends on knowing that `vectorIndexRepVal` is
+  -- only called on references of scalar base type, so that the give `vty` is,
+  -- actually, the type of the result of the indexing operation.
+  indexRepValParam rep i (const vty) action where
+    action ptr = castPtrToVectorType ptr (toIVectorType vty)
 {-# INLINE vectorIndexRepVal #-}
 
 projectDest :: Int -> Dest n -> Dest n
