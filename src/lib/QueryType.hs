@@ -9,6 +9,7 @@ module QueryType (module QueryType, module QueryTypePure, toAtomVar) where
 import Control.Category ((>>>))
 import Control.Monad
 import Data.List (elemIndex)
+import Data.Functor ((<&>))
 
 import Types.Primitives
 import Types.Core
@@ -47,13 +48,29 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
-getDestLamExprType :: LamExpr SimpIR n -> PiType SimpIR n
-getDestLamExprType (LamExpr bsRefB body) =
+blockEffTy :: (EnvReader m, IRRep r) => Block r n -> m n (EffTy r n)
+blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
+  effs <- declsEffects decls mempty
+  return $ ignoreHoistFailure $ hoist decls $ EffTy effs $ getType result
+  where
+    declsEffects :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
+    declsEffects Empty !acc = return acc
+    declsEffects n@(Nest (Let _ (DeclBinding _ expr)) rest) !acc = withExtEvidence n do
+      expr' <- sinkM expr
+      declsEffects rest $ acc <> getEffects expr'
+
+blockTy :: (EnvReader m, IRRep r) => Block r n -> m n (Type r n)
+blockTy b = blockEffTy b <&> \(EffTy _ t) -> t
+
+piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
+piTypeWithoutDest (PiType bsRefB _) =
   case popNest bsRefB of
-    Just (PairB bs (bDest:>RawRefTy ansTy)) -> do
-      let resultEffs = ignoreHoistFailure $ hoist bDest $ getEffects body
-      PiType bs $ EffTy resultEffs ansTy
+    Just (PairB bs (_:>RawRefTy ansTy)) -> do
+      PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
     _ -> error "expected trailing dest binder"
+
+blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
+blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
 
 typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfApp (Pi (CorePiType _ bs (EffTy _ resultTy))) xs = do
@@ -137,40 +154,42 @@ effTyOfHof hof = EffTy <$> hofEffects hof <*> typeOfHof hof
 
 typeOfHof :: (EnvReader m, IRRep r) => Hof r n -> m n (Type r n)
 typeOfHof = \case
-  For _ ixTy f -> case getLamExprType f of
+  For _ ixTy f -> getLamExprType f >>= \case
     PiType (UnaryNest b) (EffTy _ eltTy) -> return $ TabTy (ixTypeDict ixTy) b eltTy
     _ -> error "expected a unary pi type"
   While _ -> return UnitTy
-  Linearize f _ -> case getLamExprType f of
+  Linearize f _ -> getLamExprType f >>= \case
     PiType (UnaryNest (binder:>a)) (EffTy Pure b) -> do
       let b' = ignoreHoistFailure $ hoist binder b
       let fLinTy = Pi $ nonDepPiType [a] Pure b'
       return $ PairTy b' fLinTy
     _ -> error "expected a unary pi type"
-  Transpose f _ -> case getLamExprType f of
+  Transpose f _ -> getLamExprType f >>= \case
     PiType (UnaryNest (_:>a)) _ -> return a
     _ -> error "expected a unary pi type"
-  RunReader _ f -> return resultTy
-    where (resultTy, _) = getTypeRWSAction f
-  RunWriter _ _ f -> return $ uncurry PairTy $ getTypeRWSAction f
-  RunState _ _ f -> return $ PairTy resultTy stateTy
-    where (resultTy, stateTy) = getTypeRWSAction f
-  RunIO f -> return $ getType f
-  RunInit f -> return $ getType f
+  RunReader _ f -> do
+    (resultTy, _) <- getTypeRWSAction f
+    return resultTy
+  RunWriter _ _ f -> uncurry PairTy <$> getTypeRWSAction f
+  RunState _ _ f -> do
+    (resultTy, stateTy) <- getTypeRWSAction f
+    return $ PairTy resultTy stateTy
+  RunIO f -> blockTy f
+  RunInit f -> blockTy f
   CatchException ty _ -> return ty
 
 hofEffects :: (EnvReader m, IRRep r) => Hof r n -> m n (EffectRow r n)
 hofEffects = \case
   For _ _ f     -> functionEffs f
-  While body    -> return $ getEffects body
+  While body    -> blockEff body
   Linearize _ _ -> return Pure  -- Body has to be a pure function
   Transpose _ _ -> return Pure  -- Body has to be a pure function
   RunReader _ f -> rwsFunEffects Reader f
   RunWriter d _ f -> maybeInit d <$> rwsFunEffects Writer f
   RunState  d _ f -> maybeInit d <$> rwsFunEffects State  f
-  RunIO          f -> return $ deleteEff IOEffect        $ getEffects f
-  RunInit        f -> return $ deleteEff InitEffect      $ getEffects f
-  CatchException _ f -> return $ deleteEff ExceptionEffect $ getEffects f
+  RunIO            f -> deleteEff IOEffect        <$> blockEff f
+  RunInit          f -> deleteEff InitEffect      <$> blockEff f
+  CatchException _ f -> deleteEff ExceptionEffect <$> blockEff f
   where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
         maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
 
@@ -316,52 +335,34 @@ makePreludeMaybeTy ty = do
 -- === computing effects ===
 
 functionEffs :: (IRRep r, EnvReader m) => LamExpr r n -> m n (EffectRow r n)
-functionEffs f = case getLamExprType f of
+functionEffs f = getLamExprType f >>= \case
   PiType b (EffTy effs _) -> return $ ignoreHoistFailure $ hoist b effs
 
 rwsFunEffects :: (IRRep r, EnvReader m) => RWS -> LamExpr r n -> m n (EffectRow r n)
-rwsFunEffects rws f = return case getLamExprType f of
+rwsFunEffects rws f = getLamExprType f >>= \case
    PiType (BinaryNest h ref) et -> do
      let effs' = ignoreHoistFailure $ hoist ref (etEff et)
      let hVal = Var $ AtomVar (binderName h) (TC HeapType)
      let effs'' = deleteEff (RWSEffect rws hVal) effs'
-     ignoreHoistFailure $ hoist h effs''
+     return $ ignoreHoistFailure $ hoist h effs''
    _ -> error "Expected a binary function type"
 
-getLamExprType :: IRRep r => LamExpr r n -> PiType r n
-getLamExprType (LamExpr bs body) = PiType bs (EffTy (getEffects body) (getType body))
+getLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (PiType r n)
+getLamExprType (LamExpr bs body) = liftEnvReaderM $
+  refreshAbs (Abs bs body) \bs' body' -> do
+    effTy <- blockEffTy body'
+    return $ PiType bs' effTy
 
-getTypeRWSAction :: IRRep r => LamExpr r n -> (Type r n, Type r n)
-getTypeRWSAction f = case getLamExprType f of
+getTypeRWSAction :: (IRRep r, EnvReader m) => LamExpr r n -> m n (Type r n, Type r n)
+getTypeRWSAction f = getLamExprType f >>= \case
   PiType (BinaryNest regionBinder refBinder) (EffTy _ resultTy) -> do
     case binderType refBinder of
       RefTy _ referentTy -> do
         let referentTy' = ignoreHoistFailure $ hoist regionBinder referentTy
         let resultTy' = ignoreHoistFailure $ hoist (PairB regionBinder refBinder) resultTy
-        (resultTy', referentTy')
+        return (resultTy', referentTy')
       _ -> error "expected a ref"
   _ -> error "expected a pi type"
-
-computeAbsEffects :: (IRRep r, EnvExtender m, RenameE e)
-  => Abs (Nest (Decl r)) e n -> m n (Abs (Nest (Decl r)) (EffectRow r `PairE` e) n)
-computeAbsEffects it = refreshAbs it \decls result -> do
-  effs <- declNestEffects decls
-  return $ Abs decls (effs `PairE` result)
-{-# INLINE computeAbsEffects #-}
-
-declNestEffects :: (IRRep r, EnvReader m) => Nest (Decl r) n l -> m l (EffectRow r l)
-declNestEffects decls = liftEnvReaderM $ declNestEffectsRec decls mempty
-{-# INLINE declNestEffects #-}
-
-declNestEffectsRec :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
-declNestEffectsRec Empty !acc = return acc
-declNestEffectsRec n@(Nest decl rest) !acc = withExtEvidence n do
-  expr <- sinkM $ declExpr decl
-  acc' <- sinkM $ acc <> (getEffects expr)
-  declNestEffectsRec rest acc'
-  where
-    declExpr :: Decl r n l -> Expr r n
-    declExpr (Let _ (DeclBinding _ expr)) = expr
 
 instantiateHandlerType :: EnvReader m => HandlerName n -> CType n -> [CAtom n] -> m n (CType n)
 instantiateHandlerType hndName r args = do
@@ -385,8 +386,13 @@ getSuperclassTys (DictType _ className params) = do
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
-  DexTopFun _ piTy _ _ -> return piTy
+  DexTopFun _ (TopLam _ piTy _) _ -> return piTy
   FFITopFun _ iTy -> liftIFunType iTy
+
+asTopLam :: (EnvReader m, IRRep r) => LamExpr r n -> m n (TopLam r n)
+asTopLam lam = do
+  piTy <- getLamExprType lam
+  return $ TopLam False piTy lam
 
 liftIFunType :: (IRRep r, EnvReader m) => IFunType -> m n (PiType r n)
 liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where

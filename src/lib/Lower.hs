@@ -7,8 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Lower
-  ( lowerFullySequential, lowerFullySequentialNoDest
-  , DestLamExpr, DestBlock
+  ( lowerFullySequential, DestBlock
   ) where
 
 import Prelude hiding ((.))
@@ -29,7 +28,7 @@ import Subst
 import QueryType
 import Types.Core
 import Types.Primitives
-import Util (enumerate, foldMapM)
+import Util (enumerate)
 
 -- === For loop resolution ===
 
@@ -60,29 +59,33 @@ import Util (enumerate, foldMapM)
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-type DestLamExpr = SLam
 type DestBlock = Abs (SBinder) SBlock
 
-lowerFullySequential :: EnvReader m => SLam n -> m n (DestLamExpr n)
-lowerFullySequential (LamExpr bs body) = liftEnvReaderM $ do
-  refreshAbs (Abs bs body) \bs' body' -> do
-    Abs b body'' <- lowerFullySequentialBlock body'
-    return $ LamExpr (bs' >>> UnaryNest b) body''
+lowerFullySequential :: EnvReader m => Bool -> STopLam n -> m n (STopLam n)
+lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftEnvReaderM $ do
+  lam <- case wantDestStyle of
+    True -> do
+      refreshAbs (Abs bs body) \bs' body' -> do
+        xs <- bindersToAtoms bs'
+        EffTy _ resultTy <- instantiatePiTy (sink piTy) xs
+        Abs b body'' <- lowerFullySequentialBlock resultTy body'
+        return $ LamExpr (bs' >>> UnaryNest b) body''
+    False -> do
+      refreshAbs (Abs bs body) \bs' body' -> do
+        body'' <- lowerFullySequentialBlockNoDest body'
+        return $ LamExpr bs' body''
+  piTy' <- getLamExprType lam
+  return $ TopLam wantDestStyle piTy' lam
+lowerFullySequential _ (TopLam True _ _) = error "already in destination style"
 
-lowerFullySequentialBlock :: EnvReader m => SBlock n -> m n (DestBlock n)
-lowerFullySequentialBlock b = liftAtomSubstBuilder do
-  resultDestTy <- RawRefTy <$> substM (getType b)
+lowerFullySequentialBlock :: EnvReader m => SType n -> SBlock n -> m n (DestBlock n)
+lowerFullySequentialBlock resultTy b = liftAtomSubstBuilder do
+  let resultDestTy = RawRefTy resultTy
   withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs destBinder <$> buildBlock do
       let dest = Var $ sink $ binderVar destBinder
       lowerBlockWithDest dest b $> UnitVal
 {-# SCC lowerFullySequentialBlock #-}
-
-lowerFullySequentialNoDest :: EnvReader m => SLam n -> m n (SLam n)
-lowerFullySequentialNoDest (LamExpr bs body) = liftEnvReaderM $ do
-  refreshAbs (Abs bs body) \bs' body' -> do
-    body'' <- lowerFullySequentialBlockNoDest body'
-    return $ LamExpr bs' body''
 
 lowerFullySequentialBlockNoDest :: EnvReader m => SBlock n -> m n (SBlock n)
 lowerFullySequentialBlockNoDest b = liftAtomSubstBuilder $ buildBlock $ lowerBlock b
@@ -190,8 +193,7 @@ lowerCase maybeDest scrut alts resultTy = do
         extendSubst (b @> Rename (atomVarName b')) $
           buildBlock do
             lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
-    eff' <- foldMapM (pure . getEffects) alts'
-    void $ emitExpr $ Case (sink scrut') alts' (EffTy eff' UnitTy)
+    void $ mkCase (sink scrut') UnitTy alts' >>= emitExpr
     return UnitVal
   return $ PrimOp $ DAMOp $ Freeze dest'
 
@@ -243,7 +245,7 @@ decomposeDest dest = \case
   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
-lowerBlockWithDest dest (Block _ decls ans) = do
+lowerBlockWithDest dest (Abs decls ans) = do
   decomposeDest dest ans >>= \case
     Nothing -> do
       ans' <- visitDeclsEmits decls $ visitAtom ans

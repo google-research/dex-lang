@@ -31,7 +31,7 @@ import QueryType
 import Util (iota)
 import Err
 
-optimize :: EnvReader m => SLam n -> m n (SLam n)
+optimize :: EnvReader m => STopLam n -> m n (STopLam n)
 optimize = dceTop     -- Clean up user code
        >=> unrollLoops
        >=> dceTop     -- Clean up peephole-optimized code after unrolling
@@ -208,7 +208,7 @@ peepholeExpr expr = case expr of
 
 -- === Loop unrolling ===
 
-unrollLoops :: EnvReader m => SLam n -> m n (SLam n)
+unrollLoops :: EnvReader m => STopLam n -> m n (STopLam n)
 unrollLoops = liftLamExpr unrollLoopsBlock
 
 unrollLoopsBlock :: EnvReader m => SBlock n -> m n (SBlock n)
@@ -240,7 +240,7 @@ ulBlock :: SBlock i -> ULM i o (SBlock o)
 ulBlock b = buildBlock $ visitBlockEmits b
 
 emitSubstBlock :: Emits o => SBlock i -> ULM i o (SAtom o)
-emitSubstBlock (Block _ decls ans) = visitDeclsEmits decls $ visitAtom ans
+emitSubstBlock (Abs decls ans) = visitDeclsEmits decls $ visitAtom ans
 
 -- TODO: Refine the cost accounting so that operations that will become
 -- constant-foldable after inlining don't count towards it.
@@ -257,7 +257,7 @@ ulExpr expr = case expr of
               vals <- dropSubst $ forM (iota n) \i -> do
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
-              case getLamExprType body' of
+              getLamExprType body' >>= \case
                 PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
                   let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
                   emitExpr $ TabCon Nothing tabTy vals
@@ -305,7 +305,7 @@ hoistLoopInvariantBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 hoistLoopInvariantBlock body = liftLICMM $ buildBlock $ visitBlockEmits body
 {-# SCC hoistLoopInvariantBlock #-}
 
-hoistLoopInvariant :: EnvReader m => SLam n -> m n (SLam n)
+hoistLoopInvariant :: EnvReader m => STopLam n -> m n (STopLam n)
 hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
 {-# INLINE hoistLoopInvariant #-}
 
@@ -317,11 +317,11 @@ licmExpr = \case
     let numCarriesOriginal = length dests'
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
       -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
-      Block _ decls ans <- buildBlock $ visitBlockEmits body
+      Abs decls ans <- buildBlock $ visitBlockEmits body
       -- Now, we process the decls and decide which ones to hoist.
       liftEnvReaderM $ runSubstReaderT idSubst $
           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE extraDests) ab <- emitDecls hdecls destsAndBody
+    PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
     extraDests' <- mapM toAtomVar extraDests
     -- Append the destinations of hoisted Allocs as loop carried values.
     let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
@@ -334,19 +334,19 @@ licmExpr = \case
       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-      block <- applySubst s bodyAbs >>= makeBlockFromDecls
+      block <- applySubst s bodyAbs
       return $ UnaryLamExpr lb' block
     emitSeq dir ix' dests'' body'
   PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
     ix' <- substM ix
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      Block _ decls ans <- buildBlock $ visitBlockEmits body
+      Abs decls ans <- buildBlock $ visitBlockEmits body
       liftEnvReaderM $ runSubstReaderT idSubst $
           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls hdecls destsAndBody
+    PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls $ Abs hdecls destsAndBody
     ixTy <- substM $ binderType b
     body' <- withFreshBinder noHint ixTy \i -> do
-      block <- applyRename (lnb@>binderName i) bodyAbs >>= makeBlockFromDecls
+      block <- applyRename (lnb@>binderName i) bodyAbs
       return $ UnaryLamExpr i block
     emitHof $ For dir ix' body'
   expr -> visitGeneric expr >>= emitExpr
@@ -400,12 +400,12 @@ newtype DCEM n a = DCEM { runDCEM :: StateT1 FV EnvReaderM n a }
   deriving ( Functor, Applicative, Monad, EnvReader, ScopeReader
            , MonadState (FV n), EnvExtender)
 
-dceTop :: EnvReader m => SLam n -> m n (SLam n)
+dceTop :: EnvReader m => STopLam n -> m n (STopLam n)
 dceTop = liftLamExpr dceBlock
 {-# INLINE dceTop #-}
 
 dceBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-dceBlock b = liftEnvReaderM $ evalStateT1 (runDCEM $ dce b) mempty
+dceBlock b = liftEnvReaderM $ evalStateT1 (runDCEM $ dceBlock' b) mempty
 {-# SCC dceBlock #-}
 
 class HasDCE (e::E) where
@@ -432,32 +432,36 @@ instance HasDCE SAtom where
 instance HasDCE SType where dce = visitTypePartial
 instance HasDCE (PiType SimpIR) where
   dce (PiType bs effTy) = do
-    Abs bs' effTy' <- dce (Abs bs effTy)
-    return $ PiType bs' effTy'
+    dceBinders bs effTy \bs' effTy' -> PiType bs' <$> dce effTy'
 
 instance HasDCE (LamExpr SimpIR) where
-  dce (LamExpr bs e) = do
-    Abs bs' e' <- dce (Abs bs e)
-    return $ LamExpr bs' e'
+  dce (LamExpr bs e) = dceBinders bs e \bs' e' -> LamExpr bs' <$> dceBlock' e'
 
-instance HasDCE SBlock where
-  dce (Block ann decls ans) = case (ann, decls) of
-    (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> dce ans
-    (NoBlockAnn      , _    ) -> error "should be unreachable"
-    (BlockAnn effTy, _    ) -> do
-      -- The free vars accumulated in the state of DCEM should correspond to
-      -- the free vars of the Abs of the block answer, by the decls traversed
-      -- so far. dceNest takes care to uphold this invariant, but we temporarily
-      -- reset the state to an empty map, just so that names from the surrounding
-      -- block don't end up influencing elimination decisions here. Note that we
-      -- restore the state (and accumulate free vars of the DCE'd block into it)
-      -- right after dceNest.
-      old <- get
-      put mempty
-      Abs decls' ans' <- dceNest decls ans
-      modify (<> old)
-      effTy' <- dce effTy
-      return $ Block (BlockAnn effTy') decls' ans'
+dceBinders
+  :: (HoistableB b, BindsEnv b, RenameB b, RenameE e)
+  => b n l -> e l
+  -> (forall l'. b n l' -> e l' -> DCEM l' a)
+  -> DCEM n a
+dceBinders b e cont = do
+  ans <- refreshAbs (Abs b e) \b' e' -> cont b' e'
+  modify (<>FV (freeVarsB b))
+  return ans
+{-# INLINE dceBinders #-}
+
+dceBlock' :: SBlock n -> DCEM n (SBlock n)
+dceBlock' (Abs decls ans) = do
+  -- The free vars accumulated in the state of DCEM should correspond to
+  -- the free vars of the Abs of the block answer, by the decls traversed
+  -- so far. dceNest takes care to uphold this invariant, but we temporarily
+  -- reset the state to an empty map, just so that names from the surrounding
+  -- block don't end up influencing elimination decisions here. Note that we
+  -- restore the state (and accumulate free vars of the DCE'd block into it)
+  -- right after dceNest.
+  old <- get
+  put mempty
+  block <- dceNest decls ans
+  modify (<> old)
+  return block
 
 data CachedFVs e n = UnsafeCachedFVs { _cachedFVs :: (NameSet n), fromCachedFVs :: (e n) }
 instance HoistableE (CachedFVs e) where
@@ -511,13 +515,6 @@ dceNest decls ans = case decls of
         decl'' <- dce decl'
         modify (<>FV (freeVarsB b'))
         return $ Abs (Nest (Let b' decl'') bs'') ans''
-
-instance (BindsEnv b, RenameB b, HoistableB b, RenameE e, HasDCE e) => HasDCE (Abs b e) where
-  dce a = do
-    a'@(Abs b' _) <- refreshAbs a \b e -> Abs b <$> dce e
-    modify (<>FV (freeVarsB b'))
-    return a'
-  {-# INLINE dce #-}
 
 instance HasDCE (EffectRow   SimpIR)
 instance HasDCE (DeclBinding SimpIR)

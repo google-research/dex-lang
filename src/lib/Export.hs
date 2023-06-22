@@ -52,8 +52,8 @@ prepareFunctionForExport cc f = do
     HoistFailure _ ->
       throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess s -> return s
-  CoreLamExpr _ f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
-  fSimp <- simplifyTopFunction f'
+  f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
+  fSimp <- simplifyTopFunction $ coreLamToTopLam f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
   return $ ExportNativeFunction nativeFun closedSig
@@ -61,9 +61,8 @@ prepareFunctionForExport cc f = do
 {-# SCC prepareFunctionForExport #-}
 
 prepareSLamForExport :: (Mut n, Topper m)
-  => CallingConvention -> SLam n -> m n ExportNativeFunction
-prepareSLamForExport cc f = do
-  let naryPi = getLamExprType f
+  => CallingConvention -> STopLam n -> m n ExportNativeFunction
+prepareSLamForExport cc f@(TopLam _ naryPi _) = do
   sig <- liftExportSigM $ simpPiToExportSig cc naryPi
   closedSig <- case hoistToTop sig of
     HoistFailure _ ->

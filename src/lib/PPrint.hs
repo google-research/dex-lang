@@ -131,9 +131,9 @@ pArg :: PrettyPrec a => a -> Doc ann
 pArg a = prettyPrec a ArgPrec
 
 instance IRRep r => Pretty (Block r n) where
-  pretty (Block _ decls expr) = prettyBlock decls expr
+  pretty (Abs decls expr) = prettyBlock decls expr
 instance IRRep r => PrettyPrec (Block r n) where
-  prettyPrec (Block _ decls expr) = atPrec LowestPrec $ prettyBlock decls expr
+  prettyPrec (Abs decls expr) = atPrec LowestPrec $ prettyBlock decls expr
 
 prettyBlock :: (IRRep r, PrettyPrec (e l)) => Nest (Decl r) n l -> e l -> Doc ann
 prettyBlock Empty expr = group $ line <> pLowest expr
@@ -356,18 +356,6 @@ prettyBinderHelper (b:>ty) body =
 prettyLam :: Pretty a => Doc ann -> a -> Doc ann
 prettyLam binders body =
   group $ group (nest 4 $ binders) <> group (nest 2 $ p body)
-
-_inlineLastDeclBlock :: IRRep r => Block r n -> Abs (Nest (Decl r)) (Expr r) n
-_inlineLastDeclBlock (Block _ decls expr) = inlineLastDecl decls expr
-
-inlineLastDecl :: IRRep r => Nest (Decl r) n l -> Atom r l -> Abs (Nest (Decl r)) (Expr r) n
-inlineLastDecl Empty result = Abs Empty $ Atom result
-inlineLastDecl (Nest (Let b (DeclBinding _ expr)) Empty) (Var (AtomVar v _))
-  | v == binderName b = Abs Empty expr
-inlineLastDecl (Nest decl rest) result =
-  case inlineLastDecl rest result of
-   Abs decls' result' ->
-     Abs (Nest decl decls') result'
 
 instance IRRep r => Pretty (EffectRow r n) where
   pretty (EffectRow effs t) =
@@ -785,13 +773,15 @@ instance Pretty (TopFunDef n) where
 
 instance Pretty (TopFun n) where
   pretty = \case
-    DexTopFun def ty simp lowering ->
+    DexTopFun def lam lowering ->
       "Top-level Function"
          <> hardline <+> "definition:" <+> pretty def
-         <> hardline <+> "type:"       <+> pretty ty
-         <> hardline <+> "simplified:" <+> pretty simp
+         <> hardline <+> "lambda:" <+> pretty lam
          <> hardline <+> "lowering:" <+> pretty lowering
     FFITopFun f _ -> p f
+
+instance IRRep r => Pretty (TopLam r n) where
+  pretty (TopLam _ _ lam) = pretty lam
 
 instance Pretty a => Pretty (EvalStatus a) where
   pretty = \case

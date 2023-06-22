@@ -423,8 +423,8 @@ getInstanceDicts name = do
 
 liftLamExpr :: (IRRep r, EnvReader m)
   => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
-  -> LamExpr r n -> m n (LamExpr r n)
-liftLamExpr f (LamExpr bs body) = liftEnvReaderM $
+  -> TopLam r n -> m n (TopLam r n)
+liftLamExpr f (TopLam d ty (LamExpr bs body)) = liftM (TopLam d ty) $ liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
 
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)

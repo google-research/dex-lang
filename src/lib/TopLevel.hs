@@ -43,7 +43,7 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends, checkDestLam)
+import CheckType ( CheckableE (..), asFFIFunType, checkHasType)
 #ifdef DEX_DEBUG
 import CheckType (checkTypesM)
 #endif
@@ -536,37 +536,32 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   NoOptimize -> return x
   Optimize   -> act x
 
-evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
+evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
 evalBlock typed = do
   -- Be careful when adding new compilation passes here.  If you do, be sure to
   -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
   -- In most cases it should be easiest to add new passes to simpOptimizations or
   -- loweredOptimizations, below, because those are reused in all three places.
-  checkEffects Pure typed
   synthed <- checkPass SynthPass $ synthTopE typed
-  simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  SimplifiedBlock simp recon <- return simplifiedBlock
-  checkEffects Pure simp
-  NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
-  checkEffects Pure opt
+  SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  opt <- simpOptimizations simp
   simpResult <- case opt of
-    AtomicBlock result -> return result
+    TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result
     _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
-      checkDestLam lowered
-      lOpt <- loweredOptimizations lowered
-      checkDestLam lOpt
+      lowered <- checkPass LowerPass $ lowerFullySequential True opt
+      lOpt <- checkPass OptPass $ loweredOptimizations lowered
       cc <- getEntryFunCC
       impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
-      PiType bs (EffTy _ resultTy') <- return $ getDestLamExprType lOpt
+      TopLam _ destTy _ <- return lOpt
+      PiType bs (EffTy _ resultTy') <- return $ piTypeWithoutDest destTy
       let resultTy = ignoreHoistFailure $ hoist bs resultTy'
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
-simpOptimizations :: Topper m => SLam n -> m n (SLam n)
+simpOptimizations :: Topper m => STopLam n -> m n (STopLam n)
 simpOptimizations simp = do
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
@@ -574,7 +569,7 @@ simpOptimizations simp = do
   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
   whenOpt inlined2 $ checkPass OptPass . optimize
 
-loweredOptimizations :: Topper m => DestLamExpr n -> m n (DestLamExpr n)
+loweredOptimizations :: Topper m => STopLam n -> m n (STopLam n)
 loweredOptimizations lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
     (dceTop >=> hoistLoopInvariant)
@@ -584,7 +579,7 @@ loweredOptimizations lowered = do
     logFiltered l VectPass $ return [TextOut $ pprint errs]
     checkPass VectPass $ return vo
 
-loweredOptimizationsNoDest :: Topper m => SLam n -> m n (SLam n)
+loweredOptimizationsNoDest :: Topper m => STopLam n -> m n (STopLam n)
 loweredOptimizationsNoDest lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
     (dceTop >=> hoistLoopInvariant)
@@ -594,7 +589,7 @@ loweredOptimizationsNoDest lowered = do
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
 evalSpecializations fs = do
   fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
-    DexTopFun _ _ simp Waiting -> return $ Just (f, simp)
+    DexTopFun _ simp Waiting -> return $ Just (f, simp)
     _ -> return Nothing
   forM_ fSimps \(f, simp) -> do
     -- Prevents infinite loop in case compiling `v` ends up requiring `v`
@@ -608,14 +603,14 @@ evalSpecializations fs = do
 
 evalDictSpecializations :: (Topper m, Mut n) => [SpecDictName n] -> m n ()
 evalDictSpecializations ds = do
-  -- TODO Do we have to do these in order, like evalSpecializations, or are they
-  -- independent enough not to need it?
-  -- TODO Do we need to gate the status of these, too?
+  -- -- TODO Do we have to do these in order, like evalSpecializations, or are they
+  -- -- independent enough not to need it?
+  -- -- TODO Do we need to gate the status of these, too?
   forM_ ds \dName -> do
     SpecializedDict _ (Just fs) <- lookupSpecDict dName
     fs' <- forM fs \lam -> do
       opt <- simpOptimizations lam
-      lowered <- checkPass LowerPass $ lowerFullySequentialNoDest opt
+      lowered <- checkPass LowerPass $ lowerFullySequential False opt
       loweredOptimizationsNoDest lowered
     updateTopEnv $ LowerDictSpecialization dName fs'
   return ()
@@ -647,10 +642,10 @@ execUDecl mname decl = do
 {-# SCC execUDecl #-}
 
 compileTopLevelFun :: (Topper m, Mut n)
-  => CallingConvention -> SLam n -> m n (ImpFunction n)
+  => CallingConvention -> STopLam n -> m n (ImpFunction n)
 compileTopLevelFun cc fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- checkPass LowerPass $ lowerFullySequential fOpt
+  fLower <- checkPass LowerPass $ lowerFullySequential True fOpt
   flOpt <- loweredOptimizations fLower
   checkPass ImpPass $ toImpFunction cc flOpt
 {-# SCC compileTopLevelFun #-}
@@ -659,7 +654,8 @@ printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
   block <- liftBuilder $ buildBlock do
     emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
-  getDexString =<< evalBlock block
+  topBlock <- asTopBlock block
+  getDexString =<< evalBlock topBlock
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
 loadObject fname =
@@ -733,7 +729,7 @@ funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
 funNameToObj v = do
   lookupEnv v >>= \case
-    TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ topFunObjCode impl
+    TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
     b -> error $ "couldn't find object cache entry for " ++ pprint v ++ "\ngot:\n" ++ pprint b
 
 withCompileTime :: MonadIO m => m Result -> m Result
@@ -755,11 +751,6 @@ checkPass name cont = do
   logTop $ MiscLog $ "Checks skipped (not a debug build)"
 #endif
   return result
-
-checkEffects :: (Topper m, HasEffects e r, IRRep r) => EffectRow r n -> e n -> m n ()
-checkEffects allowedEffs e = do
-  let actualEffs = getEffects e
-  checkExtends allowedEffs actualEffs
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =

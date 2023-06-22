@@ -175,19 +175,13 @@ data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 data TyConParams n = TyConParams [Explicitness] [Atom CoreIR n]
      deriving (Show, Generic)
 
--- The Type is the type of the result expression (and thus the type of the
--- block). It's given by querying the result expression's type, and checking
--- that it doesn't have any free names bound by the decls in the block. We store
--- it separately as an optimization, to avoid having to traverse the block.
--- If the decls are empty we can skip the type annotation, because then we can
--- cheaply query the result, and, more importantly, there's no risk of having a
--- type that mentions local variables.
-data Block (r::IR) (n::S) where
-  Block :: BlockAnn r n l -> Nest (Decl r) n l -> Atom r l -> Block r n
+type WithDecls (r::IR) = Abs (Decls r) :: E -> E
+type Block (r::IR) = WithDecls r (Atom r) :: E
 
-data BlockAnn r n l where
-  BlockAnn :: EffTy r n -> BlockAnn r n l
-  NoBlockAnn :: BlockAnn r n n
+type TopBlock = TopLam -- used for nullary lambda
+type IsDestLam = Bool
+data TopLam (r::IR) (n::S) = TopLam IsDestLam (PiType r n) (LamExpr r n)
+     deriving (Show, Generic)
 
 data LamExpr (r::IR) (n::S) where
   LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
@@ -416,6 +410,7 @@ type CDecl  = Decl  CoreIR
 type CDecls = Decls CoreIR
 type CAtomName  = AtomName CoreIR
 type CAtomVar   = AtomVar CoreIR
+type CTopLam    = TopLam CoreIR
 
 type SAtom  = Atom SimpIR
 type SType  = Type SimpIR
@@ -429,6 +424,7 @@ type SAtomVar   = AtomVar SimpIR
 type SBinder = Binder SimpIR
 type SRepVal = RepVal SimpIR
 type SLam    = LamExpr SimpIR
+type STopLam    = TopLam SimpIR
 
 -- === newtypes ===
 
@@ -591,8 +587,8 @@ data TopEnvUpdate n =
  | AddCustomRule            (CAtomName n) (AtomRules n)
  | UpdateLoadedModules      ModuleSourceName (ModuleName n)
  | UpdateLoadedObjects      (FunObjCodeName n) NativeFunction
- | FinishDictSpecialization (SpecDictName n) [LamExpr SimpIR n]
- | LowerDictSpecialization  (SpecDictName n) [LamExpr SimpIR n]
+ | FinishDictSpecialization (SpecDictName n) [TopLam SimpIR n]
+ | LowerDictSpecialization  (SpecDictName n) [TopLam SimpIR n]
  | UpdateTopFunEvalStatus   (TopFunName n) (TopFunEvalStatus n)
  | UpdateInstanceDef        (InstanceName n) (InstanceDef n)
  | UpdateTyConDef           (TyConName n) (TyConDef n)
@@ -756,7 +752,7 @@ deriving instance Show (EffectOpType n)
 deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
 
 instance GenericE SpecializedDictDef where
-  type RepE SpecializedDictDef = AbsDict `PairE` MaybeE (ListE (LamExpr SimpIR))
+  type RepE SpecializedDictDef = AbsDict `PairE` MaybeE (ListE (TopLam SimpIR))
   fromE (SpecializedDict ab methods) = ab `PairE` methods'
     where methods' = case methods of Just xs -> LeftE (ListE xs)
                                      Nothing -> RightE UnitE
@@ -777,7 +773,7 @@ data EvalStatus a = Waiting | Running | Finished a
 type TopFunEvalStatus n = EvalStatus (TopFunLowerings n)
 
 data TopFun (n::S) =
-   DexTopFun (TopFunDef n) (PiType SimpIR n) (LamExpr SimpIR n) (TopFunEvalStatus n)
+   DexTopFun (TopFunDef n) (TopLam SimpIR n) (TopFunEvalStatus n)
  | FFITopFun String IFunType
    deriving (Show, Generic)
 
@@ -929,7 +925,7 @@ data SpecializedDictDef n =
      -- Methods (thunked if nullary), if they're available.
      -- We create specialized dict names during simplification, but we don't
      -- actually simplify/lower them until we return to TopLevel
-     (Maybe [LamExpr SimpIR n])
+     (Maybe [TopLam SimpIR n])
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
@@ -1125,12 +1121,11 @@ pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
 
-pattern AtomicBlock :: Atom r n -> Block r n
-pattern AtomicBlock atom <- Block _ Empty atom
-  where AtomicBlock atom = Block NoBlockAnn Empty atom
+pattern WithoutDecls :: e n -> WithDecls r e n
+pattern WithoutDecls x = Abs Empty x
 
 exprBlock :: IRRep r => Block r n -> Maybe (Expr r n)
-exprBlock (Block _ (Nest (Let b (DeclBinding _ expr)) Empty) (Var (AtomVar n _)))
+exprBlock (Abs (Nest (Let b (DeclBinding _ expr)) Empty) (Var (AtomVar n _)))
   | n == binderName b = Just expr
 exprBlock _ = Nothing
 {-# INLINE exprBlock #-}
@@ -1890,27 +1885,6 @@ instance IRRep r => AlphaEqE       (TC r)
 instance IRRep r => AlphaHashableE (TC r)
 instance IRRep r => RenameE        (TC r)
 
-instance IRRep r => GenericE (Block r) where
-  type RepE (Block r) = PairE (MaybeE (EffTy r)) (Abs (Nest (Decl r)) (Atom r))
-  fromE (Block (BlockAnn effTy) decls result) = PairE (JustE effTy) (Abs decls result)
-  fromE (Block NoBlockAnn Empty result) = PairE NothingE (Abs Empty result)
-  fromE _ = error "impossible"
-  {-# INLINE fromE #-}
-  toE   (PairE (JustE effTy) (Abs decls result)) = Block (BlockAnn effTy) decls result
-  toE   (PairE NothingE (Abs Empty result)) = Block NoBlockAnn Empty result
-  toE   _ = error "impossible"
-  {-# INLINE toE #-}
-
-deriving instance IRRep r => Show (BlockAnn r n l)
-
-instance IRRep r => SinkableE      (Block r)
-instance IRRep r => HoistableE     (Block r)
-instance IRRep r => AlphaEqE       (Block r)
-instance IRRep r => AlphaHashableE (Block r)
-instance IRRep r => RenameE        (Block r)
-deriving instance IRRep r => Show (Block r n)
-deriving via WrapE (Block r) n instance IRRep r => Generic (Block r n)
-
 instance IRRep r => GenericB (NonDepNest r ann) where
   type RepB (NonDepNest r ann) = (LiftB (ListE ann)) `PairB` Nest (AtomNameBinder r)
   fromB (NonDepNest bs anns) = LiftB (ListE anns) `PairB` bs
@@ -2291,16 +2265,29 @@ instance RenameE        TopFunDef
 instance AlphaEqE       TopFunDef
 instance AlphaHashableE TopFunDef
 
+instance IRRep r => GenericE (TopLam r) where
+  type RepE (TopLam r) = LiftE Bool `PairE` PiType r `PairE` LamExpr r
+  fromE (TopLam d x y) = LiftE d `PairE` x `PairE` y
+  {-# INLINE fromE #-}
+  toE (LiftE d `PairE` x `PairE` y) = TopLam d x y
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (TopLam r)
+instance IRRep r => HoistableE     (TopLam r)
+instance IRRep r => RenameE        (TopLam r)
+instance IRRep r => AlphaEqE       (TopLam r)
+instance IRRep r => AlphaHashableE (TopLam r)
+
 instance GenericE TopFun where
   type RepE TopFun = EitherE
-        (TopFunDef `PairE` PiType SimpIR `PairE` LamExpr SimpIR `PairE` ComposeE EvalStatus TopFunLowerings)
+        (TopFunDef `PairE` TopLam SimpIR `PairE` ComposeE EvalStatus TopFunLowerings)
         (LiftE (String, IFunType))
   fromE = \case
-    DexTopFun def ty simp status -> LeftE (def `PairE` ty `PairE` simp `PairE` ComposeE status)
+    DexTopFun def lam status -> LeftE (def `PairE` lam `PairE` ComposeE status)
     FFITopFun name ty    -> RightE (LiftE (name, ty))
   {-# INLINE fromE #-}
   toE = \case
-    LeftE  (def `PairE` ty `PairE` simp `PairE` ComposeE status) -> DexTopFun def ty simp status
+    LeftE  (def `PairE` lam `PairE` ComposeE status) -> DexTopFun def lam status
     RightE (LiftE (name, ty))            -> FFITopFun name ty
   {-# INLINE toE #-}
 
@@ -2574,8 +2561,8 @@ instance GenericE TopEnvUpdate where
     {- UpdateLoadedModules -}      (LiftE ModuleSourceName `PairE` ModuleName)
     {- UpdateLoadedObjects -}      (FunObjCodeName `PairE` LiftE NativeFunction)
       ) ( EitherE6
-    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE (LamExpr SimpIR))
-    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE (LamExpr SimpIR))
+    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE (TopLam SimpIR))
+    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE (TopLam SimpIR))
     {- UpdateTopFunEvalStatus -}   (TopFunName `PairE` ComposeE EvalStatus TopFunLowerings)
     {- UpdateInstanceDef -}        (InstanceName `PairE` InstanceDef)
     {- UpdateTyConDef -}           (TyConName `PairE` TyConDef)
@@ -2685,8 +2672,8 @@ applyUpdate e = \case
     updateEnv dName newBinding e
   UpdateTopFunEvalStatus f s -> do
     case lookupEnvPure e f of
-      TopFunBinding (DexTopFun def ty simp _) ->
-        updateEnv f (TopFunBinding $ DexTopFun def ty simp s) e
+      TopFunBinding (DexTopFun def lam _) ->
+        updateEnv f (TopFunBinding $ DexTopFun def lam s) e
       _ -> error "can't update ffi function impl"
   UpdateInstanceDef name def -> do
     case lookupEnvPure e name of
@@ -2842,7 +2829,7 @@ instance Store (TyConParams n)
 instance Store (DataConDefs n)
 instance Store (TyConDef n)
 instance Store (DataConDef n)
-instance IRRep r => Store (Block r n)
+instance IRRep r => Store (TopLam r n)
 instance IRRep r => Store (LamExpr r n)
 instance IRRep r => Store (IxType r n)
 instance Store (CorePiType n)

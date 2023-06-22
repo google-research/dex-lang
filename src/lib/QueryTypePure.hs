@@ -236,6 +236,12 @@ nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
     Abs b resultTy' -> TabPiType d (b:>t) resultTy'
 
+corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
+corePiTypeToPiType (CorePiType _ bs effTy) = PiType (fmapNest withoutExpl bs) effTy
+
+coreLamToTopLam :: CoreLamExpr n -> TopLam CoreIR n
+coreLamToTopLam (CoreLamExpr ty f) = TopLam False (corePiTypeToPiType ty) f
+
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b
 
@@ -252,11 +258,6 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
     _ -> error $ "Not an Ix dict: " ++ show dict
   IxDictRawFin _ -> IdxRepTy
   IxDictSpecialized n _ _ -> n
-
-instance IRRep r => HasType r (Block r) where
-  getType (Block NoBlockAnn Empty result) = getType result
-  getType (Block (BlockAnn (EffTy _ ty)) _ _) = ty
-  getType _ = error "impossible"
 
 -- === querying effects implementation ===
 
@@ -317,14 +318,4 @@ instance IRRep r => HasEffects (PrimOp r) r where
       AllocDest _ -> Pure -- is this correct?
       Freeze _    -> Pure -- is this correct?
     Hof (TypedHof (EffTy eff _) _) -> eff
-  {-# INLINE getEffects #-}
-
-
-instance IRRep r => HasEffects (Block r) r where
-  getEffects (Block (BlockAnn (EffTy effs _)) _ _) = effs
-  getEffects (Block NoBlockAnn _ _) = Pure
-  {-# INLINE getEffects #-}
-
-instance IRRep r => HasEffects (Alt r) r where
-  getEffects (Abs bs body) = ignoreHoistFailure $ hoist bs (getEffects body)
   {-# INLINE getEffects #-}

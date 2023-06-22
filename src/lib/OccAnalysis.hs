@@ -28,12 +28,12 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-analyzeOccurrences :: EnvReader m => SLam n -> m n (SLam n)
+analyzeOccurrences :: EnvReader m => STopLam n -> m n (STopLam n)
 analyzeOccurrences = liftLamExpr analyzeOccurrencesBlock
 {-# INLINE analyzeOccurrences #-}
 
 analyzeOccurrencesBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-analyzeOccurrencesBlock = liftOCCM . occ accessOnce
+analyzeOccurrencesBlock = liftOCCM . occNest accessOnce
 {-# SCC analyzeOccurrencesBlock #-}
 
 -- === Overview ===
@@ -254,7 +254,7 @@ occTy ty = occ accessOnce ty
 instance HasOCC SLam where
   occ a (LamExpr bs body) = do
     lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
-      LamExpr bs' <$> occ (sink a) body'
+      LamExpr bs' <$> occNest (sink a) body'
     countFreeVarsAsOccurrencesB bs'
     return lam
 
@@ -269,15 +269,6 @@ instance HasOCC (PiType SimpIR) where
     countFreeVarsAsOccurrencesB bs'
     return piTy
 
-instance HasOCC SBlock where
-  occ a (Block ann decls ans) = case (ann, decls) of
-    (NoBlockAnn      , Empty) -> Block NoBlockAnn Empty <$> occ a ans
-    (NoBlockAnn      , _    ) -> error "should be unreachable"
-    (BlockAnn effTy, _    ) -> do
-      Abs decls' ans' <- occNest a decls ans
-      effTy' <- occ a effTy
-      return $ Block (BlockAnn effTy') decls' ans'
-
 instance HasOCC (EffTy SimpIR) where
   occ _ (EffTy effs ty) = do
     ty' <- occTy ty
@@ -288,17 +279,17 @@ data ElimResult (n::S) where
   ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
   ElimFailure :: SDecl n l -> UsageInfo -> Abs (Nest SDecl) SAtom l -> ElimResult n
 
-occNest :: Access n -> Nest SDecl n l -> SAtom l
+occNest :: Access n -> Abs (Nest SDecl) SAtom n
         -> OCCM n (Abs (Nest SDecl) SAtom n)
-occNest a decls ans = case decls of
+occNest a (Abs decls ans) = case decls of
   Empty -> Abs Empty <$> occ a ans
   Nest d@(Let _ binding) ds -> do
     isPureDecl <- return $ isPure binding
     dceAttempt <- refreshAbs (Abs d (Abs ds ans))
-      \d'@(Let b' (DeclBinding _ expr')) (Abs ds' ans') -> do
+      \d'@(Let b' (DeclBinding _ expr')) rest -> do
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
-          below <- occNest (sink a) ds' ans'
+          below <- occNest (sink a) rest
           checkAllFreeVariablesMentioned below
           accessInfo <- getAccessInfo $ binderName d'
           let usage = usageInfo accessInfo
@@ -387,7 +378,7 @@ occAlt acc scrut alt = do
     -- case statement in that event.
     scrutIx <- unknown $ sink scrut
     extend nb scrutIx do
-      body' <- occ (sink acc) body
+      body' <- occNest (sink acc) body
       return $ Abs b body'
   ty' <- occTy ty
   return $ Abs (b':>ty') body'
@@ -407,12 +398,12 @@ instance HasOCC (Hof SimpIR) where
       ixDict' <- inlinedLater ixDict
       occWithBinder (Abs b body) \b' body' -> do
         extend b' (Occ.Var $ binderName b') do
-          (body'', bodyFV) <- isolated (occ accessOnce body')
+          (body'', bodyFV) <- isolated (occNest accessOnce body')
           modify (<> abstractFor b' bodyFV)
           return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> do
-      (body', bodyFV) <- isolated (occ accessOnce body)
+      (body', bodyFV) <- isolated $ occNest accessOnce body
       modify (<> useManyTimes bodyFV)
       return body'
     RunReader ini bd -> do
@@ -451,14 +442,15 @@ instance HasOCC (Hof SimpIR) where
       return $ RunState Nothing ini' bd'
     RunState (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
-    RunIO bd -> RunIO <$> occ a bd
+    RunIO bd -> RunIO <$> occNest a bd
     RunInit _ ->
       -- Though this is probably not too hard to implement.  Presumably
       -- the lambda is one-shot.
       error "Expecting to do occurrence analysis before lowering."
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
-oneShot acc [] (LamExpr Empty body) = LamExpr Empty <$> occ acc body
+oneShot acc [] (LamExpr Empty body) =
+  LamExpr Empty <$> occNest acc body
 oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
     extend b' (sink ix) do

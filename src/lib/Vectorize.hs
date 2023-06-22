@@ -19,7 +19,7 @@ import Core
 import Err
 import CheapReduction
 import IRVariants
-import Lower (DestBlock, DestLamExpr)
+import Lower (DestBlock)
 import MTL1
 import Name
 import Subst
@@ -87,13 +87,13 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
            , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
            , SubstReader Name)
 
-vectorizeLoops :: EnvReader m => Word32 -> DestLamExpr n -> m n (DestLamExpr n, Errs)
-vectorizeLoops width (LamExpr bsDestB body) = liftEnvReaderM do
+vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, Errs)
+vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
   case popNest bsDestB of
     Just (PairB bs b) ->
       refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
-        return $ (LamExpr (bs' >>> UnaryNest b'') body'', errs)
+        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
     Nothing -> error "expected a trailing dest binder"
 
 liftTopVectorizeM :: (EnvReader m)
@@ -139,7 +139,7 @@ vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
 
 vectorizeLoopsBlock :: (Emits o)
   => Block SimpIR i -> TopVectorizeM i o (SAtom o)
-vectorizeLoopsBlock (Block _ decls ans) =
+vectorizeLoopsBlock (Abs decls ans) =
   vectorizeLoopsDecls decls $ renameM ans
 
 vectorizeLoopsDecls :: (Emits o)
@@ -360,7 +360,7 @@ vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
   _ -> error "Zip error"
 
 vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)
-vectorizeBlock block@(Block _ decls (ans :: SAtom i')) =
+vectorizeBlock block@(Abs decls (ans :: SAtom i')) =
   addVectErrCtx "vectorizeBlock" ("Block:\n" ++ pprint block) $
     go decls
     where
@@ -497,11 +497,10 @@ vectorizePrimOp op = case op of
   -- complain about FFI calls and the like.
   Hof (TypedHof _ (RunIO body)) -> do
   -- TODO: buildBlockAux?
-    Abs decls (LiftE vy `PairE` yWithTy) <- buildScoped do
+    Abs decls (LiftE vy `PairE` y) <- buildScoped do
       VVal vy y <- vectorizeBlock body
-      PairE (LiftE vy) <$> withType y
-    body' <- absToBlock =<< computeAbsEffects (Abs decls yWithTy)
-    VVal vy <$> emitHof (RunIO body')
+      return $ PairE (LiftE vy) y
+    VVal vy <$> emitHof (RunIO $ Abs decls y)
   _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
 vectorizeType :: SType i -> VectorizeM i o (SType o)

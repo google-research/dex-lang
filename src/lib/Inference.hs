@@ -10,7 +10,7 @@
 
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr
-  , trySynthTerm, generalizeDict
+  , trySynthTerm, generalizeDict, asTopBlock
   , synthTopE, UDeclInferenceResult (..)) where
 
 import Prelude hiding ((.), id)
@@ -25,7 +25,7 @@ import Data.Foldable (toList, asum)
 import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Maybe (fromJust, fromMaybe, catMaybes)
-import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat)
+import Data.Text.Prettyprint.Doc (Pretty (..), (<+>), vcat, group, line, nest)
 import Data.Word
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
@@ -47,7 +47,8 @@ import QueryType
 import Types.Core
 import Types.Primitives
 import Types.Source
-import Util
+import Util hiding (group)
+import PPrint (prettyBlock)
 
 -- === Top-level interface ===
 
@@ -55,15 +56,15 @@ checkTopUType :: (Fallible1 m, EnvReader m) => UType n -> m n (CType n)
 checkTopUType ty = liftInfererM $ solveLocal $ withApplyDefaults $ checkUType ty
 {-# SCC checkTopUType #-}
 
-inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (CBlock n)
-inferTopUExpr e = liftInfererM do
+inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
+inferTopUExpr e = asTopBlock =<< liftInfererM do
   solveLocal $ buildBlockInf $ withApplyDefaults $ inferSigma noHint e
 {-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
- | UDeclResultBindName LetAnn (CBlock n) (Abs (UBinder (AtomNameC CoreIR)) e n)
- | UDeclResultBindPattern NameHint (CBlock n) (ReconAbs CoreIR e n)
+ | UDeclResultBindName LetAnn (TopBlock CoreIR n) (Abs (UBinder (AtomNameC CoreIR)) e n)
+ | UDeclResultBindPattern NameHint (TopBlock CoreIR n) (ReconAbs CoreIR e n)
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, SinkableE e, HoistableE e, RenameE e)
               => UTopDecl n l -> e l -> m n (UDeclInferenceResult e n)
@@ -129,7 +130,8 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
     WithSrcB _ (UPatBinder b) -> do
       block <- liftInfererM $ solveLocal $ buildBlockInf do
         checkMaybeAnnExpr (getNameHint b) tyAnn rhs <* applyDefaults
-      return $ UDeclResultBindName letAnn block (Abs b result)
+      topBlock <- asTopBlock block
+      return $ UDeclResultBindName letAnn topBlock (Abs b result)
     _ -> do
       PairE block recon <- liftInfererM $ solveLocal $ buildBlockInfWithRecon do
         val <- checkMaybeAnnExpr (getNameHint p) tyAnn rhs
@@ -137,10 +139,16 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
         bindLetPat p v do
           applyDefaults
           renameM result
-      return $ UDeclResultBindPattern (getNameHint p) block recon
+      topBlock <- asTopBlock block
+      return $ UDeclResultBindPattern (getNameHint p) topBlock recon
 inferTopUDecl (UEffectDecl _ _ _) _ = error "not implemented"
 inferTopUDecl (UHandlerDecl _ _ _ _ _ _ _) _ = error "not implemented"
 {-# SCC inferTopUDecl #-}
+
+asTopBlock :: EnvReader m => CBlock n -> m n (TopBlock CoreIR n)
+asTopBlock block = do
+  effTy <- blockEffTy block
+  return $ TopLam False (PiType Empty effTy) (LamExpr Empty block)
 
 getInstanceType :: EnvReader m => InstanceDef n -> m n (CorePiType n)
 getInstanceType (InstanceDef className bs params _) = liftEnvReaderM do
@@ -1454,7 +1462,8 @@ checkNamedArgValidity (Abs bs _) offeredNames = do
 inferPrimArg :: EmitsBoth o => UExpr i -> InfererM i o (CAtom o)
 inferPrimArg x = do
   xBlock <- buildBlockInf $ inferRho noHint x
-  case getType xBlock of
+  EffTy _ ty <- blockEffTy xBlock
+  case ty of
     TyKind -> cheapReduce xBlock >>= \case
       Just reduced -> return reduced
       _ -> throw CompilerErr "Type args to primops must be reducible"
@@ -1628,7 +1637,7 @@ instanceFun instanceName expl = do
     args <- mapM toAtomVar $ nestToNames bs'
     let bs'' = fmapNest (\(RolePiBinder _ b) -> b) bs'
     result <- mkDictAtom $ InstanceDict (sink instanceName) (Var <$> args)
-    return $ Abs bs'' (PairE Pure (AtomicBlock result))
+    return $ Abs bs'' (PairE Pure (WithoutDecls result))
   Lam <$> coreLamExpr expl ab
 
 checkMaybeAnnExpr :: EmitsBoth o
@@ -2823,7 +2832,7 @@ synthTerm targetTy reqMethodAccess = confuseGHC >>= \_ -> case targetTy of
     ab' <- withGivenBinders ab \bs targetTy' -> do
       Abs bs <$> synthTerm (SynthDictType targetTy') reqMethodAccess
     Abs bs synthExpr <- return ab'
-    liftM Lam $ coreLamExpr ImplicitApp $ Abs bs $ PairE Pure (AtomicBlock synthExpr)
+    liftM Lam $ coreLamExpr ImplicitApp $ Abs bs $ PairE Pure (WithoutDecls synthExpr)
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [Type (NewtypeTyCon (Fin n))] -> return $ DictCon (DictTy dictTy) $ IxFin n
     DictType "Data" _ [Type t] -> do
@@ -2991,6 +3000,9 @@ instance ExprVisitorNoEmits (DictSynthTraverserM i o) CoreIR i o where
 class DictSynthTraversable (e::E) where
   dsTraverse :: e i -> DictSynthTraverserM i o (e o)
 
+instance DictSynthTraversable (TopLam CoreIR) where
+  dsTraverse (TopLam d ty lam) = TopLam d <$> visitPiDefault ty <*> visitLamNoEmits lam
+
 instance DictSynthTraversable CAtom where
   dsTraverse atom = case atom of
     DictHole (AlwaysEqual ctx) ty access -> do
@@ -2999,12 +3011,13 @@ instance DictSynthTraversable CAtom where
       case ans of
         Failure errs -> put (LiftE errs) >> renameM atom
         Success d    -> return d
-    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _) (LamExpr bsLam body)) -> do
+    Lam (CoreLamExpr piTy@(CorePiType _ bsPi _) (LamExpr bsLam (Abs decls result))) -> do
       Pi piTy' <- dsTraverse $ Pi piTy
       let (expls, _) = unzipExpls bsPi
       lam' <- dsTraverseExplBinders (zipExpls expls bsLam) \bsLamExpl' -> do
-        let (_, bsLam') = unzipExpls bsLamExpl'
-        LamExpr bsLam' <$> dsTraverse body
+        visitDeclsNoEmits decls \decls' -> do
+          let (_, bsLam') = unzipExpls bsLamExpl'
+          LamExpr bsLam' <$> Abs decls' <$> dsTraverse result
       return $ Lam $ CoreLamExpr piTy' lam'
     Var _          -> renameM atom
     SimpInCore _   -> renameM atom
@@ -3021,8 +3034,6 @@ instance DictSynthTraversable CType where
     _ -> visitTypePartial ty
 
 instance DictSynthTraversable DataConDefs where dsTraverse = visitGeneric
-instance DictSynthTraversable (Block CoreIR) where
-  dsTraverse = visitBlockNoEmits
 
 dsTraverseExplBinders
   :: Nest (WithExpl CBinder) i i'
@@ -3057,7 +3068,15 @@ buildBlockInf
   :: EmitsInf n
   => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (CAtom l))
   -> InfererM i n (CBlock n)
-buildBlockInf cont = buildDeclsInf (cont >>= withType) >>= computeAbsEffects >>= absToBlock
+buildBlockInf cont = do
+  Abs decls (PairE result ty) <- buildDeclsInf do
+    ans <- cont
+    ty <- cheapNormalize $ getType ans
+    return $ PairE ans ty
+  let msg = "Block:" <> nest 1 (prettyBlock decls result) <> line
+            <> group ("Of type:" <> nest 2 (line <> pretty ty)) <> line
+  void $ liftHoistExcept' (docAsStr msg) $ hoist decls ty
+  return $ Abs decls result
 {-# INLINE buildBlockInf #-}
 
 buildBlockInfWithRecon
@@ -3066,10 +3085,9 @@ buildBlockInfWithRecon
   -> InfererM i n (PairE CBlock (ReconAbs CoreIR e) n)
 buildBlockInfWithRecon cont = do
   ab <- buildDeclsInfUnzonked cont
-  (declsResult, recon) <- refreshAbs ab \decls result -> do
+  (block, recon) <- refreshAbs ab \decls result -> do
     (newResult, recon) <- telescopicCapture decls result
     return (Abs decls newResult, recon)
-  block <- makeBlockFromDecls declsResult
   return $ PairE block recon
 {-# INLINE buildBlockInfWithRecon #-}
 

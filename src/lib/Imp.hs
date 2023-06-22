@@ -46,16 +46,14 @@ import Types.Imp
 import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
--- XXX: The LamExpr should be in destination-passing style, with its last
--- argument a reference to the result.
 toImpFunction :: EnvReader m
-  => CallingConvention -> LamExpr SimpIR n -> m n (ImpFunction n)
-toImpFunction cc lam = do
-  (LamExpr bsAndRefB body) <- return lam
+  => CallingConvention -> STopLam n -> m n (ImpFunction n)
+toImpFunction cc (TopLam True destTy lam) = do
+  LamExpr bsAndRefB body <- return lam
   PairB bs destB <- case popNest bsAndRefB of
     Just bsAndRefB' -> return bsAndRefB'
     Nothing -> error "expected a trailing reference binder"
-  ty <- return $ getDestLamExprType lam
+  let ty = piTypeWithoutDest destTy
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
     case cc of
@@ -75,6 +73,7 @@ toImpFunction cc lam = do
           extendSubst (destB @> SubstVal (destToAtom (sink resultDest))) do
             void $ translateBlock body
             return []
+toImpFunction _ (TopLam False _ _) = error "expected a lambda in destination-passing form"
 
 getNaryLamImpArgTypesWithCC :: EnvReader m
   => CallingConvention -> PiType SimpIR n -> m n [BaseType]
@@ -270,7 +269,7 @@ liftImpM cont = do
 
 translateBlock :: forall i o. Emits o
   => SBlock i -> SubstImpM i o (SAtom o)
-translateBlock (Block _ decls result) = translateDeclNest decls $ substM result
+translateBlock (Abs decls result) = translateDeclNest decls $ substM result
 
 translateDeclNestSubst
   :: Emits o => Subst AtomSubstVal l o
@@ -296,7 +295,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
-      DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
+      DexTopFun _ (TopLam _ piTy _) _ -> emitCall piTy f $ toList xs
       FFITopFun _ _ -> do
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
         results <- impCall f scalarArgs
@@ -1161,12 +1160,9 @@ hoistDecls
      , BindsNames b, BindsEnv b, RenameB b, SinkableB b)
   => b n l -> SBlock l -> m n (Abs b SBlock n)
 hoistDecls b block = do
-  Abs hoistedDecls rest <- liftEnvReaderM $
-    refreshAbs (Abs b block) \b' (Block _ decls result) ->
+  emitDecls =<< liftEnvReaderM do
+    refreshAbs (Abs b block) \b' (Abs decls result) ->
       hoistDeclsRec b' Empty decls result
-  ab <- emitDecls hoistedDecls rest
-  refreshAbs ab \b'' blockAbs' ->
-    Abs b'' <$> absToBlockInferringTypes blockAbs'
 {-# INLINE hoistDecls #-}
 
 hoistDeclsRec
@@ -1409,30 +1405,27 @@ ordinalImp :: Emits n => IxType SimpIR n -> SAtom n -> SubstImpM i n (IExpr n)
 ordinalImp (IxType _ dict) i = fromScalarAtom =<< case dict of
   IxDictRawFin _ -> return i
   IxDictSpecialized _ d params -> do
-    SpecializedDict _ (Just fs) <- lookupSpecDict d
-    appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
+    appSpecializedIxMethod d Ordinal (params ++ [i])
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpIR n -> IExpr n -> SubstImpM i n (SAtom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
   let i' = toScalarAtom i
   case dict of
     IxDictRawFin _ -> return i'
-    IxDictSpecialized _ d params -> do
-      SpecializedDict _ (Just fs) <- lookupSpecDict d
-      appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
+    IxDictSpecialized _ d params ->
+      appSpecializedIxMethod d UnsafeFromOrdinal (params ++ [i'])
 
 indexSetSizeImp :: Emits n => IxType SimpIR n -> SubstImpM i n (IExpr n)
 indexSetSizeImp (IxType _ dict) = do
-  ans <- case dict of
+  fromScalarAtom =<< case dict of
     IxDictRawFin n -> return n
-    IxDictSpecialized _ d params -> do
-      SpecializedDict _ (Just fs) <- lookupSpecDict d
-      appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [])
-  fromScalarAtom ans
+    IxDictSpecialized _ d params ->
+      appSpecializedIxMethod d Size (params ++ [])
 
-appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SAtom n] -> SubstImpM i n (SAtom n)
-appSpecializedIxMethod simpLam args = do
-  LamExpr bs body <- return simpLam
+appSpecializedIxMethod :: Emits n => SpecDictName n -> IxMethod -> [SAtom n] -> SubstImpM i n (SAtom n)
+appSpecializedIxMethod d method args = do
+  SpecializedDict _ (Just fs) <- lookupSpecDict d
+  TopLam _ _ (LamExpr bs body) <- return $ fs !! fromEnum method
   dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock body
 
 -- === Abstracting link-time objects ===
@@ -1444,7 +1437,7 @@ abstractLinktimeObjects f = do
   let allVars = freeVarsE f
   (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @TopFunNameC allVars) \v ->
     lookupTopFun v >>= \case
-      DexTopFun _ piTy _ _ -> do
+      DexTopFun _ (TopLam _ piTy _) _ -> do
         ty' <- getImpFunType StandardCC piTy
         return $ Just (v, ty')
       FFITopFun _ _ -> return Nothing
@@ -1529,7 +1522,7 @@ impInstrTypes instr = case instr of
   DebugPrint _ _  -> return []
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
   ICall f _ -> lookupTopFun f >>= \case
-    DexTopFun _ piTy _ _ -> do
+    DexTopFun _ (TopLam _ piTy _) _ -> do
       IFunType _ _ resultTys <- getImpFunType StandardCC piTy
       return resultTys
     FFITopFun _ (IFunType _ _ resultTys) -> return resultTys
