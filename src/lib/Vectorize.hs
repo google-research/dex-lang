@@ -49,9 +49,13 @@ import Util (allM, zipWithZ)
 -- TODO: Local vector values? We might want to pack short and pure for loops into vectors,
 -- to support things like float3 etc.
 data Stability
-  = Uniform    -- constant across vectorized dimension
-  | Varying    -- varying across vectorized dimension
-  | Contiguous -- varying, but contiguous across vectorized dimension
+  -- Constant across vectorized dimension, represented as a scalar
+  = Uniform
+  -- Varying across vectorized dimension, represented as a vector
+  | Varying
+  -- Varying, but contiguous across vectorized dimension; represented as a
+  -- scalar carrying the first value
+  | Contiguous
   | ProdStability [Stability]
   deriving (Eq, Show)
 
@@ -168,25 +172,27 @@ vectorizeLoopsExpr expr = do
   narrowestTypeByteWidth <- getNarrowestTypeByteWidth =<< renameM expr
   let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
   case expr of
-    PrimOp (DAMOp (Seq effs dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal n))) dest body))
-      | n `mod` loopWidth == 0 -> (do
-          safe <- vectorSafeEffect effs
-          if safe
-            then (do
-              Distinct <- getDistinct
-              let vn = n `div` loopWidth
-              body' <- vectorizeSeq loopWidth body
-              dest' <- renameM dest
-              seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
-              return $ PrimOp $ DAMOp seqOp)
-            else renameM expr)
-        `catchErr` \errs -> do
-            let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
-                ctx = mempty { messageCtx = [msg] }
-                errs' = prependCtxToErrs ctx errs
-            modify (<> LiftE errs')
-            recurSeq expr
-    PrimOp (DAMOp (Seq _ _ _ _ _)) -> recurSeq expr
+    PrimOp (DAMOp (Seq effs dir ixty dest body)) -> do
+      sz <- simplifyIxSize =<< renameM ixty
+      case sz of
+        Just n | n `mod` loopWidth == 0 -> (do
+            safe <- vectorSafeEffect effs
+            if safe
+              then (do
+                Distinct <- getDistinct
+                let vn = n `div` loopWidth
+                body' <- vectorizeSeq loopWidth ixty body
+                dest' <- renameM dest
+                seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
+                return $ PrimOp $ DAMOp seqOp)
+              else renameM expr)
+          `catchErr` \errs -> do
+              let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
+                  ctx = mempty { messageCtx = [msg] }
+                  errs' = prependCtxToErrs ctx errs
+              modify (<> LiftE errs')
+              recurSeq expr
+        _ -> recurSeq expr
     PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
       item' <- renameM item
       itemTy <- return $ getType item'
@@ -217,6 +223,15 @@ vectorizeLoopsExpr expr = do
       body' <- vectorizeLoopsLamExpr body
       return $ PrimOp $ DAMOp $ Seq effs' dir ixty' dest' body'
     recurSeq _ = error "Impossible"
+
+simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
+  => IxType SimpIR n -> m n (Maybe Word32)
+simplifyIxSize ixty = do
+  sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
+  cheapReduce sizeMethod >>= \case
+    Just (IdxRepVal n) -> return $ Just n
+    _ -> return Nothing
+{-# INLINE simplifyIxSize #-}
 
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
@@ -300,22 +315,27 @@ vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
       Nothing -> error $ "Handle " ++ pprint h ++ " not present in commute map?"
   safe _ = return False
 
-vectorizeSeq :: Word32 -> LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
-vectorizeSeq loopWidth (UnaryLamExpr (b:>ty) body) = do
-  (_, ty') <- case ty of
-    ProdTy [ixTy, ref] -> do
-      ixTy' <- renameM ixTy
+vectorizeSeq :: Word32 -> IxType SimpIR i -> LamExpr SimpIR i
+  -> TopVectorizeM i o (LamExpr SimpIR o)
+vectorizeSeq loopWidth ixty (UnaryLamExpr (b:>ty) body) = do
+  newLoopTy <- case ty of
+    ProdTy [_ixType, ref] -> do
       ref' <- renameM ref
-      return (ixTy', ProdTy [IdxRepTy, ref'])
+      return $ ProdTy [IdxRepTy, ref']
     _ -> error "Unexpected seq binder type"
+  ixty' <- renameM ixty
   liftVectorizeM loopWidth $
-    buildUnaryLamExpr (getNameHint b) ty' \ci -> do
-      -- XXX: we're assuming `Fin n` here
+    buildUnaryLamExpr (getNameHint b) newLoopTy \ci -> do
+      -- The per-tile loop iterates on `Fin`
       (viOrd, dest) <- fromPair $ Var ci
       iOrd <- imul viOrd $ IdxRepVal loopWidth
-      extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal iOrd dest)) $
+      -- TODO: It would be nice to cancel this UnsafeFromOrdinal with the
+      -- Ordinal that will be taken later when indexing, but that should
+      -- probably be a separate pass.
+      i <- applyIxMethod (sink $ ixTypeDict ixty') UnsafeFromOrdinal [iOrd]
+      extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)) $
         vectorizeBlock body $> UnitVal
-vectorizeSeq _ _ = error "expected a unary lambda expression"
+vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
