@@ -82,7 +82,7 @@ def set_intersect(
   UnsafeAsSet(nx, xs) = sx
   UnsafeAsSet(ny, ys) = sy
   -- This could be done in O(nx + ny) instead of O(nx log ny).
-  isInYs = \x. case search_sorted ys x of
+  isInYs = \x. case search_sorted_exact ys x of
     Just x -> True
     Nothing -> False
   AsList(n', intersection) = filter xs isInYs
@@ -100,7 +100,7 @@ struct Element(set:(Set a)) given (a|Ord) =
 -- type), but maybe it's easier to read if it's explicit.
 def member(x:a, set:(Set a)) -> Maybe (Element set) given (a|Ord) =
   UnsafeAsSet(_, elts) = set
-  case search_sorted elts x of
+  case search_sorted_exact elts x of
     Just n -> Just $ Element(ordinal n)
     Nothing -> Nothing
 
