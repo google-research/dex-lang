@@ -201,7 +201,6 @@ data UEffect (n::S) =
    URWSEffect RWS (SourceOrInternalName (AtomNameC CoreIR) n)
  | UExceptionEffect
  | UIOEffect
- | UUserEffect (SourceOrInternalName EffectNameC n)
  deriving (Generic)
 
 data UEffectRow (n::S) =

@@ -131,8 +131,6 @@ type ClassName    = Name ClassNameC
 type TyConName    = Name TyConNameC
 type DataConName  = Name DataConNameC
 type EffectName   = Name EffectNameC
-type EffectOpName = Name EffectOpNameC
-type HandlerName  = Name HandlerNameC
 type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
@@ -312,8 +310,7 @@ data PrimOp (r::IR) (n::S) where
  MiscOp   :: MiscOp r n                      -> PrimOp r n
  Hof      :: TypedHof r n                    -> PrimOp r n
  RefOp    :: Atom r n -> RefOp r n           -> PrimOp r n
- DAMOp        :: DAMOp SimpIR n              -> PrimOp SimpIR n
- UserEffectOp :: UserEffectOp n              -> PrimOp CoreIR n
+ DAMOp    :: DAMOp SimpIR n              -> PrimOp SimpIR n
 
 deriving instance IRRep r => Show (PrimOp r n)
 deriving via WrapE (PrimOp r) n instance IRRep r => Generic (PrimOp r n)
@@ -392,12 +389,6 @@ data RefOp r n =
  | IndexRef (Type r n) (Atom r n)
  | ProjRef (Type r n) Projection
   deriving (Show, Generic)
-
-data UserEffectOp n =
-   Handle (HandlerName n) [CAtom n] (CBlock n)
- | Resume (CType n) (CAtom n) -- Resume from effect handler (type, arg)
- | Perform (CAtom n) Int      -- Call an effect operation (effect name) (op #)
-   deriving (Show, Generic)
 
 -- === IR variants ===
 
@@ -656,9 +647,6 @@ data Binding (c::C) (n::S) where
   ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
   InstanceBinding   :: InstanceDef n -> CorePiType n  -> Binding InstanceNameC   n
   MethodBinding     :: ClassName n   -> Int           -> Binding MethodNameC     n
-  EffectBinding     :: EffectDef n                    -> Binding EffectNameC     n
-  HandlerBinding    :: HandlerDef n                   -> Binding HandlerNameC    n
-  EffectOpBinding   :: EffectOpDef n                  -> Binding EffectOpNameC   n
   TopFunBinding     :: TopFun n                       -> Binding TopFunNameC     n
   FunObjCodeBinding :: CFunction n                    -> Binding FunObjCodeNameC n
   ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
@@ -706,33 +694,6 @@ instance AlphaHashableE EffectDef
 instance RenameE     EffectDef
 deriving instance Show (EffectDef n)
 deriving via WrapE EffectDef n instance Generic (EffectDef n)
-
-data HandlerDef (n::S) where
-  HandlerDef :: EffectName n
-             -> CBinder n r -- body type arg
-             -> RolePiBinders r l
-               -> EffectRow CoreIR l
-               -> CType l          -- return type
-               -> [Block CoreIR l] -- effect operations
-               -> Block CoreIR l   -- return body
-             -> HandlerDef n
-
-instance GenericE HandlerDef where
-  type RepE HandlerDef =
-    EffectName `PairE` Abs (CBinder `PairB` RolePiBinders)
-      (EffectRow CoreIR `PairE` CType `PairE` ListE (Block CoreIR) `PairE` Block CoreIR)
-  fromE (HandlerDef name bodyTyArg bs effs ty ops ret) =
-    name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)
-  toE (name `PairE` Abs (bodyTyArg `PairB` bs) (effs `PairE` ty `PairE` ListE ops `PairE` ret)) =
-    HandlerDef name bodyTyArg bs effs ty ops ret
-
-instance SinkableE HandlerDef
-instance HoistableE  HandlerDef
-instance AlphaEqE HandlerDef
-instance AlphaHashableE HandlerDef
-instance RenameE     HandlerDef
-deriving instance Show (HandlerDef n)
-deriving via WrapE HandlerDef n instance Generic (HandlerDef n)
 
 data EffectOpType (n::S) where
   EffectOpType :: UResumePolicy -> CType n -> EffectOpType n
@@ -862,7 +823,6 @@ data Effect (r::IR) (n::S) =
    RWSEffect RWS (Atom r n)
  | ExceptionEffect
  | IOEffect
- | UserEffect (Name EffectNameC n)
  | InitEffect  -- Internal effect modeling writing to a destination.
  deriving (Generic, Show)
 
@@ -1319,29 +1279,6 @@ instance IRRep r => RenameE        (BaseMonoid r)
 instance IRRep r => AlphaEqE       (BaseMonoid r)
 instance IRRep r => AlphaHashableE (BaseMonoid r)
 
-instance GenericE UserEffectOp where
-  type RepE UserEffectOp = EitherE3
- {- Handle -}  (HandlerName `PairE` ListE CAtom `PairE` CBlock)
- {- Resume -}  (CType `PairE` CAtom)
- {- Perform -} (CAtom `PairE` LiftE Int)
-  fromE = \case
-    Handle name args body -> Case0 $ name `PairE` ListE args `PairE` body
-    Resume x y            -> Case1 $ x `PairE` y
-    Perform x i           -> Case2 $ x `PairE` LiftE i
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 (name `PairE` ListE args `PairE` body) -> Handle name args body
-    Case1 (x `PairE` y)                          -> Resume x y
-    Case2 (x `PairE` LiftE i)                    -> Perform x i
-    _ -> error "impossible"
-  {-# INLINE toE #-}
-
-instance SinkableE      UserEffectOp
-instance HoistableE     UserEffectOp
-instance RenameE        UserEffectOp
-instance AlphaEqE       UserEffectOp
-instance AlphaHashableE UserEffectOp
-
 instance IRRep r => GenericE (DAMOp r) where
   type RepE (DAMOp r) = EitherE5
   {- Seq -}            (EffectRow r `PairE` LiftE Direction `PairE` IxType r `PairE` Atom r `PairE` LamExpr r)
@@ -1685,11 +1622,10 @@ instance IRRep r => GenericE (PrimOp r) where
  {- MemOp -} (MemOp r)
  {- VectorOp -} (VectorOp r)
  {- MiscOp -}   (MiscOp r)
-   ) (EitherE4
+   ) (EitherE3
  {- Hof -}           (TypedHof r)
  {- RefOp -}         (Atom r `PairE` RefOp r)
  {- DAMOp -}         (WhenSimp r (DAMOp SimpIR))
- {- UserEffectOp -}  (WhenCore r UserEffectOp)
              )
   fromE = \case
     UnOp  op x   -> Case0 $ Case0 $ LiftE op `PairE` x
@@ -1700,7 +1636,6 @@ instance IRRep r => GenericE (PrimOp r) where
     Hof op          -> Case1 $ Case0 op
     RefOp r op      -> Case1 $ Case1 $ r `PairE` op
     DAMOp op        -> Case1 $ Case2 $ WhenIRE op
-    UserEffectOp op -> Case1 $ Case3 $ WhenIRE op
   {-# INLINE fromE #-}
 
   toE = \case
@@ -1715,7 +1650,6 @@ instance IRRep r => GenericE (PrimOp r) where
       Case0 op -> Hof op
       Case1 (r `PairE` op) -> RefOp r op
       Case2 (WhenIRE op)   -> DAMOp op
-      Case3 (WhenIRE op)   -> UserEffectOp op
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -2358,14 +2292,11 @@ instance GenericE (Binding c) where
           (WhenC ClassNameC    c (ClassDef))
           (WhenC InstanceNameC c (InstanceDef `PairE` CorePiType))
           (WhenC MethodNameC   c (ClassName `PairE` LiftE Int)))
-      (EitherE7
+      (EitherE4
           (WhenC TopFunNameC     c (TopFun))
           (WhenC FunObjCodeNameC c (CFunction))
           (WhenC ModuleNameC     c (Module))
-          (WhenC PtrNameC        c (LiftE (PtrType, PtrLitVal)))
-          (WhenC EffectNameC     c (EffectDef))
-          (WhenC HandlerNameC    c (HandlerDef))
-          (WhenC EffectOpNameC   c (EffectOpDef)))
+          (WhenC PtrNameC        c (LiftE (PtrType, PtrLitVal))))
       (EitherE2
           (WhenC SpecializedDictNameC c (SpecializedDictDef))
           (WhenC ImpNameC             c (LiftE BaseType)))
@@ -2381,9 +2312,6 @@ instance GenericE (Binding c) where
     FunObjCodeBinding cFun              -> Case1 $ Case1 $ WhenC $ cFun
     ModuleBinding m                     -> Case1 $ Case2 $ WhenC $ m
     PtrBinding ty p                     -> Case1 $ Case3 $ WhenC $ LiftE (ty,p)
-    EffectBinding   effDef              -> Case1 $ Case4 $ WhenC $ effDef
-    HandlerBinding  hDef                -> Case1 $ Case5 $ WhenC $ hDef
-    EffectOpBinding opDef               -> Case1 $ Case6 $ WhenC $ opDef
     SpecializedDictBinding def          -> Case2 $ Case0 $ WhenC $ def
     ImpNameBinding ty                   -> Case2 $ Case1 $ WhenC $ LiftE ty
   {-# INLINE fromE #-}
@@ -2399,9 +2327,6 @@ instance GenericE (Binding c) where
     Case1 (Case1 (WhenC (f)))                      -> FunObjCodeBinding f
     Case1 (Case2 (WhenC (m)))                      -> ModuleBinding     m
     Case1 (Case3 (WhenC ((LiftE (ty,p)))))         -> PtrBinding        ty p
-    Case1 (Case4 (WhenC (effDef)))                 -> EffectBinding     effDef
-    Case1 (Case5 (WhenC (hDef)))                   -> HandlerBinding    hDef
-    Case1 (Case6 (WhenC (opDef)))                  -> EffectOpBinding   opDef
     Case2 (Case0 (WhenC (def)))                    -> SpecializedDictBinding def
     Case2 (Case1 (WhenC ((LiftE ty))))             -> ImpNameBinding    ty
     _ -> error "impossible"
@@ -2458,23 +2383,20 @@ instance IRRep r => BindsNames     (Decl r)
 
 instance IRRep r => GenericE (Effect r) where
   type RepE (Effect r) =
-    EitherE4 (PairE (LiftE RWS) (Atom r))
+    EitherE3 (PairE (LiftE RWS) (Atom r))
              (LiftE (Either () ()))
-             (Name EffectNameC)
              UnitE
   fromE = \case
     RWSEffect rws h    -> Case0 (PairE (LiftE rws) h)
     ExceptionEffect    -> Case1 (LiftE (Left  ()))
     IOEffect           -> Case1 (LiftE (Right ()))
-    UserEffect name    -> Case2 name
-    InitEffect         -> Case3 UnitE
+    InitEffect         -> Case2 UnitE
   {-# INLINE fromE #-}
   toE = \case
     Case0 (PairE (LiftE rws) h) -> RWSEffect rws h
     Case1 (LiftE (Left  ())) -> ExceptionEffect
     Case1 (LiftE (Right ())) -> IOEffect
-    Case2 name -> UserEffect name
-    Case3 UnitE -> InitEffect
+    Case2 UnitE -> InitEffect
     _ -> error "unreachable"
   {-# INLINE toE #-}
 
@@ -2845,7 +2767,6 @@ instance Store (DictExpr n)
 instance Store (EffectDef n)
 instance Store (EffectOpDef n)
 instance Store (RolePiBinder n l)
-instance Store (HandlerDef n)
 instance Store (EffectOpType n)
 instance Store (EffectOpIdx)
 instance Store (SynthCandidates n)
@@ -2869,7 +2790,6 @@ instance IRRep r => Store (RefOp r n)
 instance IRRep r => Store (BaseMonoid r n)
 instance IRRep r => Store (DAMOp r n)
 instance IRRep r => Store (IxDict r n)
-instance Store (UserEffectOp n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
 instance Store (DotMethods n)

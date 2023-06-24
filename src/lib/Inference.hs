@@ -1975,7 +1975,6 @@ checkUEff eff = case eff of
     return $ RWSEffect rws (Var region')
   UExceptionEffect -> return ExceptionEffect
   UIOEffect        -> return IOEffect
-  UUserEffect ~(SIInternalName _ name _ _) -> UserEffect <$> renameM name
 
 constrainVarTy :: EmitsInf o => CAtomVar o -> CType o -> InfererM i o ()
 constrainVarTy v tyReq = do

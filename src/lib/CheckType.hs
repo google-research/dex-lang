@@ -481,7 +481,6 @@ typeCheckPrimOp effs op = case op of
   MiscOp x -> typeCheckMiscOp effs x
   MemOp x -> typeCheckMemOp effs x
   DAMOp op' -> typeCheckDAMOp effs op'
-  UserEffectOp _ -> error "not implemented"
   RefOp ref m -> do
     TC (RefType h s) <- getTypeE ref
     case m of
@@ -958,7 +957,6 @@ instance IRRep r => CheckableE r (EffectRow r) where
       RWSEffect _ v -> v |: TC HeapType
       ExceptionEffect -> return ()
       IOEffect        -> return ()
-      UserEffect _    -> return ()
       InitEffect      -> return ()
     case effTail of
       NoTail -> return ()

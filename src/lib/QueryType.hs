@@ -364,11 +364,6 @@ getTypeRWSAction f = getLamExprType f >>= \case
       _ -> error "expected a ref"
   _ -> error "expected a pi type"
 
-instantiateHandlerType :: EnvReader m => HandlerName n -> CType n -> [CAtom n] -> m n (CType n)
-instantiateHandlerType hndName r args = do
-  HandlerDef _ rb bs _effs retTy _ _ <- lookupHandlerDef hndName
-  applySubst (rb @> (SubstVal (Type r)) <.> bs @@> (map SubstVal args)) retTy
-
 getSuperclassDicts :: EnvReader m => CAtom n -> m n ([CAtom n])
 getSuperclassDicts dict = do
   case getType dict of

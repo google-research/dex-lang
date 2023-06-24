@@ -728,7 +728,6 @@ buildSimplifiedBlock cont = do
 
 simplifyOp :: Emits o => NameHint -> PrimOp CoreIR i -> SimplifyM i o (CAtom o)
 simplifyOp hint op = case op of
-  UserEffectOp _ -> error "not implemented"
   Hof (TypedHof (EffTy _ ty) hof) -> do
     ty' <- substM ty
     simplifyHof hint ty' hof

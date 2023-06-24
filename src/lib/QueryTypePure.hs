@@ -144,12 +144,6 @@ instance IRRep r => HasType r (DAMOp r) where
     Seq _ _ _ cinit _ -> getType cinit
     RememberDest _ d _ -> getType d
 
-instance HasType CoreIR UserEffectOp where
-  getType = \case
-    Handle _ _ _ -> undefined
-    Perform _ _ -> undefined
-    Resume retTy _ -> retTy
-
 instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
     BinOp op x _ -> TC $ BaseType $ typeBinOp op $ getTypeBaseType x
@@ -159,7 +153,6 @@ instance IRRep r => HasType r (PrimOp r) where
     MiscOp op -> getType op
     VectorOp op -> getType op
     DAMOp           op -> getType op
-    UserEffectOp    op -> getType op
     RefOp ref m -> case getType ref of
       TC (RefType _ s) -> case m of
         MGet        -> s
@@ -310,7 +303,6 @@ instance IRRep r => HasEffects (PrimOp r) r where
         IndexRef _ _ -> Pure
         ProjRef _ _  -> Pure
       _ -> error "not a ref"
-    UserEffectOp _ -> undefined
     DAMOp op -> case op of
       Place    _ _  -> OneEffect InitEffect
       Seq eff _ _ _ _        -> eff

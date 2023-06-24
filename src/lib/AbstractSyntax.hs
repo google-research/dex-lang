@@ -338,7 +338,6 @@ effect (Binary JuxtaposeWithSpace (Identifier "State") (Identifier h)) =
   return $ URWSEffect State $ fromString h
 effect (Identifier "Except") = return UExceptionEffect
 effect (Identifier "IO") = return UIOEffect
-effect (Identifier effName) = return $ UUserEffect (fromString effName)
 effect _ = throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
 
 aMethod :: CSDecl -> SyntaxM (Maybe (UMethodDef VoidS))

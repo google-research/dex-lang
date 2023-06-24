@@ -347,18 +347,6 @@ lookupInstanceTy :: EnvReader m => InstanceName n -> m n (CorePiType n)
 lookupInstanceTy name = lookupEnv name >>= \case InstanceBinding _ ty -> return ty
 {-# INLINE lookupInstanceTy #-}
 
-lookupEffectDef :: EnvReader m => EffectName n -> m n (EffectDef n)
-lookupEffectDef name = lookupEnv name >>= \case EffectBinding x -> return x
-{-# INLINE lookupEffectDef #-}
-
-lookupEffectOpDef :: EnvReader m => EffectOpName n -> m n (EffectOpDef n)
-lookupEffectOpDef name = lookupEnv name >>= \case EffectOpBinding x -> return x
-{-# INLINE lookupEffectOpDef #-}
-
-lookupHandlerDef :: EnvReader m => HandlerName n -> m n (HandlerDef n)
-lookupHandlerDef name = lookupEnv name >>= \case HandlerBinding x -> return x
-{-# INLINE lookupHandlerDef #-}
-
 lookupSourceMapPure :: SourceMap n -> SourceName -> [SourceNameDef n]
 lookupSourceMapPure (SourceMap m) v = M.findWithDefault [] v m
 {-# INLINE lookupSourceMapPure #-}

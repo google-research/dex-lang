@@ -638,7 +638,6 @@ instance IRRep r => VisitGeneric (PrimOp r) r where
     MiscOp       op -> MiscOp       <$> visitGeneric op
     Hof          op -> Hof          <$> visitGeneric op
     DAMOp        op -> DAMOp        <$> visitGeneric op
-    UserEffectOp op -> UserEffectOp <$> visitGeneric op
     RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
 
 instance IRRep r => VisitGeneric (TypedHof r) r where
@@ -668,18 +667,11 @@ instance IRRep r => VisitGeneric (DAMOp r) r where
     Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
     Freeze x  -> Freeze <$> visitGeneric x
 
-instance VisitGeneric UserEffectOp CoreIR where
-  visitGeneric = \case
-    Handle name xs body -> Handle <$> renameN name <*> mapM visitGeneric xs <*> visitBlock body
-    Resume t x -> Resume <$> visitGeneric t <*> visitGeneric x
-    Perform x i -> Perform <$> visitGeneric x <*> pure i
-
 instance IRRep r => VisitGeneric (Effect r) r where
   visitGeneric = \case
     RWSEffect rws h    -> RWSEffect rws <$> visitGeneric h
     ExceptionEffect    -> pure ExceptionEffect
     IOEffect           -> pure IOEffect
-    UserEffect name    -> UserEffect <$> renameN name
     InitEffect         -> pure InitEffect
 
 instance IRRep r => VisitGeneric (EffectRow r) r where
@@ -881,7 +873,6 @@ instance IRRep r => SubstE AtomSubstVal (RepVal r)
 instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
-instance SubstE AtomSubstVal UserEffectOp
 instance IRRep r => SubstE AtomSubstVal (DAMOp r)
 instance IRRep r => SubstE AtomSubstVal (TypedHof r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)

@@ -170,11 +170,6 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
 
-instance Pretty (UserEffectOp n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UserEffectOp n) where
-  prettyPrec (Handle v args body) = atPrec LowestPrec $ p v <+> p args <+> prettyLam "\\_." body
-  prettyPrec _ = error "not implemented"
-
 prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
@@ -371,7 +366,6 @@ instance IRRep r => Pretty (Effect r n) where
     RWSEffect rws h -> p rws <+> p h
     ExceptionEffect -> "Except"
     IOEffect        -> "IO"
-    UserEffect name -> p name
     InitEffect      -> "Init"
 
 instance Pretty (UEffect n) where
@@ -379,7 +373,6 @@ instance Pretty (UEffect n) where
     URWSEffect rws h -> p rws <+> p h
     UExceptionEffect -> "Except"
     UIOEffect        -> "IO"
-    UUserEffect name -> p name
 
 instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
 
@@ -423,10 +416,6 @@ instance Pretty (Binding c n) where
     FunObjCodeBinding _ -> "<object file>"
     ModuleBinding  _ -> "<module>"
     PtrBinding   _ _ -> "<ptr>"
-    -- TODO(alex): do something actually useful here
-    EffectBinding _ -> "<effect-binding>"
-    HandlerBinding _ -> "<handler-binding>"
-    EffectOpBinding _ -> "<effect-op-binding>"
     SpecializedDictBinding _ -> "<specialized-dict-binding>"
     ImpNameBinding ty -> "Imp name of type: " <+> p ty
 
@@ -917,7 +906,6 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
     MemOp    op -> prettyPrec op
     VectorOp op -> prettyPrec op
     DAMOp op -> prettyPrec op
-    UserEffectOp op -> prettyPrec op
     Hof (TypedHof _ hof) -> prettyPrec hof
     RefOp ref eff -> atPrec LowestPrec case eff of
       MAsk        -> "ask" <+> pApp ref
