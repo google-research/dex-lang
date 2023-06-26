@@ -2620,11 +2620,11 @@ def tiled_matmul(
         tile(m, m_tile_size) \m_set.
           for_ l_offset:l_set.
             l_ix = inject(to=l, l_offset)
-            for_ n_offset:n_set.
-              n_ix = inject n_offset
-              for_ m_offset:m_set.
-                m_ix = inject m_offset
-                result!l_ix!n_ix += x[l_ix,m_ix] * y[m_ix,n_ix]
+            for_ m_offset:m_set.
+              m_ix = inject m_offset
+              for_ n_offset:n_set.
+                n_ix = inject n_offset
+                result!l_ix!n_ix += x[l_ix][m_ix] * y[m_ix][n_ix]
 
 -- matmul. Better symbol to use? `@`?
 def (**)(
