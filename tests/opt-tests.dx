@@ -211,3 +211,19 @@ _ = yield_accum (AddMonoid Int32) \result.
 -- CHECK: [[mat1:v#[0-9]+]]:<16xInt32> = vbroadcast
 -- CHECK: [[prodj:v#[0-9]+]]:<16xInt32> = %imul [[mat1]] [[mat2j]]
 -- CHECK: extend [[refj]] [[prodj]]
+
+"vectorizing through the `tile` combinator and its funny index set"
+-- CHECK-LABEL: vectorizing through the `tile` combinator and its funny index set
+
+%passes vect
+_ = yield_accum (AddMonoid Int32) \result.
+  tile((Fin 256), 32) \set.
+    for_ i:set.
+      ix = inject(i, to=(Fin 256))
+      result!ix += xs[ix]
+-- CHECK: seq (RawFin 0x8)
+-- CHECK: seq (RawFin 0x2)
+-- CHECK: [[refix:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[xsix:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: extend [[refix]] [[xsix]]
