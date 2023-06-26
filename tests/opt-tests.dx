@@ -126,13 +126,13 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 "vectorizing int binary op"
 -- CHECK-LABEL: vectorizing int binary op
 %passes vect
-_ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
+_ = for i:(Fin 256). (n_to_i32 (ordinal i)) * 2
 -- CHECK: seq (RawFin 0x10)
 -- CHECK: [[i0:v#[0-9]+]]:<16xInt32> = vbroadcast
 -- CHECK: [[i1:v#[0-9]+]]:<16xInt32> = viota
 -- CHECK: [[i2:v#[0-9]+]]:<16xInt32> = %iadd [[i0]] [[i1]]
--- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
--- CHECK: %iadd [[i2]] [[ones]]
+-- CHECK: [[twos:v#[0-9]+]]:<16xInt32> = vbroadcast 2
+-- CHECK: %imul [[i2]] [[twos]]
 
 "vectorizing float binary op"
 -- CHECK-LABEL: vectorizing float binary op

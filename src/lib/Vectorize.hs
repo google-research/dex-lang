@@ -487,9 +487,13 @@ vectorizePrimOp op = case op of
   BinOp opk arg1 arg2 -> do
     sx@(VVal vx x) <- vectorizeAtom arg1
     sy@(VVal vy y) <- vectorizeAtom arg2
-    let v = case (vx, vy) of (Uniform, Uniform) -> Uniform; _ -> Varying
-    x' <- if vx /= v then ensureVarying sx else return x
-    y' <- if vy /= v then ensureVarying sy else return y
+    let v = case (opk, vx, vy) of
+              (_, Uniform, Uniform) -> Uniform
+              (IAdd, Uniform, Contiguous) -> Contiguous
+              (IAdd, Contiguous, Uniform) -> Contiguous
+              _ -> Varying
+    x' <- if v == Varying then ensureVarying sx else return x
+    y' <- if v == Varying then ensureVarying sy else return y
     VVal v <$> emitOp (BinOp opk x' y')
   MiscOp (CastOp tyArg arg) -> do
     ty <- vectorizeType tyArg
