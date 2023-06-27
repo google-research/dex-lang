@@ -180,9 +180,9 @@ instance SourceRenamableE UExpr' where
     UVar v -> UVar <$> sourceRenameE v
     ULit l -> return $ ULit l
     ULam lam -> ULam <$> sourceRenameE lam
-    UPi (UPiExpr pats appExpl eff body) ->
+    UPi (UPiExpr (attrs, pats) appExpl eff body) ->
       sourceRenameB pats \pats' ->
-        UPi <$> (UPiExpr pats' <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
+        UPi <$> (UPiExpr (attrs, pats') <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
     UApp f xs ys -> UApp <$> sourceRenameE f
        <*> forM xs sourceRenameE
        <*> forM ys (\(name, y) -> (name,) <$> sourceRenameE y)
@@ -224,7 +224,6 @@ instance SourceRenamableE UEffect where
   sourceRenameE (URWSEffect rws name) = URWSEffect rws <$> sourceRenameE name
   sourceRenameE UExceptionEffect = return UExceptionEffect
   sourceRenameE UIOEffect = return UIOEffect
-  sourceRenameE (UUserEffect name) = UUserEffect <$> sourceRenameE name
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
   sourceRenameE (WithSrcE pos e) = addSrcContext pos $
@@ -246,20 +245,20 @@ instance SourceRenamableB UTopDecl where
       sourceRenameUBinder UPunVar tyConName \tyConName' -> do
         structDef' <- sourceRenameE structDef
         cont $ UStructDecl tyConName' structDef'
-    UInterface paramBs methodTys className methodNames -> do
+    UInterface (attrs, paramBs) methodTys className methodNames -> do
       Abs paramBs' (ListE methodTys') <-
         sourceRenameB paramBs \paramBs' -> do
           methodTys' <- mapM sourceRenameE methodTys
           return $ Abs paramBs' $ ListE methodTys'
       sourceRenameUBinder UClassVar className \className' ->
         sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
-          cont $ UInterface paramBs' methodTys' className' methodNames'
-    UInstance className conditions params methodDefs instanceName expl -> do
+          cont $ UInterface (attrs, paramBs') methodTys' className' methodNames'
+    UInstance className (roleExpls, conditions) params methodDefs instanceName expl -> do
       className' <- sourceRenameE className
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
-        cont $ UInstance className' conditions' params' methodDefs' instanceName' expl
+        cont $ UInstance className' (roleExpls, conditions') params' methodDefs' instanceName' expl
     UEffectDecl opTypes effName opNames -> do
       opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
       sourceRenameUBinder UEffectVar effName \effName' ->
@@ -278,8 +277,8 @@ instance SourceRenamableB UDecl' where
     UPass -> cont UPass
 
 instance SourceRenamableE ULamExpr where
-  sourceRenameE (ULamExpr args expl effs resultTy body) =
-    sourceRenameB args \args' -> ULamExpr args'
+  sourceRenameE (ULamExpr (expls, args) expl effs resultTy body) =
+    sourceRenameB args \args' -> ULamExpr (expls, args')
       <$> pure expl
       <*> mapM sourceRenameE effs
       <*> mapM sourceRenameE resultTy
@@ -304,9 +303,6 @@ instance (SourceRenamableB b1, SourceRenamableB b2) => SourceRenamableB (PairB b
     sourceRenameB b1 \b1' ->
       sourceRenameB b2 \b2' ->
         cont $ PairB b1' b2'
-
-instance SourceRenamableB b => SourceRenamableB (WithExpl b) where
-  sourceRenameB (WithExpl x b) cont = sourceRenameB b \b' -> cont $ WithExpl x b'
 
 sourceRenameUBinderNest
   :: (Color c, Renamer m, Distinct o)
@@ -340,15 +336,15 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
-  sourceRenameE (UDataDef tyConName paramBs dataCons) = do
+  sourceRenameE (UDataDef tyConName (expls, paramBs) dataCons) = do
     sourceRenameB paramBs \paramBs' -> do
       dataCons' <- forM dataCons \(dataConName, argBs) -> do
         argBs' <- sourceRenameE argBs
         return (dataConName, argBs')
-      return $ UDataDef tyConName paramBs' dataCons'
+      return $ UDataDef tyConName (expls, paramBs') dataCons'
 
 instance SourceRenamableE UStructDef where
-  sourceRenameE (UStructDef tyConName paramBs fields methods) = do
+  sourceRenameE (UStructDef tyConName (expls, paramBs) fields methods) = do
     sourceRenameB paramBs \paramBs' -> do
       fields' <- forM fields \(fieldName, ty) -> do
         ty' <- sourceRenameE ty
@@ -356,7 +352,7 @@ instance SourceRenamableE UStructDef where
       methods' <- forM methods \(ann, methodName, lam) -> do
         lam' <- sourceRenameE lam
         return (ann, methodName, lam')
-      return $ UStructDef tyConName paramBs' fields' methods'
+      return $ UStructDef tyConName (expls, paramBs') fields' methods'
 
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->

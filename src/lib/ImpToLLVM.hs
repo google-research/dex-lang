@@ -501,7 +501,7 @@ compileInstr instr = case instr of
         return []
       RenameOperandSubstVal v -> do
         lookupTopFun v >>= \case
-          DexTopFun _ _ _ _ -> error "Imp functions should be abstracted at this point"
+          DexTopFun _ _ _ -> error "Imp functions should be abstracted at this point"
           FFITopFun fname ty@(IFunType cc _ impResultTys) -> do
             let resultTys = map scalarTy impResultTys
             case cc of

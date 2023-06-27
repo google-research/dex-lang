@@ -15,7 +15,8 @@ module CheapReduction
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault, visitAlt, toAtomVar)
+  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiatePiTy, instantiateTabPiTy
+  , bindersToVars, bindersToAtoms)
   where
 
 import Control.Applicative
@@ -239,7 +240,7 @@ cheapReduceDictExpr resultTy d = case d of
     cheapReduceE child >>= \case
       DictCon _ (InstanceDict instanceName args) -> dropSubst do
         args' <- mapM cheapReduceE args
-        InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+        InstanceDef _ _ bs _ body <- lookupInstanceDef instanceName
         let InstanceBody superclasses _ = body
         applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
       child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
@@ -260,9 +261,6 @@ instance CheaplyReducibleE CoreIR TyConParams TyConParams where
 
 instance (CheaplyReducibleE r e e', NiceE r e') => CheaplyReducibleE r (Abs (Nest (Decl r)) e) e' where
   cheapReduceE (Abs decls result) = cheapReduceWithDeclsB decls $ cheapReduceE result
-
-instance (CheaplyReducibleE r (Atom r) e', NiceE r e') => CheaplyReducibleE r (Block r) e' where
-  cheapReduceE (Block _ decls result) = cheapReduceE $ Abs decls result
 
 instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
   cheapReduceE expr = confuseGHC >>= \_ -> case expr of
@@ -287,7 +285,7 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
       cheapReduceE dict >>= \case
         DictCon _ (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+          InstanceDef _ _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
           let method = methods !! i
           extendSubst (bs@@>(SubstVal <$> args')) do
             method' <- cheapReduceE method
@@ -468,9 +466,17 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
-instantiateTyConDef (TyConDef _ bs conDefs) (TyConParams _ xs) = do
+instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
   applySubst (bs @@> (SubstVal <$> xs)) conDefs
 {-# INLINE instantiateTyConDef #-}
+
+instantiatePiTy :: (EnvReader m, IRRep r) => PiType r n -> [Atom r n] -> m n (EffTy r n)
+instantiatePiTy (PiType bs effTy) xs = do
+  applySubst (bs @@> (SubstVal <$> xs)) effTy
+
+instantiateTabPiTy :: (EnvReader m, IRRep r) => TabPiType r n -> Atom r n -> m n (Type r n)
+instantiateTabPiTy (TabPiType _ b resultTy) x = do
+  applySubst (b @> SubstVal x) resultTy
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -485,7 +491,7 @@ dataDefRep (StructFields fields) = case map snd fields of
 
 makeStructRepVal :: (Fallible1 m, EnvReader m) => TyConName n -> [CAtom n] -> m n (CAtom n)
 makeStructRepVal tyConName args = do
-  TyConDef _ _ (StructFields fields) <- lookupTyCon tyConName
+  TyConDef _ _ _ (StructFields fields) <- lookupTyCon tyConName
   case fields of
     [_] -> case args of
       [arg] -> return arg
@@ -517,10 +523,10 @@ instance VisitGeneric (Type    r) r where visitGeneric = visitType
 instance VisitGeneric (LamExpr r) r where visitGeneric = visitLam
 instance VisitGeneric (PiType  r) r where visitGeneric = visitPi
 
-instance VisitGeneric (Block r) r where
-  visitGeneric b = visitGeneric (LamExpr Empty b) >>= \case
-    LamExpr Empty b' -> return b'
-    _ -> error "not a block"
+visitBlock :: Visitor m r i o => Block r i -> m (Block r o)
+visitBlock b = visitGeneric (LamExpr Empty b) >>= \case
+  LamExpr Empty b' -> return b'
+  _ -> error "not a block"
 
 visitAlt :: Visitor m r i o => Alt r i -> m (Alt r o)
 visitAlt (Abs b body) = do
@@ -615,17 +621,11 @@ instance IRRep r => VisitGeneric (Expr r) r where
     -- TODO: should we reuse the original effects? Whether it's valid depends on
     -- the type-preservation requirements for a visitor. We should clarify what
     -- those are.
-    Case x alts (EffTy _ t) -> do
+    Case x alts effTy -> do
       x' <- visitGeneric x
-      t' <- visitGeneric t
       alts' <- mapM visitAlt alts
-      let effs' = foldMap altEffects alts'
-      return $ Case x' alts' $ EffTy effs' t'
-      where
-        altEffects :: Alt r n -> EffectRow r n
-        altEffects (Abs bs (Block ann _ _)) = case ann of
-          NoBlockAnn -> Pure
-          BlockAnn (EffTy effs _) -> ignoreHoistFailure $ hoist bs effs
+      effTy' <- visitGeneric effTy
+      return $ Case x' alts' effTy'
     Atom x -> Atom <$> visitGeneric x
     TabCon Nothing t xs -> TabCon Nothing <$> visitGeneric t <*> mapM visitGeneric xs
     TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> visitGeneric d) <*> visitGeneric t <*> mapM visitGeneric xs
@@ -642,7 +642,6 @@ instance IRRep r => VisitGeneric (PrimOp r) r where
     MiscOp       op -> MiscOp       <$> visitGeneric op
     Hof          op -> Hof          <$> visitGeneric op
     DAMOp        op -> DAMOp        <$> visitGeneric op
-    UserEffectOp op -> UserEffectOp <$> visitGeneric op
     RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
 
 instance IRRep r => VisitGeneric (TypedHof r) r where
@@ -654,10 +653,10 @@ instance IRRep r => VisitGeneric (Hof r) r where
     RunReader x body -> RunReader <$> visitGeneric x <*> visitGeneric body
     RunWriter dest bm body -> RunWriter <$> mapM visitGeneric dest <*> visitGeneric bm <*> visitGeneric body
     RunState  dest s body ->  RunState  <$> mapM visitGeneric dest <*> visitGeneric s <*> visitGeneric body
-    While          b -> While          <$> visitGeneric b
-    RunIO          b -> RunIO          <$> visitGeneric b
-    RunInit        b -> RunInit        <$> visitGeneric b
-    CatchException t b -> CatchException <$> visitType t <*> visitGeneric b
+    While          b -> While          <$> visitBlock b
+    RunIO          b -> RunIO          <$> visitBlock b
+    RunInit        b -> RunInit        <$> visitBlock b
+    CatchException t b -> CatchException <$> visitType t <*> visitBlock b
     Linearize      lam x -> Linearize <$> visitGeneric lam <*> visitGeneric x
     Transpose      lam x -> Transpose <$> visitGeneric lam <*> visitGeneric x
 
@@ -672,18 +671,11 @@ instance IRRep r => VisitGeneric (DAMOp r) r where
     Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
     Freeze x  -> Freeze <$> visitGeneric x
 
-instance VisitGeneric UserEffectOp CoreIR where
-  visitGeneric = \case
-    Handle name xs body -> Handle <$> renameN name <*> mapM visitGeneric xs <*> visitGeneric body
-    Resume t x -> Resume <$> visitGeneric t <*> visitGeneric x
-    Perform x i -> Perform <$> visitGeneric x <*> pure i
-
 instance IRRep r => VisitGeneric (Effect r) r where
   visitGeneric = \case
     RWSEffect rws h    -> RWSEffect rws <$> visitGeneric h
     ExceptionEffect    -> pure ExceptionEffect
     IOEffect           -> pure IOEffect
-    UserEffect name    -> UserEffect <$> renameN name
     InitEffect         -> pure InitEffect
 
 instance IRRep r => VisitGeneric (EffectRow r) r where
@@ -737,11 +729,9 @@ instance VisitGeneric CoreLamExpr CoreIR where
   visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam
 
 instance VisitGeneric CorePiType CoreIR where
-  visitGeneric (CorePiType app bsExpl effty) = do
-    let (expls, bs) = unzipExpls bsExpl
+  visitGeneric (CorePiType app expl bs effty) = do
     PiType bs' effty' <- visitGeneric $ PiType bs effty
-    let bsExpl' = zipExpls expls bs'
-    return $ CorePiType app bsExpl' effty'
+    return $ CorePiType app expl bs' effty'
 
 instance IRRep r => VisitGeneric (TabPiType r) r where
   visitGeneric (TabPiType d b eltTy) = do
@@ -797,6 +787,15 @@ toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
 toAtomVar v = do
   ty <- getType <$> lookupAtomName v
   return $ AtomVar v ty
+
+bindersToVars :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [AtomVar r n]
+bindersToVars bs = do
+  withExtEvidence bs do
+    Distinct <- getDistinct
+    mapM toAtomVar $ nestToNames bs
+
+bindersToAtoms :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [Atom r n]
+bindersToAtoms bs = liftM (Var <$>) $ bindersToVars bs
 
 newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst AtomSubstVal i o) a }
         deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst AtomSubstVal i o))
@@ -876,7 +875,6 @@ instance IRRep r => SubstE AtomSubstVal (RepVal r)
 instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
-instance SubstE AtomSubstVal UserEffectOp
 instance IRRep r => SubstE AtomSubstVal (DAMOp r)
 instance IRRep r => SubstE AtomSubstVal (TypedHof r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)
@@ -889,7 +887,6 @@ instance IRRep r => SubstE AtomSubstVal (PrimOp r)
 instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (EffTy r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
-instance IRRep r => SubstE AtomSubstVal (Block r)
 instance IRRep r => SubstE AtomSubstVal (GenericOpRep const r)
 instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal DictType

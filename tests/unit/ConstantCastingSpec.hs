@@ -24,6 +24,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import QueryType
 
 castOp :: ScalarBaseType -> (SAtom n) -> PrimOp SimpIR n
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
@@ -43,7 +44,7 @@ exprToBlock expr = do
 compile :: (Topper m, Mut n)
   => ScalarBaseType -> ScalarBaseType -> m n LLVMCallable
 compile fromTy toTy = do
-  sLam <- liftEnvReaderM $ castLam fromTy toTy
+  sLam <- liftEnvReaderM (castLam fromTy toTy) >>= asTopLam
   compileTopLevelFun (EntryFunCC CUDANotRequired) sLam >>= packageLLVMCallable
 
 arbLitVal :: ScalarBaseType -> Gen LitVal

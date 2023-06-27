@@ -42,8 +42,8 @@ runTransposeM cont = runReaderT1 (ListE []) $ runSubstReaderT idSubst $ cont
 
 transposeTopFun
   :: (MonadFail1 m, EnvReader m)
-  => LamExpr SimpIR n -> m n (LamExpr SimpIR n)
-transposeTopFun lam = liftBuilder $ runTransposeM do
+  => STopLam n -> m n (STopLam n)
+transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
   (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
     outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
@@ -54,7 +54,11 @@ transposeTopFun lam = liftBuilder $ runTransposeM do
         withAccumulator inTy \refSubstVal ->
           extendSubst (bLin @> refSubstVal) $
             transposeBlock body (sink ct)
-      return $ LamExpr (bsNonlin' >>> UnaryNest bCT) body'
+      EffTy _ bodyTy <- blockEffTy body'
+      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (EffTy Pure bodyTy)
+      let lamT = LamExpr (bsNonlin' >>> UnaryNest bCT) body'
+      return $ TopLam False piTy lamT
+transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
 
 unpackLinearLamExpr
   :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
@@ -63,7 +67,7 @@ unpackLinearLamExpr
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
-  PiType bsTy (EffTy _ resultTy) <- return $ getLamExprType lam
+  PiType bsTy (EffTy _ resultTy) <- getLamExprType lam
   PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
   let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
   return ( Abs bsNonlin $ Abs bLin body
@@ -154,7 +158,7 @@ extendLinRegions v cont = local (\(ListE vs) -> ListE (v:vs)) cont
 -- === actual pass ===
 
 transposeBlock :: Emits o => SBlock i -> SAtom o -> TransposeM i o ()
-transposeBlock (Block _ decls result) ct = transposeWithDecls decls result ct
+transposeBlock (Abs decls result) ct = transposeWithDecls decls result ct
 
 transposeWithDecls :: Emits o => Nest SDecl i i' -> SAtom i' -> SAtom o -> TransposeM i o ()
 transposeWithDecls Empty atom ct = transposeAtom atom ct

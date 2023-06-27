@@ -22,9 +22,7 @@ module Types.Primitives (
   module Types.Primitives, UnOp (..), BinOp (..),
   CmpOp (..), Projection (..)) where
 
-import Name
 import qualified Data.ByteString       as BS
-import Control.Monad
 import Data.Int
 import Data.Word
 import Data.Hashable
@@ -35,7 +33,6 @@ import Foreign.Ptr
 import GHC.Generics (Generic (..))
 
 import Occurrence
-import Util (zipErr)
 import Types.OpNames (UnOp (..), BinOp (..), CmpOp (..), Projection (..))
 
 type SourceName = String
@@ -57,23 +54,6 @@ data Explicitness =
   | Inferred (Maybe SourceName) InferenceMechanism  deriving (Show, Eq, Ord, Generic)
 data AppExplicitness = ExplicitApp | ImplicitApp  deriving (Show, Generic, Eq)
 data DepPairExplicitness = ExplicitDepPair | ImplicitDepPair  deriving (Show, Generic, Eq)
-
-data WithExpl (b::B) (n::S) (l::S) =
-  WithExpl { getExpl :: Explicitness , withoutExpl :: b n l }
-  deriving (Show, Generic)
-
-unzipExpls :: Nest (WithExpl b) n l -> ([Explicitness], Nest b n l)
-unzipExpls Empty = ([], Empty)
-unzipExpls (Nest (WithExpl expl b) rest) = (expl:expls, Nest b bs)
-  where (expls, bs) = unzipExpls rest
-
-zipExpls :: [Explicitness] -> Nest b n l -> Nest (WithExpl b) n l
-zipExpls [] Empty = Empty
-zipExpls (expl:expls) (Nest b bs) = Nest (WithExpl expl b) (zipExpls expls bs)
-zipExpls _ _ = error "zip error"
-
-addExpls :: Explicitness -> Nest b n l -> Nest (WithExpl b) n l
-addExpls expl bs = fmapNest (\b -> WithExpl expl b) bs
 
 data RequiredMethodAccess = Full | Partial Int deriving (Show, Eq, Ord, Generic)
 
@@ -225,40 +205,3 @@ instance Hashable AppExplicitness
 instance Hashable DepPairExplicitness
 instance Hashable InferenceMechanism
 instance Hashable RequiredMethodAccess
-
-instance Store (b n l) => Store (WithExpl b n l)
-
-instance (Color c, BindsOneName b c) => BindsOneName (WithExpl b) c where
-  binderName (WithExpl _ b) = binderName b
-  asNameBinder (WithExpl _ b) = asNameBinder b
-
-instance (Color c, BindsAtMostOneName b c) => BindsAtMostOneName (WithExpl b) c where
-  WithExpl _ b @> x = b @> x
-  {-# INLINE (@>) #-}
-
-instance AlphaEqB b => AlphaEqB (WithExpl b) where
-  withAlphaEqB (WithExpl a1 b1) (WithExpl a2 b2) cont = do
-    unless (a1 == a2) zipErr
-    withAlphaEqB b1 b2 cont
-
-instance AlphaHashableB b => AlphaHashableB (WithExpl b) where
-  hashWithSaltB env salt (WithExpl expl b) = do
-    let h = hashWithSalt salt expl
-    hashWithSaltB env h b
-
-instance BindsNames b => ProvesExt  (WithExpl b) where
-instance BindsNames b => BindsNames (WithExpl b) where
-  toScopeFrag (WithExpl _ b) = toScopeFrag b
-
-instance (SinkableB b) => SinkableB (WithExpl b) where
-  sinkingProofB fresh (WithExpl a b) cont =
-    sinkingProofB fresh b \fresh' b' ->
-      cont fresh' (WithExpl a b')
-
-instance (BindsNames b, RenameB b) => RenameB (WithExpl b) where
-  renameB env (WithExpl a b) cont =
-      renameB env b \env' b' ->
-        cont env' $ WithExpl a b'
-
-instance HoistableB b => HoistableB (WithExpl b) where
-  freeVarsB (WithExpl _ b) = freeVarsB b

@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Linearize (linearize, linearizeLam) where
+module Linearize (linearize, linearizeTopLam) where
 
 import Control.Category ((>>>))
 import Control.Monad.Reader
@@ -269,10 +269,9 @@ linearizeBlockDefuncGeneral locals block = do
     WithTangent primalResult tangentFun <- linearizeBlock block
     lam <- tangentFunAsLambda tangentFun
     return $ PairE primalResult lam
-  (blockAbs, recon) <- refreshAbs (Abs decls result) \decls' (PairE primal lam) -> do
+  (block', recon) <- refreshAbs (Abs decls result) \decls' (PairE primal lam) -> do
     (primal', recon) <- capture (locals >>> toScopeFrag decls') primal lam
     return (Abs decls' primal', recon)
-  block' <- makeBlockFromDecls blockAbs
   return (block', recon)
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
@@ -289,9 +288,9 @@ linearize :: Emits n => SLam n -> SAtom n -> DoubleBuilder SimpIR n (SAtom n, SL
 linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
-linearizeLam :: SLam n -> [Active] -> DoubleBuilder SimpIR n (SLam n, SLam n)
-linearizeLam (LamExpr bs body) actives = runPrimalMInit do
-  refreshBinders bs \bs' frag -> extendSubst frag do
+linearizeTopLam :: STopLam n -> [Active] -> DoubleBuilder SimpIR n (STopLam n, STopLam n)
+linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
+  (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
     let allPrimals = nestToAtomVars bs'
     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
       True  -> return $ Just v
@@ -312,6 +311,8 @@ linearizeLam (LamExpr bs body) actives = runPrimalMInit do
           emitBlock =<< applySubst substFrag tangentBody
         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
     return (primalFun, tangentFun)
+  (,) <$> asTopLam primalFun <*> asTopLam tangentFun
+linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
@@ -343,7 +344,7 @@ linearizeAtom atom = case atom of
   where emitZeroT = withZeroT $ renameM atom
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o SAtom SAtom
-linearizeBlock (Block _ decls result) =
+linearizeBlock (Abs decls result) =
   linearizeDecls decls $ linearizeAtom result
 
 linearizeDecls :: Emits o => Nest SDecl i i' -> LinM i' o e1 e2 -> LinM i  o e1 e2
@@ -624,7 +625,7 @@ linearizeHof hof = case hof of
     WithTangent sInit' sLin <- linearizeAtom sInit
     (lam', recon) <- linearizeEffectFun State lam
     (primalAux, sFinal) <- fromPair =<< emitHof (RunState Nothing sInit' lam')
-    referentTy <- return $ snd $ getTypeRWSAction lam'
+    referentTy <- snd <$> getTypeRWSAction lam'
     (primal, linLam) <- reconstruct primalAux recon
     return $ WithTangent (PairVal primal sFinal) do
       sLin' <- sLin
@@ -639,7 +640,7 @@ linearizeHof hof = case hof of
     (lam', recon) <- linearizeEffectFun Writer lam
     (primalAux, wFinal) <- fromPair =<< emitHof (RunWriter Nothing bm' lam')
     (primal, linLam) <- reconstruct primalAux recon
-    referentTy <- return $ snd $ getTypeRWSAction lam'
+    referentTy <- snd <$> getTypeRWSAction lam'
     return $ WithTangent (PairVal primal wFinal) do
       bm'' <- sinkM bm'
       tt <- tangentType $ sink referentTy

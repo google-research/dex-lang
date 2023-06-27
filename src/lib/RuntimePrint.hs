@@ -169,8 +169,9 @@ withBuffer cont = do
       body <- buildBlock do
         cont $ sink $ Var $ binderVar b
         return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
-      let piTy = CorePiType ExplicitApp piBinders $ EffTy eff UnitTy
+      let binders = BinaryNest h b
+      let expls = [Inferred Nothing Unify, Explicit]
+      let piTy = CorePiType ExplicitApp expls binders $ EffTy eff UnitTy
       let lam = LamExpr (BinaryNest h b) body
       return $ Lam $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
@@ -184,8 +185,8 @@ bufferTy h = do
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
   RefTy h _ <- return $ getType buf
-  TabTy d (_:>t) _ <- return $ getType tab
-  n <- applyIxMethodCore Size (IxType t d) []
+  TabPi t <- return $ getType tab
+  n <- applyIxMethodCore Size (tabIxType t) []
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
@@ -236,8 +237,8 @@ forEachTabElt
   -> (forall l. (Emits l, DExt n l) => CAtom l -> CAtom l -> m l ())
   -> m n ()
 forEachTabElt tab cont = do
-  TabTy d (_:>t) _ <- return $ getType tab
-  let ixTy = IxType t d
+  TabPi t <- return $ getType tab
+  let ixTy = tabIxType t
   void $ buildFor "i" Fwd ixTy \i -> do
     x <- tabApp (sink tab) (Var i)
     i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]

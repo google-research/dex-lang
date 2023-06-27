@@ -119,8 +119,8 @@ instance IRRep r => HasType r (Con r) where
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
 getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
+getSuperclassType bsAbove (Nest b@(_:>t) bs) = \case
+  0 -> ignoreHoistFailure $ hoist bsAbove t
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
 instance IRRep r => HasType r (Expr r) where
@@ -144,12 +144,6 @@ instance IRRep r => HasType r (DAMOp r) where
     Seq _ _ _ cinit _ -> getType cinit
     RememberDest _ d _ -> getType d
 
-instance HasType CoreIR UserEffectOp where
-  getType = \case
-    Handle _ _ _ -> undefined
-    Perform _ _ -> undefined
-    Resume retTy _ -> retTy
-
 instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
     BinOp op x _ -> TC $ BaseType $ typeBinOp op $ getTypeBaseType x
@@ -159,7 +153,6 @@ instance IRRep r => HasType r (PrimOp r) where
     MiscOp op -> getType op
     VectorOp op -> getType op
     DAMOp           op -> getType op
-    UserEffectOp    op -> getType op
     RefOp ref m -> case getType ref of
       TC (RefType _ s) -> case m of
         MGet        -> s
@@ -220,6 +213,9 @@ rawStrType = case newName "n" of
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
+tabIxType :: TabPiType r n -> IxType r n
+tabIxType (TabPiType d (_:>t) _) = IxType t d
+
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
   => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
@@ -228,13 +224,19 @@ typesAsBinderNest types body = toConstBinderNest types body
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
   Abs bs (PairE eff' resultTy') -> do
-    let bs' = fmapNest (WithExpl Explicit) bs
-    CorePiType ExplicitApp bs' $ EffTy eff' resultTy'
+    let expls = nestToList (const Explicit) bs
+    CorePiType ExplicitApp expls bs $ EffTy eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
     Abs b resultTy' -> TabPiType d (b:>t) resultTy'
+
+corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
+corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy
+
+coreLamToTopLam :: CoreLamExpr n -> TopLam CoreIR n
+coreLamToTopLam (CoreLamExpr ty f) = TopLam False (corePiTypeToPiType ty) f
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
 a ==> b = TabPi $ nonDepTabPiType a b
@@ -252,11 +254,6 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
     _ -> error $ "Not an Ix dict: " ++ show dict
   IxDictRawFin _ -> IdxRepTy
   IxDictSpecialized n _ _ -> n
-
-instance IRRep r => HasType r (Block r) where
-  getType (Block NoBlockAnn Empty result) = getType result
-  getType (Block (BlockAnn (EffTy _ ty)) _ _) = ty
-  getType _ = error "impossible"
 
 -- === querying effects implementation ===
 
@@ -309,7 +306,6 @@ instance IRRep r => HasEffects (PrimOp r) r where
         IndexRef _ _ -> Pure
         ProjRef _ _  -> Pure
       _ -> error "not a ref"
-    UserEffectOp _ -> undefined
     DAMOp op -> case op of
       Place    _ _  -> OneEffect InitEffect
       Seq eff _ _ _ _        -> eff
@@ -317,14 +313,4 @@ instance IRRep r => HasEffects (PrimOp r) r where
       AllocDest _ -> Pure -- is this correct?
       Freeze _    -> Pure -- is this correct?
     Hof (TypedHof (EffTy eff _) _) -> eff
-  {-# INLINE getEffects #-}
-
-
-instance IRRep r => HasEffects (Block r) r where
-  getEffects (Block (BlockAnn (EffTy effs _)) _ _) = effs
-  getEffects (Block NoBlockAnn _ _) = Pure
-  {-# INLINE getEffects #-}
-
-instance IRRep r => HasEffects (Alt r) r where
-  getEffects (Abs bs body) = ignoreHoistFailure $ hoist bs (getEffects body)
   {-# INLINE getEffects #-}

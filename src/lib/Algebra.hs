@@ -137,7 +137,7 @@ type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpIR
 blockAsPoly
   :: (EnvExtender m, EnvReader m)
   => Block SimpIR n -> m n (Maybe (Polynomial n))
-blockAsPoly (Block _ decls result) =
+blockAsPoly (Abs decls result) =
   liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ blockAsPolyRec decls result
 
 blockAsPolyRec :: Nest (Decl SimpIR) i i' -> Atom SimpIR i' -> BlockTraverserM i o (Polynomial o)

@@ -18,6 +18,7 @@ import TopLevel
 import Types.Imp
 import Types.Primitives hiding (Sin)
 import Types.Source hiding (SourceName)
+import QueryType
 
 x_nm, y_nm :: JSourceName
 x_nm = JSourceName 0 0 "x"
@@ -48,7 +49,7 @@ compile jaxpr = do
     -- the jaxpr instead of just coercing it.
     Distinct <- getDistinct
     jRename <- liftRenameM $ renameJaxpr (unsafeCoerceE jaxpr)
-    jSimp <- liftJaxSimpM $ simplifyJaxpr jRename
+    jSimp <- liftJaxSimpM (simplifyJaxpr jRename) >>= asTopLam
     compileTopLevelFun (EntryFunCC CUDANotRequired) jSimp >>= packageLLVMCallable
 
 spec :: Spec

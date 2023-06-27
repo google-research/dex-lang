@@ -15,8 +15,9 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict hiding (Alt)
 import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
+import Data.Foldable (fold)
 import Data.Graph (graphFromEdges, topSort)
-import Data.Text.Prettyprint.Doc (Pretty (..), group, line, nest)
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import Foreign.Ptr
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -28,7 +29,6 @@ import IRVariants
 import MTL1
 import Subst
 import Name
-import PPrint (prettyBlock)
 import QueryType
 import Types.Core
 import Types.Imp
@@ -88,11 +88,11 @@ emitUnOp op x = emitOp $ UnOp op x
 {-# INLINE emitUnOp #-}
 
 emitBlock :: (Builder r m, Emits n) => Block r n -> m n (Atom r n)
-emitBlock (Block _ decls result) = emitDecls decls result
+emitBlock = emitDecls
 
 emitDecls :: (Builder r m, Emits n, RenameE e, SinkableE e)
-          => Nest (Decl r) n l -> e l -> m n (e n)
-emitDecls decls result = runSubstReaderT idSubst $ emitDecls' decls result
+          => WithDecls r e n -> m n (e n)
+emitDecls (Abs decls result) = runSubstReaderT idSubst $ emitDecls' decls result
 
 emitDecls' :: (Builder r m, Emits o, RenameE e, SinkableE e)
            => Nest (Decl r) i i' -> e i' -> SubstReaderT Name m i o (e o)
@@ -278,10 +278,9 @@ emitTopLet hint letAnn expr = do
   v <- emitBinding hint $ AtomNameBinding $ LetBound (DeclBinding letAnn expr)
   return $ AtomVar v ty
 
-emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> LamExpr SimpIR n -> m n (TopFunName n)
+emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> STopLam n -> m n (TopFunName n)
 emitTopFunBinding hint def f = do
-  ty <- return $ getLamExprType f
-  emitBinding hint $ TopFunBinding $ DexTopFun def ty f Waiting
+  emitBinding hint $ TopFunBinding $ DexTopFun def f Waiting
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
@@ -334,7 +333,7 @@ extendLinearizationCache s fs =
 
 queryObjCache :: EnvReader m => TopFunName n -> m n (Maybe (FunObjCodeName n))
 queryObjCache v = lookupEnv v >>= \case
-  TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
+  TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ Just $ topFunObjCode impl
   _ -> return Nothing
 
 emitObjFile :: (Mut n, TopBuilder m) => CFunction n -> m n (FunObjCodeName n)
@@ -468,7 +467,7 @@ liftEmitBuilder cont = do
   Distinct <- getDistinct
   let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env emptyOutFrag
   Emits <- fabricateEmitsEvidenceM
-  emitDecls (unsafeCoerceB $ unRNest decls) result
+  emitDecls $ Abs (unsafeCoerceB $ unRNest decls) result
 
 instance (IRRep r, Fallible m) => ScopableBuilder r (BuilderT r m) where
   buildScoped cont = BuilderT do
@@ -601,66 +600,15 @@ buildBlock
   :: ScopableBuilder r m
   => (forall l. (Emits l, DExt n l) => m l (Atom r l))
   -> m n (Block r n)
-buildBlock cont = buildScoped (cont >>= withType) >>= computeAbsEffects >>= absToBlock
-
-withType :: ((EnvReader m, IRRep r), HasType r e) => e l -> m l ((e `PairE` Type r) l)
-withType e = do
-  ty <- {-# SCC blockTypeNormalization #-} cheapNormalize $ getType e
-  return $ e `PairE` ty
-{-# INLINE withType #-}
-
-makeBlock :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> Atom r l -> Type r l -> Block r n
-makeBlock decls effs atom ty = Block (BlockAnn (EffTy effs' ty')) decls atom where
-  ty' = ignoreHoistFailure $ hoist decls ty
-  effs' = ignoreHoistFailure $ hoist decls effs
-{-# INLINE makeBlock #-}
-
-absToBlockInferringTypes :: (EnvReader m, IRRep r) => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
-absToBlockInferringTypes ab = liftEnvReaderM do
-  abWithEffs <-  computeAbsEffects ab
-  refreshAbs abWithEffs \decls (effs `PairE` result) -> do
-    ty <- cheapNormalize $ getType result
-    return $ ignoreExcept $
-      absToBlock $ Abs decls (effs `PairE` (result `PairE` ty))
-{-# INLINE absToBlockInferringTypes #-}
-
-absToBlock
-  :: (Fallible m, IRRep r)
-  => Abs (Nest (Decl r)) (EffectRow r `PairE` (Atom r `PairE` Type r)) n -> m (Block r n)
-absToBlock (Abs decls (effs `PairE` (result `PairE` ty))) = do
-  let msg = "Block:" <> nest 1 (prettyBlock decls result) <> line
-            <> group ("Of type:" <> nest 2 (line <> pretty ty)) <> line
-            <> group ("With effects:" <> nest 2 (line <> pretty effs))
-  ty' <- liftHoistExcept' (docAsStr msg) $ hoist decls ty
-  effs' <- liftHoistExcept' (docAsStr msg) $ hoist decls effs
-  return $ Block (BlockAnn (EffTy effs' ty')) decls result
-{-# INLINE absToBlock #-}
-
-makeBlockFromDecls :: (EnvReader m, IRRep r) => Abs (Nest (Decl r)) (Atom r) n -> m n (Block r n)
-makeBlockFromDecls (Abs Empty result) = return $ AtomicBlock result
-makeBlockFromDecls ab = liftEnvReaderM $ refreshAbs ab \decls result -> do
-  ty <- return $ getType result
-  effs <- declNestEffects decls
-  PairE ty' effs' <- return $ ignoreHoistFailure $ hoist decls $ PairE ty effs
-  return $ Block (BlockAnn (EffTy effs' ty')) decls result
-{-# INLINE makeBlockFromDecls #-}
-
-coreLamExpr :: EnvReader m => AppExplicitness
-            -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CBlock) n
-            -> m n (CoreLamExpr n)
-coreLamExpr appExpl ab = liftEnvReaderM do
-  refreshAbs ab \bs' (PairE effs' body') -> do
-    resultTy <- return $ getType body'
-    let bs'' = fmapNest withoutExpl bs'
-    return $ CoreLamExpr (CorePiType appExpl bs' (EffTy effs' resultTy)) (LamExpr bs'' body')
+buildBlock = buildScoped
 
 buildCoreLam
   :: ScopableBuilder CoreIR m
   => CorePiType n
   -> (forall l. (Emits l, DExt n l) => [CAtomVar l] -> m l (CAtom l))
   -> m n (CoreLamExpr n)
-buildCoreLam piTy@(CorePiType _ bs _) cont = do
-  lam <- buildLamExpr (EmptyAbs $ fmapNest withoutExpl bs) cont
+buildCoreLam piTy@(CorePiType _ _ bs _) cont = do
+  lam <- buildLamExpr (EmptyAbs bs) cont
   return $ CoreLamExpr piTy lam
 
 buildAbs
@@ -736,12 +684,13 @@ buildLamExpr (Abs bs UnitE) cont = case bs of
       buildLamExpr rest' \vs -> cont $ sink v : vs
     return $ LamExpr (Nest b' bs') body'
 
-buildLamExprFromPi
+buildTopLamFromPi
   :: ScopableBuilder r m
   => PiType r n
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomVar r l] -> m l (Atom r l))
-  -> m n (LamExpr r n)
-buildLamExprFromPi (PiType bs _) cont = buildLamExpr (EmptyAbs bs) cont
+  -> m n (TopLam r n)
+buildTopLamFromPi piTy@(PiType bs _) cont =
+  TopLam False piTy <$> buildLamExpr (EmptyAbs bs) cont
 
 buildAlt
   :: ScopableBuilder r m
@@ -789,7 +738,7 @@ buildCase' scrut resultTy indexedAltBody = do
       (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
         (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
           blk <- buildBlock $ indexedAltBody i $ Var $ sink x
-          eff <- return $ getEffects blk
+          EffTy eff _ <- blockEffTy blk
           return $ blk `PairE` eff
         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
       return $ Case scrut alts $ EffTy (mconcat effs) resultTy
@@ -837,8 +786,8 @@ buildMap :: (Emits n, ScopableBuilder r m)
          -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
          -> m n (Atom r n)
 buildMap xs f = do
-  TabTy d (_:>t) _ <- return $ getType xs
-  buildFor noHint Fwd (IxType t d) \i ->
+  TabPi t <- return $ getType xs
+  buildFor noHint Fwd (tabIxType t) \i ->
     tabApp (sink xs) (Var i) >>= f
 
 unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
@@ -908,8 +857,8 @@ zeroAt ty = liftEmitBuilder $ go ty where
   go = \case
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
-   TabTy d (b:>t) bodyTy -> buildFor (getNameHint b) Fwd (IxType t d) \i ->
-     go =<< applySubst (b @> SubstVal (Var i)) bodyTy
+   TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
+     go =<< instantiateTabPiTy (sink tabPi) (Var i)
    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
@@ -953,8 +902,8 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getType x of
-    TabTy d (b:>t) _  ->
-      liftEmitBuilder $ buildFor (getNameHint b) Fwd (IxType t d) \i -> do
+    TabPi t ->
+      liftEmitBuilder $ buildFor (getNameHint t) Fwd (tabIxType t) \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ BinOp FAdd x y
@@ -1125,7 +1074,7 @@ projectStructRef i x = do
 
 getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
 getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
-  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  TyConDef _ _ _ ~(StructFields fields) <- lookupTyCon tyConName
   return case fields of
     [_] | i == 0    -> [UnwrapNewtype]
         | otherwise -> error "bad index"
@@ -1157,9 +1106,17 @@ mkDictAtom d = do
   ty <- typeOfDictExpr d
   return $ DictCon ty d
 
+mkCase :: (EnvReader m, IRRep r) => Atom r n -> Type r n -> [Alt r n] -> m n (Expr r n)
+mkCase scrut resultTy alts = liftEnvReaderM do
+  eff' <- fold <$> forM alts \alt -> refreshAbs alt \b body -> do
+    EffTy eff _ <- blockEffTy body
+    return $ ignoreHoistFailure $ hoist b eff
+  return $ Case scrut alts (EffTy eff' resultTy)
+
 mkCatchException :: EnvReader m => CBlock n -> m n (Hof CoreIR n)
 mkCatchException body = do
-  resultTy <- makePreludeMaybeTy $ getType body
+  EffTy _ bodyTy <- blockEffTy body
+  resultTy <- makePreludeMaybeTy bodyTy
   return $ CatchException resultTy body
 
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
@@ -1177,7 +1134,7 @@ naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] ->
 naryTopAppInlined f xs = do
   TopFunBinding f' <- lookupEnv f
   case f' of
-    DexTopFun _ _ (LamExpr bs body) _ ->
+    DexTopFun _ (TopLam _ _ (LamExpr bs body)) _ ->
       applySubst (bs@@>(SubstVal<$>xs)) body >>= emitBlock
     _ -> naryTopApp f xs
 {-# INLINE naryTopAppInlined #-}
@@ -1237,7 +1194,7 @@ applyIxMethod dict method args = case dict of
   IxDictSpecialized _ d params -> do
     SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
-    LamExpr bs body <- return $ fs !! fromEnum method
+    TopLam _ _ (LamExpr bs body) <- return $ fs !! fromEnum method
     emitBlock =<< applySubst (bs @@> fmap SubstVal (params ++ args)) body
 
 unsafeFromOrdinal :: (SBuilder m, Emits n) => IxType SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
@@ -1551,15 +1508,10 @@ type ExprVisitorNoEmits2 m r = forall i o. ExprVisitorNoEmits (m i o) r i o
 visitLamNoEmits
   :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
   => LamExpr r i -> m i o (LamExpr r o)
-visitLamNoEmits (LamExpr bs body) =
-  visitBinders bs \bs' -> LamExpr bs' <$> visitBlockNoEmits body
-
-visitBlockNoEmits
-  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
-  => Block r i -> m i o (Block r o)
-visitBlockNoEmits (Block _ decls result) =
-  absToBlockInferringTypes =<< visitDeclsNoEmits decls \decls' -> do
-    Abs decls' <$> visitAtom result
+visitLamNoEmits (LamExpr bs (Abs decls result)) =
+  visitBinders bs \bs' -> LamExpr bs' <$>
+    visitDeclsNoEmits decls \decls' -> Abs decls' <$> do
+      visitAtom result
 
 visitDeclsNoEmits
   :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
@@ -1602,7 +1554,7 @@ visitLamEmits (LamExpr bs body) = visitBinders bs \bs' -> LamExpr bs' <$>
 visitBlockEmits
   :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
   => Block r i -> m i o (Atom r o)
-visitBlockEmits (Block _ decls result) = visitDeclsEmits decls $ visitAtom result
+visitBlockEmits (Abs decls result) = visitDeclsEmits decls $ visitAtom result
 
 visitDeclsEmits
   :: (ExprVisitorEmits2 m r, SubstReader AtomSubstVal m, EnvExtender2 m, IRRep r, Emits o)
