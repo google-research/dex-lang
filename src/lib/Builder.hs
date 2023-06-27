@@ -1134,8 +1134,7 @@ naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] ->
 naryTopAppInlined f xs = do
   TopFunBinding f' <- lookupEnv f
   case f' of
-    DexTopFun _ (TopLam _ _ (LamExpr bs body)) _ ->
-      applySubst (bs@@>(SubstVal<$>xs)) body >>= emitBlock
+    DexTopFun _ lam _ -> instantiate lam xs >>= emitBlock
     _ -> naryTopApp f xs
 {-# INLINE naryTopAppInlined #-}
 
@@ -1194,8 +1193,7 @@ applyIxMethod dict method args = case dict of
   IxDictSpecialized _ d params -> do
     SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
-    TopLam _ _ (LamExpr bs body) <- return $ fs !! fromEnum method
-    emitBlock =<< applySubst (bs @@> fmap SubstVal (params ++ args)) body
+    instantiate (fs !! fromEnum method) (params ++ args) >>= emitBlock
 
 unsafeFromOrdinal :: (SBuilder m, Emits n) => IxType SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
 unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [i]

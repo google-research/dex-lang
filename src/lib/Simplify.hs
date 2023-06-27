@@ -451,7 +451,7 @@ simplifyApp hint resultTy f xs =  case f of
   _ -> slow =<< simplifyAtomAndInline f
   where
     fast :: LamExpr CoreIR i' -> SimplifyM i' o (CAtom o)
-    fast (LamExpr bs body) = extendSubst (bs@@>(SubstVal<$>xs)) $ simplifyBlock body
+    fast lam = withInstantiated lam xs \body -> simplifyBlock body
 
     slow :: CAtom o -> SimplifyM i o (CAtom o)
     slow = \case
@@ -462,10 +462,10 @@ simplifyApp hint resultTy f xs =  case f of
           extendSubst (b@>SubstVal x) do
             xs' <- mapM sinkM xs
             simplifyApp hint (sink resultTy) body xs'
-      SimpInCore (LiftSimpFun _ (LamExpr bs body)) -> do
+      SimpInCore (LiftSimpFun _ lam) -> do
         xs' <- mapM toDataAtomIgnoreRecon xs
-        body' <- applySubst (bs@@>map SubstVal xs') body
-        liftSimpAtom resultTy =<< emitBlock body'
+        result <- instantiate lam xs' >>= emitBlock
+        liftSimpAtom resultTy result
       Var v -> do
         lookupAtomName (atomVarName v) >>= \case
           NoinlineFun _ _ -> simplifyTopFunApp v xs
@@ -549,10 +549,10 @@ simplifyTabApp f [] = return f
 simplifyTabApp f@(SimpInCore sic) xs = case sic of
   TabLam _ _ -> do
     case fromNaryTabLam (length xs) f of
-      Just (bsCount, Abs bs block) -> do
+      Just (bsCount, ab) -> do
         let (xsPref, xsRest) = splitAt bsCount xs
         xsPref' <- mapM toDataAtomIgnoreRecon xsPref
-        block' <- applySubst (bs@@>(SubstVal <$> xsPref')) block
+        block' <- instantiate ab xsPref'
         atom <- emitDecls block'
         simplifyTabApp atom xsRest
       Nothing -> error "should never happen"
@@ -788,10 +788,10 @@ applyDictMethod resultTy d i methodArgs = do
   cheapNormalize d >>= \case
     DictCon _ (InstanceDict instanceName instanceArgs) -> dropSubst do
       instanceArgs' <- mapM simplifyAtom instanceArgs
-      InstanceDef _ _ bsInstance _ body <- lookupInstanceDef instanceName
-      let InstanceBody _ methods = body
-      let method = methods !! i
-      extendSubst (bsInstance @@> (SubstVal <$> instanceArgs')) do
+      instanceDef <- lookupInstanceDef instanceName
+      withInstantiated instanceDef instanceArgs' \(PairE _ body) -> do
+        let InstanceBody _ methods = body
+        let method = methods !! i
         simplifyApp noHint resultTy method methodArgs
     DictCon _ (IxFin n) -> applyIxFinMethod (toEnum i) n methodArgs
     d' -> error $ "Not a simplified dict: " ++ pprint d'
@@ -975,7 +975,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
   CustomLinearize nImplicit nExplicit zeros fCustom <- return rule
   linearized <- withSimplifiedBinders runtimeBs \runtimeBs' runtimeArgs -> do
       Abs runtimeBs' <$> buildScoped do
-        ListE staticArgs' <- applySubst (runtimeBs @@> (SubstVal . sink <$> runtimeArgs)) staticArgs
+        ListE staticArgs' <- instantiate (sink $ Abs runtimeBs staticArgs) (sink <$> runtimeArgs)
         fCustom' <- sinkM fCustom
         resultTy <- typeOfApp (getType fCustom') staticArgs'
         pairResult <- dropSubst $ simplifyApp noHint resultTy fCustom' staticArgs'

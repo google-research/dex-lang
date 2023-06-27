@@ -239,6 +239,9 @@ class ToBindersAbs (e::E) (body::E) (r::IR) | e -> body, e -> r where
 instance ToBindersAbs CorePiType (EffTy CoreIR) CoreIR where
   toAbs (CorePiType _ _ bs effTy) = Abs bs effTy
 
+instance ToBindersAbs CoreLamExpr (Block CoreIR) CoreIR where
+  toAbs (CoreLamExpr _ lam) = toAbs lam
+
 instance ToBindersAbs (Abs (Nest (Binder r)) body) body r where
   toAbs = id
 
@@ -253,6 +256,18 @@ instance ToBindersAbs (TabPiType r) (Type r) r where
 
 instance ToBindersAbs (DepPairType r) (Type r) r where
   toAbs (DepPairType _ b rhsTy) = Abs (UnaryNest b) rhsTy
+
+instance ToBindersAbs InstanceDef (ListE CAtom `PairE` InstanceBody) CoreIR where
+  toAbs (InstanceDef _ _ bs params body) = Abs bs (ListE params `PairE` body)
+
+instance ToBindersAbs TyConDef DataConDefs CoreIR where
+  toAbs (TyConDef _ _ bs body) = Abs bs body
+
+instance ToBindersAbs ClassDef (Abs (Nest CBinder) (ListE CorePiType)) CoreIR where
+  toAbs (ClassDef _ _ _ _ bs scBs tys) = Abs bs (Abs scBs (ListE tys))
+
+instance ToBindersAbs (TopLam r) (Block r) r where
+  toAbs (TopLam _ _ lam) = toAbs lam
 
 -- === GenericOp class ===
 
@@ -1198,6 +1213,9 @@ instance AlphaHashableE TyConDef
 instance HasNameHint (TyConDef n) where
   getNameHint (TyConDef v _ _ _) = getNameHint v
 
+instance HasSourceName (TyConDef n) where
+  getSourceName (TyConDef v _ _ _) = v
+
 instance GenericE DataConDef where
   type RepE DataConDef = (LiftE (SourceName, [[Projection]]))
     `PairE` EmptyAbs (Nest CBinder) `PairE` Type CoreIR
@@ -1850,6 +1868,8 @@ instance AlphaHashableE ClassDef
 instance RenameE     ClassDef
 deriving instance Show (ClassDef n)
 deriving via WrapE ClassDef n instance Generic (ClassDef n)
+instance HasSourceName (ClassDef n) where
+  getSourceName = \case ClassDef name _ _ _ _ _ _ -> name
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
