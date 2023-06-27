@@ -231,6 +231,29 @@ type Dict = Atom CoreIR
 data NonDepNest r ann n l = NonDepNest (Nest (AtomNameBinder r) n l) [ann n]
                             deriving (Generic)
 
+-- === ToAtomAbs class ===
+
+class ToBindersAbs (e::E) (body::E) (r::IR) | e -> body, e -> r where
+  toAbs :: e n -> Abs (Nest (Binder r)) body n
+
+instance ToBindersAbs CorePiType (EffTy CoreIR) CoreIR where
+  toAbs (CorePiType _ _ bs effTy) = Abs bs effTy
+
+instance ToBindersAbs (Abs (Nest (Binder r)) body) body r where
+  toAbs = id
+
+instance ToBindersAbs (PiType r) (EffTy r) r where
+  toAbs (PiType bs effTy) = Abs bs effTy
+
+instance ToBindersAbs (LamExpr r) (Block r) r where
+  toAbs (LamExpr bs body) = Abs bs body
+
+instance ToBindersAbs (TabPiType r) (Type r) r where
+  toAbs (TabPiType _ b eltTy) = Abs (UnaryNest b) eltTy
+
+instance ToBindersAbs (DepPairType r) (Type r) r where
+  toAbs (DepPairType _ b rhsTy) = Abs (UnaryNest b) rhsTy
+
 -- === GenericOp class ===
 
 class IsPrimOp (e::IR->E) where

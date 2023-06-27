@@ -11,11 +11,11 @@ module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
   , normalizeProj, asNaryProj, normalizeNaryProj
   , depPairLeftTy, instantiateTyConDef
-  , dataDefRep, instantiateDepPairTy, unwrapNewtypeType, repValAtom
+  , dataDefRep, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiatePiTy, instantiateTabPiTy
+  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate
   , bindersToVars, bindersToAtoms)
   where
 
@@ -450,7 +450,7 @@ projType i ty x = case ty of
   DepPairTy t | i == 0 -> return $ depPairLeftTy t
   DepPairTy t | i == 1 -> do
     xFst <- normalizeProj (ProjectProduct 0) x
-    instantiateDepPairTy t xFst
+    instantiate t [xFst]
   _ -> error $ "Can't project type: " ++ pprint ty
 
 unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
@@ -470,13 +470,11 @@ instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
   applySubst (bs @@> (SubstVal <$> xs)) conDefs
 {-# INLINE instantiateTyConDef #-}
 
-instantiatePiTy :: (EnvReader m, IRRep r) => PiType r n -> [Atom r n] -> m n (EffTy r n)
-instantiatePiTy (PiType bs effTy) xs = do
-  applySubst (bs @@> (SubstVal <$> xs)) effTy
-
-instantiateTabPiTy :: (EnvReader m, IRRep r) => TabPiType r n -> Atom r n -> m n (Type r n)
-instantiateTabPiTy (TabPiType _ b resultTy) x = do
-  applySubst (b @> SubstVal x) resultTy
+instantiate
+  :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [Atom r n] -> m n (body n)
+instantiate e xs = case toAbs e of
+  Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -497,10 +495,6 @@ makeStructRepVal tyConName args = do
       [arg] -> return arg
       _ -> error "wrong number of args"
     _ -> return $ ProdVal args
-
-instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
-instantiateDepPairTy (DepPairType _ b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
-{-# INLINE instantiateDepPairTy #-}
 
 -- === traversable terms ===
 

@@ -214,7 +214,7 @@ instance IRRep r => HasType r (Atom r) where
     DepPair l r ty -> do
       ty' <- checkTypeE TyKind ty
       l'  <- checkTypeE (depPairLeftTy ty') l
-      rTy <- instantiateDepPairTy ty' l'
+      rTy <- instantiate ty' [l']
       r |: rTy
       return $ DepPairTy ty'
     Con con  -> typeCheckPrimCon con
@@ -236,7 +236,7 @@ instance IRRep r => HasType r (Atom r) where
         DepPairTy t | i == 1 -> do
           x' <- renameM x
           xFst <- normalizeProj (ProjectProduct 0) x'
-          instantiateDepPairTy t xFst
+          instantiate t [xFst]
         _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
     TypeAsAtom ty -> getTypeE ty
 
@@ -275,7 +275,7 @@ instance IRRep r => HasType r (Type r) where
         DepPairTy t | i == 1 -> do
           x' <- renameM x
           xFst <- normalizeProj (ProjectProduct 0) x'
-          instantiateDepPairTy t xFst
+          instantiate t [xFst]
         _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
 
 instance HasType CoreIR SimpInCore where

@@ -67,7 +67,7 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
     True -> do
       refreshAbs (Abs bs body) \bs' body' -> do
         xs <- bindersToAtoms bs'
-        EffTy _ resultTy <- instantiatePiTy (sink piTy) xs
+        EffTy _ resultTy <- instantiate (sink piTy) xs
         Abs b body'' <- lowerFullySequentialBlock resultTy body'
         return $ LamExpr (bs' >>> UnaryNest b) body''
     False -> do

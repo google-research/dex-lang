@@ -158,7 +158,7 @@ getRepType ty = go ty where
       IxType t' d' <- simplifyIxType ixTy
       withFreshBinder (getNameHint tabTy) t' \b' -> do
         x <- liftSimpAtom (sink $ ixTypeType ixTy) (Var $ binderVar b')
-        bodyTy' <- go =<< instantiateTabPiTy (sink tabTy) x
+        bodyTy' <- go =<< instantiate (sink tabTy) [x]
         return $ TabPi $ TabPiType d' b' bodyTy'
     NewtypeTyCon con -> do
       (_, ty') <- unwrapNewtypeType con

@@ -858,7 +858,7 @@ zeroAt ty = liftEmitBuilder $ go ty where
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
    TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
-     go =<< instantiateTabPiTy (sink tabPi) (Var i)
+     go =<< instantiate (sink tabPi) [Var i]
    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
