@@ -16,7 +16,7 @@ module CheapReduction
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
-  , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames)
+  , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst)
   where
 
 import Control.Applicative
@@ -466,6 +466,10 @@ instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataCo
 instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
   applySubst (bs @@> (SubstVal <$> xs)) conDefs
 {-# INLINE instantiateTyConDef #-}
+
+assumeConst
+  :: (IRRep r, HoistableE body, SinkableE body, ToBindersAbs e body r) => e n -> body n
+assumeConst e = case toAbs e of Abs bs body -> ignoreHoistFailure $ hoist bs body
 
 instantiate
   :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)

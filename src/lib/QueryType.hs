@@ -112,9 +112,9 @@ typeOfTopApp f xs = do
 
 typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Atom r n -> m n (Type r n)
 typeOfIndexRef (TC (RefType h s)) i = do
-  TabTy _ (b:>_) eltTy <- return s
-  eltTy' <- applyAbs (Abs b eltTy) (SubstVal i)
-  return $ TC $ RefType h eltTy'
+  TabPi tabPi <- return s
+  eltTy <- instantiate tabPi [i]
+  return $ TC $ RefType h eltTy
 typeOfIndexRef _ _ = error "expected a ref type"
 
 typeOfProjRef :: EnvReader m => Type r n -> Projection -> m n (Type r n)
