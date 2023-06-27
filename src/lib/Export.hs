@@ -175,8 +175,8 @@ parseTabTy = go []
       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
       TabTy d (b:>ixty) a -> do
         maybeN <- case IxType ixty d of
-          (IxType (NewtypeTyCon (Fin n)) _) -> return $ Just n
-          (IxType _ (IxDictRawFin n)) -> return $ Just n
+          IxType (NewtypeTyCon (Fin n)) _ -> return $ Just n
+          IxType _ (IxDictRawFin n) -> return $ Just n
           _ -> return Nothing
         maybeDim <- case maybeN of
           Just (Var v)    -> do

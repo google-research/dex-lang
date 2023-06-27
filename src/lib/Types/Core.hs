@@ -897,17 +897,13 @@ data LinearizationSpec (n::S) =
   LinearizationSpec (TopFunName n) [Active]
   deriving (Show, Generic)
 
--- === BindsOneAtomName ===
+-- === Binder utils ===
 
-class BindsOneName b (AtomNameC r) => BindsOneAtomName (r::IR) (b::B) | b -> r where
-  binderType :: b n l -> Type r n
-  binderVar  :: DExt n l => b n l -> AtomVar r l
+binderType :: Binder r n l -> Type r n
+binderType (_:>ty) = ty
 
-bindersTypes :: (IRRep r, Distinct l, ProvesExt b, BindsNames b, BindsOneAtomName r b)
-             => Nest b n l -> [Type r l]
-bindersTypes Empty = []
-bindersTypes n@(Nest b bs) = ty : bindersTypes bs
-  where ty = withExtEvidence n $ sink (binderType b)
+binderVar  :: (IRRep r, DExt n l) => Binder r n l -> AtomVar r l
+binderVar (b:>ty) = AtomVar (binderName b) (sink ty)
 
 nestToAtomVars :: (Distinct l, Ext n l, IRRep r)
                => Nest (Binder r) n l -> [AtomVar r l]
@@ -915,14 +911,6 @@ nestToAtomVars = \case
   Empty -> []
   Nest b bs -> withExtEvidence b $ withSubscopeDistinct bs $
     sink (binderVar b) : nestToAtomVars bs
-
-instance IRRep r => BindsOneAtomName r (BinderP (AtomNameC r) (Type r)) where
-  binderType (_ :> ty) = ty
-  binderVar (b:>t) = AtomVar (binderName b) (sink t)
-
-toBinderNest :: BindsOneAtomName r b => Nest b n l -> Nest (Binder r) n l
-toBinderNest Empty = Empty
-toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest bs)
 
 -- === ToBinding ===
 
@@ -956,14 +944,6 @@ instance IRRep r => ToBinding (IxType r) (AtomNameC r) where
 instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
-
--- === HasArgType ===
-
-class HasArgType (e::E) (r::IR) | e -> r where
-  argType :: e n -> Type r n
-
-instance HasArgType (TabPiType r) r where
-  argType (TabPiType _ (_:>ty) _) = ty
 
 -- === Pattern synonyms ===
 
@@ -2054,6 +2034,9 @@ instance IRRep r => AlphaEqE (TabPiType r) where
 
 instance IRRep r => AlphaHashableE (TabPiType r) where
   hashWithSaltE env salt (TabPiType _ b t) = hashWithSaltE env salt $ Abs b t
+
+instance HasNameHint (TabPiType r n) where
+  getNameHint (TabPiType _ b _) = getNameHint b
 
 instance IRRep r => SinkableE      (TabPiType r)
 instance IRRep r => HoistableE     (TabPiType r)

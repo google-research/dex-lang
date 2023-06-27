@@ -366,16 +366,16 @@ toImpRefOp refDest' m = do
           ans <- liftBuilderImp $ emitBlock (sink body')
           storeAtom accDest ans
         False -> case accTy of
-          TabTy d (b:>t) eltTy -> do
-            let ixTy = IxType t d
+          TabPi t -> do
+            let ixTy = tabIxType t
             n <- indexSetSizeImp ixTy
             emitLoop noHint Fwd n \i -> do
               idx <- unsafeFromOrdinalImp (sink ixTy) i
               xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
               yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
-              eltTy' <- applySubst (b@>SubstVal idx) eltTy
+              eltTy <- instantiateTabPiTy (sink t) idx
               ithDest <- indexDest (sink accDest) idx
-              liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
+              liftMonoidCombine ithDest eltTy (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
 
@@ -578,15 +578,15 @@ toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
         alphaEq xTy accTy >>= \case
           True -> storeAtom accDest x
           False -> case accTy of
-            TabTy d (b:>t) eltTy -> do
-              let ixTy = IxType t d
+            TabPi t -> do
+              let ixTy = tabIxType t
               n <- indexSetSizeImp ixTy
               emitLoop noHint Fwd n \i -> do
                 idx <- unsafeFromOrdinalImp (sink ixTy) i
                 x' <- sinkM x
-                eltTy' <- applySubst (b@>SubstVal idx) eltTy
+                eltTy <- instantiateTabPiTy (sink t) idx
                 ithDest <- indexDest (sink accDest) idx
-                liftMonoidEmpty ithDest eltTy' x'
+                liftMonoidEmpty ithDest eltTy x'
             _ -> error $ "Base monoid type mismatch: can't lift " ++
                   pprint xTy ++ " to " ++ pprint accTy
 
@@ -1002,11 +1002,11 @@ buildGarbageVal ty =
 -- === Operations on dests ===
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
-indexDest (Dest destValTy@(TabTy d (b:>t) eltTy) tree) i = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp (IxType t d) i
-  leafTys <- typeToTree destValTy
-  Dest eltTy' <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
+indexDest (Dest (TabPi tabTy) tree) i = do
+  eltTy <- instantiateTabPiTy tabTy i
+  ord <- ordinalImp (tabIxType tabTy) i
+  leafTys <- typeToTree $ TabPi tabTy
+  Dest eltTy <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
     BufferType ixStruct _ <- return $ getRefBufferType leafTy
     offset <- computeOffsetImp ixStruct ord
     impOffset ptr offset
@@ -1026,10 +1026,10 @@ indexRepValParam :: Emits n
   => SRepVal n -> SAtom n -> (SType n -> SType n)
   -> (IExpr n -> SubstImpM i n (IExpr n))
   -> SubstImpM i n (SRepVal n)
-indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i tyFunc func = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp (IxType t d) i
-  leafTys <- typeToTree tabTy
+indexRepValParam (RepVal (TabPi tabTy) vals) i tyFunc func = do
+  eltTy <- instantiateTabPiTy tabTy i
+  ord <- ordinalImp (tabIxType tabTy) i
+  leafTys <- typeToTree (TabPi tabTy)
   vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
     BufferPtr (BufferType ixStruct _) <- return $ getIExprInterpretation leafTy
     offset <- computeOffsetImp ixStruct ord
@@ -1041,7 +1041,7 @@ indexRepValParam (RepVal tabTy@(TabPi (TabPiType d (b:>t) eltTy)) vals) i tyFunc
       _                       -> func ptr'
   -- `func` may have changed the types of the `vals'`.  The caller must also
   -- supply `tyFunc` to reflect that change in the SType.
-  return $ RepVal (tyFunc eltTy') vals'
+  return $ RepVal (tyFunc eltTy) vals'
 indexRepValParam _ _ _ _ = error "expected table type"
 {-# INLINE indexRepValParam #-}
 

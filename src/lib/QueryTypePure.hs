@@ -119,8 +119,8 @@ instance IRRep r => HasType r (Con r) where
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
 getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove $ binderType b
+getSuperclassType bsAbove (Nest b@(_:>t) bs) = \case
+  0 -> ignoreHoistFailure $ hoist bsAbove t
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
 instance IRRep r => HasType r (Expr r) where
@@ -212,6 +212,9 @@ rawStrType = case newName "n" of
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
+
+tabIxType :: TabPiType r n -> IxType r n
+tabIxType (TabPiType d (_:>t) _) = IxType t d
 
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)

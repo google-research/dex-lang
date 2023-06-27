@@ -153,12 +153,12 @@ lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
 lowerTabCon maybeDest tabTy elems = do
-  tabTy'@(TabPi (TabPiType dict (_:>t) _)) <- substM tabTy
+  TabPi tabTy' <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest tabTy'
+    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest $ TabPi tabTy'
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
-    buildBlock $ unsafeFromOrdinal (sink $ IxType t dict) $ Var $ sink ord
+    buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ Var $ sink ord
   -- This is emitting a chain of RememberDest ops to force `dest` to be used
   -- linearly, and to force reads of the `Freeze dest'` result not to be
   -- reordered in front of the writes.

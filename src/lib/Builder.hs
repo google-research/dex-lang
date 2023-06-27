@@ -786,8 +786,8 @@ buildMap :: (Emits n, ScopableBuilder r m)
          -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
          -> m n (Atom r n)
 buildMap xs f = do
-  TabTy d (_:>t) _ <- return $ getType xs
-  buildFor noHint Fwd (IxType t d) \i ->
+  TabPi t <- return $ getType xs
+  buildFor noHint Fwd (tabIxType t) \i ->
     tabApp (sink xs) (Var i) >>= f
 
 unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
@@ -857,8 +857,8 @@ zeroAt ty = liftEmitBuilder $ go ty where
   go = \case
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
-   TabTy d (b:>t) bodyTy -> buildFor (getNameHint b) Fwd (IxType t d) \i ->
-     go =<< applySubst (b @> SubstVal (Var i)) bodyTy
+   TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
+     go =<< instantiateTabPiTy (sink tabPi) (Var i)
    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
@@ -902,8 +902,8 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getType x of
-    TabTy d (b:>t) _  ->
-      liftEmitBuilder $ buildFor (getNameHint b) Fwd (IxType t d) \i -> do
+    TabPi t ->
+      liftEmitBuilder $ buildFor (getNameHint t) Fwd (tabIxType t) \i -> do
         bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
     TC con -> case con of
       BaseType (Scalar _) -> emitOp $ BinOp FAdd x y

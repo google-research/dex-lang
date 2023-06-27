@@ -15,7 +15,7 @@ module CheapReduction
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiatePiTy
+  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiatePiTy, instantiateTabPiTy
   , bindersToVars, bindersToAtoms)
   where
 
@@ -473,6 +473,10 @@ instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
 instantiatePiTy :: (EnvReader m, IRRep r) => PiType r n -> [Atom r n] -> m n (EffTy r n)
 instantiatePiTy (PiType bs effTy) xs = do
   applySubst (bs @@> (SubstVal <$> xs)) effTy
+
+instantiateTabPiTy :: (EnvReader m, IRRep r) => TabPiType r n -> Atom r n -> m n (Type r n)
+instantiateTabPiTy (TabPiType _ b resultTy) x = do
+  applySubst (b @> SubstVal x) resultTy
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.

@@ -788,11 +788,7 @@ checkTabApp ty (i:rest) = do
   resultTy' <- applySubst (b@>SubstVal i') resultTy
   checkTabApp resultTy' rest
 
-checkArgTys
-  :: (Typer m r, SubstB AtomSubstVal b, BindsNames b, BindsOneAtomName r b, IRRep r)
-  => Nest b o o'
-  -> [Atom r o]
-  -> m i o ()
+checkArgTys :: (Typer m r, IRRep r) => Nest (Binder r) o o' -> [Atom r o] -> m i o ()
 checkArgTys Empty [] = return ()
 checkArgTys (Nest b bs) (x:xs) = do
   dropSubst $ x |: binderType b
@@ -930,15 +926,14 @@ checkedInstantiateTyConDef (TyConDef _ _ bs cons) (TyConParams _ xs) = do
   checkedApplyNaryAbs (Abs bs cons) xs
 
 checkedApplyNaryAbs
-  :: forall b r e o m
-  .  ( BindsOneAtomName r b, EnvReader m, Fallible1 m, SinkableE e
-     , SubstE AtomSubstVal e, IRRep r, SubstB AtomSubstVal b)
-  => Abs (Nest b) e o -> [Atom r o] -> m o (e o)
+  :: forall r e o m
+  .  ( EnvReader m, Fallible1 m, SinkableE e , SubstE AtomSubstVal e, IRRep r)
+  => Abs (Nest (Binder r)) e o -> [Atom r o] -> m o (e o)
 checkedApplyNaryAbs (Abs bsTop e) xsTop = do
   go (EmptyAbs bsTop) xsTop
   applySubst (bsTop@@>(SubstVal<$>xsTop)) e
  where
-   go :: EmptyAbs (Nest b) o -> [Atom r o] -> m o ()
+   go :: EmptyAbs (Nest (Binder r)) o -> [Atom r o] -> m o ()
    go (Abs Empty UnitE) [] = return ()
    go (Abs (Nest b bs) UnitE) (x:xs) = do
      checkAlphaEq (binderType b) (getType x)

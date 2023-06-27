@@ -153,12 +153,12 @@ getRepType ty = go ty where
         x <- liftSimpAtom (sink l) (Var $ binderVar b')
         r' <- go =<< applySubst (b@>SubstVal x) r
         return $ DepPairTy $ DepPairType expl b' r'
-    TabPi (TabPiType d (b:>t) bodyTy) -> do
-      let ixTy = IxType t d
+    TabPi tabTy -> do
+      let ixTy = tabIxType tabTy
       IxType t' d' <- simplifyIxType ixTy
-      withFreshBinder (getNameHint b) t' \b' -> do
+      withFreshBinder (getNameHint tabTy) t' \b' -> do
         x <- liftSimpAtom (sink $ ixTypeType ixTy) (Var $ binderVar b')
-        bodyTy' <- go =<< applySubst (b@>SubstVal x) bodyTy
+        bodyTy' <- go =<< instantiateTabPiTy (sink tabTy) x
         return $ TabPi $ TabPiType d' b' bodyTy'
     NewtypeTyCon con -> do
       (_, ty') <- unwrapNewtypeType con
@@ -1025,7 +1025,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
       return $ activeArg':rest
     buildTangentArgs _ _ _ = error "zip error"
 
-    fromNonDepNest :: (HoistableB b, BindsOneAtomName CoreIR b) => Nest b n l -> [CType n]
+    fromNonDepNest :: Nest CBinder n l -> [CType n]
     fromNonDepNest Empty = []
     fromNonDepNest (Nest b bs) =
       case ignoreHoistFailure $ hoist b (Abs bs UnitE) of
