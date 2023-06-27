@@ -602,22 +602,13 @@ buildBlock
   -> m n (Block r n)
 buildBlock = buildScoped
 
-coreLamExpr :: EnvReader m => AppExplicitness
-            -> Abs (Nest (WithExpl CBinder)) (PairE (EffectRow CoreIR) CBlock) n
-            -> m n (CoreLamExpr n)
-coreLamExpr appExpl ab = liftEnvReaderM do
-  refreshAbs ab \bs' (PairE effs' body') -> do
-    EffTy _ resultTy <- blockEffTy body'
-    let bs'' = fmapNest withoutExpl bs'
-    return $ CoreLamExpr (CorePiType appExpl bs' (EffTy effs' resultTy)) (LamExpr bs'' body')
-
 buildCoreLam
   :: ScopableBuilder CoreIR m
   => CorePiType n
   -> (forall l. (Emits l, DExt n l) => [CAtomVar l] -> m l (CAtom l))
   -> m n (CoreLamExpr n)
-buildCoreLam piTy@(CorePiType _ bs _) cont = do
-  lam <- buildLamExpr (EmptyAbs $ fmapNest withoutExpl bs) cont
+buildCoreLam piTy@(CorePiType _ _ bs _) cont = do
+  lam <- buildLamExpr (EmptyAbs bs) cont
   return $ CoreLamExpr piTy lam
 
 buildAbs
@@ -1083,7 +1074,7 @@ projectStructRef i x = do
 
 getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
 getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
-  TyConDef _ _ ~(StructFields fields) <- lookupTyCon tyConName
+  TyConDef _ _ _ ~(StructFields fields) <- lookupTyCon tyConName
   return case fields of
     [_] | i == 0    -> [UnwrapNewtype]
         | otherwise -> error "bad index"

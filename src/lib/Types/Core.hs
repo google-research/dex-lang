@@ -151,7 +151,8 @@ data TyConDef n where
   -- binder name is in UExpr and Env
   TyConDef
     :: SourceName
-    -> RolePiBinders n l
+    -> [RoleExpl]
+    -> Nest CBinder n l
     ->   DataConDefs l
     -> TyConDef n
 
@@ -213,10 +214,8 @@ data TabPiType (r::IR) (n::S) where
 data PiType (r::IR) (n::S) where
   PiType :: Nest (Binder r) n l -> EffTy r l -> PiType r n
 
-type CoreBinders = Nest (WithExpl CBinder)
-
 data CorePiType (n::S) where
-  CorePiType :: AppExplicitness -> CoreBinders n l -> EffTy CoreIR l -> CorePiType n
+  CorePiType :: AppExplicitness -> [Explicitness] -> Nest CBinder n l -> EffTy CoreIR l -> CorePiType n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
@@ -443,16 +442,15 @@ isSumCon = \case
 
 -- === type classes ===
 
-data RolePiBinder (n::S) (l::S) = RolePiBinder ParamRole (WithExpl CBinder n l)
-     deriving (Show, Generic)
-type RolePiBinders = Nest RolePiBinder
+type RoleExpl = (ParamRole, Explicitness)
 
 data ClassDef (n::S) where
   ClassDef
     :: SourceName            -- name of class
     -> [SourceName]          -- method source names
     -> [Maybe SourceName]    -- parameter source names
-    -> RolePiBinders n1 n2   -- parameters
+    -> [RoleExpl]            -- parameter info
+    -> Nest CBinder n1 n2   -- parameters
     ->   Nest CBinder n2 n3  -- superclasses
     ->   [CorePiType n3]     -- method types
     -> ClassDef n1
@@ -460,7 +458,8 @@ data ClassDef (n::S) where
 data InstanceDef (n::S) where
   InstanceDef
     :: ClassName n1
-    -> RolePiBinders n1 n2   -- parameters (types and dictionaries)
+    -> [RoleExpl]           -- parameter info
+    -> Nest CBinder n1 n2   -- parameters (types and dictionaries)
     ->   [CAtom n2]          -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
@@ -921,10 +920,6 @@ instance IRRep r => BindsOneAtomName r (BinderP (AtomNameC r) (Type r)) where
   binderType (_ :> ty) = ty
   binderVar (b:>t) = AtomVar (binderName b) (sink t)
 
-instance BindsOneAtomName CoreIR b => BindsOneAtomName CoreIR (WithExpl b) where
-  binderType (WithExpl _ b) = binderType b
-  binderVar  (WithExpl _ b) = binderVar b
-
 toBinderNest :: BindsOneAtomName r b => Nest b n l -> Nest (Binder r) n l
 toBinderNest Empty = Empty
 toBinderNest (Nest b bs) = Nest (asNameBinder b :> binderType b) (toBinderNest bs)
@@ -1183,10 +1178,10 @@ instance AlphaEqE       DataConDefs
 instance AlphaHashableE DataConDefs
 
 instance GenericE TyConDef where
-  type RepE TyConDef = PairE (LiftE SourceName) (Abs RolePiBinders DataConDefs)
-  fromE (TyConDef sourceName bs cons) = PairE (LiftE sourceName) (Abs bs cons)
+  type RepE TyConDef = PairE (LiftE (SourceName, [RoleExpl])) (Abs (Nest CBinder) DataConDefs)
+  fromE (TyConDef sourceName expls bs cons) = PairE (LiftE (sourceName, expls)) (Abs bs cons)
   {-# INLINE fromE #-}
-  toE   (PairE (LiftE sourceName) (Abs bs cons)) = TyConDef sourceName bs cons
+  toE   (PairE (LiftE (sourceName, expls)) (Abs bs cons)) = TyConDef sourceName expls bs cons
   {-# INLINE toE #-}
 
 deriving instance Show (TyConDef n)
@@ -1198,7 +1193,7 @@ instance AlphaEqE TyConDef
 instance AlphaHashableE TyConDef
 
 instance HasNameHint (TyConDef n) where
-  getNameHint (TyConDef v _ _) = getNameHint v
+  getNameHint (TyConDef v _ _ _) = getNameHint v
 
 instance GenericE DataConDef where
   type RepE DataConDef = (LiftE (SourceName, [[Projection]]))
@@ -1834,39 +1829,15 @@ instance (IRRep r, AlphaEqE       ann) => AlphaEqB       (NonDepNest r ann)
 instance (IRRep r, AlphaHashableE ann) => AlphaHashableB (NonDepNest r ann)
 deriving instance (Show (ann n)) => IRRep r => Show (NonDepNest r ann n l)
 
-instance GenericB RolePiBinder where
-  type RepB RolePiBinder = PairB (LiftB (LiftE ParamRole)) (WithExpl CBinder)
-  fromB (RolePiBinder role b) = PairB (LiftB (LiftE role)) b
-  toB   (PairB (LiftB (LiftE role)) b) = RolePiBinder role b
-
-instance BindsAtMostOneName RolePiBinder (AtomNameC CoreIR) where
-  RolePiBinder _ b @> x = b @> x
-  {-# INLINE (@>) #-}
-
-instance BindsOneName RolePiBinder (AtomNameC CoreIR) where
-  binderName (RolePiBinder _ b) = binderName b
-
-instance BindsOneAtomName CoreIR RolePiBinder where
-  binderType (RolePiBinder _ b) = binderType b
-  binderVar  (RolePiBinder _ b) = binderVar  b
-
-instance ProvesExt   RolePiBinder
-instance BindsNames  RolePiBinder
-instance SinkableB   RolePiBinder
-instance HoistableB  RolePiBinder
-instance RenameB     RolePiBinder
-instance AlphaEqB RolePiBinder
-instance AlphaHashableB RolePiBinder
-
 instance GenericE ClassDef where
   type RepE ClassDef =
-    LiftE (SourceName, [SourceName], [Maybe SourceName])
-     `PairE` Abs RolePiBinders (Abs (Nest CBinder) (ListE CorePiType))
-  fromE (ClassDef name names paramNames b scs tys) =
-    LiftE (name, names, paramNames) `PairE` Abs b (Abs scs (ListE tys))
+    LiftE (SourceName, [SourceName], [Maybe SourceName], [RoleExpl])
+     `PairE` Abs (Nest CBinder) (Abs (Nest CBinder) (ListE CorePiType))
+  fromE (ClassDef name names paramNames roleExpls b scs tys) =
+    LiftE (name, names, paramNames, roleExpls) `PairE` Abs b (Abs scs (ListE tys))
   {-# INLINE fromE #-}
-  toE (LiftE (name, names, paramNames) `PairE` Abs b (Abs scs (ListE tys))) =
-    ClassDef name names paramNames b scs tys
+  toE (LiftE (name, names, paramNames, roleExpls) `PairE` Abs b (Abs scs (ListE tys))) =
+    ClassDef name names paramNames roleExpls b scs tys
   {-# INLINE toE #-}
 
 instance SinkableE ClassDef
@@ -1879,11 +1850,11 @@ deriving via WrapE ClassDef n instance Generic (ClassDef n)
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
-    ClassName `PairE` Abs RolePiBinders (ListE CAtom `PairE` InstanceBody)
-  fromE (InstanceDef name bs params body) =
-    name `PairE` Abs bs (ListE params `PairE` body)
-  toE (name `PairE` Abs bs (ListE params `PairE` body)) =
-    InstanceDef name bs params body
+    ClassName `PairE` LiftE [RoleExpl] `PairE` Abs (Nest CBinder) (ListE CAtom `PairE` InstanceBody)
+  fromE (InstanceDef name expls bs params body) =
+    name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)
+  toE (name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)) =
+    InstanceDef name expls bs params body
 
 instance SinkableE InstanceDef
 instance HoistableE  InstanceDef
@@ -2015,10 +1986,10 @@ deriving instance Show (CoreLamExpr n)
 deriving via WrapE CoreLamExpr n instance Generic (CoreLamExpr n)
 
 instance GenericE CorePiType where
-  type RepE CorePiType = LiftE AppExplicitness `PairE` Abs CoreBinders (EffTy CoreIR)
-  fromE (CorePiType ex b effTy) = LiftE ex `PairE` Abs b effTy
+  type RepE CorePiType = LiftE (AppExplicitness, [Explicitness]) `PairE` Abs (Nest CBinder) (EffTy CoreIR)
+  fromE (CorePiType ex exs b effTy) = LiftE (ex, exs) `PairE` Abs b effTy
   {-# INLINE fromE #-}
-  toE   (LiftE ex `PairE` Abs b effTy) = CorePiType ex b effTy
+  toE   (LiftE (ex, exs) `PairE` Abs b effTy) = CorePiType ex exs b effTy
   {-# INLINE toE #-}
 
 instance SinkableE      CorePiType
@@ -2766,7 +2737,6 @@ instance Store (DictType n)
 instance Store (DictExpr n)
 instance Store (EffectDef n)
 instance Store (EffectOpDef n)
-instance Store (RolePiBinder n l)
 instance Store (EffectOpType n)
 instance Store (EffectOpIdx)
 instance Store (SynthCandidates n)

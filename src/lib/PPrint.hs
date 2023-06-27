@@ -296,26 +296,26 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl bs (EffTy eff resultTy)) =
-    prettyBindersWithExpl bs <+> p appExpl <> prettyEff <> p resultTy
+  pretty (CorePiType appExpl expls bs (EffTy eff resultTy)) =
+    prettyBindersWithExpl expls bs <+> p appExpl <> prettyEff <> p resultTy
     where
       prettyEff = case eff of
         Pure -> space
         _    -> space <> pretty eff <> space
 
 prettyBindersWithExpl :: forall b n l ann. PrettyB b
-  => Nest (WithExpl b) n l -> Doc ann
-prettyBindersWithExpl bs = do
-  let groups = groupByExpl $ fromNest bs
+  => [Explicitness] -> Nest b n l -> Doc ann
+prettyBindersWithExpl expls bs = do
+  let groups = groupByExpl $ zip expls (fromNest bs)
   let groups' = case groups of [] -> [(Explicit, [])]
                                _  -> groups
   mconcat [withExplParens expl $ commaSep bsGroup | (expl, bsGroup) <- groups']
 
-groupByExpl :: [WithExpl b UnsafeS UnsafeS] -> [(Explicitness, [b UnsafeS UnsafeS])]
+groupByExpl :: [(Explicitness, b UnsafeS UnsafeS)] -> [(Explicitness, [b UnsafeS UnsafeS])]
 groupByExpl [] = []
-groupByExpl (WithExpl expl b:bs) = do
-  let (matches, rest) = span (\(WithExpl expl' _) -> expl == expl') bs
-  let matches' = map withoutExpl matches
+groupByExpl ((expl, b):bs) = do
+  let (matches, rest) = span (\(expl', _) -> expl == expl') bs
+  let matches' = map snd matches
   (expl, b:matches') : groupByExpl rest
 
 withExplParens :: Explicitness -> Doc ann -> Doc ann
@@ -431,36 +431,29 @@ instance Pretty (TyConParams n) where
   pretty (TyConParams _ _) = undefined
 
 instance Pretty (TyConDef n) where
-  pretty (TyConDef name bs cons) =
-    "data" <+> p name <+> (p $ map (\(RolePiBinder _ b) -> b) $ fromNest bs) <> pretty cons
+  pretty (TyConDef name _ bs cons) = "data" <+> p name <+> p bs <> pretty cons
 
 instance Pretty (DataConDefs n) where
   pretty = undefined
-
-instance Pretty (RolePiBinder n l) where
-  pretty (RolePiBinder _ b) = pretty b
 
 instance Pretty (DataConDef n) where
   pretty (DataConDef name _ repTy _) =
     p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
-  pretty (ClassDef classSourceName methodNames _ params superclasses methodTys) =
+  pretty (ClassDef classSourceName methodNames _ _ params superclasses methodTys) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
     <> indented (
-         line <> "parameter binders:" <+> prettyRolePiBinders params <>
+         line <> "parameter binders:" <+> pretty params <>
          line <> "superclasses:" <+> pretty superclasses <>
          line <> "methods:" <+> pretty methodTys)
 
 instance Pretty ParamRole where
   pretty r = p (show r)
 
-prettyRolePiBinders :: RolePiBinders n l -> Doc ann
-prettyRolePiBinders = undefined
-
 instance Pretty (InstanceDef n) where
-  pretty (InstanceDef className bs params _) =
-    "Instance" <+> p className <+> prettyRolePiBinders bs <+> p params
+  pretty (InstanceDef className _ bs params _) =
+    "Instance" <+> p className <+> pretty bs <+> p params
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
@@ -629,14 +622,11 @@ instance Pretty FieldName' where
 instance Pretty (UAlt n) where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
 
-instance PrettyB b => Pretty (WithExpl b n l) where
-  pretty (WithExpl _ b) = pretty b
-
 instance Pretty (UTopDecl n l) where
-  pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
+  pretty (UDataDefDecl (UDataDef nm (_, bs) dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UStructDecl bTyCon (UStructDef nm bs fields defs)) =
+  pretty (UStructDecl bTyCon (UStructDef nm (_, bs) fields defs)) =
     "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines fields <> prettyLines defs)
   pretty (UInterface params methodTys interfaceName methodNames) =

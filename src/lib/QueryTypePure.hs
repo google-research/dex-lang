@@ -221,8 +221,8 @@ typesAsBinderNest types body = toConstBinderNest types body
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
   Abs bs (PairE eff' resultTy') -> do
-    let bs' = fmapNest (WithExpl Explicit) bs
-    CorePiType ExplicitApp bs' $ EffTy eff' resultTy'
+    let expls = nestToList (const Explicit) bs
+    CorePiType ExplicitApp expls bs $ EffTy eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
@@ -230,7 +230,7 @@ nonDepTabPiType (IxType t d) resultTy =
     Abs b resultTy' -> TabPiType d (b:>t) resultTy'
 
 corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
-corePiTypeToPiType (CorePiType _ bs effTy) = PiType (fmapNest withoutExpl bs) effTy
+corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy
 
 coreLamToTopLam :: CoreLamExpr n -> TopLam CoreIR n
 coreLamToTopLam (CoreLamExpr ty f) = TopLam False (corePiTypeToPiType ty) f

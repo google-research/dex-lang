@@ -30,8 +30,8 @@ liftJaxSimpM :: (EnvReader m) => JaxSimpM n n (e n) -> m n (e n)
 liftJaxSimpM act = liftBuilder $ runSubstReaderT idSubst $ runJaxSimpM act
 {-# INLINE liftJaxSimpM #-}
 
-simplifyClosedJaxpr :: ClosedJaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
-simplifyClosedJaxpr ClosedJaxpr{jaxpr, consts=[]} = simplifyJaxpr jaxpr
+simplifyClosedJaxpr :: ClosedJaxpr i -> JaxSimpM i o (TopLam SimpIR o)
+simplifyClosedJaxpr ClosedJaxpr{jaxpr, consts=[]} = asTopLam =<< simplifyJaxpr jaxpr
 simplifyClosedJaxpr _ = error "TODO Support consts"
 
 simplifyJaxpr :: Jaxpr i -> JaxSimpM i o (LamExpr SimpIR o)

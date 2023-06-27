@@ -20,6 +20,9 @@ import Subst
 import MTL1
 import Types.Primitives
 
+type RolePiBinder = WithAttrB RoleExpl CBinder
+type RolePiBinders = Nest RolePiBinder
+
 generalizeIxDict :: EnvReader m => Atom CoreIR n -> m n (Generalized CoreIR CAtom n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
@@ -31,12 +34,12 @@ generalizeIxDict dict = liftGeneralizerM do
 
 generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
 generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
-  PairE (CorePiType _ bs _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
-  ListE <$> go bs argsTop'
+  PairE (CorePiType _ expls bs _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
+  ListE <$> go (zipAttrs expls bs) argsTop'
   where
-    go :: Nest (WithExpl CBinder) i i' -> [Atom CoreIR n]
+    go :: Nest (WithAttrB Explicitness CBinder) i i' -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Nest (WithExpl expl b) bs) (arg:args) = do
+    go (Nest (WithAttrB expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
       arg' <- case (ty', expl) of
         (TyKind, _) -> liftSubstReaderT case arg of
@@ -172,7 +175,7 @@ traverseRoleBinders f allBinders allParams =
     go :: forall i i'. RolePiBinders i i' -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
     go Empty [] = return []
-    go (Nest (RolePiBinder role b) bs) (param:params) = do
+    go (Nest (WithAttrB (role, _) b) bs) (param:params) = do
       ty' <- substM $ binderType b
       Distinct <- getDistinct
       param' <- liftSubstReaderT $ f role ty' param
@@ -183,14 +186,14 @@ traverseRoleBinders f allBinders allParams =
 
 getDataDefRoleBinders :: EnvReader m => TyConName n -> m n (Abs RolePiBinders UnitE n)
 getDataDefRoleBinders def = do
-  TyConDef _ bs _ <- lookupTyCon def
-  return $ Abs bs UnitE
+  TyConDef _ attrs bs _ <- lookupTyCon def
+  return $ Abs (zipAttrs attrs bs) UnitE
 {-# INLINE getDataDefRoleBinders #-}
 
 getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs RolePiBinders UnitE n)
 getClassRoleBinders def = do
-  ClassDef _ _ _ bs _ _ <- lookupClassDef def
-  return $ Abs bs UnitE
+  ClassDef _ _ _ roleExpls bs _ _ <- lookupClassDef def
+  return $ Abs (zipAttrs roleExpls bs) UnitE
 {-# INLINE getClassRoleBinders #-}
 
 -- === instances ===

@@ -18,7 +18,6 @@ import Control.Monad.State.Strict
 import Name
 import IRVariants
 import Types.Core
-import Types.Primitives
 import Core
 import qualified RawName as R
 import Err
@@ -444,19 +443,15 @@ instance (BindsNames b, SubstB v b, SinkableV v)
 instance FromName v => SubstE v UnitE where
   substE _ UnitE = UnitE
 
+instance SubstB v b => SubstB v (WithAttrB a b) where
+  substB env (WithAttrB x b) cont =
+    substB env b \env' b' -> cont env' $ WithAttrB x b'
+
 instance (Traversable f, SubstE v e) => SubstE v (ComposeE f e) where
   substE env (ComposeE xs) = ComposeE $ fmap (substE env) xs
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (PairE e1 e2) where
   substE env (PairE x y) = PairE (substE env x) (substE env y)
-
-instance SubstB v b => SubstB v (WithExpl b) where
-  substB env (WithExpl x b) cont =
-    substB env b \env' b' -> cont env' $ WithExpl x b'
-
-instance (FromName v, SubstB v CBinder) => SubstB v RolePiBinder where
-  substB env (RolePiBinder role b) cont =
-    substB env b \env' b' -> cont env' $ RolePiBinder role b'
 
 instance (SubstE v e1, SubstE v e2) => SubstE v (EitherE e1 e2) where
   substE env (LeftE  x) = LeftE  $ substE env x

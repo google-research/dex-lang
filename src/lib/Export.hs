@@ -100,11 +100,11 @@ liftExportSigM cont = do
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
-corePiToExportSig cc (CorePiType _ tbs (EffTy effs resultTy)) = do
+corePiToExportSig cc (CorePiType _ expls tbs (EffTy effs resultTy)) = do
     case effs of
       Pure -> return ()
       _    -> throw TypeErr "Only pure functions can be exported"
-    goArgs cc Empty [] tbs resultTy
+    goArgs cc Empty [] (zipAttrs expls tbs) resultTy
 
 simpPiToExportSig :: CallingConvention
   -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
@@ -112,14 +112,14 @@ simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
   case effs of
     Pure -> return ()
     _    -> throw TypeErr "Only pure functions can be exported"
-  bs' <- return $ fmapNest (\b -> WithExpl Explicit b) bs
+  bs' <- return $ fmapNest (\b -> WithAttrB Explicit b) bs
   goArgs cc Empty [] bs' resultTy
 
 goArgs :: (IRRep r)
   => CallingConvention
   -> Nest ExportArg o o'
   -> [CAtomName o']
-  -> Nest (WithExpl (Binder r)) i i'
+  -> Nest (WithAttrB Explicitness (Binder r)) i i'
   -> Type r i'
   -> ExportSigM r i o' (ExportedSignature o)
 goArgs cc argSig argVs piBs piRes = case piBs of
@@ -128,7 +128,7 @@ goArgs cc argSig argVs piBs piRes = case piBs of
       StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
       XLACC      -> []
       _ -> error $ "calling convention not supported: " ++ show cc
-  Nest (WithExpl expl (b:>ty)) bs -> do
+  Nest (WithAttrB expl (b:>ty)) bs -> do
     ety <- toExportType ty
     withFreshBinder (getNameHint b) ety \(v:>_) ->
       extendSubst (b @> Rename (binderName v)) $ do

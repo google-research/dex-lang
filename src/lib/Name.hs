@@ -521,6 +521,20 @@ data PairB (b1::B) (b2::B) (n::S) (l::S) where
   PairB :: b1 n l' -> b2 l' l -> PairB b1 b2 n l
 deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
 
+data WithAttrB (a:: *) (b::B) (n::S) (l::S) =
+  WithAttrB {getAttr :: a , withoutAttr :: b n l }
+  deriving (Show, Generic)
+
+unzipAttrs :: Nest (WithAttrB a b) n l -> ([a], Nest b n l)
+unzipAttrs Empty = ([], Empty)
+unzipAttrs (Nest (WithAttrB a b) rest) = (a:as, Nest b bs)
+  where (as, bs) = unzipAttrs rest
+
+zipAttrs :: [a] -> Nest b n l -> Nest (WithAttrB a b) n l
+zipAttrs [] Empty = Empty
+zipAttrs (a:as) (Nest b bs) = Nest (WithAttrB a b) (zipAttrs as bs)
+zipAttrs _ _ = error "zip error"
+
 data EitherB (b1::B) (b2::B) (n::S) (l::S) =
    LeftB  (b1 n l)
  | RightB (b2 n l)
@@ -655,7 +669,7 @@ forNest :: Nest b  i i'
         -> Nest b' i i'
 forNest n f = fmapNest f n
 
-zipWithNest :: Nest b  n l -> [a]
+zipWithNest :: Nest b n l -> [a]
             -> (forall n1 n2. b n1 n2 -> a -> b' n1 n2)
             -> Nest b' n l
 zipWithNest Empty [] _ = Empty
@@ -3194,6 +3208,35 @@ instance Monad HoistExcept where
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
   {-# INLINE (>>=) #-}
+
+instance (Store a, Store (b n l)) => Store (WithAttrB a b n l)
+
+instance (Eq a, AlphaEqB b) => AlphaEqB (WithAttrB a b) where
+  withAlphaEqB (WithAttrB a1 b1) (WithAttrB a2 b2) cont = do
+    unless (a1 == a2) zipErr
+    withAlphaEqB b1 b2 cont
+
+instance (Hashable a, AlphaHashableB b) => AlphaHashableB (WithAttrB a b) where
+  hashWithSaltB env salt (WithAttrB expl b) = do
+    let h = hashWithSalt salt expl
+    hashWithSaltB env h b
+
+instance BindsNames b => ProvesExt  (WithAttrB a b) where
+instance BindsNames b => BindsNames (WithAttrB a b) where
+  toScopeFrag (WithAttrB _ b) = toScopeFrag b
+
+instance (SinkableB b) => SinkableB (WithAttrB a b) where
+  sinkingProofB fresh (WithAttrB a b) cont =
+    sinkingProofB fresh b \fresh' b' ->
+      cont fresh' (WithAttrB a b')
+
+instance (BindsNames b, RenameB b) => RenameB (WithAttrB a b) where
+  renameB env (WithAttrB a b) cont =
+      renameB env b \env' b' ->
+        cont env' $ WithAttrB a b'
+
+instance HoistableB b => HoistableB (WithAttrB a b) where
+  freeVarsB (WithAttrB _ b) = freeVarsB b
 
 -- === extra data structures ===
 

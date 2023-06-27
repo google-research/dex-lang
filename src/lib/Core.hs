@@ -218,16 +218,12 @@ instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
 
-instance BindsEnv b => BindsEnv (WithExpl b) where
-  toEnvFrag (WithExpl _ b) = toEnvFrag b
-  {-# INLINE toEnvFrag #-}
-
-instance BindsEnv RolePiBinder where
-  toEnvFrag (RolePiBinder _ b) = toEnvFrag b
-  {-# INLINE toEnvFrag #-}
-
 instance BindsEnv (RecSubstFrag Binding) where
   toEnvFrag frag = EnvFrag frag
+
+instance BindsEnv b => BindsEnv (WithAttrB a b) where
+  toEnvFrag (WithAttrB _ b) = toEnvFrag b
+  {-# INLINE toEnvFrag #-}
 
 instance (BindsEnv b1, BindsEnv b2)
          => (BindsEnv (PairB b1 b2)) where

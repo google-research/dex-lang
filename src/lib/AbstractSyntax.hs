@@ -110,23 +110,23 @@ topDecl = dropSrc topDecl' where
   topDecl' (CSDecl ann d) = ULocalDecl <$> decl ann (WithSrc emptySrcPosCtx d)
   topDecl' (CData name tyConParams givens constructors) = do
     tyConParams' <- aExplicitParams tyConParams
-    givens' <- toNest <$> fromMaybeM givens [] aGivens
+    givens' <- aOptGivens givens
     constructors' <- forM constructors \(v, ps) -> do
       ps' <- toNest <$> mapM tyOptBinder ps
       return (v, ps')
     return $ UDataDefDecl
-      (UDataDef name (givens' >>> tyConParams') $
+      (UDataDef name (catUOptAnnExplBinders givens' tyConParams') $
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
   topDecl' (CStruct name params givens fields defs) = do
     params' <- aExplicitParams params
-    givens' <- toNest <$> fromMaybeM givens [] aGivens
+    givens' <- aOptGivens givens
     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
     methods <- forM defs \(ann, d) -> do
       (methodName, lam) <- aDef d
       return (ann, methodName, Abs (UBindSource emptySrcPosCtx "self") lam)
-    return $ UStructDecl (fromString name) (UStructDef name (givens' >>> params') fields' methods)
+    return $ UStructDecl (fromString name) (UStructDef name (catUOptAnnExplBinders givens' params') fields' methods)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
@@ -153,7 +153,7 @@ aInstanceDef :: CInstanceDef -> SyntaxM (UTopDecl VoidS VoidS)
 aInstanceDef (CInstanceDef clName args givens methods instNameAndParams) = do
   let clName' = fromString clName
   args' <- mapM expr args
-  givens' <- toNest <$> fromMaybeM givens [] aGivens
+  givens' <- aOptGivens givens
   methods' <- catMaybes <$> mapM aMethod methods
   case instNameAndParams of
     Nothing -> return $ UInstance clName' givens' args' methods' NothingB ImplicitApp
@@ -162,7 +162,7 @@ aInstanceDef (CInstanceDef clName args givens methods instNameAndParams) = do
       case optParams of
         Just params -> do
           params' <- aExplicitParams params
-          return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
+          return $ UInstance clName' (catUOptAnnExplBinders givens' params') args' methods' instName' ExplicitApp
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
 
 aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
@@ -173,19 +173,27 @@ aDef (CDef name params optRhs optGivens body) = do
     effs <- fromMaybeM optEffs UPure aEffects
     resultTy' <- expr resultTy
     return (expl, Just effs, Just resultTy')
-  implicitParams <- toNest <$> fromMaybeM optGivens [] aGivens
-  let allParams = implicitParams >>> explicitParams
+  implicitParams <- aOptGivens optGivens
+  let allParams = catUOptAnnExplBinders implicitParams explicitParams
   body' <- block body
   return (name, ULamExpr allParams expl effs resultTy body')
+
+catUOptAnnExplBinders :: UOptAnnExplBinders n l -> UOptAnnExplBinders l l' -> UOptAnnExplBinders n l'
+catUOptAnnExplBinders (expls, bs) (expls', bs') = (expls <> expls', bs >>> bs')
 
 stripParens :: Group -> Group
 stripParens (WithSrc _ (CParens [g])) = stripParens g
 stripParens g = g
 
-aExplicitParams :: ExplicitParams -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
+aExplicitParams :: ExplicitParams -> SyntaxM ([Explicitness], Nest UOptAnnBinder VoidS VoidS)
 aExplicitParams gs = generalBinders DataParam Explicit gs
 
-aGivens :: GivenClause -> SyntaxM [WithExpl UOptAnnBinder VoidS VoidS]
+aOptGivens :: Maybe GivenClause -> SyntaxM (UOptAnnExplBinders VoidS VoidS)
+aOptGivens optGivens = do
+  (expls, implicitParams) <- unzip <$> fromMaybeM optGivens [] aGivens
+  return (expls, toNest implicitParams)
+
+aGivens :: GivenClause -> SyntaxM [(Explicitness, UOptAnnBinder VoidS VoidS)]
 aGivens (implicits, optConstraints) = do
   implicits' <- mapM (generalBinder DataParam (Inferred Nothing Unify)) implicits
   constraints <- fromMaybeM optConstraints [] \gs -> do
@@ -194,23 +202,24 @@ aGivens (implicits, optConstraints) = do
 
 generalBinders
   :: ParamStyle -> Explicitness -> [Group]
-  -> SyntaxM (Nest (WithExpl UOptAnnBinder) VoidS VoidS)
-generalBinders paramStyle expl params = toNest . concat <$>
-  forM params \case
+  -> SyntaxM ([Explicitness], Nest UOptAnnBinder VoidS VoidS)
+generalBinders paramStyle expl params = do
+  (expls, bs) <- unzip . concat <$> forM params \case
     WithSrc _ (CGivens gs) -> aGivens gs
     p -> (:[]) <$> generalBinder paramStyle expl p
+  return (expls, toNest bs)
 
 generalBinder :: ParamStyle -> Explicitness -> Group
-              -> SyntaxM (WithExpl UOptAnnBinder VoidS VoidS)
+              -> SyntaxM (Explicitness, UOptAnnBinder VoidS VoidS)
 generalBinder paramStyle expl g = case expl of
-  Inferred _ (Synth _) -> WithExpl expl <$> tyOptBinder g
+  Inferred _ (Synth _) -> (expl,) <$> tyOptBinder g
   Inferred _ Unify -> do
     b <- binderOptTy g
     expl' <- return case b of
       UAnnBinder (UBindSource _ s) _ _ -> Inferred (Just s) Unify
       _ -> expl
-    return $ WithExpl expl' b
-  Explicit -> WithExpl expl <$> case paramStyle of
+    return (expl', b)
+  Explicit -> (expl,) <$> case paramStyle of
     TypeParam -> tyOptBinder g
     DataParam -> binderOptTy g
 
@@ -347,7 +356,7 @@ aMethod (WithSrc src d) = Just . WithSrcE src <$> addSrcContext src case d of
     (name, lam) <- aDef def
     return $ UMethodDef (fromString name) lam
   CLet (WithSrc _ (CIdentifier name)) rhs -> do
-    rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
+    rhs' <- ULamExpr ([], Empty) ImplicitApp Nothing Nothing <$> block rhs
     return $ UMethodDef (fromString name) rhs'
   _ -> throw SyntaxErr "Unexpected method definition. Expected `def` or `x = ...`."
 
@@ -368,10 +377,10 @@ blockDecls [WithSrc src d] = addSrcContext src case d of
   CExpr g -> (Empty,) <$> expr g
   _ -> throw SyntaxErr "Block must end in expression"
 blockDecls (WithSrc pos (CBind b rhs):ds) = do
-  WithExpl _ b' <- generalBinder DataParam Explicit b
+  (_, b') <- generalBinder DataParam Explicit b
   rhs' <- asExpr <$> block rhs
   body <- block $ IndentedBlock ds
-  let lam = ULam $ ULamExpr (UnaryNest (WithExpl Explicit b')) ExplicitApp Nothing Nothing body
+  let lam = ULam $ ULamExpr ([Explicit], UnaryNest b') ExplicitApp Nothing Nothing body
   return (Empty, WithSrcE pos $ extendAppRight rhs' (ns lam))
 blockDecls (d:ds) = do
   d' <- decl PlainLet d

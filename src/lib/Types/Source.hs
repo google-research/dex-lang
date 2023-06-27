@@ -274,9 +274,12 @@ data FieldName' =
  | FieldNum  Int
   deriving (Show, Eq, Ord)
 
+type UAnnExplBinders req n l = ([Explicitness], Nest (UAnnBinder req) n l)
+type UOptAnnExplBinders n l = UAnnExplBinders AnnOptional n l
+
 data ULamExpr (n::S) where
   ULamExpr
-    :: Nest (WithExpl UOptAnnBinder) n l  -- args
+    :: UOptAnnExplBinders n l  -- args
     -> AppExplicitness
     -> Maybe (UEffectRow l)               -- optional effect
     -> Maybe (UType l)                    -- optional result type
@@ -284,7 +287,7 @@ data ULamExpr (n::S) where
     -> ULamExpr n
 
 data UPiExpr (n::S) where
-  UPiExpr :: Nest (WithExpl UOptAnnBinder) n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
+  UPiExpr :: UOptAnnExplBinders n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UOptAnnBinder n l -> UType l -> UTabPiExpr n
@@ -297,14 +300,14 @@ type UConDef (n::S) (l::S) = (SourceName, Nest UReqAnnBinder n l)
 data UDataDef (n::S) where
   UDataDef
     :: SourceName  -- source name for pretty printing
-    -> Nest (WithExpl UOptAnnBinder) n l
+    -> UOptAnnExplBinders n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
 data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
-    -> Nest (WithExpl UOptAnnBinder) n l
+    -> UOptAnnExplBinders n l
     -> [(SourceName, UType l)]                    -- named payloads
     -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
@@ -324,14 +327,14 @@ data UTopDecl (n::S) (l::S) where
     -> UStructDef l                        -- actual definition
     -> UTopDecl n l
   UInterface
-    :: Nest (WithExpl UOptAnnBinder) n p   -- parameter binders
+    :: UOptAnnExplBinders n p   -- parameter binders
     ->   [UType p]                         -- method types
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UTopDecl n l
   UInstance
     :: SourceNameOr (Name ClassNameC) n  -- class name
-    -> Nest (WithExpl UOptAnnBinder) n l'
+    -> UOptAnnExplBinders n l'
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
@@ -346,7 +349,7 @@ data UTopDecl (n::S) (l::S) where
   UHandlerDecl
     :: SourceNameOr (Name EffectNameC) n  -- effect name
     -> UAtomBinder n b                    -- body type argument
-    -> Nest (WithExpl UOptAnnBinder) b l' -- type args
+    -> UOptAnnExplBinders b l'            -- type args
     ->   UEffectRow l'                    -- returning effect
     ->   UType l'                         -- returning type
     ->   [UEffectOpDef l']                -- operation definitions

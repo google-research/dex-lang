@@ -240,7 +240,7 @@ cheapReduceDictExpr resultTy d = case d of
     cheapReduceE child >>= \case
       DictCon _ (InstanceDict instanceName args) -> dropSubst do
         args' <- mapM cheapReduceE args
-        InstanceDef _ bs _ body <- lookupInstanceDef instanceName
+        InstanceDef _ _ bs _ body <- lookupInstanceDef instanceName
         let InstanceBody superclasses _ = body
         applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
       child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
@@ -285,7 +285,7 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
       cheapReduceE dict >>= \case
         DictCon _ (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
-          InstanceDef _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
+          InstanceDef _ _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
           let method = methods !! i
           extendSubst (bs@@>(SubstVal <$> args')) do
             method' <- cheapReduceE method
@@ -466,7 +466,7 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
-instantiateTyConDef (TyConDef _ bs conDefs) (TyConParams _ xs) = do
+instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
   applySubst (bs @@> (SubstVal <$> xs)) conDefs
 {-# INLINE instantiateTyConDef #-}
 
@@ -487,7 +487,7 @@ dataDefRep (StructFields fields) = case map snd fields of
 
 makeStructRepVal :: (Fallible1 m, EnvReader m) => TyConName n -> [CAtom n] -> m n (CAtom n)
 makeStructRepVal tyConName args = do
-  TyConDef _ _ (StructFields fields) <- lookupTyCon tyConName
+  TyConDef _ _ _ (StructFields fields) <- lookupTyCon tyConName
   case fields of
     [_] -> case args of
       [arg] -> return arg
@@ -725,11 +725,9 @@ instance VisitGeneric CoreLamExpr CoreIR where
   visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam
 
 instance VisitGeneric CorePiType CoreIR where
-  visitGeneric (CorePiType app bsExpl effty) = do
-    let (expls, bs) = unzipExpls bsExpl
+  visitGeneric (CorePiType app expl bs effty) = do
     PiType bs' effty' <- visitGeneric $ PiType bs effty
-    let bsExpl' = zipExpls expls bs'
-    return $ CorePiType app bsExpl' effty'
+    return $ CorePiType app expl bs' effty'
 
 instance IRRep r => VisitGeneric (TabPiType r) r where
   visitGeneric (TabPiType d b eltTy) = do

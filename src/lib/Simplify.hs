@@ -618,8 +618,8 @@ simplifyDictMethod absDict@(Abs bs dict) method = do
 ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
-    CorePiType _ methodArgs (EffTy _ resultTy) <- getMethodType dict (fromEnum method)
-    let allBs = extraArgBs >>> fmapNest withoutExpl methodArgs
+    CorePiType _ _ methodArgs (EffTy _ resultTy) <- getMethodType dict (fromEnum method)
+    let allBs = extraArgBs >>> methodArgs
     return $ PiType allBs (EffTy Pure resultTy)
 
 -- TODO: do we even need this, or is it just a glorified `SubstM`?
@@ -788,7 +788,7 @@ applyDictMethod resultTy d i methodArgs = do
   cheapNormalize d >>= \case
     DictCon _ (InstanceDict instanceName instanceArgs) -> dropSubst do
       instanceArgs' <- mapM simplifyAtom instanceArgs
-      InstanceDef _ bsInstance _ body <- lookupInstanceDef instanceName
+      InstanceDef _ _ bsInstance _ body <- lookupInstanceDef instanceName
       let InstanceBody _ methods = body
       let method = methods !! i
       extendSubst (bsInstance @@> (SubstVal <$> instanceArgs')) do
@@ -921,7 +921,7 @@ preludeNothingVal ty = do
 preludeMaybeNewtypeCon :: EnvReader m => CType n -> m n (NewtypeCon n)
 preludeMaybeNewtypeCon ty = do
   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  TyConDef sn _ _ <- lookupTyCon tyConName
+  TyConDef sn _ _ _ <- lookupTyCon tyConName
   let params = TyConParams [Explicit] [Type ty]
   return $ UserADTData sn tyConName params
 
@@ -997,7 +997,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
           -- a custom linearization defined for a function on ADTs will
           -- not work.
           fLin' <- sinkM fLin
-          Pi (CorePiType _ bs _) <- return $ getType fLin'
+          Pi (CorePiType _ _ bs _) <- return $ getType fLin'
           let tangentCoreTys = fromNonDepNest bs
           tangentArgs' <- zipWithM liftSimpAtom tangentCoreTys tangentArgs
           resultTyTangent <- typeOfApp (getType fLin') tangentArgs'
