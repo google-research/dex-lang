@@ -626,31 +626,14 @@ buildAbs hint binding cont = do
         return $ Abs b body
 {-# INLINE buildAbs #-}
 
-varsAsBinderNest :: (EnvReader m, IRRep r) => [AtomVar r n] -> m n (EmptyAbs (Nest (Binder r)) n)
-varsAsBinderNest [] = return $ EmptyAbs Empty
-varsAsBinderNest (v:vs) = do
-  rest <- varsAsBinderNest vs
-  ty <- return $ getType v
-  let AtomVar v' _ = v
-  Abs b (Abs bs UnitE) <- return $ abstractFreeVar v' rest
-  return $ EmptyAbs (Nest (b:>ty) bs)
-
 typesFromNonDepBinderNest
   :: (EnvReader m, Fallible1 m, IRRep r)
   => Nest (Binder r) n l -> m n [Type r n]
 typesFromNonDepBinderNest Empty = return []
-typesFromNonDepBinderNest (Nest (b:>ty) rest) = do
-  Abs rest' UnitE <- return $ ignoreHoistFailure $ hoist b (Abs rest UnitE)
+typesFromNonDepBinderNest (Nest b rest) = do
+  Abs rest' UnitE <- return $ assumeConst $ Abs (UnaryNest b) $ Abs rest UnitE
   tys <- typesFromNonDepBinderNest rest'
-  return $ ty : tys
-
-singletonBinderNest
-  :: (EnvReader m, IRRep r)
-  => NameHint -> ann n
-  -> m n (EmptyAbs (Nest (BinderP (AtomNameC r) ann)) n)
-singletonBinderNest hint ann = do
-  Abs b _ <- return $ newName hint
-  return $ EmptyAbs (Nest (b:>ann) Empty)
+  return $ binderType b : tys
 
 buildUnaryLamExpr
   :: (ScopableBuilder r m)
@@ -858,7 +841,7 @@ zeroAt ty = liftEmitBuilder $ go ty where
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
    TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
-     go =<< instantiateTabPiTy (sink tabPi) (Var i)
+     go =<< instantiate (sink tabPi) [Var i]
    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
@@ -1134,8 +1117,7 @@ naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] ->
 naryTopAppInlined f xs = do
   TopFunBinding f' <- lookupEnv f
   case f' of
-    DexTopFun _ (TopLam _ _ (LamExpr bs body)) _ ->
-      applySubst (bs@@>(SubstVal<$>xs)) body >>= emitBlock
+    DexTopFun _ lam _ -> instantiate lam xs >>= emitBlock
     _ -> naryTopApp f xs
 {-# INLINE naryTopAppInlined #-}
 
@@ -1194,8 +1176,7 @@ applyIxMethod dict method args = case dict of
   IxDictSpecialized _ d params -> do
     SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
-    TopLam _ _ (LamExpr bs body) <- return $ fs !! fromEnum method
-    emitBlock =<< applySubst (bs @@> fmap SubstVal (params ++ args)) body
+    instantiate (fs !! fromEnum method) (params ++ args) >>= emitBlock
 
 unsafeFromOrdinal :: (SBuilder m, Emits n) => IxType SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
 unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [i]
@@ -1262,10 +1243,10 @@ isJustE x = liftEmitBuilder $
 -- Monoid a -> (n=>a) -> a
 reduceE :: (Emits n, Builder r m) => BaseMonoid r n -> Atom r n -> m n (Atom r n)
 reduceE monoid xs = liftEmitBuilder do
-  TabTy d (n:>ty) a <- return $ getType xs
-  a' <- return $ ignoreHoistFailure $ hoist n a
-  getSnd =<< emitRunWriter noHint a' monoid \_ ref ->
-    buildFor noHint Fwd (sink $ IxType ty d) \i -> do
+  TabPi tabPi <- return $ getType xs
+  let a = assumeConst tabPi
+  getSnd =<< emitRunWriter noHint a monoid \_ ref ->
+    buildFor noHint Fwd (sink $ tabIxType tabPi) \i -> do
       x <- tabApp (sink xs) (Var i)
       emitExpr $ PrimOp $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
 
@@ -1278,11 +1259,10 @@ andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
 mapE :: (Emits n, ScopableBuilder r m)
      => (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
      -> Atom r n -> m n (Atom r n)
-mapE f xs = do
-  TabTy d (n:>ty) _ <- return $ getType xs
-  buildFor (getNameHint n) Fwd (IxType ty d) \i -> do
-    x <- tabApp (sink xs) (Var i)
-    f x
+mapE cont xs = do
+  TabPi tabPi <- return $ getType xs
+  buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i -> do
+    tabApp (sink xs) (Var i) >>= cont
 
 -- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
 catMaybesE :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)

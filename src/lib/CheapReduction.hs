@@ -11,12 +11,12 @@ module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
   , normalizeProj, asNaryProj, normalizeNaryProj
   , depPairLeftTy, instantiateTyConDef
-  , dataDefRep, instantiateDepPairTy, unwrapNewtypeType, repValAtom
+  , dataDefRep, unwrapNewtypeType, repValAtom
   , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
-  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiatePiTy, instantiateTabPiTy
-  , bindersToVars, bindersToAtoms)
+  , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
+  , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst)
   where
 
 import Control.Applicative
@@ -242,7 +242,7 @@ cheapReduceDictExpr resultTy d = case d of
         args' <- mapM cheapReduceE args
         InstanceDef _ _ bs _ body <- lookupInstanceDef instanceName
         let InstanceBody superclasses _ = body
-        applySubst (bs@@>(SubstVal <$> args')) (superclasses !! superclassIx)
+        instantiate (Abs bs (superclasses !! superclassIx)) args'
       child' -> return $ DictCon resultTy $ SuperclassProj child' superclassIx
   InstantiatedGiven f xs ->
     reduceApp <|> justSubst
@@ -285,19 +285,16 @@ instance IRRep r => CheaplyReducibleE r (Expr r) (Atom r) where
       cheapReduceE dict >>= \case
         DictCon _ (InstanceDict instanceName args) -> dropSubst do
           args' <- mapM cheapReduceE args
-          InstanceDef _ _ bs _ (InstanceBody _ methods) <- lookupInstanceDef instanceName
-          let method = methods !! i
-          extendSubst (bs@@>(SubstVal <$> args')) do
-            method' <- cheapReduceE method
+          def <- lookupInstanceDef instanceName
+          withInstantiated def args' \(PairE _ (InstanceBody _ methods)) -> do
+            method' <- cheapReduceE $ methods !! i
             cheapReduceApp method' explicitArgs'
         _ -> empty
     _ -> empty
 
 cheapReduceApp :: CAtom o -> [CAtom o] -> CheapReducerM CoreIR i o (CAtom o)
 cheapReduceApp f xs = case f of
-  Lam (CoreLamExpr _ (LamExpr bs body)) -> do
-    let subst = bs @@> fmap SubstVal xs
-    dropSubst $ extendSubst subst $ cheapReduceE body
+  Lam lam -> dropSubst $ withInstantiated lam xs \body -> cheapReduceE body
   _ -> empty
 
 instance IRRep r => CheaplyReducibleE r (IxType r) (IxType r) where
@@ -450,7 +447,7 @@ projType i ty x = case ty of
   DepPairTy t | i == 0 -> return $ depPairLeftTy t
   DepPairTy t | i == 1 -> do
     xFst <- normalizeProj (ProjectProduct 0) x
-    instantiateDepPairTy t xFst
+    instantiate t [xFst]
   _ -> error $ "Can't project type: " ++ pprint ty
 
 unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
@@ -470,13 +467,39 @@ instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
   applySubst (bs @@> (SubstVal <$> xs)) conDefs
 {-# INLINE instantiateTyConDef #-}
 
-instantiatePiTy :: (EnvReader m, IRRep r) => PiType r n -> [Atom r n] -> m n (EffTy r n)
-instantiatePiTy (PiType bs effTy) xs = do
-  applySubst (bs @@> (SubstVal <$> xs)) effTy
+assumeConst
+  :: (IRRep r, HoistableE body, SinkableE body, ToBindersAbs e body r) => e n -> body n
+assumeConst e = case toAbs e of Abs bs body -> ignoreHoistFailure $ hoist bs body
 
-instantiateTabPiTy :: (EnvReader m, IRRep r) => TabPiType r n -> Atom r n -> m n (Type r n)
-instantiateTabPiTy (TabPiType _ b resultTy) x = do
-  applySubst (b @> SubstVal x) resultTy
+instantiate
+  :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [Atom r n] -> m n (body n)
+instantiate e xs = case toAbs e of
+  Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
+
+-- "lazy" subst-extending version of `instantiate`
+withInstantiated
+  :: (SubstReader AtomSubstVal m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
+  => e i -> [Atom r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiated e xs cont = case toAbs e of
+  Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
+
+instantiateNames
+  :: (EnvReader m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [AtomName r n] -> m n (body n)
+instantiateNames e vs = case toAbs e of
+  Abs bs body -> applyRename (bs @@> vs) body
+
+-- "lazy" subst-extending version of `instantiateNames`
+withInstantiatedNames
+  :: (SubstReader Name m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
+  => e i -> [AtomName r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiatedNames e vs cont = case toAbs e of
+  Abs bs body -> extendRenamer (bs @@> vs) $ cont body
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -497,10 +520,6 @@ makeStructRepVal tyConName args = do
       [arg] -> return arg
       _ -> error "wrong number of args"
     _ -> return $ ProdVal args
-
-instantiateDepPairTy :: (IRRep r, EnvReader m) => DepPairType r n -> Atom r n -> m n (Type r n)
-instantiateDepPairTy (DepPairType _ b rhsTy) x = applyAbs (Abs b rhsTy) (SubstVal x)
-{-# INLINE instantiateDepPairTy #-}
 
 -- === traversable terms ===
 

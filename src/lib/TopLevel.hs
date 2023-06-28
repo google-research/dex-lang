@@ -555,8 +555,7 @@ evalBlock typed = do
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
       TopLam _ destTy _ <- return lOpt
-      PiType bs (EffTy _ resultTy') <- return $ piTypeWithoutDest destTy
-      let resultTy = ignoreHoistFailure $ hoist bs resultTy'
+      EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}

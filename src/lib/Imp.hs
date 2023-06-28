@@ -373,7 +373,7 @@ toImpRefOp refDest' m = do
               idx <- unsafeFromOrdinalImp (sink ixTy) i
               xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
               yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
-              eltTy <- instantiateTabPiTy (sink t) idx
+              eltTy <- instantiate (sink t) [idx]
               ithDest <- indexDest (sink accDest) idx
               liftMonoidCombine ithDest eltTy (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
@@ -584,7 +584,7 @@ toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
               emitLoop noHint Fwd n \i -> do
                 idx <- unsafeFromOrdinalImp (sink ixTy) i
                 x' <- sinkM x
-                eltTy <- instantiateTabPiTy (sink t) idx
+                eltTy <- instantiate (sink t) [idx]
                 ithDest <- indexDest (sink accDest) idx
                 liftMonoidEmpty ithDest eltTy x'
             _ -> error $ "Base monoid type mismatch: can't lift " ++
@@ -1003,7 +1003,7 @@ buildGarbageVal ty =
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
 indexDest (Dest (TabPi tabTy) tree) i = do
-  eltTy <- instantiateTabPiTy tabTy i
+  eltTy <- instantiate tabTy [i]
   ord <- ordinalImp (tabIxType tabTy) i
   leafTys <- typeToTree $ TabPi tabTy
   Dest eltTy <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
@@ -1027,7 +1027,7 @@ indexRepValParam :: Emits n
   -> (IExpr n -> SubstImpM i n (IExpr n))
   -> SubstImpM i n (SRepVal n)
 indexRepValParam (RepVal (TabPi tabTy) vals) i tyFunc func = do
-  eltTy <- instantiateTabPiTy tabTy i
+  eltTy <- instantiate tabTy [i]
   ord <- ordinalImp (tabIxType tabTy) i
   leafTys <- typeToTree (TabPi tabTy)
   vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do

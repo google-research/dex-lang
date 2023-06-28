@@ -887,7 +887,7 @@ checkSigma hint expr sTy = confuseGHC >>= \_ -> case sTy of
       -- TODO: check for the case that we're given some of the implicit dependent pair args explicitly
       lhsVal <- Var <$> freshInferenceName MiscInfVar lhsTy
       -- TODO: make an InfVarDesc case for dep pair instantiation
-      rhsTy <- instantiateDepPairTy depPairTy lhsVal
+      rhsTy <- instantiate depPairTy [lhsVal]
       rhsVal <- checkSigma noHint expr rhsTy
       return $ DepPair lhsVal rhsVal depPairTy
     _ -> fallback
@@ -996,7 +996,7 @@ checkOrInferRho hint uExprWithSrc@(WithSrcE pos expr) reqTy = do
     case reqTy of
       Check (DepPairTy ty@(DepPairType _ (_ :> lhsTy) _)) -> do
         lhs' <- checkSigmaDependent noHint lhs lhsTy
-        rhsTy <- instantiateDepPairTy ty lhs'
+        rhsTy <- instantiate ty [lhs']
         rhs' <- checkSigma noHint rhs rhsTy
         return $ DepPair lhs' rhs' ty
       _ -> throw TypeErr $ "Can't infer the type of a dependent pair; please annotate it"
