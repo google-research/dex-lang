@@ -453,10 +453,11 @@ runLocalInfererM
   => (forall l. (EmitsInf l, DExt n l) => InfererM i l (e l))
   -> InfererM i n (Abs InfOutFrag e n)
 runLocalInfererM cont = InfererM $ SubstReaderT $ ReaderT \env -> do
-  locallyMutableInplaceT do
+  locallyMutableInplaceT (do
     Distinct <- getDistinct
     EmitsInf <- fabricateEmitsInfEvidenceM
-    runSubstReaderT (sink env) $ runInfererM' cont
+    runSubstReaderT (sink env) $ runInfererM' cont)
+    (\d e -> return $ Abs d e)
 {-# INLINE runLocalInfererM #-}
 
 initInfOutMap :: Env n -> InfOutMap n
@@ -517,21 +518,23 @@ formatAmbiguousVarErr infVar ty = \case
 instance InfBuilder (InfererM i) where
   buildDeclsInfUnzonked cont = do
     InfererM $ SubstReaderT $ ReaderT \env -> do
-      Abs frag result <- locallyMutableInplaceT do
+      Abs frag result <- locallyMutableInplaceT (do
         Emits    <- fabricateEmitsEvidenceM
         EmitsInf <- fabricateEmitsInfEvidenceM
-        runSubstReaderT (sink env) $ runInfererM' cont
+        runSubstReaderT (sink env) $ runInfererM' cont)
+        (\d e -> return $ Abs d e)
       extendInplaceT =<< hoistThroughDecls frag result
 
   buildAbsInf hint expl ty cont = do
     ab <- InfererM $ SubstReaderT $ ReaderT \env -> do
       extendInplaceT =<< withFreshBinder hint ty \bWithTy@(b:>_) -> do
-        ab <- locallyMutableInplaceT do
+        ab <- locallyMutableInplaceT (do
           v <- sinkM $ binderVar bWithTy
           extendInplaceTLocal (extendSynthCandidatesInf expl $ atomVarName v) do
             EmitsInf <- fabricateEmitsInfEvidenceM
             -- zonking is needed so that dceInfFrag works properly
-            runSubstReaderT (sink env) (runInfererM' $ cont v >>= zonk)
+            runSubstReaderT (sink env) (runInfererM' $ cont v >>= zonk))
+          (\d e -> return $ Abs d e)
         ab' <- dceInfFrag ab
         refreshAbs ab' \infFrag result -> do
           case exchangeBs $ PairB b infFrag of
@@ -2330,10 +2333,10 @@ instance Solver SolverM where
   {-# INLINE emitSolver #-}
 
   solveLocal cont = SolverM do
-    results <- locallyMutableInplaceT do
+    results <- locallyMutableInplaceT (do
       Distinct <- getDistinct
       EmitsInf <- fabricateEmitsInfEvidenceM
-      runSolverM' cont
+      runSolverM' cont) (\d e -> return $ Abs d e)
     Abs (SolverOutFrag unsolvedInfNames _) result <- return results
     case unsolvedInfNames of
       REmpty -> return result

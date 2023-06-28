@@ -43,10 +43,17 @@ class (EnvReader m, EnvExtender m, Fallible1 m, IRRep r)
   rawEmitDecl :: Emits n => NameHint -> LetAnn -> Expr r n -> m n (AtomVar r n)
 
 class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
-  buildScoped
+  buildScopedAndThen
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
-    -> m n (Abs (Nest (Decl r)) e n)
+    -> (forall l.           DExt n l  => Nest (Decl r) n l -> e l -> m l a)
+    -> m n a
+
+buildScoped
+ :: (ScopableBuilder r m, SinkableE e)
+ => (forall l. (Emits l, DExt n l) => m l (e l))
+ -> m n (Abs (Nest (Decl r)) e n)
+buildScoped cont = buildScopedAndThen cont \decls body -> return $ Abs decls body
 
 type SBuilder = Builder SimpIR
 type CBuilder = Builder CoreIR
@@ -208,21 +215,26 @@ instance ( RenameB frag, HoistableB frag, OutFrag frag
          , ExtOutMap Env frag, Fallible m, IRRep r)
          => ScopableBuilder r (DoubleBuilderT r frag m) where
   -- TODO: find a safe API for DoubleInplaceT sufficient to implement this
-  buildScoped cont = DoubleBuilderT do
-    (ans, decls) <- UnsafeMakeDoubleInplaceT $
+  buildScopedAndThen cont1 cont2  = DoubleBuilderT do
+    (ans, topDecls) <- UnsafeMakeDoubleInplaceT $
       StateT \s@(topScope, _) -> do
-        Abs rdecls (PairE e (LiftE topDecls)) <-
-          locallyMutableInplaceT do
-            (e, (_, topDecls)) <- flip runStateT (topScope, emptyOutFrag) $
-               unsafeRunDoubleInplaceT $ runDoubleBuilderT' do
-                 Emits <- fabricateEmitsEvidenceM
-                 Distinct <- getDistinct
-                 cont
-            return $ PairE e $ LiftE topDecls
-        return ((Abs (unRNest rdecls) e, topDecls), s)
-    unsafeEmitDoubleInplaceTHoisted decls
+          (ans, topDecls) <- locallyMutableInplaceT
+            (do (e, s') <- flip runStateT (topScope, emptyOutFrag) $
+                   unsafeRunDoubleInplaceT $ runDoubleBuilderT' do
+                     Emits <- fabricateEmitsEvidenceM
+                     Distinct <- getDistinct
+                     cont1
+                return $ PairE e $ LiftE s')
+            (\rdecls (PairE e (LiftE s')) -> do
+                (ans, (_, topDecls)) <- flip runStateT s' $
+                   unsafeRunDoubleInplaceT $ runDoubleBuilderT' do
+                     Distinct <- getDistinct
+                     cont2 (unRNest rdecls) e
+                return (ans, topDecls))
+          return ((ans, topDecls), s)
+    unsafeEmitDoubleInplaceTHoisted topDecls
     return ans
-  {-# INLINE buildScoped #-}
+  {-# INLINE buildScopedAndThen #-}
 
 -- TODO: derive this instead
 instance ( IRRep r, RenameB frag, HoistableB frag, OutFrag frag
@@ -385,7 +397,7 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
   {-# INLINE emitNamelessEnv #-}
 
   localTopBuilder cont = TopBuilderT $
-    locallyMutableInplaceT $ runTopBuilderT' cont
+    locallyMutableInplaceT (runTopBuilderT' cont) (\d e -> return $ Abs d e)
   {-# INLINE localTopBuilder #-}
 
 instance (SinkableV v, TopBuilder m) => TopBuilder (SubstReaderT v m i) where
@@ -470,14 +482,12 @@ liftEmitBuilder cont = do
   emitDecls $ Abs (unsafeCoerceB $ unRNest decls) result
 
 instance (IRRep r, Fallible m) => ScopableBuilder r (BuilderT r m) where
-  buildScoped cont = BuilderT do
-    Abs rdecls e <- locallyMutableInplaceT $
-      runBuilderT' do
-        Emits <- fabricateEmitsEvidenceM
-        Distinct <- getDistinct
-        cont
-    return $ Abs (unRNest rdecls) e
-  {-# INLINE buildScoped #-}
+  buildScopedAndThen cont1 cont2 = BuilderT $ locallyMutableInplaceT
+    (runBuilderT' do
+       Emits <- fabricateEmitsEvidenceM
+       cont1 )
+    (\rdecls e -> runBuilderT' $ cont2 (unRNest rdecls) e)
+  {-# INLINE buildScopedAndThen #-}
 
 newtype BuilderDeclEmission (r::IR) (n::S) (l::S) = BuilderDeclEmission (Decl r n l)
 instance IRRep r => ExtOutMap Env (BuilderDeclEmission r) where
@@ -504,21 +514,25 @@ instance (IRRep r, Fallible m) => EnvExtender (BuilderT r m) where
   {-# INLINE refreshAbs #-}
 
 instance (SinkableV v, ScopableBuilder r m) => ScopableBuilder r (SubstReaderT v m i) where
-  buildScoped cont = SubstReaderT $ ReaderT \env ->
-    buildScoped $
-      runReaderT (runSubstReaderT' cont) (sink env)
-  {-# INLINE buildScoped #-}
+  buildScopedAndThen cont1 cont2 = SubstReaderT $ ReaderT \env ->
+    buildScopedAndThen
+      (runReaderT (runSubstReaderT' cont1) (sink env))
+      (\d e -> runReaderT (runSubstReaderT' $ cont2 d e) (sink env))
+  {-# INLINE buildScopedAndThen #-}
 
 instance (SinkableV v, Builder r m) => Builder r (SubstReaderT v m i) where
   rawEmitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
   {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (OutReaderT e m) where
-  buildScoped cont = OutReaderT $ ReaderT \env ->
-    buildScoped do
-      env' <- sinkM env
-      runReaderT (runOutReaderT' cont) env'
-  {-# INLINE buildScoped #-}
+  buildScopedAndThen cont1 cont2 = OutReaderT $ ReaderT \env ->
+    buildScopedAndThen
+      (do env' <- sinkM env
+          runReaderT (runOutReaderT' cont1) env')
+      (\d e -> do
+          env' <- sinkM env
+          runReaderT (runOutReaderT' $ cont2 d e) env')
+  {-# INLINE buildScopedAndThen #-}
 
 instance (SinkableE e, Builder r m) => Builder r (OutReaderT e m) where
   rawEmitDecl hint ann expr =
@@ -526,11 +540,15 @@ instance (SinkableE e, Builder r m) => Builder r (OutReaderT e m) where
   {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (ReaderT1 e m) where
-  buildScoped cont = ReaderT1 $ ReaderT \env ->
-    buildScoped do
-      env' <- sinkM env
-      runReaderT (runReaderT1' cont) env'
-  {-# INLINE buildScoped #-}
+  buildScopedAndThen cont1 cont2 = ReaderT1 $ ReaderT \env ->
+    buildScopedAndThen
+      (do env' <- sinkM env
+          runReaderT (runReaderT1' cont1) env')
+      (\d e -> do
+          env' <- sinkM env
+          runReaderT (runReaderT1' $ cont2 d e) env')
+
+  {-# INLINE buildScopedAndThen #-}
 
 instance (SinkableE e, Builder r m) => Builder r (ReaderT1 e m) where
   rawEmitDecl hint ann expr =
@@ -542,11 +560,14 @@ instance (SinkableE e, HoistableState e, Builder r m) => Builder r (StateT1 e m)
   {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, HoistableState e, ScopableBuilder r m) => ScopableBuilder r (StateT1 e m) where
-  buildScoped cont = StateT1 \s -> do
-    Abs decls (e `PairE` s') <- buildScoped $ liftM toPairE $ runStateT1 cont =<< sinkM s
-    let s'' = hoistState s decls s'
-    return (Abs decls e, s'')
-  {-# INLINE buildScoped #-}
+  buildScopedAndThen cont1 cont2 = StateT1 \s1 -> do
+    buildScopedAndThen
+       (liftM toPairE $ runStateT1 cont1 =<< sinkM s1)
+       (\decls (PairE e s2) -> do
+           let s3 = hoistState s1 decls s2
+           (ans, s4) <- runStateT1 (cont2 decls e) (sink s3)
+           let s5 = hoistState s3 decls s4
+           return (ans, s5))
 
 instance (SinkableE e, HoistableState e, HoistingTopBuilder frag m)
   => HoistingTopBuilder frag (StateT1 e m) where

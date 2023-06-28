@@ -230,14 +230,15 @@ instance ImpBuilder ImpM where
 
   buildScopedImp cont = ImpM $ WriterT1 \w ->
     liftM (, w) do
-      Abs rdecls e <- locallyMutableInplaceT do
-        Emits <- fabricateEmitsEvidenceM
-        (result, (ListE ptrs)) <- runWriterT1 $ runImpM' do
-           Distinct <- getDistinct
-           cont
-        _ <- runWriterT1 $ runImpM' do
-          forM ptrs \ptr -> emitStatement $ Free ptr
-        return result
+      Abs rdecls e <- locallyMutableInplaceT
+        (do Emits <- fabricateEmitsEvidenceM
+            (result, (ListE ptrs)) <- runWriterT1 $ runImpM' do
+               Distinct <- getDistinct
+               cont
+            _ <- runWriterT1 $ runImpM' do
+              forM ptrs \ptr -> emitStatement $ Free ptr
+            return result)
+        (\d e -> return $ Abs d e)
       return $ Abs (unRNest rdecls) e
 
   extendAllocsToFree ptr = ImpM $ tell $ ListE [ptr]

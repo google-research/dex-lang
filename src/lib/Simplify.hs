@@ -236,12 +236,7 @@ liftDoubleBuilderToSimplifyM :: DoubleBuilder SimpIR o a -> SimplifyM i o a
 liftDoubleBuilderToSimplifyM cont = SimplifyM $ liftSubstReaderT cont
 
 instance Simplifier SimplifyM
-
--- TODO: figure out why we can't derive this one (here and elsewhere)
-instance ScopableBuilder SimpIR (SimplifyM i) where
-  buildScoped cont = SimplifyM $ SubstReaderT $ ReaderT \env ->
-    buildScoped $ runSubstReaderT (sink env) (runSimplifyM' cont)
-  {-# INLINE buildScoped #-}
+deriving instance ScopableBuilder SimpIR (SimplifyM i)
 
 -- === Top-level API ===
 

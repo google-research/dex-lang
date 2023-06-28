@@ -1465,15 +1465,18 @@ freshExtendSubInplaceT hint build =
 {-# INLINE freshExtendSubInplaceT #-}
 
 locallyMutableInplaceT
-  :: forall m b d n e.
+  :: forall m b d n e a.
      (ExtOutMap b d, OutFrag d, Monad m, SinkableE e)
-  => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
-  -> InplaceT b d m n (Abs d e n)
-locallyMutableInplaceT cont = do
+  => (forall l. (Mut l, DExt n l) =>                 InplaceT b d m l (e l))
+  -> (forall l.         DExt n l  => d n l -> e l -> InplaceT b d m l a)
+  -> InplaceT b d m n a
+locallyMutableInplaceT cont1 cont2 = do
   UnsafeMakeInplaceT \env decls -> do
-    (e, d, _) <- withFabricatedMut @n $
-      unsafeRunInplaceT cont env emptyOutFrag
-    return (Abs (unsafeCoerceB d) e, decls, unsafeCoerceE env)
+    (e, d, env') <- withFabricatedMut @n $
+      unsafeRunInplaceT cont1 env emptyOutFrag
+    withFabricatedDistinct @UnsafeS do
+      (ans, _, _) <- unsafeRunInplaceT (cont2 @n (unsafeCoerceB d) (unsafeCoerceE e)) (unsafeCoerceE env') emptyOutFrag
+      return (ans, decls, unsafeCoerceE env)
 {-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
