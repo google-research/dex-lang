@@ -648,8 +648,7 @@ buildAbs hint binding cont = do
 {-# INLINE buildAbs #-}
 
 typesFromNonDepBinderNest
-  :: (EnvReader m, Fallible1 m, IRRep r)
-  => Nest (Binder r) n l -> m n [Type r n]
+  :: (EnvReader m, Fallible1 m, IRRep r) => Binders r n l -> m n [Type r n]
 typesFromNonDepBinderNest Empty = return []
 typesFromNonDepBinderNest (Nest b rest) = do
   Abs rest' UnitE <- return $ assumeConst $ Abs (UnaryNest b) $ Abs rest UnitE
@@ -662,7 +661,7 @@ buildUnaryLamExpr
   -> (forall l. (Emits l, Distinct l, DExt n l) => AtomVar r l -> m l (Atom r l))
   -> m n (LamExpr r n)
 buildUnaryLamExpr hint ty cont = do
-  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest b)
+  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest (BD b Empty))
   buildLamExpr bs \[v] -> cont v
 
 buildBinaryLamExpr
@@ -672,21 +671,22 @@ buildBinaryLamExpr
   -> m n (LamExpr r n)
 buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
   bs <- withFreshBinder h1 t1 \b1 -> withFreshBinder h2 (sink t2) \b2 ->
-    return $ EmptyAbs $ BinaryNest b1 b2
+    return $ EmptyAbs $ BinaryNest (BD b1 Empty) (BD b2 Empty)
   buildLamExpr bs \[v1, v2] -> cont v1 v2
 
 buildLamExpr
   :: ScopableBuilder r m
-  => (EmptyAbs (Nest (Binder r)) n)
+  => (EmptyAbs (Binders r) n)
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomVar r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildLamExpr (Abs bs UnitE) cont = case bs of
-  Empty -> LamExpr Empty <$> buildBlock (cont [])
-  Nest b rest -> do
-    Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
-      rest' <- applySubst (b@>SubstVal (Var v)) $ EmptyAbs rest
-      buildLamExpr rest' \vs -> cont $ sink v : vs
-    return $ LamExpr (Nest b' bs') body'
+buildLamExpr (Abs bs UnitE) cont = undefined
+-- buildLamExpr (Abs bs UnitE) cont = case bs of
+--   Empty -> LamExpr Empty <$> buildBlock (cont [])
+--   Nest b rest -> do
+--     Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
+--       rest' <- applySubst (b@>SubstVal (Var v)) $ EmptyAbs rest
+--       buildLamExpr rest' \vs -> cont $ sink v : vs
+--     return $ LamExpr (Nest (BD b' Empty) bs') body'
 
 buildTopLamFromPi
   :: ScopableBuilder r m
@@ -719,11 +719,12 @@ buildCaseAlts scrut indexedAltBody = do
       indexedAltBody i b
 
 injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
-injectAltResult sumTys con (Abs b body) = liftBuilder do
-  buildAlt (binderType b) \v -> do
-    originalResult <- emitBlock =<< applySubst (b@>SubstVal (Var v)) body
-    (dataResult, nonDataResult) <- fromPair originalResult
-    return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
+injectAltResult sumTys con (Abs b body) = undefined
+-- injectAltResult sumTys con (Abs b body) = liftBuilder do
+--   buildAlt (binderType b) \v -> do
+--     originalResult <- emitBlock =<< applySubst (b@>SubstVal (Var v)) body
+--     (dataResult, nonDataResult) <- fromPair originalResult
+--     return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
@@ -731,21 +732,22 @@ buildCase' :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n
   -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
   -> m n (Expr r n)
-buildCase' scrut resultTy indexedAltBody = do
-  case trySelectBranch scrut of
-    Just (i, arg) -> do
-      Distinct <- getDistinct
-      Atom <$> indexedAltBody i (sink arg)
-    Nothing -> do
-      scrutTy <- return $ getType scrut
-      altBinderTys <- caseAltsBinderTys scrutTy
-      (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
-        (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
-          blk <- buildBlock $ indexedAltBody i $ Var $ sink x
-          EffTy eff _ <- blockEffTy blk
-          return $ blk `PairE` eff
-        return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
-      return $ Case scrut alts $ EffTy (mconcat effs) resultTy
+buildCase' scrut resultTy indexedAltBody = undefined
+-- buildCase' scrut resultTy indexedAltBody = do
+--   case trySelectBranch scrut of
+--     Just (i, arg) -> do
+--       Distinct <- getDistinct
+--       Atom <$> indexedAltBody i (sink arg)
+--     Nothing -> do
+--       scrutTy <- return $ getType scrut
+--       altBinderTys <- caseAltsBinderTys scrutTy
+--       (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
+--         (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
+--           blk <- buildBlock $ indexedAltBody i $ Var $ sink x
+--           EffTy eff _ <- blockEffTy blk
+--           return $ blk `PairE` eff
+--         return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
+--       return $ Case scrut alts $ EffTy (mconcat effs) resultTy
 
 buildCase :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n
@@ -765,7 +767,7 @@ buildEffLam hint ty body = do
       let ref = binderVar b
       hVar <- sinkM $ binderVar h
       body' <- buildBlock $ body (sink hVar) $ sink ref
-      return $ LamExpr (BinaryNest h b) body'
+      return $ LamExpr (BinaryNest (BD h Empty) (BD b Empty)) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder r m)
@@ -776,7 +778,7 @@ buildForAnn hint ann (IxType iTy ixDict) body = do
   lam <- withFreshBinder hint iTy \b -> do
     let v = binderVar b
     body' <- buildBlock $ body $ sink v
-    return $ LamExpr (UnaryNest b) body'
+    return $ UnaryLamExpr b body'
   emitHof $ For ann (IxType iTy ixDict) lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
@@ -1423,27 +1425,28 @@ prependTelescopeTy x = \case
 buildTelescopeVal
   :: (EnvReader m, IRRep r) => [Atom r n]
   -> TelescopeType (AtomNameC r) (Type r) n -> m n (Atom r n)
-buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
-  go :: (EnvReader m, IRRep r)
-     => TelescopeType (AtomNameC r) (Type r) n ->  [Atom r n]
-     -> m n (Atom r n, [Atom r n])
-  go ty rest = case ty of
-    ProdTelescope tys -> do
-      (xs, rest') <- return $ splitAt (length tys) rest
-      return (ProdVal xs, rest')
-    DepTelescope ty1 (Abs b ty2) -> do
-      (x1, ~(xDep : rest')) <- go ty1 rest
-      ty2' <- applySubst (b@>SubstVal xDep) ty2
-      (x2, rest'') <- go ty2' rest'
-      let depPairTy = DepPairType ExplicitDepPair b (telescopeTypeType ty2)
-      return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
+buildTelescopeVal xsTop tyTop = undefined
+-- buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
+--   go :: (EnvReader m, IRRep r)
+--      => TelescopeType (AtomNameC r) (Type r) n ->  [Atom r n]
+--      -> m n (Atom r n, [Atom r n])
+--   go ty rest = case ty of
+--     ProdTelescope tys -> do
+--       (xs, rest') <- return $ splitAt (length tys) rest
+--       return (ProdVal xs, rest')
+--     DepTelescope ty1 (Abs b ty2) -> do
+--       (x1, ~(xDep : rest')) <- go ty1 rest
+--       ty2' <- applySubst (b@>SubstVal xDep) ty2
+--       (x2, rest'') <- go ty2' rest'
+--       let depPairTy = DepPairType ExplicitDepPair b (telescopeTypeType ty2)
+--       return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
 
 telescopeTypeType :: TelescopeType (AtomNameC r) (Type r) n -> Type r n
 telescopeTypeType (ProdTelescope tys) = ProdTy tys
-telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
-  let lhs' = telescopeTypeType lhs
-  let rhs' = DepPairTy (DepPairType ExplicitDepPair b (telescopeTypeType rhs))
-  PairTy lhs' rhs'
+-- telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
+--   let lhs' = telescopeTypeType lhs
+--   let rhs' = DepPairTy (DepPairType ExplicitDepPair b (telescopeTypeType rhs))
+--   PairTy lhs' rhs'
 
 unpackTelescope
   :: (Fallible1 m, EnvReader m, IRRep r)

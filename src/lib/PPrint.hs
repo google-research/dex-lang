@@ -159,6 +159,9 @@ instance PrettyPrec a => PrettyPrec [a] where
 instance PrettyE ann => Pretty (BinderP c ann n l)
   where pretty (b:>ty) = p b <> ":" <> p ty
 
+instance Pretty (BinderAndDecls r n l) where
+  pretty (BD b _) = undefined -- pretty b
+
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (Atom x) = prettyPrec x
@@ -181,7 +184,8 @@ prettyPrecCase name e alts effs = atPrec LowestPrec $
     effectLine row = hardline <> "case annotated with effects" <+> p row
 
 prettyAlt :: IRRep r => Alt r n -> Doc ann
-prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
+prettyAlt (Abs b body) = undefined
+  -- prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: Binder r n l -> Doc ann
 prettyBinderNoAnn (b:>_) = p b
@@ -324,17 +328,18 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (b:>ty) body) = let
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
-    prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
-        then parens $ p b <> ":" <> prettyTy
-        else prettyTy
-        where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
-    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+  pretty (TabPiType dict (BD (b:>ty) bDecls) body) = undefined
+  -- pretty (TabPiType dict (BD (b:>ty) bDecls) body) = let
+  --   prettyBody = case body of
+  --     Pi subpi -> pretty subpi
+  --     _ -> pLowest body
+  --   prettyBinder = case dict of
+  --     IxDictRawFin n -> if binderName b `isFreeIn` (Abs bDecls body)
+  --       then parens $ p b <> ":" <> prettyTy
+  --       else prettyTy
+  --       where prettyTy = "RawFin" <+> p n
+  --     _ -> prettyBinderHelper (b:>ty) body
+  --   in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we

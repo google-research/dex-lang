@@ -218,12 +218,12 @@ instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    TabPi (TabPiType d (b:>t) resultTy) -> do
-      t' <- cheapReduceE t
-      d' <- cheapReduceE d
-      withFreshBinder (getNameHint b) t' \b' -> do
-        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType d' b' resultTy'
+    TabPi (TabPiType d (BD (b:>t) _) resultTy) -> undefined
+      -- t' <- cheapReduceE t
+      -- d' <- cheapReduceE d
+      -- withFreshBinder (getNameHint b) t' \b' -> do
+      --   resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
+      --   return $ TabPi $ TabPiType d' b' resultTy'
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
@@ -401,9 +401,9 @@ liftSimpAtom ty simpAtom = case simpAtom of
       (BaseTy _  , Con (Lit v))      -> return $ Con $ Lit v
       (ProdTy tys, Con (ProdCon xs))   -> Con . ProdCon <$> zipWithM rec tys xs
       (SumTy  tys, Con (SumCon _ i x)) -> Con . SumCon tys i <$> rec (tys!!i) x
-      (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
-        x1' <- rec t1 x1
-        t2' <- applySubst (b@>SubstVal x1') t2
+      (DepPairTy dpt, DepPair x1 x2 _) -> do
+        x1' <- rec (depPairLeftTy dpt) x1
+        t2' <- instantiate dpt [x1']
         x2' <- rec t2' x2
         return $ DepPair x1' x2' dpt
       _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty'
@@ -427,7 +427,7 @@ confuseGHC = getDistinct
 -- CheapReduction and QueryType import?
 
 depPairLeftTy :: DepPairType r n -> Type r n
-depPairLeftTy (DepPairType _ (_:>ty) _) = ty
+depPairLeftTy (DepPairType _ b _) = binderType b
 {-# INLINE depPairLeftTy #-}
 
 unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
@@ -463,8 +463,7 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
-instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
-  applySubst (bs @@> (SubstVal <$> xs)) conDefs
+instantiateTyConDef tyConDef (TyConParams _ xs) = instantiate tyConDef xs
 {-# INLINE instantiateTyConDef #-}
 
 assumeConst
@@ -474,8 +473,9 @@ assumeConst e = case toAbs e of Abs bs body -> ignoreHoistFailure $ hoist bs bod
 instantiate
   :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
   => e n -> [Atom r n] -> m n (body n)
-instantiate e xs = case toAbs e of
-  Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
+instantiate e xs = undefined
+-- instantiate e xs = case toAbs e of
+--   Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
 
 -- "lazy" subst-extending version of `instantiate`
 withInstantiated
@@ -483,14 +483,16 @@ withInstantiated
   => e i -> [Atom r o]
   -> (forall i'. body i' -> m i' o a)
   -> m i o a
-withInstantiated e xs cont = case toAbs e of
-  Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
+withInstantiated e xs cont = undefined
+-- withInstantiated e xs cont = case toAbs e of
+--   Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
 
 instantiateNames
   :: (EnvReader m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
   => e n -> [AtomName r n] -> m n (body n)
-instantiateNames e vs = case toAbs e of
-  Abs bs body -> applyRename (bs @@> vs) body
+instantiateNames e vs = undefined
+-- instantiateNames e vs = case toAbs e of
+--   Abs bs body -> applyRename (bs @@> vs) body
 
 -- "lazy" subst-extending version of `instantiateNames`
 withInstantiatedNames
@@ -498,8 +500,9 @@ withInstantiatedNames
   => e i -> [AtomName r o]
   -> (forall i'. body i' -> m i' o a)
   -> m i o a
-withInstantiatedNames e vs cont = case toAbs e of
-  Abs bs body -> extendRenamer (bs @@> vs) $ cont body
+withInstantiatedNames e vs cont = undefined
+-- case toAbs e of
+--   Abs bs body -> extendRenamer (bs @@> vs) $ cont body
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -549,8 +552,8 @@ visitBlock b = visitGeneric (LamExpr Empty b) >>= \case
 
 visitAlt :: Visitor m r i o => Alt r i -> m (Alt r o)
 visitAlt (Abs b body) = do
-  visitGeneric (LamExpr (UnaryNest b) body) >>= \case
-    LamExpr (UnaryNest b') body' -> return $ Abs b' body'
+  visitGeneric (UnaryLamExpr b body) >>= \case
+    UnaryLamExpr b' body' -> return $ Abs b' body'
     _ -> error "not an alt"
 
 traverseOpTerm
@@ -585,16 +588,16 @@ visitPiDefault (PiType bs effty) = do
 
 visitBinders
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
-  => Nest (Binder r) i i'
-  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
+  => Binders r i i'
+  -> (forall o'. DExt o o' => Binders r o o' -> m i' o' a)
   -> m i o a
 visitBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-visitBinders (Nest (b:>ty) bs) cont = do
-  ty' <- visitType ty
-  withFreshBinder (getNameHint b) ty' \b' -> do
-    extendRenamer (b@>binderName b') do
-      visitBinders bs \bs' ->
-        cont $ Nest b' bs'
+-- visitBinders (Nest (b:>ty) bs) cont = do
+--   ty' <- visitType ty
+--   withFreshBinder (getNameHint b) ty' \b' -> do
+--     extendRenamer (b@>binderName b') do
+--       visitBinders bs \bs' ->
+--         cont $ Nest b' bs'
 
 -- XXX: This doesn't handle the `Var`, `ProjectElt`, `SimpInCore` cases. These
 -- should be handled explicitly beforehand. TODO: split out these cases under a
@@ -919,6 +922,7 @@ instance IRRep r => SubstE AtomSubstVal (DepPairType r)
 instance SubstE AtomSubstVal SolverBinding
 instance IRRep r => SubstE AtomSubstVal (DeclBinding r)
 instance IRRep r => SubstB AtomSubstVal (Decl r)
+instance IRRep r => SubstB AtomSubstVal (BinderAndDecls r)
 instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)

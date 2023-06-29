@@ -319,15 +319,15 @@ instance Inlinable SLam where
         inlineDecls decls $ inline Stop ans
 
 withBinders
-  :: Nest SBinder i i'
-  -> (forall o'. DExt o o' => Nest SBinder o o' -> InlineM i' o' a)
+  :: SBinders i i'
+  -> (forall o'. DExt o o' => SBinders o o' -> InlineM i' o' a)
   -> InlineM i o a
 withBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-withBinders (Nest (b:>ty) bs) cont = do
-  ty' <- buildScopedAssumeNoDecls $ inline Stop ty
-  withFreshBinder (getNameHint b) ty' \b' ->
-    extendRenamer (b@>binderName b') do
-      withBinders bs \bs' -> cont $ Nest b' bs'
+-- withBinders (Nest (b:>ty) bs) cont = do
+--   ty' <- buildScopedAssumeNoDecls $ inline Stop ty
+--   withFreshBinder (getNameHint b) ty' \b' ->
+--     extendRenamer (b@>binderName b') do
+--       withBinders bs \bs' -> cont $ Nest b' bs'
 
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effTy)  =
@@ -355,56 +355,57 @@ reconstructTabApp :: Emits o
   => Context SExpr e o -> SExpr o -> [SAtom i] -> InlineM i o (e o)
 reconstructTabApp ctx expr [] = do
   reconstruct ctx expr
-reconstructTabApp ctx expr ixs =
-  case fromNaryForExpr (length ixs) expr of
-    Just (bsCount, LamExpr bs (Abs decls result)) -> do
-      let (ixsPref, ixsRest) = splitAt bsCount ixs
-      -- Note: There's a decision here.  Is it ok to inline the atoms in
-      -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
-      -- carry them in `DoneEx`, or suspend them in `SuspEx`?  (If not, we can
-      -- emit fresh bindings and use `Rename`.)  We can't make this decision
-      -- properly without annotating the `for` binders with occurrence
-      -- information; even though `ixsPref` itself are atoms, we may be carrying
-      -- suspended inlining decisions that would want to make one an expression,
-      -- and thus force-inlining it may duplicate work.
-      --
-      -- There remains a decision between just emitting bindings, or running
-      -- `mapM (inline $ EmitToAtomCtx Stop)` and inlining the resulting atoms.
-      -- In the work-heavy case where an element of `ixsPref` becomes an
-      -- expression after inlining, the result will be the same; but in the
-      -- work-light case where the element remains an atom, more inlining can
-      -- proceed.  This decision only affects the runtime of the inliner and the
-      -- code size of the IR the inliner produces.
-      --
-      -- Current status: Emitting bindings in the interest if "launch and
-      -- iterate"; have not tried `EmitToAtomCtx`.
-      ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
-      let ixsPref'' = [v | AtomVar v _ <- ixsPref']
-      s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref''
-      dropSubst $ extendSubst moreSubst do
-        -- Decision here.  These decls have already been processed by the
-        -- inliner once, so their occurrence information is stale (and should
-        -- have been erased).  Do we rerun occurrence analysis, or just complete
-        -- the pass without inlining any of them?
-        -- - Con rerunning: Slower
-        -- - Con completing: No detection of erroneous lack of occurrence info
-        -- For now went with "completing"; to detect erroneous lack of
-        -- occurrence info, change the relevant PlainLet cases above.
-        --
-        -- There's also a missed opportunity here to do more inlining in one
-        -- pass: we lost the occurrence information of the bindings, so we lost
-        -- the ability to inline them into the result, so in the common case
-        -- that the result is a variable reference, we will find ourselves
-        -- emitting a rename, _which will inhibit downstream inlining_ because a
-        -- rename is not indexable.
-        inlineDecls decls do
-          let ctx' = TabAppCtx ixsRest s ctx
-          inlineAtom ctx' result
-    Nothing -> do
-      array' <- emitExprToAtom expr
-      ixs' <- mapM (inline Stop) ixs
-      reconstruct ctx =<< mkTabApp array' ixs'
+reconstructTabApp ctx expr ixs = undefined
+-- reconstructTabApp ctx expr ixs =
+--   case fromNaryForExpr (length ixs) expr of
+--     Just (bsCount, LamExpr bs (Abs decls result)) -> do
+--       let (ixsPref, ixsRest) = splitAt bsCount ixs
+--       -- Note: There's a decision here.  Is it ok to inline the atoms in
+--       -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
+--       -- carry them in `DoneEx`, or suspend them in `SuspEx`?  (If not, we can
+--       -- emit fresh bindings and use `Rename`.)  We can't make this decision
+--       -- properly without annotating the `for` binders with occurrence
+--       -- information; even though `ixsPref` itself are atoms, we may be carrying
+--       -- suspended inlining decisions that would want to make one an expression,
+--       -- and thus force-inlining it may duplicate work.
+--       --
+--       -- There remains a decision between just emitting bindings, or running
+--       -- `mapM (inline $ EmitToAtomCtx Stop)` and inlining the resulting atoms.
+--       -- In the work-heavy case where an element of `ixsPref` becomes an
+--       -- expression after inlining, the result will be the same; but in the
+--       -- work-light case where the element remains an atom, more inlining can
+--       -- proceed.  This decision only affects the runtime of the inliner and the
+--       -- code size of the IR the inliner produces.
+--       --
+--       -- Current status: Emitting bindings in the interest if "launch and
+--       -- iterate"; have not tried `EmitToAtomCtx`.
+--       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
+--       let ixsPref'' = [v | AtomVar v _ <- ixsPref']
+--       s <- getSubst
+--       let moreSubst = bs @@> map Rename ixsPref''
+--       dropSubst $ extendSubst moreSubst do
+--         -- Decision here.  These decls have already been processed by the
+--         -- inliner once, so their occurrence information is stale (and should
+--         -- have been erased).  Do we rerun occurrence analysis, or just complete
+--         -- the pass without inlining any of them?
+--         -- - Con rerunning: Slower
+--         -- - Con completing: No detection of erroneous lack of occurrence info
+--         -- For now went with "completing"; to detect erroneous lack of
+--         -- occurrence info, change the relevant PlainLet cases above.
+--         --
+--         -- There's also a missed opportunity here to do more inlining in one
+--         -- pass: we lost the occurrence information of the bindings, so we lost
+--         -- the ability to inline them into the result, so in the common case
+--         -- that the result is a variable reference, we will find ourselves
+--         -- emitting a rename, _which will inhibit downstream inlining_ because a
+--         -- rename is not indexable.
+--         inlineDecls decls do
+--           let ctx' = TabAppCtx ixsRest s ctx
+--           inlineAtom ctx' result
+--     Nothing -> do
+--       array' <- emitExprToAtom expr
+--       ixs' <- mapM (inline Stop) ixs
+--       reconstruct ctx =<< mkTabApp array' ixs'
 
 reconstructCase :: Emits o
   => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i

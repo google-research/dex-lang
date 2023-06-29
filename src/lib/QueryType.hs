@@ -65,8 +65,10 @@ blockTy b = blockEffTy b <&> \(EffTy _ t) -> t
 piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
 piTypeWithoutDest (PiType bsRefB _) =
   case popNest bsRefB of
-    Just (PairB bs (_:>RawRefTy ansTy)) -> do
-      PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
+    Just (PairB bs destBinder) -> do
+      case binderType destBinder of
+        RawRefTy ansTy -> PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
+        _ -> error "expecting a reference type"
     _ -> error "expected trailing dest binder"
 
 blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
@@ -90,20 +92,21 @@ typeOfApplyMethod d i args = do
   appEffTy ty args
 
 typeOfDictExpr :: EnvReader m => DictExpr n -> m n (CType n)
-typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
-  InstanceDict instanceName args -> do
-    instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
-    sourceName <- getSourceName <$> lookupClassDef className
-    PairE (ListE params) _ <- instantiate instanceDef args
-    return $ DictTy $ DictType sourceName className params
-  InstantiatedGiven given args -> typeOfApp (getType given) args
-  SuperclassProj d i -> do
-    DictTy (DictType _ className params) <- return $ getType d
-    classDef <- lookupClassDef className
-    withSubstReaderT $ withInstantiated classDef params \(Abs superclasses _) -> do
-      substM $ getSuperclassType REmpty superclasses i
-  IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
-  DataData ty -> DictTy <$> dataDictType ty
+typeOfDictExpr e = undefined
+-- typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
+--   InstanceDict instanceName args -> do
+--     instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
+--     sourceName <- getSourceName <$> lookupClassDef className
+--     PairE (ListE params) _ <- instantiate instanceDef args
+--     return $ DictTy $ DictType sourceName className params
+--   InstantiatedGiven given args -> typeOfApp (getType given) args
+--   SuperclassProj d i -> do
+--     DictTy (DictType _ className params) <- return $ getType d
+--     classDef <- lookupClassDef className
+--     withSubstReaderT $ withInstantiated classDef params \(Abs superclasses _) -> do
+--       substM $ getSuperclassType REmpty superclasses i
+--   IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
+--   DataData ty -> DictTy <$> dataDictType ty
 
 typeOfTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (EffTy SimpIR n)
 typeOfTopApp f xs = do
@@ -150,13 +153,13 @@ typeOfHof = \case
     _ -> error "expected a unary pi type"
   While _ -> return UnitTy
   Linearize f _ -> getLamExprType f >>= \case
-    PiType (UnaryNest (binder:>a)) (EffTy Pure b) -> do
-      let b' = ignoreHoistFailure $ hoist binder b
-      let fLinTy = Pi $ nonDepPiType [a] Pure b'
-      return $ PairTy b' fLinTy
+    PiType (UnaryNest b) (EffTy Pure bodyTy) -> do
+      let bodyTy' = ignoreHoistFailure $ hoist b bodyTy
+      let fLinTy = Pi $ nonDepPiType [binderType b] Pure bodyTy'
+      return $ PairTy bodyTy' fLinTy
     _ -> error "expected a unary pi type"
   Transpose f _ -> getLamExprType f >>= \case
-    PiType (UnaryNest (_:>a)) _ -> return a
+    PiType (UnaryNest b) _ -> return $ binderType b
     _ -> error "expected a unary pi type"
   RunReader _ f -> do
     (resultTy, _) <- getTypeRWSAction f
@@ -209,18 +212,19 @@ getUVarType = \case
   UEffectOpVar _ -> error "not implemented"
 
 getMethodNameType :: EnvReader m => MethodName n -> m n (CType n)
-getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
-  MethodBinding className i -> do
-    ClassDef _ _ paramNames _ paramBs scBinders methodTys <- lookupClassDef className
-    refreshAbs (Abs paramBs $ Abs scBinders (methodTys !! i)) \paramBs' absPiTy -> do
-      let params = Var <$> nestToAtomVars paramBs'
-      dictTy <- DictTy <$> dictType (sink className) params
-      withFreshBinder noHint dictTy \dictB -> do
-        scDicts <- getSuperclassDicts (Var $ binderVar dictB)
-        CorePiType appExpl methodExpls methodBs effTy <- instantiate (sink absPiTy) scDicts
-        let paramExpls = paramNames <&> \name -> Inferred name Unify
-        let expls = paramExpls <> [Inferred Nothing (Synth $ Partial $ succ i)] <> methodExpls
-        return $ Pi $ CorePiType appExpl expls (paramBs' >>> UnaryNest dictB >>> methodBs) effTy
+getMethodNameType v = undefined
+-- getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
+--   MethodBinding className i -> do
+--     ClassDef _ _ paramNames _ paramBs scBinders methodTys <- lookupClassDef className
+--     refreshAbs (Abs paramBs $ Abs scBinders (methodTys !! i)) \paramBs' absPiTy -> do
+--       let params = Var <$> nestToAtomVars paramBs'
+--       dictTy <- DictTy <$> dictType (sink className) params
+--       withFreshBinder noHint dictTy \dictB -> do
+--         scDicts <- getSuperclassDicts (Var $ binderVar dictB)
+--         CorePiType appExpl methodExpls methodBs effTy <- instantiate (sink absPiTy) scDicts
+--         let paramExpls = paramNames <&> \name -> Inferred name Unify
+--         let expls = paramExpls <> [Inferred Nothing (Synth $ Partial $ succ i)] <> methodExpls
+--         return $ Pi $ CorePiType appExpl expls (paramBs' >>> UnaryNest dictB >>> methodBs) effTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
 getMethodType dict i = liftEnvReaderM $ withSubstReaderT do
@@ -239,44 +243,47 @@ getTyConNameType v = do
     _ -> return $ Pi $ CorePiType ExplicitApp (snd <$> expls) bs $ EffTy Pure TyKind
 
 getDataConNameType :: EnvReader m => DataConName n -> m n (Type CoreIR n)
-getDataConNameType dataCon = liftEnvReaderM $ withSubstReaderT do
-  (tyCon, i) <- lookupDataCon dataCon
-  tyConDef <- lookupTyCon tyCon
-  buildDataConType tyConDef \expls paramBs' paramVs params -> do
-    withInstantiatedNames tyConDef paramVs \(ADTCons dataCons) -> do
-      DataConDef _ ab _ _ <- renameM (dataCons !! i)
-      refreshAbs ab \dataBs UnitE -> do
-        let appExpl = case dataBs of Empty -> ImplicitApp
-                                     _     -> ExplicitApp
-        let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) (sink params)
-        let dataExpls = nestToList (const $ Explicit) dataBs
-        return $ Pi $ CorePiType appExpl (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy)
+getDataConNameType dataCon = undefined
+-- getDataConNameType dataCon = liftEnvReaderM $ withSubstReaderT do
+--   (tyCon, i) <- lookupDataCon dataCon
+--   tyConDef <- lookupTyCon tyCon
+--   buildDataConType tyConDef \expls paramBs' paramVs params -> do
+--     withInstantiatedNames tyConDef paramVs \(ADTCons dataCons) -> do
+--       DataConDef _ ab _ _ <- renameM (dataCons !! i)
+--       refreshAbs ab \dataBs UnitE -> do
+--         let appExpl = case dataBs of Empty -> ImplicitApp
+--                                      _     -> ExplicitApp
+--         let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) (sink params)
+--         let dataExpls = nestToList (const $ Explicit) dataBs
+--         return $ Pi $ CorePiType appExpl (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy)
 
 getStructDataConType :: EnvReader m => TyConName n -> m n (CType n)
-getStructDataConType tyCon = liftEnvReaderM $ withSubstReaderT do
-  tyConDef <- lookupTyCon tyCon
-  buildDataConType tyConDef \expls paramBs' paramVs params -> do
-    withInstantiatedNames tyConDef paramVs \(StructFields fields) -> do
-      fieldTys <- forM fields \(_, t) -> renameM t
-      let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) params
-      Abs dataBs resultTy' <- return $ typesAsBinderNest fieldTys resultTy
-      let dataExpls = nestToList (const Explicit) dataBs
-      return $ Pi $ CorePiType ExplicitApp (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy')
+getStructDataConType tyCon = undefined
+-- getStructDataConType tyCon = liftEnvReaderM $ withSubstReaderT do
+--   tyConDef <- lookupTyCon tyCon
+--   buildDataConType tyConDef \expls paramBs' paramVs params -> do
+--     withInstantiatedNames tyConDef paramVs \(StructFields fields) -> do
+--       fieldTys <- forM fields \(_, t) -> renameM t
+--       let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) params
+--       Abs dataBs resultTy' <- return $ typesAsBinderNest fieldTys resultTy
+--       let dataExpls = nestToList (const Explicit) dataBs
+--       return $ Pi $ CorePiType ExplicitApp (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy')
 
 buildDataConType
   :: (EnvReader m, EnvExtender m)
   => TyConDef n
   -> (forall l. DExt n l => [Explicitness] -> Nest CBinder n l -> [CAtomName l] -> TyConParams l -> m l a)
   -> m n a
-buildDataConType (TyConDef _ roleExpls bs _) cont = do
-  let expls = snd <$> roleExpls
-  expls' <- forM expls \case
-    Explicit -> return $ Inferred Nothing Unify
-    expl     -> return $ expl
-  refreshAbs (Abs bs UnitE) \bs' UnitE -> do
-    let vs = nestToNames bs'
-    vs' <- mapM toAtomVar vs
-    cont expls' bs' vs $ TyConParams expls (Var <$> vs')
+buildDataConType (TyConDef _ roleExpls bs _) cont = undefined
+-- buildDataConType (TyConDef _ roleExpls bs _) cont = do
+--   let expls = snd <$> roleExpls
+--   expls' <- forM expls \case
+--     Explicit -> return $ Inferred Nothing Unify
+--     expl     -> return $ expl
+--   refreshAbs (Abs bs UnitE) \bs' UnitE -> do
+--     let vs = nestToNames bs'
+--     vs' <- mapM toAtomVar vs
+--     cont expls' bs' vs $ TyConParams expls (Var <$> vs')
 
 makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
 makeTyConParams tc params = do
@@ -322,13 +329,14 @@ functionEffs f = getLamExprType f >>= \case
   PiType b (EffTy effs _) -> return $ ignoreHoistFailure $ hoist b effs
 
 rwsFunEffects :: (IRRep r, EnvReader m) => RWS -> LamExpr r n -> m n (EffectRow r n)
-rwsFunEffects rws f = getLamExprType f >>= \case
-   PiType (BinaryNest h ref) et -> do
-     let effs' = ignoreHoistFailure $ hoist ref (etEff et)
-     let hVal = Var $ AtomVar (binderName h) (TC HeapType)
-     let effs'' = deleteEff (RWSEffect rws hVal) effs'
-     return $ ignoreHoistFailure $ hoist h effs''
-   _ -> error "Expected a binary function type"
+rwsFunEffects rws f = undefined
+-- rwsFunEffects rws f = getLamExprType f >>= \case
+--    PiType (BinaryNest h@(BD h' _) ref) et -> do
+--      let effs' = ignoreHoistFailure $ hoist ref (etEff et)
+--      let hVal = Var $ AtomVar (binderName h') (TC HeapType)
+--      let effs'' = deleteEff (RWSEffect rws hVal) effs'
+--      return $ ignoreHoistFailure $ hoist h effs''
+--    _ -> error "Expected a binary function type"
 
 getLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (PiType r n)
 getLamExprType (LamExpr bs body) = liftEnvReaderM $
@@ -356,10 +364,11 @@ getSuperclassDicts dict = do
     _ -> error "expected a dict type"
 
 getSuperclassTys :: EnvReader m => DictType n -> m n [CType n]
-getSuperclassTys (DictType _ className params) = do
-  ClassDef _ _ _ _ bs superclasses _ <- lookupClassDef className
-  forM [0 .. nestLength superclasses - 1] \i -> do
-    instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
+getSuperclassTys (DictType _ className params) = undefined
+-- getSuperclassTys (DictType _ className params) = do
+--   ClassDef _ _ _ _ bs superclasses _ <- lookupClassDef className
+--   forM [0 .. nestLength superclasses - 1] \i -> do
+--     instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
@@ -372,15 +381,16 @@ asTopLam lam = do
   return $ TopLam False piTy lam
 
 liftIFunType :: (IRRep r, EnvReader m) => IFunType -> m n (PiType r n)
-liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
-  go :: IRRep r => [BaseType] -> EnvReaderM n (PiType r n)
-  go = \case
-    [] -> return $ PiType Empty (EffTy (OneEffect IOEffect) resultTy)
-      where resultTy = case resultTys of
-              [] -> UnitTy
-              [t] -> BaseTy t
-              [t1, t2] -> PairTy (BaseTy t1) (BaseTy t2)
-              _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
-    t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
-      PiType bs effTy <- go ts
-      return $ PiType (Nest b bs) effTy
+liftIFunType (IFunType _ argTys resultTys) = undefined
+-- liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
+--   go :: IRRep r => [BaseType] -> EnvReaderM n (PiType r n)
+--   go = \case
+--     [] -> return $ PiType Empty (EffTy (OneEffect IOEffect) resultTy)
+--       where resultTy = case resultTys of
+--               [] -> UnitTy
+--               [t] -> BaseTy t
+--               [t1, t2] -> PairTy (BaseTy t1) (BaseTy t2)
+--               _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
+--     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
+--       PiType bs effTy <- go ts
+--       return $ PiType (Nest b bs) effTy

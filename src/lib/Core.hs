@@ -214,6 +214,10 @@ instance IRRep r => BindsEnv (Decl r) where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
   {-# INLINE toEnvFrag #-}
 
+instance IRRep r => BindsEnv (BinderAndDecls r) where
+  toEnvFrag (BD b ds) = toEnvFrag (PairB b ds)
+  {-# INLINE toEnvFrag #-}
+
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
@@ -415,13 +419,13 @@ fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
   PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
-    extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
+    extend <|> (Just $ (1, UnaryLamExpr b body))
     where
       extend = do
         expr <- exprBlock body
         guard $ maxDepth > 1
         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
-        return (d + 1, LamExpr (Nest b bs) body2)
+        return (d + 1, LamExpr (Nest (BD b Empty) bs) body2)
   _ -> Nothing
 
 mkConsListTy :: [Type r n] -> Type r n

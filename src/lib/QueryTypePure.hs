@@ -207,19 +207,20 @@ rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+    DepPairTy $ DepPairType ExplicitDepPair (BD (b:>IdxRepTy) Empty) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
 tabIxType :: TabPiType r n -> IxType r n
-tabIxType (TabPiType d (_:>t) _) = IxType t d
+tabIxType (TabPiType d b _) = IxType (binderType b) d
 
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
-  => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
-typesAsBinderNest types body = toConstBinderNest types body
+  => [Type r n] -> e n -> Abs (Binders r) e n
+typesAsBinderNest types body = case toConstBinderNest types body of
+  Abs bs e -> Abs (fmapNest (\b -> BD b Empty) bs) e
 
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
@@ -230,7 +231,7 @@ nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resu
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType d (b:>t) resultTy'
+    Abs b resultTy' -> TabPiType d (BD (b:>t) Empty) resultTy'
 
 corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
 corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy

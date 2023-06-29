@@ -258,8 +258,8 @@ ulExpr expr = case expr of
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               getLamExprType body' >>= \case
-                PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
-                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
+                PiType (UnaryNest (BD (tb:>_) decls)) (EffTy _ valTy) -> do
+                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (BD (tb:>IdxRepTy) decls) valTy
                   emitExpr $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
@@ -310,46 +310,47 @@ hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
 {-# INLINE hoistLoopInvariant #-}
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
-licmExpr = \case
-  PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
-    ix' <- substM ix
-    dests' <- mapM visitAtom dests
-    let numCarriesOriginal = length dests'
-    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
-      Abs decls ans <- buildBlock $ visitBlockEmits body
-      -- Now, we process the decls and decide which ones to hoist.
-      liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
-    extraDests' <- mapM toAtomVar extraDests
-    -- Append the destinations of hoisted Allocs as loop carried values.
-    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
-    let carryTy = getType dests''
-    let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
-    extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
-    Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
-    body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
-      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
-      let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
-      let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-      block <- applySubst s bodyAbs
-      return $ UnaryLamExpr lb' block
-    emitSeq dir ix' dests'' body'
-  PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
-    ix' <- substM ix
-    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      Abs decls ans <- buildBlock $ visitBlockEmits body
-      liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls $ Abs hdecls destsAndBody
-    ixTy <- substM $ binderType b
-    body' <- withFreshBinder noHint ixTy \i -> do
-      block <- applyRename (lnb@>binderName i) bodyAbs
-      return $ UnaryLamExpr i block
-    emitHof $ For dir ix' body'
-  expr -> visitGeneric expr >>= emitExpr
+licmExpr = undefined
+-- licmExpr = \case
+--   PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+--     ix' <- substM ix
+--     dests' <- mapM visitAtom dests
+--     let numCarriesOriginal = length dests'
+--     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+--       -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
+--       Abs decls ans <- buildBlock $ visitBlockEmits body
+--       -- Now, we process the decls and decide which ones to hoist.
+--       liftEnvReaderM $ runSubstReaderT idSubst $
+--           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+--     PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
+--     extraDests' <- mapM toAtomVar extraDests
+--     -- Append the destinations of hoisted Allocs as loop carried values.
+--     let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
+--     let carryTy = getType dests''
+--     let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
+--     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
+--     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+--     body' <- withFreshBinder noHint lbTy \lb' -> do
+--       (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
+--       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+--       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+--       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
+--       block <- applySubst s bodyAbs
+--       return $ UnaryLamExpr lb' block
+--     emitSeq dir ix' dests'' body'
+--   PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
+--     ix' <- substM ix
+--     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+--       Abs decls ans <- buildBlock $ visitBlockEmits body
+--       liftEnvReaderM $ runSubstReaderT idSubst $
+--           seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+--     PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls $ Abs hdecls destsAndBody
+--     ixTy <- substM $ binderType b
+--     body' <- withFreshBinder noHint ixTy \i -> do
+--       block <- applyRename (lnb@>binderName i) bodyAbs
+--       return $ UnaryLamExpr i block
+--     emitHof $ For dir ix' body'
+--   expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]          -- hoisted dests
