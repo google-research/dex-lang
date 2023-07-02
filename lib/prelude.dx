@@ -2241,6 +2241,11 @@ def natlog2(x:Nat) -> Nat =
           False
   unsafe_nat_diff(tmp, 1)  -- TODO: something less horrible
 
+def nextpow2(x:Nat) -> Nat =
+  case is_power_of_2 x of
+    True -> natlog2 x
+    False -> 1 + natlog2 x
+
 def general_integer_power(
     times:(a,a)->a,
     one:a, base:a,
@@ -2477,7 +2482,7 @@ struct Stack(h:Heap, a|Data) =
 
   def ensure_size_at_least(req_size:Nat) -> {State h} () =
     if req_size > self.buf_size() then
-      new_buf_size = intpow2 (1 + natlog2 req_size)
+      new_buf_size = intpow2 $ nextpow2 req_size
       buf = self.unsafe_get_buffer()
       logical_size = self.size()
       cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
