@@ -2477,8 +2477,7 @@ struct Stack(h:Heap, a|Data) =
 
   def ensure_size_at_least(req_size:Nat) -> {State h} () =
     if req_size > self.buf_size() then
-      -- TODO: maybe this should use integer arithmetic?
-      new_buf_size = f_to_n $ 2.0 `pow` (ceil $ log2 $ n_to_f req_size)
+      new_buf_size = intpow2 (1 + natlog2 req_size)
       buf = self.unsafe_get_buffer()
       logical_size = self.size()
       cur_data = get $ unsafe_coerce(to=Ref(h, Fin logical_size => a), buf)
