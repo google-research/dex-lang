@@ -20,11 +20,6 @@ def odd_sized_palindrome(mid:a, seq:n=>a) -> ((n `Either` () `Either` n)=>a) giv
         Right () -> mid
       Right i -> seq[i]
 
-def nextpow2(x:Nat) -> Nat =
-  case is_power_of_2 x of
-    True -> natlog2 x
-    False -> 1 + natlog2 x
-
 '## Inner FFT functions
 
 data FTDirection =
