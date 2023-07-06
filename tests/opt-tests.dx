@@ -227,3 +227,22 @@ _ = yield_accum (AddMonoid Int32) \result.
 -- CHECK: [[xsix:v#[0-9]+]]:<16xInt32> =
 -- CHECK-NEXT: vslice
 -- CHECK: extend [[refix]] [[xsix]]
+
+"Non-aligned"
+-- CHECK-LABEL: Non-aligned
+
+-- This is a regression test.  We are checking that Dex-side
+-- vectorization does not end up assuming that arrays are aligned on
+-- the size of the vectors, only on the size of the underlying
+-- scalars.
+
+non_aligned = for i:(Fin 7). for j:(Fin 257). +0
+
+%passes llvm
+_ = yield_accum (AddMonoid Int32) \result.
+  tile((Fin 257), 32) \set.
+    for_ i:set.
+      ix = inject(i, to=(Fin 257))
+      result!(6@(Fin 7))!ix += non_aligned[6@_][ix]
+-- CHECK: load <16 x i32>, <16 x i32>* %"v#{{[0-9]+}}", align 4
+-- CHECK: store <16 x i32> %"v#{{[0-9]+}}", <16 x i32>* %"v#{{[0-9]+}}", align 4

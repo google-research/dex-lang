@@ -902,16 +902,33 @@ withWidthOfFP x template = case typeOf template of
   L.FloatingPointType L.FloatFP  -> litVal $ Float32Lit $ realToFrac x
   _ -> error $ "Unsupported floating point type: " ++ show (typeOf template)
 
+-- If we are accessing a `L.Type` from a Dex array, what memory alignment (in
+-- bytes) can we guarantee?  This is probably better expressed in Dex types, but
+-- we would need to plumb them to do it that way.  1-byte alignment should
+-- always be safe, but we can promise higher-performance alignments for some
+-- types.
+dexAlignment :: L.Type -> Word32
+dexAlignment = \case
+  L.IntegerType bits | bits `mod` 8 == 0 -> bits `div` 8
+  L.IntegerType _ -> 1
+  L.PointerType _ _ -> 4
+  L.FloatingPointType L.FloatFP -> 4
+  L.FloatingPointType L.DoubleFP -> 8
+  L.VectorType _ eltTy -> dexAlignment eltTy
+  _ -> 1
+
 store :: LLVMBuilder m => Operand -> Operand -> m ()
-store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
+store ptr x = addInstr $ L.Do $ L.Store False ptr x Nothing alignment [] where
+  alignment = dexAlignment $ typeOf x
 
 load :: LLVMBuilder m => L.Type -> Operand -> m Operand
 load pointeeTy ptr =
 #if MIN_VERSION_llvm_hs(15,0,0)
-  emitInstr pointeeTy $ L.Load False pointeeTy ptr Nothing 0 []
+  emitInstr pointeeTy $ L.Load False pointeeTy ptr Nothing alignment []
 #else
-  emitInstr pointeeTy $ L.Load False ptr Nothing 0 []
+  emitInstr pointeeTy $ L.Load False ptr Nothing alignment []
 #endif
+  where alignment = dexAlignment pointeeTy
 
 ilt :: LLVMBuilder m => Operand -> Operand -> m Operand
 ilt x y = emitInstr i1 $ L.ICmp IP.SLT x y []
