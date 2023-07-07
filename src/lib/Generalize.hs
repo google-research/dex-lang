@@ -8,7 +8,6 @@ module Generalize (generalizeArgs, generalizeIxDict) where
 
 import Control.Monad
 
-import CheckType (isData)
 import Core
 import Err
 import Types.Core

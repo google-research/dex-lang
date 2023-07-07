@@ -291,7 +291,7 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 linearizeTopLam :: STopLam n -> [Active] -> DoubleBuilder SimpIR n (STopLam n, STopLam n)
 linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
   (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = nestToAtomVars bs'
+    let allPrimals = bindersVars bs'
     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
       True  -> return $ Just v
       False -> return $ Nothing

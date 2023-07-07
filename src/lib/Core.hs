@@ -82,6 +82,7 @@ newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
            , MonadWriter w, Fallible, Searcher, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
+type FallibleEnvReaderM = EnvReaderT FallibleM
 
 runEnvReaderM :: Distinct n => Env n -> EnvReaderM n a -> a
 runEnvReaderM bindings m = runIdentity $ runEnvReaderT bindings m

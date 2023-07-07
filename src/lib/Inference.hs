@@ -11,7 +11,7 @@
 module Inference
   ( inferTopUDecl, checkTopUType, inferTopUExpr
   , trySynthTerm, generalizeDict, asTopBlock
-  , synthTopE, UDeclInferenceResult (..)) where
+  , synthTopE, UDeclInferenceResult (..), asFFIFunType) where
 
 import Prelude hiding ((.), id)
 import Control.Category
@@ -45,6 +45,7 @@ import SourceInfo
 import Subst
 import QueryType
 import Types.Core
+import Types.Imp
 import Types.Primitives
 import Types.Source
 import Util hiding (group)
@@ -3184,6 +3185,43 @@ withFabricatedEmitsInf cont = fromWrapWithEmitsInf
 newtype WrapWithEmitsInf n r =
   WrapWithEmitsInf { fromWrapWithEmitsInf :: EmitsInf n => r }
 
+-- === IFunType ===
+
+asFFIFunType :: EnvReader m => CType n -> m n (Maybe (IFunType, CorePiType n))
+asFFIFunType ty = return do
+  Pi piTy <- return ty
+  impTy <- checkFFIFunTypeM piTy
+  return (impTy, piTy)
+
+checkFFIFunTypeM :: Fallible m => CorePiType n -> m IFunType
+checkFFIFunTypeM (CorePiType appExpl (_:expls) (Nest b bs) effTy) = do
+  argTy <- checkScalar $ binderType b
+  case bs of
+    Empty -> do
+      resultTys <- checkScalarOrPairType (etTy effTy)
+      let cc = case length resultTys of
+                 0 -> error "Not implemented"
+                 1 -> FFICC
+                 _ -> FFIMultiResultCC
+      return $ IFunType cc [argTy] resultTys
+    Nest b' rest -> do
+      let naryPiRest = CorePiType appExpl expls (Nest b' rest) effTy
+      IFunType cc argTys resultTys <- checkFFIFunTypeM naryPiRest
+      return $ IFunType cc (argTy:argTys) resultTys
+checkFFIFunTypeM _ = error "expected at least one argument"
+
+checkScalar :: (IRRep r, Fallible m) => Type r n -> m BaseType
+checkScalar (BaseTy ty) = return ty
+checkScalar ty = throw TypeErr $ pprint ty
+
+checkScalarOrPairType :: (IRRep r, Fallible m) => Type r n -> m [BaseType]
+checkScalarOrPairType (PairTy a b) = do
+  tys1 <- checkScalarOrPairType a
+  tys2 <- checkScalarOrPairType b
+  return $ tys1 ++ tys2
+checkScalarOrPairType (BaseTy ty) = return [ty]
+checkScalarOrPairType ty = throw TypeErr $ pprint ty
+
 -- === instances ===
 
 instance PrettyE e => Pretty (UDeclInferenceResult e l) where
@@ -3197,9 +3235,11 @@ instance SinkableE e => SinkableE (UDeclInferenceResult e) where
 
 instance (RenameE e, CheckableE CoreIR e) => CheckableE CoreIR (UDeclInferenceResult e) where
   checkE = \case
-    UDeclResultDone _ -> return ()
-    UDeclResultBindName _ block _ -> checkE block
-    UDeclResultBindPattern _ block _ -> checkE block
+    UDeclResultDone e -> UDeclResultDone <$> checkE e
+    UDeclResultBindName ann block ab ->
+      UDeclResultBindName ann <$> checkE block <*> renameM ab -- TODO: check result
+    UDeclResultBindPattern hint block recon ->
+      UDeclResultBindPattern hint <$> checkE block <*> renameM recon -- TODO: check recon
 
 instance HasType CoreIR InfEmission where
   getType = \case

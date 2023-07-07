@@ -43,9 +43,9 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), asFFIFunType, checkHasType)
+import CheckType ( CheckableE (..), checkTypeIs)
 #ifdef DEX_DEBUG
-import CheckType (checkTypesM)
+import CheckType (checkTypes)
 #endif
 import Core
 import ConcreteSyntax
@@ -316,7 +316,7 @@ evalSourceBlock' mname block = case sbContents block of
           _ -> evalUExpr expr
         fType <- getType <$> toAtomVar fname'
         (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
-        impl `checkHasType` linFunTy >>= \case
+        liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
           Failure _ -> do
             let implTy = getType impl
             throw TypeErr $ unlines
@@ -744,7 +744,7 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  checkTypesM result
+  checkTypes result
   logTop $ MiscLog $ "Checks passed"
 #else
   logTop $ MiscLog $ "Checks skipped (not a debug build)"

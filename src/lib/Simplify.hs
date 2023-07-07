@@ -19,7 +19,7 @@ import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 
 import Builder
 import CheapReduction
-import CheckType (CheckableE (..), isData, checkBlock)
+import CheckType
 import Core
 import Err
 import Generalize
@@ -274,9 +274,12 @@ instance SinkableE SimplifiedBlock
 instance RenameE SimplifiedBlock
 instance HoistableE SimplifiedBlock
 instance CheckableE SimpIR SimplifiedBlock where
-  checkE (SimplifiedBlock block _) =
-    -- TODO: CheckableE instance for the recon too
-    void $ checkBlock block
+  checkE (SimplifiedBlock block recon) = do
+    block' <- renameM block
+    effTy <- blockEffTy block' -- TODO: store this in the simplified block instead
+    block'' <- dropSubst $ checkBlock effTy block'
+    recon' <- renameM recon -- TODO: CheckableE instance for the recon too
+    return $ SimplifiedBlock block'' recon'
 
 instance Pretty (SimplifiedBlock n) where
   pretty (SimplifiedBlock block recon) =
@@ -286,9 +289,9 @@ instance SinkableE SimplifiedTopLam where
   sinkingProofE = todoSinkableProof
 
 instance CheckableE SimpIR SimplifiedTopLam where
-  checkE (SimplifiedTopLam lam _) = do
+  checkE (SimplifiedTopLam lam recon) =
     -- TODO: CheckableE instance for the recon too
-    checkE lam
+    SimplifiedTopLam <$> checkE lam <*> renameM recon
 
 instance Pretty (SimplifiedTopLam n) where
   pretty (SimplifiedTopLam lam recon) = pretty lam <> hardline <> pretty recon

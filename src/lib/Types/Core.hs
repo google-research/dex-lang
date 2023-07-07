@@ -943,12 +943,12 @@ binderType (_:>ty) = ty
 binderVar  :: (IRRep r, DExt n l) => Binder r n l -> AtomVar r l
 binderVar (b:>ty) = AtomVar (binderName b) (sink ty)
 
-nestToAtomVars :: (Distinct l, Ext n l, IRRep r)
-               => Nest (Binder r) n l -> [AtomVar r l]
-nestToAtomVars = \case
+bindersVars :: (Distinct l, Ext n l, IRRep r)
+            => Nest (Binder r) n l -> [AtomVar r l]
+bindersVars = \case
   Empty -> []
   Nest b bs -> withExtEvidence b $ withSubscopeDistinct bs $
-    sink (binderVar b) : nestToAtomVars bs
+    sink (binderVar b) : bindersVars bs
 
 -- === ToBinding ===
 

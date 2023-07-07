@@ -701,6 +701,15 @@ instance Color c => BindsAtMostOneName (UBinder c) c where
     UIgnore         -> emptyInFrag
     UBind _ _ b'    -> b' @> x
 
+instance Color c => SinkableB (UBinder c) where
+  sinkingProofB _ _ _ = todoSinkableProof
+
+instance Color c => RenameB (UBinder c) where
+  renameB env ub cont = case ub of
+    UBindSource pos sn -> cont env $ UBindSource pos sn
+    UIgnore -> cont env UIgnore
+    UBind ctx sn b -> renameB env b \env' b' -> cont env' $ UBind ctx sn b'
+
 instance ProvesExt  (UAnnBinder  req) where
 instance BindsNames  (UAnnBinder req) where
   toScopeFrag (UAnnBinder b _ _) = toScopeFrag b
