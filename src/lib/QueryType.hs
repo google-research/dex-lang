@@ -213,7 +213,7 @@ getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
   MethodBinding className i -> do
     ClassDef _ _ paramNames _ paramBs scBinders methodTys <- lookupClassDef className
     refreshAbs (Abs paramBs $ Abs scBinders (methodTys !! i)) \paramBs' absPiTy -> do
-      let params = Var <$> nestToAtomVars paramBs'
+      let params = Var <$> bindersVars paramBs'
       dictTy <- DictTy <$> dictType (sink className) params
       withFreshBinder noHint dictTy \dictB -> do
         scDicts <- getSuperclassDicts (Var $ binderVar dictB)
@@ -384,3 +384,47 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
       PiType bs effTy <- go ts
       return $ PiType (Nest b bs) effTy
+
+-- === Data constraints ===
+
+isData :: EnvReader m => Type CoreIR n -> m n Bool
+isData ty = do
+  result <- liftEnvReaderT $ withSubstReaderT $ checkDataLike ty
+  case runFallibleM result of
+    Success () -> return True
+    Failure _  -> return False
+
+checkDataLike :: Type CoreIR i -> SubstReaderT Name FallibleEnvReaderM i o ()
+checkDataLike ty = case ty of
+  TyVar _ -> notData
+  TabPi (TabPiType _ b eltTy) -> do
+    renameBinders b \_ ->
+      checkDataLike eltTy
+  DepPairTy (DepPairType _ b@(_:>l) r) -> do
+    recur l
+    renameBinders b \_ -> checkDataLike r
+  NewtypeTyCon nt -> do
+    (_, ty') <- unwrapNewtypeType =<< renameM nt
+    dropSubst $ recur ty'
+  TC con -> case con of
+    BaseType _       -> return ()
+    ProdType as      -> mapM_ recur as
+    SumType  cs      -> mapM_ recur cs
+    RefType _ _      -> return ()
+    HeapType         -> return ()
+    _ -> notData
+  _   -> notData
+  where
+    recur = checkDataLike
+    notData = throw TypeErr $ pprint ty
+
+checkExtends :: (Fallible m, IRRep r) => EffectRow r n -> EffectRow r n -> m ()
+checkExtends allowed (EffectRow effs effTail) = do
+  let (EffectRow allowedEffs allowedEffTail) = allowed
+  case effTail of
+    EffectRowTail _ -> assertEq allowedEffTail effTail ""
+    NoTail -> return ()
+  forM_ (eSetToList effs) \eff -> unless (eff `eSetMember` allowedEffs) $
+    throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
+                      "\nAllowed: " ++ pprint allowed
+

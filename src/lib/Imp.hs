@@ -1535,7 +1535,7 @@ impInstrTypes instr = case instr of
   where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE SimpIR ImpFunction where
-  checkE _ = return () -- TODO
+  checkE = renameM -- TODO
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where
