@@ -26,7 +26,7 @@ def multiclass_logreg_jaxopt(X, y):
   fun = jaxopt.objective.multiclass_logreg
   init = jnp.zeros((X.shape[1], FLAGS.n_classes))
   bfgs = jaxopt.BFGS(
-    fun=fun, 
+    fun=fun,
     linesearch='zoom',
     maxiter=FLAGS.maxiter,
     maxls=FLAGS.maxls,
@@ -59,8 +59,8 @@ def main(argv):
 
     start_time = time.time()
     dex_value = dex_bfgs(
-      jnp.array(X), 
-      jnp.array(y), 
+      jnp.array(X),
+      jnp.array(y),
       FLAGS.n_classes,
       FLAGS.maxiter,
       FLAGS.maxls,
