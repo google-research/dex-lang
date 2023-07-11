@@ -39,6 +39,11 @@
 # center insertion.  This way (i) you're profiling optimized rather
 # than unoptimized Dex, and (ii) the profile data is restricted to our
 # {-# SCC #-} annotations, and thus not as overwhelming.
+# - As a reminder, runtime profiling is turned on by passing +RTS -p
+#   -RTS to `dexprof`; you can read the resulting .prof file directly,
+#   or postprocess it into a more legible form by for example
+#   running `profiteur` on it and browsing the HTML page so
+#   created.
 #
 # We keep the builds in separate .stack-work directories so they don't
 # step on each other's GHC-level compilation caches.

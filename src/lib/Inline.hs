@@ -26,6 +26,7 @@ inlineBindings :: (EnvReader m) => STopLam n -> m n (STopLam n)
 inlineBindings = liftLamExpr \(Abs decls ans) -> liftInlineM $
   buildScoped $ inlineDecls decls $ inline Stop ans
 {-# INLINE inlineBindings #-}
+{-# SCC inlineBindings #-}
 
 -- === Data Structure ===
 

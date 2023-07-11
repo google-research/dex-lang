@@ -82,6 +82,7 @@ callEntryFun LLVMCallable{nativeFun, benchRequired, logger, resultTypes} args = 
               sync
             logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime + evalTime))]
         return results
+{-# SCC callEntryFun #-}
 
 checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
 checkedCallFunPtr fd argsPtr resultPtr fPtr = do
@@ -91,7 +92,6 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
     return exitCode
   unless (exitCode == 0) $ throw RuntimeErr ""
   return duration
-{-# SCC checkedCallFunPtr #-}
 
 withPipeToLogger :: PassLogger -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do

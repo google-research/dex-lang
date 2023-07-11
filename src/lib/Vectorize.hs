@@ -99,6 +99,7 @@ vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
         return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
     Nothing -> error "expected a trailing dest binder"
+{-# SCC vectorizeLoops #-}
 
 liftTopVectorizeM :: (EnvReader m)
   => Word32 -> TopVectorizeM i i a -> m i (a, Errs)
@@ -139,7 +140,6 @@ vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
   withFreshBinder (getNameHint destb) destTy' \destb' -> do
     extendRenamer (destb @> binderName destb') do
       Abs destb' <$> buildBlock (vectorizeLoopsBlock body)
-{-# SCC vectorizeLoopsDestBlock #-}
 
 vectorizeLoopsBlock :: (Emits o)
   => Block SimpIR i -> TopVectorizeM i o (SAtom o)

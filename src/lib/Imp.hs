@@ -74,6 +74,7 @@ toImpFunction cc (TopLam True destTy lam) = do
             void $ translateBlock body
             return []
 toImpFunction _ (TopLam False _ _) = error "expected a lambda in destination-passing form"
+{-# SCC toImpFunction #-}
 
 getNaryLamImpArgTypesWithCC :: EnvReader m
   => CallingConvention -> PiType SimpIR n -> m n [BaseType]
@@ -1431,8 +1432,7 @@ appSpecializedIxMethod d method args = do
 
 -- === Abstracting link-time objects ===
 
-abstractLinktimeObjects
-  :: forall m n. EnvReader m
+abstractLinktimeObjects :: forall m n. EnvReader m
   => ImpFunction n -> m n (ClosedImpFunction n, [TopFunName n], [PtrName n])
 abstractLinktimeObjects f = do
   let allVars = freeVarsE f
