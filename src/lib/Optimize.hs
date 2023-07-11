@@ -36,7 +36,6 @@ optimize = dceTop     -- Clean up user code
        >=> unrollLoops
        >=> dceTop     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
-{-# SCC optimize #-}
 
 -- === Peephole optimizations ===
 
@@ -210,6 +209,7 @@ peepholeExpr expr = case expr of
 
 unrollLoops :: EnvReader m => STopLam n -> m n (STopLam n)
 unrollLoops = liftLamExpr unrollLoopsBlock
+{-# SCC unrollLoops #-}
 
 unrollLoopsBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 unrollLoopsBlock b = liftM fst $

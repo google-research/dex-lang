@@ -182,6 +182,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
         let sv = PtrSubstVal $ L.ConstantOperand $ globalReference ptrTy' v'
         return (defn, sv)
       return (defns, cnames, substVals)
+{-# SCC impToLLVM #-}
 
 compileFunction
   :: (EnvReader m, MonadIO1 m)
@@ -296,6 +297,7 @@ compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
       mainFun <- makeFunction fName argParams (Just $ i64Lit 0)
       extraSpecs <- gets funSpecs
       return ([L.GlobalDefinition mainFun], extraSpecs, [])
+{-# SCC compileFunction #-}
 
 compileInstr :: Compiler m => ImpInstr i -> m i o [Operand]
 compileInstr instr = case instr of
