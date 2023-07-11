@@ -72,6 +72,9 @@ extendActiveSubst
   => b i i' -> SAtomVar o -> PrimalM i' o a -> PrimalM i o a
 extendActiveSubst b v cont = extendSubst (b@>atomVarName v) $ extendActivePrimals v cont
 
+extendActiveSubstBD :: BinderAndDecls SimpIR i i' -> SAtomVar o -> PrimalM i' o a -> PrimalM i o a
+extendActiveSubstBD (BD b) v cont = extendActiveSubst b v cont
+
 extendActiveEffs :: Effect SimpIR o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
   primals { activeEffs = extendEffRow (eSetSingleton eff) (activeEffs primals)}
@@ -169,7 +172,7 @@ isActive e = do
   vs <- (S.fromList . map atomVarName . activeVars) <$> getActivePrimals
   return $ any (`S.member` vs) (freeAtomVarsList e)
 
--- === converision between monadic and reified version of functions ===
+-- === conversion between monadic and reified version of functions ===
 
 tangentFunAsLambda
   :: Emits o
@@ -181,10 +184,10 @@ tangentFunAsLambda cont = do
   buildLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
-getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
+getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomVar n] -> m n (EmptyAbs SBinders n)
 getTangentArgTys topVs = go mempty topVs where
   go :: (Fallible1 m, EnvExtender m)
-     => EMap SAtomName SAtomVar n -> [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
+     => EMap SAtomName SAtomVar n -> [SAtomVar n] -> m n (EmptyAbs SBinders n)
   go _ [] = return $ EmptyAbs Empty
   go heapMap (v:vs) = case getType v of
     -- This is a hack to handle heaps/references. They normally come in pairs
@@ -195,7 +198,7 @@ getTangentArgTys topVs = go mempty topVs where
       withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
         let newHeapMap = sink heapMap <> eMapSingleton (sink (atomVarName v)) (binderVar hb)
         Abs bs UnitE <- go newHeapMap $ sinkList vs
-        return $ EmptyAbs $ Nest hb bs
+        return $ EmptyAbs $ Nest (PlainBD hb) bs
     RefTy (Var h) referentTy -> do
       case lookupEMap heapMap (atomVarName h) of
         Nothing -> error "shouldn't happen?"
@@ -204,12 +207,12 @@ getTangentArgTys topVs = go mempty topVs where
           let refTy = RefTy (Var h') tt
           withFreshBinder (getNameHint v) refTy \refb -> do
             Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-            return $ EmptyAbs $ Nest refb bs
+            return $ EmptyAbs $ Nest (PlainBD refb) bs
     ty -> do
       tt <- tangentType ty
       withFreshBinder (getNameHint v) tt \b -> do
         Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-        return $ EmptyAbs $ Nest b bs
+        return $ EmptyAbs $ Nest (PlainBD b) bs
 
 class ReconFunctor (f :: E -> E) where
   capture
@@ -276,9 +279,9 @@ linearizeBlockDefuncGeneral locals block = do
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinLam :: Emits o => SLam i -> SubstReaderT AtomSubstVal TangentM i o (Atom SimpIR o)
-applyLinLam (LamExpr bs body) = do
+applyLinLam lam = do
   TangentArgs args <- liftSubstReaderT $ getTangentArgs
-  extendSubst (bs @@> ((Rename . atomVarName) <$> args)) do
+  withInstantiated lam (Var <$> args) \body ->
     substM body >>= emitBlock
 
 -- === actual linearization passs ===
@@ -307,9 +310,9 @@ linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
         tangentBody' <- buildBlock do
           ts <- getUnpacked $ Var $ sink $ binderVar bTangent
           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> bsTangent @@> map (SubstVal . sink) ts
+                        <.> (fmapNest (\(BD b) -> b) bsTangent) @@> map (SubstVal . sink) ts
           emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
+        return $ LamExpr (bs' >>> BinaryNest (PlainBD bResidual) (PlainBD bTangent)) tangentBody'
     return (primalFun, tangentFun)
   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
 linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
@@ -659,11 +662,11 @@ linearizeHof hof = case hof of
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
 linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
   withFreshBinder noHint (TC HeapType) \h -> do
-    bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
+    bTy <- extendSubstBD hB [binderName h] $ renameM $ binderType refB
     withFreshBinder noHint bTy \b -> do
       let ref = binderVar b
       hVar <- sinkM $ binderVar h
-      (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
+      (body', linLam) <- extendActiveSubstBD hB hVar $ extendActiveSubstBD refB ref $
         -- TODO: maybe we should check whether we need to extend the active effects
         extendActiveEffs (RWSEffect rws (Var hVar)) do
           linearizeBlockDefunc body
@@ -671,7 +674,7 @@ linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
       -- ensures that such references can never be *used* once the effect runner
       -- returns, but technically it's legal to return them.
       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr h b body', linLam')
+      return (BinaryLamExpr (BD h) (BD b) body', linLam')
 linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)

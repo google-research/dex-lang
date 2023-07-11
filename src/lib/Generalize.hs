@@ -14,12 +14,13 @@ import Types.Core
 import Inference
 import IRVariants
 import QueryType
+import CheapReduction
 import Name
 import Subst
 import MTL1
 import Types.Primitives
 
-type RolePiBinder = WithAttrB RoleExpl CBinder
+type RolePiBinder = WithAttrB RoleExpl CBinderAndDecls
 type RolePiBinders = Nest RolePiBinder
 
 generalizeIxDict :: EnvReader m => Atom CoreIR n -> m n (Generalized CoreIR CAtom n)
@@ -36,7 +37,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   PairE (CorePiType _ expls bs _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
   ListE <$> go (zipAttrs expls bs) argsTop'
   where
-    go :: Nest (WithAttrB Explicitness CBinder) i i' -> [Atom CoreIR n]
+    go :: Nest (WithAttrB Explicitness CBinderAndDecls) i i' -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
     go (Nest (WithAttrB expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
@@ -52,7 +53,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
             -- non-type, non-dict arguments (e.g. a function). We just don't
             -- generalize in that case.
             return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go bs args
+      args'' <- extendSubstBD b [SubstVal arg'] $ go bs args
       return $ arg' : args''
     go Empty [] = return []
     go _ _ = error "zip error"
@@ -80,12 +81,12 @@ liftGeneralizerM cont = do
   return (Abs bs e, vals)
   where
     -- OPTIMIZE: something not O(N^2)
-    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest (Binder CoreIR) n l, [Atom CoreIR n])
+    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Binders CoreIR n l, [Atom CoreIR n])
     hoistGeneralizationVals Empty = (Empty, [])
     hoistGeneralizationVals (Nest (GeneralizationEmission b val) bs) = do
       let (bs', vals) = hoistGeneralizationVals bs
       case hoist b (ListE vals) of
-        HoistSuccess (ListE vals') -> (Nest b bs', val:vals')
+        HoistSuccess (ListE vals') -> (Nest (PlainBD b) bs', val:vals')
         HoistFailure _ -> error "should't happen" -- when we do the generalization,
         -- the "local" values we emit never mention the new generalization binders.
         -- TODO: consider trying to encode this constraint using scope parameters.
@@ -130,13 +131,13 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
-  TabPi (TabPiType (IxDictAtom d) (b:>iTy) resultTy) -> do
-    iTy' <- f' TypeParam TyKind iTy
-    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
+  TabPi tabTy@(TabPiType (IxDictAtom d) b _) -> do
+    iTy <- f' TypeParam TyKind $ binderType b
+    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy
     d'   <- f DictParam dictTy d
-    withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
-      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
-      return $ TabTy (IxDictAtom d') (b':>iTy') resultTy'
+    withFreshBinder (getNameHint b) iTy \b' -> do
+      resultTy' <- instantiate tabTy [Var $ binderVar b'] >>= (f' TypeParam TyKind)
+      return $ TabTy (IxDictAtom d') (PlainBD b') resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
   TabPi t -> return $ TabPi t
   TC tc -> TC <$> case tc of
@@ -178,7 +179,7 @@ traverseRoleBinders f allBinders allParams =
       ty' <- substM $ binderType b
       Distinct <- getDistinct
       param' <- liftSubstReaderT $ f role ty' param
-      params'' <- extendSubst (b@>SubstVal param') $ go bs params
+      params'' <- extendSubstBD b [SubstVal param'] $ go bs params
       return $ param' : params''
     go _ _ = error "zip error"
 {-# INLINE traverseRoleBinders #-}

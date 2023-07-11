@@ -117,12 +117,6 @@ instance IRRep r => HasType r (Con r) where
     SumCon tys _ _ -> SumTy tys
     HeapVal        -> TC HeapType
 
-getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
-getSuperclassType _ Empty = error "bad index"
-getSuperclassType bsAbove (Nest b@(_:>t) bs) = \case
-  0 -> ignoreHoistFailure $ hoist bsAbove t
-  i -> getSuperclassType (RNest bsAbove b) bs (i-1)
-
 instance IRRep r => HasType r (Expr r) where
   getType expr = case expr of
     App (EffTy _ ty) _ _ -> ty
@@ -207,19 +201,21 @@ rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+    DepPairTy $ DepPairType ExplicitDepPair (PlainBD (b:>IdxRepTy)) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
 
-tabIxType :: TabPiType r n -> IxType r n
-tabIxType (TabPiType d (_:>t) _) = IxType t d
+tabIxType :: IRRep r => TabPiType r n -> IxType r n
+tabIxType (TabPiType d b _) = IxType (binderType b) d
 
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
-  => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
-typesAsBinderNest types body = toConstBinderNest types body
+  => [Type r n] -> e n -> Abs (Binders r) e n
+typesAsBinderNest types body =
+  case toConstBinderNest types body of
+    Abs bs body' -> Abs (fmapNest PlainBD bs) body'
 
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
@@ -230,7 +226,7 @@ nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resu
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType d (b:>t) resultTy'
+    Abs b resultTy' -> TabPiType d (PlainBD (b:>t)) resultTy'
 
 corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
 corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy

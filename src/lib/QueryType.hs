@@ -65,9 +65,11 @@ blockTy b = blockEffTy b <&> \(EffTy _ t) -> t
 piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
 piTypeWithoutDest (PiType bsRefB _) =
   case popNest bsRefB of
-    Just (PairB bs (_:>RawRefTy ansTy)) -> do
-      PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
-    _ -> error "expected trailing dest binder"
+    Just (PairB bs refB) -> do
+      case binderType refB of
+        RawRefTy ansTy -> PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
+        _ -> error "expected ref type"
+    _ -> error "expected trailing binder"
 
 blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
 blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
@@ -150,13 +152,13 @@ typeOfHof = \case
     _ -> error "expected a unary pi type"
   While _ -> return UnitTy
   Linearize f _ -> getLamExprType f >>= \case
-    PiType (UnaryNest (binder:>a)) (EffTy Pure b) -> do
+    PiType (UnaryNest binder) (EffTy Pure b) -> do
       let b' = ignoreHoistFailure $ hoist binder b
-      let fLinTy = Pi $ nonDepPiType [a] Pure b'
+      let fLinTy = Pi $ nonDepPiType [binderType binder] Pure b'
       return $ PairTy b' fLinTy
     _ -> error "expected a unary pi type"
   Transpose f _ -> getLamExprType f >>= \case
-    PiType (UnaryNest (_:>a)) _ -> return a
+    PiType (UnaryNest b) _ -> return $ binderType b
     _ -> error "expected a unary pi type"
   RunReader _ f -> do
     (resultTy, _) <- getTypeRWSAction f
@@ -217,10 +219,10 @@ getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
       dictTy <- DictTy <$> dictType (sink className) params
       withFreshBinder noHint dictTy \dictB -> do
         scDicts <- getSuperclassDicts (Var $ binderVar dictB)
-        CorePiType appExpl methodExpls methodBs effTy <- instantiate (sink absPiTy) scDicts
+        CorePiType appExpl methodExpls methodBs effTy <- instantiate absPiTy scDicts
         let paramExpls = paramNames <&> \name -> Inferred name Unify
         let expls = paramExpls <> [Inferred Nothing (Synth $ Partial $ succ i)] <> methodExpls
-        return $ Pi $ CorePiType appExpl expls (paramBs' >>> UnaryNest dictB >>> methodBs) effTy
+        return $ Pi $ CorePiType appExpl expls (paramBs' >>> UnaryNest (BD dictB) >>> methodBs) effTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
 getMethodType dict i = liftEnvReaderM $ withSubstReaderT do
@@ -266,7 +268,7 @@ getStructDataConType tyCon = liftEnvReaderM $ withSubstReaderT do
 buildDataConType
   :: (EnvReader m, EnvExtender m)
   => TyConDef n
-  -> (forall l. DExt n l => [Explicitness] -> Nest CBinder n l -> [CAtomName l] -> TyConParams l -> m l a)
+  -> (forall l. DExt n l => [Explicitness] -> CBinders n l -> [CAtomName l] -> TyConParams l -> m l a)
   -> m n a
 buildDataConType (TyConDef _ roleExpls bs _) cont = do
   let expls = snd <$> roleExpls
@@ -274,9 +276,8 @@ buildDataConType (TyConDef _ roleExpls bs _) cont = do
     Explicit -> return $ Inferred Nothing Unify
     expl     -> return $ expl
   refreshAbs (Abs bs UnitE) \bs' UnitE -> do
-    let vs = nestToNames bs'
-    vs' <- mapM toAtomVar vs
-    cont expls' bs' vs $ TyConParams expls (Var <$> vs')
+    let vs = bindersVars bs'
+    cont expls' bs' (atomVarName <$> vs) $ TyConParams expls (Var <$> vs)
 
 makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
 makeTyConParams tc params = do
@@ -322,12 +323,13 @@ functionEffs f = getLamExprType f >>= \case
   PiType b (EffTy effs _) -> return $ ignoreHoistFailure $ hoist b effs
 
 rwsFunEffects :: (IRRep r, EnvReader m) => RWS -> LamExpr r n -> m n (EffectRow r n)
-rwsFunEffects rws f = getLamExprType f >>= \case
+rwsFunEffects rws f = liftEnvReaderM $ getLamExprType f >>= \case
    PiType (BinaryNest h ref) et -> do
      let effs' = ignoreHoistFailure $ hoist ref (etEff et)
-     let hVal = Var $ AtomVar (binderName h) (TC HeapType)
-     let effs'' = deleteEff (RWSEffect rws hVal) effs'
-     return $ ignoreHoistFailure $ hoist h effs''
+     refreshAbs (Abs h effs') \h' effs'' -> do
+       let hVal = Var $ binderVar h'
+       let effs''' = deleteEff (RWSEffect rws hVal) effs''
+       return $ ignoreHoistFailure $ hoist h' effs'''
    _ -> error "Expected a binary function type"
 
 getLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (PiType r n)
@@ -361,6 +363,13 @@ getSuperclassTys (DictType _ className params) = do
   forM [0 .. nestLength superclasses - 1] \i -> do
     instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
 
+getSuperclassType :: RNest (BinderAndDecls CoreIR) n l -> CBinders l l' -> Int -> CType n
+getSuperclassType _ Empty = error "bad index"
+getSuperclassType bsAbove (Nest b bs) = \case
+  0 -> ignoreHoistFailure $ hoist bsAbove (binderType b)
+  i -> getSuperclassType (RNest bsAbove b) bs (i-1)
+
+
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
   DexTopFun _ (TopLam _ piTy _) _ -> return piTy
@@ -383,7 +392,7 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
               _ -> error $ "Not a valid FFI return type: " ++ pprint resultTys
     t:ts -> withFreshBinder noHint (BaseTy t) \b -> do
       PiType bs effTy <- go ts
-      return $ PiType (Nest b bs) effTy
+      return $ PiType (Nest (PlainBD b) bs) effTy
 
 -- === Data constraints ===
 
@@ -400,8 +409,8 @@ checkDataLike ty = case ty of
   TabPi (TabPiType _ b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
-  DepPairTy (DepPairType _ b@(_:>l) r) -> do
-    recur l
+  DepPairTy (DepPairType _ b r) -> do
+    recur $ binderType b
     renameBinders b \_ -> checkDataLike r
   NewtypeTyCon nt -> do
     (_, ty') <- unwrapNewtypeType =<< renameM nt

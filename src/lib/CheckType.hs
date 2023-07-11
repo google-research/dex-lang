@@ -254,6 +254,9 @@ instance (ToBinding ann c, Color c, CheckableE r ann) => CheckableB r (BinderP c
       extendRenamer (b@>binderName b') $
         cont b'
 
+instance IRRep r => CheckableB r (BinderAndDecls r) where
+  checkB (BD b) cont = checkB b \b' -> cont $ BD b'
+
 checkBinderType
   :: (IRRep r) => Type r o -> Binder r i i'
   -> (forall o'. DExt o o' => Binder r o o' -> TyperM r i' o' a)
@@ -262,6 +265,12 @@ checkBinderType ty b cont = do
   checkB b \b' -> do
     checkTypesEq (sink $ binderType b') (sink ty)
     cont b'
+
+checkBinderAndDecls
+  :: (IRRep r) => Type r o -> BinderAndDecls r i i'
+  -> (forall o'. DExt o o' => BinderAndDecls r o o' -> TyperM r i' o' a)
+  -> TyperM r i o a
+checkBinderAndDecls ty (BD b) cont = checkBinderType ty b \b' -> cont (BD b')
 
 instance IRRep r => CheckableWithEffects r (Expr r) where
   checkWithEffects allowedEffs expr = addContext ("Checking expr:\n" ++ pprint expr) case expr of
@@ -616,7 +625,7 @@ checkHof (EffTy effs reqTy) = \case
     IxType t d <- checkE ixTy
     LamExpr (UnaryNest b) body <- return f
     TabPi tabTy <- return reqTy
-    checkBinderType t b \b' -> do
+    checkBinderAndDecls t b \b' -> do
       resultTy <- checkInstantiation (sink tabTy) [Var $ binderVar b']
       body' <- checkBlock (EffTy (sink effs) resultTy) body
       return $ For dir (IxType t d) (LamExpr (UnaryNest b') body')
@@ -627,7 +636,7 @@ checkHof (EffTy effs reqTy) = \case
   Linearize f x -> do
     (x', xTy) <- checkAndGetType x
     LamExpr (UnaryNest b) body <- return f
-    checkBinderType xTy b \b' -> do
+    checkBinderAndDecls xTy b \b' -> do
       PairTy resultTy fLinTy <- sinkM reqTy
       body' <- checkBlock (EffTy Pure resultTy) body
       checkTypesEq fLinTy (Pi $ nonDepPiType [sink xTy] Pure resultTy)
@@ -693,7 +702,7 @@ instance IRRep r => CheckableWithEffects r (DAMOp r) where
         ProdTy refTys -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
         _ -> badCarry
       let binderReqTy = PairTy (ixTypeType ixTy') carryTy'
-      checkBinderType binderReqTy b \b' -> do
+      checkBinderAndDecls binderReqTy b \b' -> do
         body' <- checkBlock (EffTy (sink effAnn') UnitTy) body
         return $ Seq effAnn' dir ixTy' carry' $ LamExpr (UnaryNest b') body'
     RememberDest effAnn d lam -> do
@@ -701,7 +710,7 @@ instance IRRep r => CheckableWithEffects r (DAMOp r) where
       effAnn' <- checkE effAnn
       checkExtends effs effAnn'
       (d', dTy@(RawRefTy _)) <- checkAndGetType d
-      checkBinderType dTy b \b' -> do
+      checkBinderAndDecls dTy b \b' -> do
         body' <- checkBlock (EffTy (sink effAnn') UnitTy) body
         return $ RememberDest effAnn' d' $ LamExpr (UnaryNest b') body'
     AllocDest ty -> AllocDest <$> ty|:TyKind
@@ -740,10 +749,10 @@ checkRWSAction
   -> RWS -> LamExpr r i -> TyperM r i o (LamExpr r o)
 checkRWSAction resultTy referentTy effs rws f = do
   BinaryLamExpr bH bR body <- return f
-  checkBinderType (TC HeapType) bH \bH' -> do
+  checkBinderAndDecls (TC HeapType) bH \bH' -> do
     let h = Var $ binderVar bH'
     let refTy = RefTy h (sink referentTy)
-    checkBinderType refTy bR \bR' -> do
+    checkBinderAndDecls refTy bR \bR' -> do
       let effs' = extendEffect (RWSEffect rws $ sink h) (sink effs)
       body' <- checkBlock (EffTy effs' (sink resultTy)) body
       return $ BinaryLamExpr bH' bR' body'
@@ -775,9 +784,9 @@ checkInstantiation abTop xsTop = do
   Abs bs body <- return $ toAbs abTop
   go (Abs bs body) xsTop
  where
-  go :: Abs (Nest (Binder r)) body o' -> [Atom r o'] -> TyperM r i o' (body o')
+  go :: Abs (Binders r) body o' -> [Atom r o'] -> TyperM r i o' (body o')
   go (Abs Empty body) [] = return body
-  go (Abs (Nest b bs) body) (x:xs) = do
+  go (Abs (Nest (BD b) bs) body) (x:xs) = do
     checkTypesEq (getType x) (binderType b)
     rest <- applySubst (b@>SubstVal x) (Abs bs body)
     go rest xs

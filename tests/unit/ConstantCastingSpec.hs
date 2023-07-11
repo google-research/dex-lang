@@ -31,9 +31,9 @@ castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
 
 castLam :: EnvExtender m => ScalarBaseType -> ScalarBaseType -> m n (SLam n)
 castLam fromTy toTy = do
-  withFreshBinder noHint (BaseTy (Scalar fromTy)) \x -> do
-    body <- exprToBlock $ PrimOp $ castOp toTy $ Var $ binderVar x
-    return $ LamExpr (Nest x Empty) body
+  withFreshBinder noHint (BaseTy (Scalar fromTy)) \b -> do
+    body <- exprToBlock $ PrimOp $ castOp toTy $ Var $ binderVar b
+    return $ LamExpr (Nest (PlainBD b) Empty) body
 
 exprToBlock :: EnvReader m => SExpr n -> m n (SBlock n)
 exprToBlock expr = do

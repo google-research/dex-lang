@@ -649,7 +649,7 @@ buildAbs hint binding cont = do
 
 typesFromNonDepBinderNest
   :: (EnvReader m, Fallible1 m, IRRep r)
-  => Nest (Binder r) n l -> m n [Type r n]
+  => Binders r n l -> m n [Type r n]
 typesFromNonDepBinderNest Empty = return []
 typesFromNonDepBinderNest (Nest b rest) = do
   Abs rest' UnitE <- return $ assumeConst $ Abs (UnaryNest b) $ Abs rest UnitE
@@ -662,7 +662,7 @@ buildUnaryLamExpr
   -> (forall l. (Emits l, Distinct l, DExt n l) => AtomVar r l -> m l (Atom r l))
   -> m n (LamExpr r n)
 buildUnaryLamExpr hint ty cont = do
-  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest b)
+  bs <- withFreshBinder hint ty \b -> return $ EmptyAbs (UnaryNest (PlainBD b))
   buildLamExpr bs \[v] -> cont v
 
 buildBinaryLamExpr
@@ -672,21 +672,21 @@ buildBinaryLamExpr
   -> m n (LamExpr r n)
 buildBinaryLamExpr (h1,t1) (h2,t2) cont = do
   bs <- withFreshBinder h1 t1 \b1 -> withFreshBinder h2 (sink t2) \b2 ->
-    return $ EmptyAbs $ BinaryNest b1 b2
+    return $ EmptyAbs $ BinaryNest (PlainBD b1) (PlainBD b2)
   buildLamExpr bs \[v1, v2] -> cont v1 v2
 
 buildLamExpr
   :: ScopableBuilder r m
-  => (EmptyAbs (Nest (Binder r)) n)
+  => (Abs (Binders r) any n)
   -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomVar r l] -> m l (Atom r l))
   -> m n (LamExpr r n)
-buildLamExpr (Abs bs UnitE) cont = case bs of
+buildLamExpr (Abs bs _) cont = case bs of
   Empty -> LamExpr Empty <$> buildBlock (cont [])
   Nest b rest -> do
     Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
-      rest' <- applySubst (b@>SubstVal (Var v)) $ EmptyAbs rest
+      rest' <- instantiate (Abs (UnaryNest b) (EmptyAbs rest)) [Var v]
       buildLamExpr rest' \vs -> cont $ sink v : vs
-    return $ LamExpr (Nest b' bs') body'
+    return $ LamExpr (Nest (PlainBD b') bs') body'
 
 buildTopLamFromPi
   :: ScopableBuilder r m
@@ -765,7 +765,7 @@ buildEffLam hint ty body = do
       let ref = binderVar b
       hVar <- sinkM $ binderVar h
       body' <- buildBlock $ body (sink hVar) $ sink ref
-      return $ LamExpr (BinaryNest h b) body'
+      return $ LamExpr (BinaryNest (PlainBD h) (PlainBD b)) body'
 
 buildForAnn
   :: (Emits n, ScopableBuilder r m)
@@ -776,7 +776,7 @@ buildForAnn hint ann (IxType iTy ixDict) body = do
   lam <- withFreshBinder hint iTy \b -> do
     let v = binderVar b
     body' <- buildBlock $ body $ sink v
-    return $ LamExpr (UnaryNest b) body'
+    return $ UnaryLamExpr b body'
   emitHof $ For ann (IxType iTy ixDict) lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
@@ -862,7 +862,7 @@ zeroAt ty = liftEmitBuilder $ go ty where
    BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
    ProdTy tys -> ProdVal <$> mapM go tys
    TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
-     go =<< instantiate (sink tabPi) [Var i]
+     go =<< instantiate tabPi [Var i]
    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
@@ -1336,17 +1336,15 @@ runMaybeWhile body = do
 
 type ReconAbs r e = Abs (ReconBinders r) e
 
-data ReconBinders r n l = ReconBinders
-  (TelescopeType (AtomNameC r) (Type r) n)
-  (Nest (NameBinder (AtomNameC r)) n l)
+data ReconBinders r n l = ReconBinders (TelescopeType r n) (Nest (NameBinder (AtomNameC r)) n l)
 
-data TelescopeType c e n =
-   DepTelescope (TelescopeType c e n) (Abs (BinderP c e) (TelescopeType c e) n)
- | ProdTelescope [e n]
+data TelescopeType r n =
+   DepTelescope (TelescopeType r n) (Abs (BinderAndDecls r) (TelescopeType r) n)
+ | ProdTelescope [Type r n]
 
 instance IRRep r => GenericB (ReconBinders r) where
   type RepB (ReconBinders r) =
-    PairB (LiftB (TelescopeType (AtomNameC r) (Type r)))
+    PairB (LiftB (TelescopeType r))
           (Nest (NameBinder (AtomNameC r)))
   fromB (ReconBinders x y) = PairB (LiftB x) y
   {-# INLINE fromB #-}
@@ -1365,10 +1363,10 @@ instance IRRep r => ProvesExt  (ReconBinders r)
 instance IRRep r => BindsNames (ReconBinders r)
 instance IRRep r => HoistableB (ReconBinders r)
 
-instance GenericE (TelescopeType c e) where
-  type RepE (TelescopeType c e) = EitherE
-         (PairE (TelescopeType c e) (Abs (BinderP c e) (TelescopeType c e)))
-         (ListE e)
+instance GenericE (TelescopeType r) where
+  type RepE (TelescopeType r) = EitherE
+         (PairE (TelescopeType r) (Abs (BinderAndDecls r) (TelescopeType r)))
+         (ListE (Type r))
   fromE (DepTelescope lhs ab) = LeftE (PairE lhs ab)
   fromE (ProdTelescope tys)   = RightE (ListE tys)
   {-# INLINE fromE #-}
@@ -1376,10 +1374,10 @@ instance GenericE (TelescopeType c e) where
   toE (RightE (ListE tys))   = ProdTelescope tys
   {-# INLINE toE #-}
 
-instance (Color c, SinkableE e) => SinkableE (TelescopeType c e)
-instance (Color c, SinkableE e, RenameE e) => RenameE (TelescopeType c e)
-instance (Color c, ToBinding e c, SubstE AtomSubstVal e) => SubstE AtomSubstVal (TelescopeType c e)
-instance (Color c, HoistableE e) => HoistableE (TelescopeType c e)
+instance IRRep r => SinkableE (TelescopeType r)
+instance IRRep r => RenameE (TelescopeType r)
+instance IRRep r => SubstE AtomSubstVal (TelescopeType r)
+instance IRRep r => HoistableE (TelescopeType r)
 
 telescopicCapture
   :: (EnvReader m, HoistableE e, HoistableB b, IRRep r)
@@ -1405,27 +1403,27 @@ applyReconAbs (Abs bs result) x = do
   applySubst (bs @@> map SubstVal xs) result
 
 buildTelescopeTy
-  :: (EnvReader m, EnvExtender m, Color c, HoistableE e)
-  => [AnnVar c e n] -> m n (TelescopeType c e n)
+  :: (EnvReader m, EnvExtender m, IRRep r)
+  => [AnnVar (AtomNameC r) (Type r) n] -> m n (TelescopeType r n)
 buildTelescopeTy [] = return (ProdTelescope [])
 buildTelescopeTy ((v,ty):xs) = do
   rhs <- buildTelescopeTy xs
   Abs b rhs' <- return $ abstractFreeVar v rhs
   case hoist b rhs' of
     HoistSuccess rhs'' -> return $ prependTelescopeTy ty rhs''
-    HoistFailure _ -> return $ DepTelescope (ProdTelescope []) (Abs (b:>ty) rhs')
+    HoistFailure _ -> return $ DepTelescope (ProdTelescope []) (Abs (BD (b:>ty)) rhs')
 
-prependTelescopeTy :: e n -> TelescopeType c e n -> TelescopeType c e n
+prependTelescopeTy :: Type r n -> TelescopeType r n -> TelescopeType r n
 prependTelescopeTy x = \case
   DepTelescope lhs rhs -> DepTelescope (prependTelescopeTy x lhs) rhs
   ProdTelescope xs -> ProdTelescope (x:xs)
 
 buildTelescopeVal
   :: (EnvReader m, IRRep r) => [Atom r n]
-  -> TelescopeType (AtomNameC r) (Type r) n -> m n (Atom r n)
+  -> TelescopeType r n -> m n (Atom r n)
 buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
   go :: (EnvReader m, IRRep r)
-     => TelescopeType (AtomNameC r) (Type r) n ->  [Atom r n]
+     => TelescopeType r n ->  [Atom r n]
      -> m n (Atom r n, [Atom r n])
   go ty rest = case ty of
     ProdTelescope tys -> do
@@ -1433,12 +1431,12 @@ buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
       return (ProdVal xs, rest')
     DepTelescope ty1 (Abs b ty2) -> do
       (x1, ~(xDep : rest')) <- go ty1 rest
-      ty2' <- applySubst (b@>SubstVal xDep) ty2
+      ty2' <- instantiate (Abs b ty2) [xDep]
       (x2, rest'') <- go ty2' rest'
       let depPairTy = DepPairType ExplicitDepPair b (telescopeTypeType ty2)
       return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
 
-telescopeTypeType :: TelescopeType (AtomNameC r) (Type r) n -> Type r n
+telescopeTypeType :: TelescopeType r n -> Type r n
 telescopeTypeType (ProdTelescope tys) = ProdTy tys
 telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
   let lhs' = telescopeTypeType lhs
@@ -1450,7 +1448,7 @@ unpackTelescope
   => ReconBinders r l1 l2 -> Atom r n -> m n [Atom r n]
 unpackTelescope (ReconBinders tyTop _) xTop = go tyTop xTop where
   go :: (Fallible1 m, EnvReader m, IRRep r)
-     => TelescopeType c e l-> Atom r n -> m n [Atom r n]
+     => TelescopeType r l-> Atom r n -> m n [Atom r n]
   go ty x = case ty of
     ProdTelescope _ -> getUnpacked x
     DepTelescope ty1 (Abs _  ty2) -> do

@@ -159,6 +159,9 @@ instance PrettyPrec a => PrettyPrec [a] where
 instance PrettyE ann => Pretty (BinderP c ann n l)
   where pretty (b:>ty) = p b <> ":" <> p ty
 
+instance IRRep r => Pretty (BinderAndDecls r n l) where
+  pretty (BD b) = pretty b
+
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (Atom x) = prettyPrec x
@@ -324,7 +327,7 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (b:>ty) body) = let
+  pretty (TabPiType dict (BD (b:>ty)) body) = let
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
