@@ -293,26 +293,24 @@ convertMethodAtom iso atom = do
   if isTyEqualToInType
     then applyAbs (fwd iso) (SubstVal atom)
     else case ty of
-      Pi (CorePiType _ [] Empty _) -> case atom of
-        Lam (CoreLamExpr _ (LamExpr Empty block)) -> case block of
-          Abs decls ans -> do
-            Pi cty@(CorePiType _ _ Empty _) <- convertType iso ty
-            block' <- refreshAbs (Abs decls ans) \decls' ans' -> do
-              ans'' <- convertMethodAtom (sink iso) ans'
-              return $ Abs decls' ans''
-            return $ Lam $ CoreLamExpr cty (LamExpr Empty block')
+      Pi (CorePiType appExpl expl bs (EffTy effs bodyTy)) -> case atom of
+        Lam (CoreLamExpr _ _) -> do
+          Abs bs' (effs' `PairE` bodyTy') <- convertBinders iso (Abs (zipAttrs expl bs) (effs `PairE` bodyTy))
+          let (_, bs'') = unzipAttrs bs'
+          lamExpr <- buildCoreLam (CorePiType appExpl expl bs'' (EffTy effs' bodyTy')) \binderNames -> do
+            let args = map Var binderNames
+            args' <- mapM (convertMethodAtom (sink $ invert iso)) args
+            -- Note that `App atom args'` (two lines down) has the unconverted
+            -- type `bodyTy` (and unconverted effects `effs`). After the recursive
+            -- call to `convertMethodAtom` (three lines down), the resulting
+            -- `atom''` will have the correct converted type and effects (i.e.
+            -- type and effects equivalent to `bodyTy'` and `effs'`).
+            effTy <- applyRename (bs @@> (map atomVarName binderNames)) $ EffTy effs bodyTy
+            atom' <- emitExpr $ App effTy (sink atom) args'
+            atom'' <- convertMethodAtom (sink iso) atom'
+            emitExpr $ Atom atom''
+          return $ Lam lamExpr
         _ -> error "should not occur"
-      Pi (CorePiType appExpl expl bs (EffTy effs bodyTy)) -> do
-        Abs bs' (effs' `PairE` bodyTy') <- convertBinders iso (Abs (zipAttrs expl bs) (effs `PairE` bodyTy))
-        let (_, bs'') = unzipAttrs bs'
-        lamExpr <- buildCoreLam (CorePiType appExpl expl bs'' (EffTy effs' bodyTy')) \binderNames -> do
-          let args = map Var binderNames
-          args' <- mapM (convertMethodAtom (sink $ invert iso)) args
-          effTy <- applyRename (bs'' @@> (map atomVarName binderNames)) $ EffTy effs' bodyTy'
-          atom' <- emitExpr $ App effTy (sink atom) args'
-          atom'' <- convertMethodAtom (sink iso) atom'
-          emitExpr $ Atom atom''
-        return $ Lam lamExpr
       _ -> return atom
 
 -- === Inferer interface ===
