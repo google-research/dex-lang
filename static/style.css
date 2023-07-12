@@ -47,9 +47,6 @@ nav ol {
   margin: auto;
 }
 
-.cell {
-}
-
 .code-block, .err-block, .result-block {
   padding: 0em 0em 0em 2em;
   display: block;

@@ -57,7 +57,7 @@ emitCharLit :: Emits n => Char -> Print n
 emitCharLit c = emitChar $ charRepVal c
 
 showAnyRec :: forall n. Emits n => CAtom n -> Print n
-showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
+showAnyRec atom = case getType atom of
   -- hack to print chars nicely. TODO: make `Char` a newtype
   TC t -> case t of
     BaseType bt -> case bt of
@@ -78,16 +78,16 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ -> error "not implemented"
+  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
     void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
   NewtypeTyCon tc -> case tc of
-    Fin _ -> rec $ unwrapNewtype atom
+    Fin _ -> rec =<< unwrapNewtype atom
     Nat -> do
-      let n = unwrapNewtype atom
+      n <- unwrapNewtype atom
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = TC (BaseType (Scalar Int64Type))
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
@@ -102,7 +102,7 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
       def <- lookupTyCon defName
       conDefs <- instantiateTyConDef def params
       case conDefs of
-        ADTCons [con] -> showDataCon con $ unwrapNewtype atom
+        ADTCons [con] -> showDataCon con =<< unwrapNewtype atom
         ADTCons cons -> void $ buildCase atom UnitTy \i arg -> do
           showDataCon (sink $ cons !! i) arg
           return UnitVal
@@ -128,14 +128,14 @@ showAnyRec atom = getType atom >>= \atomTy -> case atomTy of
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
-  TyVar _ -> error $ "unexpected type variable: " ++ pprint atomTy
+  TyVar v -> error $ "unexpected type variable: " ++ pprint v
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
 
     printTypeOnly :: String -> Print n
     printTypeOnly thingName = do
-      ty <- getType atom
+      ty <- return $ getType atom
       emitLit $ "<" <> thingName <> " of type " <> pprint ty <> ">"
 
     printAsConstant :: Print n
@@ -163,14 +163,15 @@ withBuffer
   -> BuilderM CoreIR n (CAtom n)
 withBuffer cont = do
   lam <- withFreshBinder "h" (TC HeapType) \h -> do
-    bufTy <- bufferTy (Var $ binderName h)
+    bufTy <- bufferTy (Var $ binderVar h)
     withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (Var $ sink $ binderName h))
+      let eff = OneEffect (RWSEffect State (Var $ sink $ binderVar h))
       body <- buildBlock do
-        cont $ sink $ Var $ binderName b
+        cont $ sink $ Var $ binderVar b
         return UnitVal
-      let piBinders = BinaryNest (WithExpl (Inferred Nothing Unify) h) (WithExpl Explicit b)
-      let piTy = CorePiType ExplicitApp piBinders eff UnitTy
+      let binders = BinaryNest h b
+      let expls = [Inferred Nothing Unify, Explicit]
+      let piTy = CorePiType ExplicitApp expls binders $ EffTy eff UnitTy
       let lam = LamExpr (BinaryNest h b) body
       return $ Lam $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
@@ -183,15 +184,15 @@ bufferTy h = do
 -- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
-  RefTy h _ <- getType buf
-  TabTy (_:>ixTy) _ <- getType tab
-  n <- applyIxMethodCore Size ixTy []
+  RefTy h _ <- return $ getType buf
+  TabPi t <- return $ getType tab
+  n <- applyIxMethodCore Size (tabIxType t) []
   void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
 
 -- argument has type `Word8`
 pushBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 pushBuffer buf x = do
-  RefTy h _ <- getType buf
+  RefTy h _ <- return $ getType buf
   void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
 
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
@@ -199,11 +200,16 @@ stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
+finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
+finTabTyCore n eltTy = do
+  d <- mkDictAtom $ IxFin n
+  return $ IxType (FinTy n) (IxDictAtom d) ==> eltTy
+
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
 getPreludeFunction sourceName = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of
-      UAtomVar v -> return $ Var v
+      UAtomVar v -> Var <$> toAtomVar v
       _ -> notfound
     Nothing -> notfound
  where notfound = error $ "Function not defined: " ++ sourceName
@@ -231,7 +237,8 @@ forEachTabElt
   -> (forall l. (Emits l, DExt n l) => CAtom l -> CAtom l -> m l ())
   -> m n ()
 forEachTabElt tab cont = do
-  TabTy (_:>ixTy) _ <- getType tab
+  TabPi t <- return $ getType tab
+  let ixTy = tabIxType t
   void $ buildFor "i" Fwd ixTy \i -> do
     x <- tabApp (sink tab) (Var i)
     i' <- applyIxMethodCore Ordinal (sink ixTy) [Var i]

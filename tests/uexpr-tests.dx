@@ -321,7 +321,7 @@ def bug(n|Data) -> () =
 >  v#1:((RangeFrom n v#0) => ()) = for i:(RangeFrom n v#0). ()
 >  v#1
 > Of type: ((RangeFrom n v#0) => ())
-> With effects: {}
+>
 >
 >   for w':n.
 >   ^^^^^^^^^^

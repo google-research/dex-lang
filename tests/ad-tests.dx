@@ -498,3 +498,24 @@ deriv (\x. q x 1.0) 1.0
 -- Correct derivative, based on the SomeTangent branch
 deriv (\x. q x x) 1.0
 > 3.
+
+------ Check custom linearization of matmul ------
+
+amat = for i:(Fin 100) j:(Fin 100). n_to_f $ ordinal (i, j)
+
+-- The derivative of matmul should give the same answers as a direct
+-- matmul (this checks that the custom derivative is not too busted).
+
+def mmp'(m1:l=>m=>Float, m2:m=>n=>Float) -> l=>n=>Float given (l|Ix, m|Ix, n|Ix) =
+  jvp (\m. m1 ** m) m2 m2
+
+:p mmp'(amat, amat) ~~ naive_matmul(amat, amat)
+> True
+
+-- Let's check the other orientation too
+
+def mmp''(m1:l=>m=>Float, m2:m=>n=>Float) -> l=>n=>Float given (l|Ix, m|Ix, n|Ix) =
+  jvp (\m. m ** m2) m1 m1
+
+:p mmp''(amat, amat) ~~ naive_matmul(amat, amat)
+> True

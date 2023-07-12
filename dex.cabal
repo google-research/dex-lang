@@ -84,9 +84,11 @@ library
                      , Serialize
                      , Simplify
                      , Subst
+                     , SourceInfo
                      , SourceRename
                      , TopLevel
                      , Transpose
+                     , TraverseSourceInfo
                      , Types.Core
                      , Types.Imp
                      , Types.Misc
@@ -94,7 +96,9 @@ library
                      , Types.OpNames
                      , Types.Source
                      , QueryType
+                     , QueryTypePure
                      , Util
+                     , Vectorize
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval
@@ -322,12 +326,14 @@ test-suite spec
                      , aeson
                      , aeson-pretty
                      , bytestring
+                     , blaze-html
                      , dex
   other-modules:       ConstantCastingSpec
                      , JaxADTSpec
                      , OccAnalysisSpec
                      , OccurrenceSpec
                      , RawNameSpec
+                     , SourceInfoSpec
   default-language:    Haskell2010
   build-tool-depends:  hspec-discover:hspec-discover
                        -- Mimicking -XGHC2021 in GHC 8.10.1

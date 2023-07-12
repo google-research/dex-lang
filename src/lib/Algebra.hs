@@ -59,7 +59,7 @@ sumUsingPolys lim (Abs i body) = do
         ++ "Trying to sum from 0 to " ++ pprint lim ++ " - 1, \\"
         ++ pprint i' ++ "." ++ pprint body'
   limName <- emit (Atom lim)
-  emitPolynomial $ sum (LeftE limName) sumAbs
+  emitPolynomial $ sum (LeftE (atomVarName limName)) sumAbs
 
 mul :: Polynomial n-> Polynomial n -> Polynomial n
 mul (Polynomial x) (Polynomial y) =
@@ -137,20 +137,20 @@ type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpIR
 blockAsPoly
   :: (EnvExtender m, EnvReader m)
   => Block SimpIR n -> m n (Maybe (Polynomial n))
-blockAsPoly (Block _ decls result) =
+blockAsPoly (Abs decls result) =
   liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ blockAsPolyRec decls result
 
 blockAsPolyRec :: Nest (Decl SimpIR) i i' -> Atom SimpIR i' -> BlockTraverserM i o (Polynomial o)
 blockAsPolyRec decls result = case decls of
   Empty -> atomAsPoly result
-  Nest (Let b (DeclBinding _ _ expr)) restDecls -> do
+  Nest (Let b (DeclBinding _ expr)) restDecls -> do
     p <- optional (exprAsPoly expr)
     extendSubst (b@>PolySubstVal p) $ blockAsPolyRec restDecls result
 
   where
     atomAsPoly :: Atom SimpIR i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
-      Var v       -> atomNameAsPoly v
+      Var v       -> atomVarAsPoly v
       RepValAtom (RepVal _ (Leaf (IVar v' _))) -> impNameAsPoly v'
       IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
@@ -159,12 +159,13 @@ blockAsPolyRec decls result = case decls of
     impNameAsPoly v = getSubst <&> (!v) >>= \case
       PolyRename v' -> return $ poly [(1, mono [(RightE v', 1)])]
 
-    atomNameAsPoly :: AtomName SimpIR i -> BlockTraverserM i o (Polynomial o)
-    atomNameAsPoly v = getSubst <&> (!v) >>= \case
+    atomVarAsPoly :: AtomVar SimpIR i -> BlockTraverserM i o (Polynomial o)
+    atomVarAsPoly v = getSubst <&> (! atomVarName v) >>= \case
       PolySubstVal Nothing   -> empty
       PolySubstVal (Just cp) -> return cp
-      PolyRename   v'        ->
-        getType v' >>= \case
+      PolyRename v' -> do
+        v'' <- toAtomVar v'
+        case getType v'' of
           IdxRepTy -> return $ poly [(1, mono [(LeftE v', 1)])]
           _ -> empty
 
@@ -208,7 +209,9 @@ emitPolynomial (Polynomial p) = do
 emitMonomial :: (Emits n, Builder SimpIR m) => Monomial n -> m n (Atom SimpIR n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
-    LeftE v' -> ipow (Var v') e
+    LeftE v' -> do
+      v'' <- Var <$> toAtomVar v'
+      ipow v'' e
     RightE v' -> do
       let atom = RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
       ipow atom e

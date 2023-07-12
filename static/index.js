@@ -43,6 +43,45 @@ function lookup_address(cell, address) {
     return node
 }
 
+function renderHovertips() {
+    var spans = document.querySelectorAll(".code-span");
+    Array.from(spans).map((span) => attachHovertip(span));
+}
+
+function attachHovertip(node) {
+    node.addEventListener("mouseover", (event) => highlightNode(     event, node));
+    node.addEventListener("mouseout" , (event) => removeHighlighting(event, node));
+}
+
+function highlightNode(event, node) {
+    event.stopPropagation();
+    node.style.backgroundColor = "lightblue";
+    node.style.outlineColor = "lightblue";
+    node.style.outlineStyle = "solid";
+    Array.from(node.children).map(function (child) {
+        if (isCodeSpanOrLeaf(child)) {
+            child.style.backgroundColor = "yellow";
+        }
+    })
+}
+
+function isCodeSpanOrLeaf(node) {
+  return node.classList.contains("code-span") || node.classList.contains("code-span-leaf")
+
+}
+
+function removeHighlighting(event, node) {
+    event.stopPropagation();
+    node.style.backgroundColor = null;
+    node.style.outlineColor = null;
+    node.style.outlineStyle = null;
+    Array.from(node.children).map(function (child) {
+        if (isCodeSpanOrLeaf(child)) {
+          child.style.backgroundColor = null;
+        }
+    })
+}
+
 function renderLaTeX() {
     // Render LaTeX equations in prose blocks via KaTeX, if available.
     // Skip rendering if KaTeX is unavailable.
@@ -154,6 +193,7 @@ function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
         renderLaTeX();
+        renderHovertips();
         updateNavigation();
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
@@ -192,6 +232,7 @@ function render(renderMode) {
                 Object.assign(cells, new_cells);
             }
             renderLaTeX();
+            renderHovertips();
             updateNavigation();
         };
     }

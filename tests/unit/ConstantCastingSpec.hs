@@ -24,6 +24,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import QueryType
 
 castOp :: ScalarBaseType -> (SAtom n) -> PrimOp SimpIR n
 castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
@@ -31,7 +32,7 @@ castOp ty x = MiscOp $ CastOp (BaseTy (Scalar ty)) x
 castLam :: EnvExtender m => ScalarBaseType -> ScalarBaseType -> m n (SLam n)
 castLam fromTy toTy = do
   withFreshBinder noHint (BaseTy (Scalar fromTy)) \x -> do
-    body <- exprToBlock $ PrimOp $ castOp toTy $ Var $ binderName x
+    body <- exprToBlock $ PrimOp $ castOp toTy $ Var $ binderVar x
     return $ LamExpr (Nest x Empty) body
 
 exprToBlock :: EnvReader m => SExpr n -> m n (SBlock n)
@@ -43,7 +44,7 @@ exprToBlock expr = do
 compile :: (Topper m, Mut n)
   => ScalarBaseType -> ScalarBaseType -> m n LLVMCallable
 compile fromTy toTy = do
-  sLam <- liftEnvReaderM $ castLam fromTy toTy
+  sLam <- liftEnvReaderM (castLam fromTy toTy) >>= asTopLam
   compileTopLevelFun (EntryFunCC CUDANotRequired) sLam >>= packageLLVMCallable
 
 arbLitVal :: ScalarBaseType -> Gen LitVal

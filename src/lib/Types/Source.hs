@@ -20,6 +20,7 @@
 
 module Types.Source where
 
+import Data.Data
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
@@ -35,29 +36,38 @@ import Data.Store (Store (..))
 import Name
 import qualified Types.OpNames as P
 import IRVariants
-import Err
+import SourceInfo
 import Util (File (..))
 
 import Types.Primitives
 
+data SourceName' = SourceName' SrcPosCtx SourceName
+  deriving (Show, Eq, Ord, Generic)
+
+fromName :: SourceName -> SourceName'
+fromName = SourceName' emptySrcPosCtx
+
+instance HasNameHint SourceName' where
+  getNameHint (SourceName' _ name) = getNameHint name
+
 data SourceNameOr (a::E) (n::S) where
   -- Only appears before renaming pass
-  SourceName :: SourceName -> SourceNameOr a n
+  SourceName :: SrcPosCtx -> SourceName -> SourceNameOr a n
   -- Only appears after renaming pass
   -- We maintain the source name for user-facing error messages.
-  InternalName :: SourceName -> a n -> SourceNameOr a n
-deriving instance Eq (a n) => Eq (SourceNameOr (a::E) (n::S))
+  InternalName :: SrcPosCtx -> SourceName -> a n -> SourceNameOr a n
+deriving instance Eq (a n) => Eq (SourceNameOr a n)
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
 
 newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr (Name c) n)
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
 
 pattern SISourceName :: (n ~ VoidS) => SourceName -> SourceOrInternalName c n
-pattern SISourceName n = SourceOrInternalName (SourceName n)
+pattern SISourceName n = SourceOrInternalName (SourceName EmptySrcPosCtx n)
 
-pattern SIInternalName :: SourceName -> Name c n -> SourceOrInternalName c n
-pattern SIInternalName n a = SourceOrInternalName (InternalName n a)
+pattern SIInternalName :: SourceName -> Name c n -> Maybe SrcPos -> Maybe SpanId -> SourceOrInternalName c n
+pattern SIInternalName n a srcPos spanId = SourceOrInternalName (InternalName (SrcPosCtx srcPos spanId) n a)
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -198,7 +208,7 @@ data UEffect (n::S) =
    URWSEffect RWS (SourceOrInternalName (AtomNameC CoreIR) n)
  | UExceptionEffect
  | UIOEffect
- | UUserEffect (SourceOrInternalName EffectNameC n)
+ deriving (Generic)
 
 data UEffectRow (n::S) =
   UEffectRow (S.Set (UEffect n)) (Maybe (SourceOrInternalName (AtomNameC CoreIR) n))
@@ -222,13 +232,13 @@ data UVar (n::S) =
 type UAtomBinder = UBinder (AtomNameC CoreIR)
 data UBinder (c::C) (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SourceName -> UBinder c n n
+  UBindSource :: SrcPosCtx -> SourceName -> UBinder c n n
   -- May appear before or after renaming pass
   UIgnore :: UBinder c n n
   -- The following binders only appear after the renaming pass.
   -- We maintain the source name for user-facing error messages
   -- and named arguments.
-  UBind :: SourceName -> NameBinder c n l -> UBinder c n l
+  UBind :: SrcPosCtx -> SourceName -> NameBinder c n l -> UBinder c n l
 
 type UBlock = WithSrcE UBlock'
 data UBlock' (n::S) where
@@ -271,9 +281,12 @@ data FieldName' =
  | FieldNum  Int
   deriving (Show, Eq, Ord)
 
+type UAnnExplBinders req n l = ([Explicitness], Nest (UAnnBinder req) n l)
+type UOptAnnExplBinders n l = UAnnExplBinders AnnOptional n l
+
 data ULamExpr (n::S) where
   ULamExpr
-    :: Nest (WithExpl UOptAnnBinder) n l  -- args
+    :: UOptAnnExplBinders n l  -- args
     -> AppExplicitness
     -> Maybe (UEffectRow l)               -- optional effect
     -> Maybe (UType l)                    -- optional result type
@@ -281,7 +294,7 @@ data ULamExpr (n::S) where
     -> ULamExpr n
 
 data UPiExpr (n::S) where
-  UPiExpr :: Nest (WithExpl UOptAnnBinder) n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
+  UPiExpr :: UOptAnnExplBinders n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UOptAnnBinder n l -> UType l -> UTabPiExpr n
@@ -294,14 +307,14 @@ type UConDef (n::S) (l::S) = (SourceName, Nest UReqAnnBinder n l)
 data UDataDef (n::S) where
   UDataDef
     :: SourceName  -- source name for pretty printing
-    -> Nest (WithExpl UOptAnnBinder) n l
+    -> UOptAnnExplBinders n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
 data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
-    -> Nest (WithExpl UOptAnnBinder) n l
+    -> UOptAnnExplBinders n l
     -> [(SourceName, UType l)]                    -- named payloads
     -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
@@ -321,14 +334,14 @@ data UTopDecl (n::S) (l::S) where
     -> UStructDef l                        -- actual definition
     -> UTopDecl n l
   UInterface
-    :: Nest (WithExpl UOptAnnBinder) n p   -- parameter binders
+    :: UOptAnnExplBinders n p   -- parameter binders
     ->   [UType p]                         -- method types
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UTopDecl n l
   UInstance
     :: SourceNameOr (Name ClassNameC) n  -- class name
-    -> Nest (WithExpl UOptAnnBinder) n l'
+    -> UOptAnnExplBinders n l'
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
@@ -337,7 +350,7 @@ data UTopDecl (n::S) (l::S) where
     -> UTopDecl n l
   UDerivingInstance
     :: SourceNameOr (Name ClassNameC) n    -- class name
-    -> Nest (WithExpl UOptAnnBinder) n l'  -- givens
+    -> UOptAnnExplBinders n l'  -- givens
     ->   [UExpr l']                        -- class parameters
     -- Note that no new symbols are brough into scope by a deriving instance
     -- declaration. Hence the double occurrence of `n` in `UDecl n n`.
@@ -350,7 +363,7 @@ data UTopDecl (n::S) (l::S) where
   UHandlerDecl
     :: SourceNameOr (Name EffectNameC) n  -- effect name
     -> UAtomBinder n b                    -- body type argument
-    -> Nest (WithExpl UOptAnnBinder) b l' -- type args
+    -> UOptAnnExplBinders b l'            -- type args
     ->   UEffectRow l'                    -- returning effect
     ->   UType l'                         -- returning type
     ->   [UEffectOpDef l']                -- operation definitions
@@ -410,7 +423,7 @@ data UPat' (n::S) (l::S) =
  | UPatProd (Nest UPat n l)
  | UPatDepPair (PairB UPat UPat n l)
  | UPatTable (Nest UPat n l)
-  deriving (Show)
+  deriving (Show, Generic)
 
 pattern UPatIgnore :: UPat' (n::S) n
 pattern UPatIgnore = UPatBinder UIgnore
@@ -425,20 +438,20 @@ instance HasSourceName (UAnnBinder req n l) where
 
 instance HasSourceName (UBinder c n l) where
   getSourceName = \case
-    UBindSource sn -> sn
-    UIgnore        -> "_"
-    UBind sn _     -> sn
+    UBindSource _ sn -> sn
+    UIgnore          -> "_"
+    UBind _ sn _     -> sn
 
 -- === Source context helpers ===
 
 data WithSrc a = WithSrc SrcPosCtx a
-  deriving (Show, Functor)
+  deriving (Show, Functor, Generic)
 
 data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
-  deriving (Show)
+  deriving (Show, Generic)
 
 data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
-  deriving (Show)
+  deriving (Show, Data, Generic)
 
 class HasSrcPos a where
   srcPos :: a -> SrcPosCtx
@@ -572,7 +585,7 @@ data PrimName =
  | UIndexRef | UApplyMethod Int
  | UNat | UNatCon | UFin | UEffectRowKind
  | UTuple -- overloaded for type constructor and data constructor, resolved in inference
-   deriving (Show, Eq)
+   deriving (Show, Eq, Generic)
 
 -- === instances ===
 
@@ -686,21 +699,30 @@ instance HasNameHint ModuleSourceName where
 
 instance HasNameHint (UBinder c n l) where
   getNameHint b = case b of
-    UBindSource v -> getNameHint v
-    UIgnore       -> noHint
-    UBind v _     -> getNameHint v
+    UBindSource _ v -> getNameHint v
+    UIgnore         -> noHint
+    UBind _ v _     -> getNameHint v
 
 instance Color c => BindsNames (UBinder c) where
-  toScopeFrag (UBindSource _) = emptyOutFrag
+  toScopeFrag (UBindSource _ _) = emptyOutFrag
   toScopeFrag (UIgnore)       = emptyOutFrag
-  toScopeFrag (UBind _ b)     = toScopeFrag b
+  toScopeFrag (UBind _ _ b)     = toScopeFrag b
 
 instance Color c => ProvesExt (UBinder c) where
 instance Color c => BindsAtMostOneName (UBinder c) c where
   b @> x = case b of
-    UBindSource _ -> emptyInFrag
-    UIgnore       -> emptyInFrag
-    UBind _ b'    -> b' @> x
+    UBindSource _ _ -> emptyInFrag
+    UIgnore         -> emptyInFrag
+    UBind _ _ b'    -> b' @> x
+
+instance Color c => SinkableB (UBinder c) where
+  sinkingProofB _ _ _ = todoSinkableProof
+
+instance Color c => RenameB (UBinder c) where
+  renameB env ub cont = case ub of
+    UBindSource pos sn -> cont env $ UBindSource pos sn
+    UIgnore -> cont env UIgnore
+    UBind ctx sn b -> renameB env b \env' b' -> cont env' $ UBind ctx sn b'
 
 instance ProvesExt  (UAnnBinder  req) where
 instance BindsNames  (UAnnBinder req) where
@@ -744,14 +766,20 @@ instance Store (SourceMap n)
 
 instance Hashable ModuleSourceName
 
+instance Store SourceName'
+instance Hashable SourceName'
+
+instance IsString SourceName' where
+  fromString = SourceName' emptySrcPosCtx
+
 instance IsString (SourceNameOr a VoidS) where
-  fromString = SourceName
+  fromString = SourceName emptySrcPosCtx
 
 instance IsString (SourceOrInternalName c VoidS) where
   fromString = SISourceName
 
 instance IsString (UBinder s VoidS VoidS) where
-  fromString = UBindSource
+  fromString = UBindSource emptySrcPosCtx
 
 instance IsString (UPat' VoidS VoidS) where
   fromString = UPatBinder . fromString
@@ -763,10 +791,10 @@ instance IsString (UExpr' VoidS) where
   fromString = UVar . fromString
 
 instance IsString (a n) => IsString (WithSrcE a n) where
-  fromString = WithSrcE Nothing . fromString
+  fromString = WithSrcE emptySrcPosCtx . fromString
 
 instance IsString (b n l) => IsString (WithSrcB b n l) where
-  fromString = WithSrcB Nothing . fromString
+  fromString = WithSrcB emptySrcPosCtx . fromString
 
 deriving instance Show (UBinder s n l)
 deriving instance Show (UDataDefTrail n)

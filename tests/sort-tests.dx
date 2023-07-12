@@ -5,6 +5,12 @@ import sort
 :p is_sorted $ sort [9, 3, 7, 4, 6, 1, 9, 1, 9, -1, 10, 10, 100, 0]
 > True
 
+:p
+  xs = [1,2,4]
+  for i:(Fin 6).
+    search_sorted_exact(xs, ordinal i)
+> [Nothing, (Just 0), (Just 1), Nothing, (Just 2), Nothing]
+
 '### Lexical Sorting Tests
 
 :p "aaa" < "bbb"

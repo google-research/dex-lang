@@ -321,6 +321,11 @@ toRNest n = go REmpty n
       Empty     -> acc
       Nest b bs -> go (RNest acc b) bs
 
+popNest :: Nest b n l -> Maybe (PairB (Nest b) b n l)
+popNest bs = case toRNest bs of
+  RNest bs' b -> Just $ PairB (unRNest bs') b
+  REmpty -> Nothing
+
 data BinderP (c::C) (ann::E) (n::S) (l::S) =
   (:>) (NameBinder c n l) (ann n)
   deriving (Show, Generic)
@@ -394,6 +399,19 @@ toConstAbsPure :: (HoistableE e, SinkableE e)
 toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
   where n = freshRawName noHint $ fromNameSet $ freeVarsE e
 
+toConstBinderNest
+  :: forall n ann e c
+  .  (HoistableE ann, HoistableE e, SinkableE e, SinkableE ann, Color c)
+  => [ann n] -> e n -> Abs (Nest (BinderP c ann)) e n
+toConstBinderNest anns body = withFabricatedDistinct @n $ runScopeReaderM scope $ go anns
+  where
+    go :: forall l.  DExt n l => [ann l] -> ScopeReaderM l (Abs (Nest (BinderP c ann)) e l)
+    go = \case
+      [] -> Abs Empty <$> sinkM body
+      ann:rest -> withFreshM noHint \b -> do
+        Abs bs body' <- go $ map sink rest
+        return $ Abs (Nest (b:>sink ann) bs) body'
+    scope = Scope $ UnsafeMakeScopeFrag $ fromNameSet $ freeVarsE (ListE anns `PairE` body)
 
 -- === various E-kind and B-kind versions of standard containers and classes ===
 
@@ -502,6 +520,20 @@ data VoidB (n::S) (l::S) deriving (Generic)
 data PairB (b1::B) (b2::B) (n::S) (l::S) where
   PairB :: b1 n l' -> b2 l' l -> PairB b1 b2 n l
 deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
+
+data WithAttrB (a:: *) (b::B) (n::S) (l::S) =
+  WithAttrB {getAttr :: a , withoutAttr :: b n l }
+  deriving (Show, Generic)
+
+unzipAttrs :: Nest (WithAttrB a b) n l -> ([a], Nest b n l)
+unzipAttrs Empty = ([], Empty)
+unzipAttrs (Nest (WithAttrB a b) rest) = (a:as, Nest b bs)
+  where (as, bs) = unzipAttrs rest
+
+zipAttrs :: [a] -> Nest b n l -> Nest (WithAttrB a b) n l
+zipAttrs [] Empty = Empty
+zipAttrs (a:as) (Nest b bs) = Nest (WithAttrB a b) (zipAttrs as bs)
+zipAttrs _ _ = error "zip error"
 
 data EitherB (b1::B) (b2::B) (n::S) (l::S) =
    LeftB  (b1 n l)
@@ -637,7 +669,7 @@ forNest :: Nest b  i i'
         -> Nest b' i i'
 forNest n f = fmapNest f n
 
-zipWithNest :: Nest b  n l -> [a]
+zipWithNest :: Nest b n l -> [a]
             -> (forall n1 n2. b n1 n2 -> a -> b' n1 n2)
             -> Nest b' n l
 zipWithNest Empty [] _ = Empty
@@ -1433,15 +1465,18 @@ freshExtendSubInplaceT hint build =
 {-# INLINE freshExtendSubInplaceT #-}
 
 locallyMutableInplaceT
-  :: forall m b d n e.
+  :: forall m b d n e a.
      (ExtOutMap b d, OutFrag d, Monad m, SinkableE e)
-  => (forall l. (Mut l, DExt n l) => InplaceT b d m l (e l))
-  -> InplaceT b d m n (Abs d e n)
-locallyMutableInplaceT cont = do
+  => (forall l. (Mut l, DExt n l) =>                 InplaceT b d m l (e l))
+  -> (forall l.         DExt n l  => d n l -> e l -> InplaceT b d m l a)
+  -> InplaceT b d m n a
+locallyMutableInplaceT cont1 cont2 = do
   UnsafeMakeInplaceT \env decls -> do
-    (e, d, _) <- withFabricatedMut @n $
-      unsafeRunInplaceT cont env emptyOutFrag
-    return (Abs (unsafeCoerceB d) e, decls, unsafeCoerceE env)
+    (e, d, env') <- withFabricatedMut @n $
+      unsafeRunInplaceT cont1 env emptyOutFrag
+    withFabricatedDistinct @UnsafeS do
+      (ans, _, _) <- unsafeRunInplaceT (cont2 @n (unsafeCoerceB d) (unsafeCoerceE e)) (unsafeCoerceE env') emptyOutFrag
+      return (ans, decls, unsafeCoerceE env)
 {-# INLINE locallyMutableInplaceT #-}
 
 liftBetweenInplaceTs
@@ -3176,6 +3211,35 @@ instance Monad HoistExcept where
   HoistFailure vs >>= _ = HoistFailure vs
   HoistSuccess x >>= f = f x
   {-# INLINE (>>=) #-}
+
+instance (Store a, Store (b n l)) => Store (WithAttrB a b n l)
+
+instance (Eq a, AlphaEqB b) => AlphaEqB (WithAttrB a b) where
+  withAlphaEqB (WithAttrB a1 b1) (WithAttrB a2 b2) cont = do
+    unless (a1 == a2) zipErr
+    withAlphaEqB b1 b2 cont
+
+instance (Hashable a, AlphaHashableB b) => AlphaHashableB (WithAttrB a b) where
+  hashWithSaltB env salt (WithAttrB expl b) = do
+    let h = hashWithSalt salt expl
+    hashWithSaltB env h b
+
+instance BindsNames b => ProvesExt  (WithAttrB a b) where
+instance BindsNames b => BindsNames (WithAttrB a b) where
+  toScopeFrag (WithAttrB _ b) = toScopeFrag b
+
+instance (SinkableB b) => SinkableB (WithAttrB a b) where
+  sinkingProofB fresh (WithAttrB a b) cont =
+    sinkingProofB fresh b \fresh' b' ->
+      cont fresh' (WithAttrB a b')
+
+instance (BindsNames b, RenameB b) => RenameB (WithAttrB a b) where
+  renameB env (WithAttrB a b) cont =
+      renameB env b \env' b' ->
+        cont env' $ WithAttrB a b'
+
+instance HoistableB b => HoistableB (WithAttrB a b) where
+  freeVarsB (WithAttrB _ b) = freeVarsB b
 
 -- === extra data structures ===
 

@@ -23,6 +23,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
 
 import Err
+import SourceInfo
 import Types.Primitives
 
 data ParseCtx = ParseCtx

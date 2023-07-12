@@ -43,9 +43,9 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), asFFIFunType, checkHasType, checkExtends)
+import CheckType ( CheckableE (..), checkTypeIs)
 #ifdef DEX_DEBUG
-import CheckType (checkTypesM)
+import CheckType (checkTypes)
 #endif
 import Core
 import ConcreteSyntax
@@ -59,6 +59,7 @@ import Inline
 import Logging
 import Lower
 import MTL1
+import SourceInfo
 import Subst
 import Name
 import OccAnalysis
@@ -76,6 +77,7 @@ import Types.Misc
 import Types.Primitives
 import Types.Source
 import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
+import Vectorize
 
 -- === top-level monad ===
 
@@ -277,7 +279,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize =<< getType val
+      ty <- cheapNormalize $ getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
@@ -290,7 +292,7 @@ evalSourceBlock' mname block = case sbContents block of
         let hint = getNameHint b
         fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun fname impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
-        UBindSource sourceName <- return b
+        UBindSource _ sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
   DeclareCustomLinearization fname zeros g -> do
@@ -309,14 +311,14 @@ evalSourceBlock' mname block = case sbContents block of
         impl <- case expr of
           WithSrcE _ (UVar _) ->
             renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ (UAtomVar v))) -> return $ Var v
+              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
-        fType <- getType fname'
+        fType <- getType <$> toAtomVar fname'
         (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
-        impl `checkHasType` linFunTy >>= \case
+        liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
           Failure _ -> do
-            implTy <- getType impl
+            let implTy = getType impl
             throw TypeErr $ unlines
               [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
               , "but it has type:" , "" , pprint implTy]
@@ -336,11 +338,11 @@ evalSourceBlock' mname block = case sbContents block of
     EmptyLines   -> return ()
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
-    addTypeAnn e = WithSrcE Nothing . UTypeAnn e
+    addTypeAnn e = WithSrcE emptySrcPosCtx . UTypeAnn e
     addShowAny :: UExpr n -> UExpr n
-    addShowAny e = WithSrcE Nothing $ UApp (referTo "show_any") [e] []
+    addShowAny e = WithSrcE emptySrcPosCtx $ UApp (referTo "show_any") [e] []
     referTo :: SourceName -> UExpr n
-    referTo = WithSrcE Nothing . UVar . SourceName
+    referTo = WithSrcE emptySrcPosCtx . UVar . SourceName emptySrcPosCtx
 
 runEnvQuery :: Topper m => EnvQuery -> m n ()
 runEnvQuery query = do
@@ -452,7 +454,7 @@ evalPartiallyParsedUModule partiallyParsed = do
   emitBinding (getNameHint name) $ ModuleBinding evaluated
 
 -- Assumes all module dependencies have been loaded already
-evalUModule :: (Topper m  ,Mut n) => UModule -> m n (Module n)
+evalUModule :: (Topper m, Mut n) => UModule -> m n (Module n)
 evalUModule (UModule name _ blocks) = do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag otherUpdates <- return topFrag
@@ -534,36 +536,31 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   NoOptimize -> return x
   Optimize   -> act x
 
-evalBlock :: (Topper m, Mut n) => CBlock n -> m n (CAtom n)
+evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
 evalBlock typed = do
   -- Be careful when adding new compilation passes here.  If you do, be sure to
   -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
   -- In most cases it should be easiest to add new passes to simpOptimizations or
   -- loweredOptimizations, below, because those are reused in all three places.
-  checkEffects Pure typed
   synthed <- checkPass SynthPass $ synthTopE typed
-  simplifiedBlock <- checkPass SimpPass $ simplifyTopBlock synthed
-  SimplifiedBlock simp recon <- return simplifiedBlock
-  checkEffects Pure simp
-  NullaryLamExpr opt <- simpOptimizations $ NullaryLamExpr simp
-  checkEffects Pure opt
+  SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  opt <- simpOptimizations simp
   simpResult <- case opt of
-    AtomicBlock result -> return result
+    TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result
     _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential $ NullaryLamExpr opt
-      checkEffects (OneEffect InitEffect) (NullaryDestLamApp lowered)
-      NullaryDestLamExpr lOpt <- loweredOptimizations lowered
-      checkEffects (OneEffect InitEffect) lOpt
+      lowered <- checkPass LowerPass $ lowerFullySequential True opt
+      lOpt <- checkPass OptPass $ loweredOptimizations lowered
       cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc (NullaryDestLamExpr lOpt)
+      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt
       resultVals <- liftIO $ callEntryFun llvmOpt []
-      resultTy <- getDestBlockType lOpt
+      TopLam _ destTy _ <- return lOpt
+      EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
       repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
-simpOptimizations :: Topper m => SLam n -> m n (SLam n)
+simpOptimizations :: Topper m => STopLam n -> m n (STopLam n)
 simpOptimizations simp = do
   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
@@ -571,17 +568,17 @@ simpOptimizations simp = do
   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
   whenOpt inlined2 $ checkPass OptPass . optimize
 
-loweredOptimizations :: Topper m => DestLamExpr SimpIR n -> m n (DestLamExpr SimpIR n)
+loweredOptimizations :: Topper m => STopLam n -> m n (STopLam n)
 loweredOptimizations lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
-    (dceTopDest >=> hoistLoopInvariantDest)
+    (dceTop >=> hoistLoopInvariant)
   whenOpt lopt \lo -> do
     (vo, errs) <- vectorizeLoops 64 lo
     l <- getFilteredLogger
     logFiltered l VectPass $ return [TextOut $ pprint errs]
     checkPass VectPass $ return vo
 
-loweredOptimizationsNoDest :: Topper m => SLam n -> m n (SLam n)
+loweredOptimizationsNoDest :: Topper m => STopLam n -> m n (STopLam n)
 loweredOptimizationsNoDest lowered = do
   lopt <- whenOpt lowered $ checkPass LowerOptPass .
     (dceTop >=> hoistLoopInvariant)
@@ -591,7 +588,7 @@ loweredOptimizationsNoDest lowered = do
 evalSpecializations :: (Topper m, Mut n) => [TopFunName n] -> m n ()
 evalSpecializations fs = do
   fSimps <- toposortAnnVars <$> catMaybes <$> forM fs \f -> lookupTopFun f >>= \case
-    DexTopFun _ _ simp Waiting -> return $ Just (f, simp)
+    DexTopFun _ simp Waiting -> return $ Just (f, simp)
     _ -> return Nothing
   forM_ fSimps \(f, simp) -> do
     -- Prevents infinite loop in case compiling `v` ends up requiring `v`
@@ -605,14 +602,14 @@ evalSpecializations fs = do
 
 evalDictSpecializations :: (Topper m, Mut n) => [SpecDictName n] -> m n ()
 evalDictSpecializations ds = do
-  -- TODO Do we have to do these in order, like evalSpecializations, or are they
-  -- independent enough not to need it?
-  -- TODO Do we need to gate the status of these, too?
+  -- -- TODO Do we have to do these in order, like evalSpecializations, or are they
+  -- -- independent enough not to need it?
+  -- -- TODO Do we need to gate the status of these, too?
   forM_ ds \dName -> do
     SpecializedDict _ (Just fs) <- lookupSpecDict dName
     fs' <- forM fs \lam -> do
       opt <- simpOptimizations lam
-      lowered <- checkPass LowerPass $ lowerFullySequentialNoDest opt
+      lowered <- checkPass LowerPass $ lowerFullySequential False opt
       loweredOptimizationsNoDest lowered
     updateTopEnv $ LowerDictSpecialization dName fs'
   return ()
@@ -629,25 +626,25 @@ execUDecl mname decl = do
       result <- evalBlock block
       case ann of
         NoInlineLet -> do
-          fTy <- getType result
+          let fTy = getType result
           f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
           applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
-          applyRename (b@>v) sm >>= emitSourceMap
+          applyRename (b@>atomVarName v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope bs result
       vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>vs) sm >>= emitSourceMap
+      applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 {-# SCC execUDecl #-}
 
 compileTopLevelFun :: (Topper m, Mut n)
-  => CallingConvention -> SLam n -> m n (ImpFunction n)
+  => CallingConvention -> STopLam n -> m n (ImpFunction n)
 compileTopLevelFun cc fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- checkPass LowerPass $ lowerFullySequential fOpt
+  fLower <- checkPass LowerPass $ lowerFullySequential True fOpt
   flOpt <- loweredOptimizations fLower
   checkPass ImpPass $ toImpFunction cc flOpt
 {-# SCC compileTopLevelFun #-}
@@ -656,7 +653,8 @@ printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
   block <- liftBuilder $ buildBlock do
     emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
-  getDexString =<< evalBlock block
+  topBlock <- asTopBlock block
+  getDexString =<< evalBlock topBlock
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
 loadObject fname =
@@ -730,7 +728,7 @@ funNameToObj
   :: (EnvReader m, Fallible1 m) => ImpFunName n -> m n (FunObjCodeName n)
 funNameToObj v = do
   lookupEnv v >>= \case
-    TopFunBinding (DexTopFun _ _ _ (Finished impl)) -> return $ topFunObjCode impl
+    TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
     b -> error $ "couldn't find object cache entry for " ++ pprint v ++ "\ngot:\n" ++ pprint b
 
 withCompileTime :: MonadIO m => m Result -> m Result
@@ -746,17 +744,12 @@ checkPass name cont = do
     return result
 #ifdef DEX_DEBUG
   logTop $ MiscLog $ "Running checks"
-  checkTypesM result
+  checkTypes result
   logTop $ MiscLog $ "Checks passed"
 #else
   logTop $ MiscLog $ "Checks skipped (not a debug build)"
 #endif
   return result
-
-checkEffects :: (Topper m, HasEffectsE e r, IRRep r) => EffectRow r n -> e n -> m n ()
-checkEffects allowedEffs e = do
-  actualEffs <- getEffects e
-  checkExtends allowedEffs actualEffs
 
 addResultCtx :: SourceBlock -> Result -> Result
 addResultCtx block (Result outs errs) =
@@ -943,8 +936,8 @@ instance Generic TopStateEx where
 
 getLinearizationType :: SymbolicZeros -> CType n -> EnvReaderT Except n (Int, Int, CType n)
 getLinearizationType zeros = \case
-  Pi (CorePiType ExplicitApp bs Pure resultTy) -> do
-    (numIs, numEs) <- getNumImplicits $ fst $ unzipExpls bs
+  Pi (CorePiType ExplicitApp expls bs (EffTy Pure resultTy)) -> do
+    (numIs, numEs) <- getNumImplicits expls
     refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
       PairB _ bsE <- return $ splitNestAt numIs bs'
       let explicitArgTys = nestToList (\b -> sink $ binderType b) bsE
@@ -956,8 +949,8 @@ getLinearizationType zeros = \case
       resultTanTy <- maybeTangentType resultTy' >>= \case
         Just rtt -> return rtt
         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
-      tanFunTy <- Pi <$> nonDepPiType argTanTys Pure resultTanTy
-      let fullTy = CorePiType ExplicitApp bs' Pure (PairTy resultTy' tanFunTy)
+      let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
+      let fullTy = CorePiType ExplicitApp expls bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
       return (numIs, numEs, Pi fullTy)
   _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
   where

@@ -118,18 +118,24 @@ _ = for i:(Fin 20) j:(Fin 4). ordinal j
 :pp (2 > 1 || 4 < 5) && 6 == 6
 -- CHECK: (1| () |)
 
+-- === Vectorization ===
+
 "vectorization"
 -- CHECK-LABEL: vectorization
 
+"vectorizing int binary op"
+-- CHECK-LABEL: vectorizing int binary op
 %passes vect
-_ = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
+_ = for i:(Fin 256). (n_to_i32 (ordinal i)) * 2
 -- CHECK: seq (RawFin 0x10)
 -- CHECK: [[i0:v#[0-9]+]]:<16xInt32> = vbroadcast
 -- CHECK: [[i1:v#[0-9]+]]:<16xInt32> = viota
 -- CHECK: [[i2:v#[0-9]+]]:<16xInt32> = %iadd [[i0]] [[i1]]
--- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
--- CHECK: %iadd [[i2]] [[ones]]
+-- CHECK: [[twos:v#[0-9]+]]:<16xInt32> = vbroadcast 2
+-- CHECK: %imul [[i2]] [[twos]]
 
+"vectorizing float binary op"
+-- CHECK-LABEL: vectorizing float binary op
 %passes vect
 _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 -- CHECK: seq (RawFin 0x10)
@@ -139,6 +145,8 @@ _ = for i:(Fin 256). (n_to_f32 (ordinal i)) + 1
 -- CHECK: [[ones:v#[0-9]+]]:<16xFloat32> = vbroadcast 1.
 -- CHECK: %fadd [[i2]] [[ones]]
 
+"vectorizing float64 binary op, implies different width"
+-- CHECK-LABEL: vectorizing float64 binary op, implies different width
 %passes vect
 _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
 -- CHECK: seq (RawFin 0x20)
@@ -147,3 +155,94 @@ _ = for i:(Fin 256). (n_to_f64 (ordinal i)) + 1
 -- CHECK: [[i2:v#[0-9]+]]:<8xFloat64> = %fadd [[i0]] [[i1]]
 -- CHECK: [[ones:v#[0-9]+]]:<8xFloat64> = vbroadcast 1.
 -- CHECK: %fadd [[i2]] [[ones]]
+
+"vectorizing array reference"
+-- CHECK-LABEL: vectorizing array reference
+xs = for i:(Fin 256). (n_to_i32 (ordinal i)) + 1
+
+%passes vect
+_ = for i:(Fin 256). xs[i] + 1
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[i:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: [[ones:v#[0-9]+]]:<16xInt32> = vbroadcast 1
+-- CHECK: %iadd [[i]] [[ones]]
+
+"vectorizing reader effect"
+-- CHECK-LABEL: vectorizing reader effect
+%passes vect
+_ = with_reader 2 \ref.
+  for i:(Fin 256). xs[i] + ask(ref)
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[ref:v#[0-9]+]]:Int32 = ask
+-- CHECK: [[xi:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: [[bcast:v#[0-9]+]]:<16xInt32> = vbroadcast [[ref]]
+-- CHECK: %iadd [[xi]] [[bcast]]
+
+"vectorizing independent writer effect"
+-- CHECK-LABEL: vectorizing independent writer effect
+%passes vect
+_ = yield_accum (AddMonoid Int32) \ref.
+  for i:(Fin 256). ref!i += xs[i]
+-- CHECK: seq (RawFin 0x10)
+-- CHECK: [[refi:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[xi:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: extend [[refi]] [[xi]]
+
+"vectorizing under an outer loop, like matmul"
+-- CHECK-LABEL: vectorizing under an outer loop, like matmul
+
+mat1 = for i:(Fin 32). for j:(Fin 32).
+  (n_to_i32 (ordinal i)) * (n_to_i32 (ordinal j)) + 1
+
+mat2 = for i:(Fin 32). for j:(Fin 32).
+  (n_to_i32 (ordinal i)) * (n_to_i32 (ordinal j)) + 7
+
+%passes vect
+_ = yield_accum (AddMonoid Int32) \result.
+  for k:(Fin 32).
+    for j:(Fin 32).
+      result!(3@(Fin 32))!j += mat1[3@_][k] * mat2[k][j]
+-- CHECK: seq (RawFin 0x2)
+-- CHECK: [[refj:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[mat2j:v#[0-9]+]]:<16xInt32> = vslice
+-- CHECK: [[mat1:v#[0-9]+]]:<16xInt32> = vbroadcast
+-- CHECK: [[prodj:v#[0-9]+]]:<16xInt32> = %imul [[mat1]] [[mat2j]]
+-- CHECK: extend [[refj]] [[prodj]]
+
+"vectorizing through the `tile` combinator and its funny index set"
+-- CHECK-LABEL: vectorizing through the `tile` combinator and its funny index set
+
+%passes vect
+_ = yield_accum (AddMonoid Int32) \result.
+  tile((Fin 256), 32) \set.
+    for_ i:set.
+      ix = inject(i, to=(Fin 256))
+      result!ix += xs[ix]
+-- CHECK: seq (RawFin 0x8)
+-- CHECK: seq (RawFin 0x2)
+-- CHECK: [[refix:v#[0-9]+]]:(Ref {{v#[0-9]+}} <16xInt32>) = vrefslice
+-- CHECK: [[xsix:v#[0-9]+]]:<16xInt32> =
+-- CHECK-NEXT: vslice
+-- CHECK: extend [[refix]] [[xsix]]
+
+"Non-aligned"
+-- CHECK-LABEL: Non-aligned
+
+-- This is a regression test.  We are checking that Dex-side
+-- vectorization does not end up assuming that arrays are aligned on
+-- the size of the vectors, only on the size of the underlying
+-- scalars.
+
+non_aligned = for i:(Fin 7). for j:(Fin 257). +0
+
+%passes llvm
+_ = yield_accum (AddMonoid Int32) \result.
+  tile((Fin 257), 32) \set.
+    for_ i:set.
+      ix = inject(i, to=(Fin 257))
+      result!(6@(Fin 7))!ix += non_aligned[6@_][ix]
+-- CHECK: load <16 x i32>, <16 x i32>* %"v#{{[0-9]+}}", align 4
+-- CHECK: store <16 x i32> %"v#{{[0-9]+}}", <16 x i32>* %"v#{{[0-9]+}}", align 4

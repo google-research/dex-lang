@@ -166,7 +166,7 @@ instance OrderedDist(Binomial, Nat, Float)
     lpdf = for i:(Fin tp1). ln $ density d (ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
-    ordinal $ from_just mi
+    ordinal $ from_just $ left_fence mi
 
 
 '### Exponential distribution

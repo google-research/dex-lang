@@ -47,31 +47,33 @@ import Types.Primitives
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
 toImpFunction :: EnvReader m
-  => CallingConvention -> DestLamExpr SimpIR n -> m n (ImpFunction n)
-toImpFunction cc lam = do
-  (DestLamExpr bs bodyAbs) <- return lam
-  ty <- getNaryDestLamExprType lam
+  => CallingConvention -> STopLam n -> m n (ImpFunction n)
+toImpFunction cc (TopLam True destTy lam) = do
+  LamExpr bsAndRefB body <- return lam
+  PairB bs destB <- case popNest bsAndRefB of
+    Just bsAndRefB' -> return bsAndRefB'
+    Nothing -> error "expected a trailing reference binder"
+  let ty = piTypeWithoutDest destTy
   impArgTys <- getNaryLamImpArgTypesWithCC cc ty
   liftImpM $ buildImpFunction cc (zip (repeat noHint) impArgTys) \vs -> do
     case cc of
       EntryFunCC _ -> do
         argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          DestBlock (destb:>destTy) body <- return bodyAbs
-          dest <- case destTy of
+          dest <- case binderType destB of
             RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
             _ -> error "Expected a reference type for body destination"
-          extendSubst (destb @> SubstVal (destToAtom dest)) do
+          extendSubst (destB @> SubstVal (destToAtom dest)) do
             void $ translateBlock body
           resultAtom <- loadAtom dest
           repValToList <$> atomToRepVal resultAtom
       _ -> do
         (argAtoms, resultDest) <- interpretImpArgsWithCC cc (sink ty) vs
         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
-          (DestBlock destb body) <- return bodyAbs
-          extendSubst (destb @> SubstVal (destToAtom (sink resultDest))) do
+          extendSubst (destB @> SubstVal (destToAtom (sink resultDest))) do
             void $ translateBlock body
             return []
+toImpFunction _ (TopLam False _ _) = error "expected a lambda in destination-passing form"
 
 getNaryLamImpArgTypesWithCC :: EnvReader m
   => CallingConvention -> PiType SimpIR n -> m n [BaseType]
@@ -116,18 +118,18 @@ getNaryLamImpArgTypes :: EnvReader m
   => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
   go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (PiType bs effs resultTy) = case bs of
+  go (PiType bs effTy) = case bs of
     Nest piB rest -> do
       ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (PiType rest effs resultTy)) \_ restPi -> do
+      refreshAbs (Abs piB (PiType rest effTy)) \_ restPi -> do
         (argTys, resultTys) <- go restPi
         return (ts:argTys, resultTys)
-    Empty -> ([],) <$> getDestBaseTypes resultTy
+    Empty -> ([],) <$> getDestBaseTypes (etTy effTy)
 
 interpretImpArgsWithDest :: EnvReader m
   => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
 interpretImpArgsWithDest t xs = do
-  (PiType bs _ resultTy) <- return t
+  (PiType bs (EffTy _ resultTy)) <- return t
   (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
   resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
   (destTree, xsRest) <- listToTree resultTy' xsLeft
@@ -228,14 +230,15 @@ instance ImpBuilder ImpM where
 
   buildScopedImp cont = ImpM $ WriterT1 \w ->
     liftM (, w) do
-      Abs rdecls e <- locallyMutableInplaceT do
-        Emits <- fabricateEmitsEvidenceM
-        (result, (ListE ptrs)) <- runWriterT1 $ runImpM' do
-           Distinct <- getDistinct
-           cont
-        _ <- runWriterT1 $ runImpM' do
-          forM ptrs \ptr -> emitStatement $ Free ptr
-        return result
+      Abs rdecls e <- locallyMutableInplaceT
+        (do Emits <- fabricateEmitsEvidenceM
+            (result, (ListE ptrs)) <- runWriterT1 $ runImpM' do
+               Distinct <- getDistinct
+               cont
+            _ <- runWriterT1 $ runImpM' do
+              forM ptrs \ptr -> emitStatement $ Free ptr
+            return result)
+        (\d e -> return $ Abs d e)
       return $ Abs (unRNest rdecls) e
 
   extendAllocsToFree ptr = ImpM $ tell $ ListE [ptr]
@@ -267,14 +270,14 @@ liftImpM cont = do
 
 translateBlock :: forall i o. Emits o
   => SBlock i -> SubstImpM i o (SAtom o)
-translateBlock (Block _ decls result) = translateDeclNest decls $ substM result
+translateBlock (Abs decls result) = translateDeclNest decls $ substM result
 
 translateDeclNestSubst
   :: Emits o => Subst AtomSubstVal l o
   -> Nest SDecl l i' -> SubstImpM i o (Subst AtomSubstVal i' o)
 translateDeclNestSubst !s = \case
   Empty -> return s
-  Nest (Let b (DeclBinding _ _ expr)) rest -> do
+  Nest (Let b (DeclBinding _ expr)) rest -> do
     x <- withSubst s $ translateExpr expr
     translateDeclNestSubst (s <>> (b@>SubstVal x)) rest
 
@@ -288,23 +291,23 @@ translateDeclNest decls cont = do
 
 translateExpr :: forall i o. Emits o => SExpr i -> SubstImpM i o (SAtom o)
 translateExpr expr = confuseGHC >>= \_ -> case expr of
-  TopApp f' xs' -> do
+  TopApp (EffTy _ resultTy') f' xs' -> do
+    resultTy <- substM resultTy'
     f <- substM f'
     xs <- mapM substM xs'
     lookupTopFun f >>= \case
-      DexTopFun _ piTy _ _ -> emitCall piTy f $ toList xs
+      DexTopFun _ (TopLam _ piTy _) _ -> emitCall piTy f $ toList xs
       FFITopFun _ _ -> do
-        resultTy <- getType $ TopApp f xs
         scalarArgs <- liftM toList $ mapM fromScalarAtom xs
         results <- impCall f scalarArgs
         restructureScalarOrPairType resultTy results
-  TabApp f' xs' -> do
+  TabApp _ f' xs' -> do
     xs <- mapM substM xs'
     f <- atomToRepVal =<< substM f'
     repValAtom =<< naryIndexRepVal f (toList xs)
   Atom x -> substM x
   PrimOp op -> toImpOp op
-  Case e alts unitResultTy _ -> do
+  Case e alts (EffTy _ unitResultTy) -> do
     e' <- substM e
     case unitResultTy of
       UnitTy -> return ()
@@ -336,7 +339,7 @@ toImpRefOp refDest' m = do
   substM m >>= \case
     MAsk -> loadAtom refDest
     MExtend (BaseMonoid _ combine) x -> do
-      xTy <- getType x
+      xTy <- return $ getType x
       refVal <- loadAtom refDest
       liftMonoidCombine refDest xTy combine refVal x
       return UnitVal
@@ -348,8 +351,8 @@ toImpRefOp refDest' m = do
       -- than to go through a general purpose atom.
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
-    IndexRef i -> destToAtom <$> indexDest refDest i
-    ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
+    IndexRef _ i -> destToAtom <$> indexDest refDest i
+    ProjRef  _ ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
   where
     liftMonoidCombine :: Emits o
       => (Dest o) -> SType o -> LamExpr SimpIR o
@@ -364,26 +367,27 @@ toImpRefOp refDest' m = do
           ans <- liftBuilderImp $ emitBlock (sink body')
           storeAtom accDest ans
         False -> case accTy of
-          TabTy (b:>ixTy) eltTy -> do
+          TabPi t -> do
+            let ixTy = tabIxType t
             n <- indexSetSizeImp ixTy
             emitLoop noHint Fwd n \i -> do
               idx <- unsafeFromOrdinalImp (sink ixTy) i
               xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
               yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
-              eltTy' <- applySubst (b@>SubstVal idx) eltTy
+              eltTy <- instantiate (sink t) [idx]
               ithDest <- indexDest (sink accDest) idx
-              liftMonoidCombine ithDest eltTy' (sink bc) xElt yElt
+              liftMonoidCombine ithDest eltTy (sink bc) xElt yElt
           _ -> error $ "Base monoid type mismatch: can't lift " ++
                  pprint baseTy ++ " to " ++ pprint accTy
 
 toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
-  Hof hof -> toImpHof hof
+  Hof hof -> toImpTypedHof hof
   RefOp refDest eff -> toImpRefOp refDest eff
   DAMOp damOp -> case damOp of
-    Seq d ixDict carry f -> do
+    Seq _ d ixTy' carry f -> do
       UnaryLamExpr b body <- return f
-      ixTy <- ixTyFromDict =<< substM ixDict
+      ixTy <- substM ixTy'
       carry' <- substM carry
       n <- indexSetSizeImp ixTy
       emitLoop (getNameHint b) d n \i -> do
@@ -391,7 +395,7 @@ toImpOp op = case op of
         void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
           translateBlock body
       return carry'
-    RememberDest d f -> do
+    RememberDest _ d f -> do
       UnaryLamExpr b body <- return f
       d' <- substM d
       void $ extendSubst (b @> SubstVal d') $ translateBlock body
@@ -419,18 +423,25 @@ toImpVectorOp = \case
     val' <- fromScalarAtom val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
   VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
+  VectorIdx tbl' i vty -> do
+    -- VectorIdx requires that tbl' have a scalar element type, which is
+    -- ultimately enforced by `Lower.getVectorType` barfing on non-scalars.
+    tbl <- atomToRepVal tbl'
+    repValAtom =<< vectorIndexRepVal tbl i vty
   VectorSubref ref i vty -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fromScalarAtom refi
-    let PtrType (addrSpace, _) = getIType refi'
-    case vty of
-      BaseTy vty'@(Vector _ _) -> do
-        resultVal <- cast refi' (PtrType (addrSpace, vty'))
-        repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
-      _ -> error "Expected a vector type"
+    resultVal <- castPtrToVectorType refi' (toIVectorType vty)
+    repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
   where
     returnIExprVal x = return $ toScalarAtom x
+
+castPtrToVectorType :: Emits n
+  => IExpr n -> IVectorType -> SubstImpM i n (IExpr n)
+castPtrToVectorType ptr vty = do
+  let PtrType (addrSpace, _) = getIType ptr
+  cast ptr (PtrType (addrSpace, vty))
 
 toImpMiscOp :: Emits o => MiscOp SimpIR o -> SubstImpM i o (SAtom o)
 toImpMiscOp op = case op of
@@ -438,7 +449,7 @@ toImpMiscOp op = case op of
     emitStatement IThrowError
     buildGarbageVal resultTy
   CastOp destTy x -> do
-    BaseTy _  <- getType x
+    BaseTy _  <- return $ getType x
     BaseTy bt <- return destTy
     x' <- fsa x
     returnIExprVal =<< cast x' bt
@@ -446,7 +457,7 @@ toImpMiscOp op = case op of
     BaseTy bt <- return destTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
   UnsafeCoerce resultTy x -> do
-    srcTy <- getType x
+    srcTy <- return $ getType x
     srcRep  <- getRepBaseTypes srcTy
     destRep <- getRepBaseTypes resultTy
     assertEq srcRep destRep $
@@ -455,7 +466,7 @@ toImpMiscOp op = case op of
     repValAtom (RepVal resultTy tree)
   GarbageVal resultTy -> buildGarbageVal resultTy
   Select p x y -> do
-    BaseTy _ <- getType x
+    BaseTy _ <- return $ getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
   SumTag con -> case con of
     Con (SumCon _ tag _) -> return $ TagRepVal $ fromIntegral tag
@@ -473,7 +484,7 @@ toImpMiscOp op = case op of
   ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
-    resultTy <- getType $ PrimOp $ MiscOp op
+    resultTy <- return $ getType $ PrimOp $ MiscOp op
     Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- allocDest resultTy
     xScalar <- fromScalarAtom x
     size <- emitInstr $ IShowScalar tabPtr xScalar
@@ -513,9 +524,9 @@ toImpMemOp op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpHof :: Emits o => Hof SimpIR i -> SubstImpM i o (SAtom o)
-toImpHof hof = do
-  resultTy <- getTypeSubst (Hof hof)
+toImpTypedHof :: Emits o => TypedHof SimpIR i -> SubstImpM i o (SAtom o)
+toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
+  resultTy <- substM resultTy'
   case hof of
     For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
     While body -> do
@@ -527,7 +538,7 @@ toImpHof hof = do
     RunReader r f -> do
       BinaryLamExpr h ref body <- return f
       r' <- substM r
-      rDest <- allocDest =<< getType r'
+      rDest <- allocDest $ getType r'
       storeAtom rDest r'
       extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
         translateBlock body
@@ -564,18 +575,19 @@ toImpHof hof = do
     where
       liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
       liftMonoidEmpty accDest accTy x = do
-        xTy <- getType x
+        xTy <- return $ getType x
         alphaEq xTy accTy >>= \case
           True -> storeAtom accDest x
           False -> case accTy of
-            TabTy (b:>ixTy) eltTy -> do
+            TabPi t -> do
+              let ixTy = tabIxType t
               n <- indexSetSizeImp ixTy
               emitLoop noHint Fwd n \i -> do
                 idx <- unsafeFromOrdinalImp (sink ixTy) i
                 x' <- sinkM x
-                eltTy' <- applySubst (b@>SubstVal idx) eltTy
+                eltTy <- instantiate (sink t) [idx]
                 ithDest <- indexDest (sink accDest) idx
-                liftMonoidEmpty ithDest eltTy' x'
+                liftMonoidEmpty ithDest eltTy x'
             _ -> error $ "Base monoid type mismatch: can't lift " ++
                   pprint xTy ++ " to " ++ pprint accTy
 
@@ -598,6 +610,7 @@ type IndexStructure r = EmptyAbs (IdxNest r) :: E
 pattern Singleton :: IndexStructure r n
 pattern Singleton = EmptyAbs Empty
 
+type IxBinder r = PairB (LiftB (IxDict r)) (Binder r)
 type IdxNest r = Nest (IxBinder r)
 
 data TypeCtxLayer (r::IR) (n::S) (l::S) where
@@ -611,8 +624,8 @@ instance SinkableE Dest where
 -- `ScalarDesc` describes how to interpret an Imp value in terms of the nest of
 -- buffers that it points to
 data BufferElementType = UnboxedValue BaseType | BoxedBuffer BufferElementType deriving (Show)
-data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType deriving (Show)
-data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType deriving (Show)
+data BufferType n = BufferType (IndexStructure SimpIR n) BufferElementType
+data IExprInterpretation n = BufferPtr (BufferType n) | RawValue BaseType
 
 getRefBufferType :: LeafType n -> BufferType n
 getRefBufferType fullLeafTy = case splitLeadingIxs fullLeafTy of
@@ -684,7 +697,7 @@ typeToTree tyTop = return $ go REmpty tyTop
   go :: RNest (TypeCtxLayer SimpIR) n l -> SType l -> Tree (LeafType n)
   go ctx = \case
     BaseTy b -> Leaf $ LeafType (unRNest ctx) b
-    TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy
+    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy
     RefTy _ t -> go (RNest ctx RefCtx) t
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
       let tree1 = rec t1
@@ -720,7 +733,7 @@ valueToTree (RepVal tyTop valTop) = do
      -> m n (Tree (LeafType n))
   go ctx ty val = case ty of
     BaseTy b -> return $ Leaf $ LeafType (unRNest ctx) b
-    TabTy b bodyTy -> go (RNest ctx (TabCtx b)) bodyTy val
+    TabTy d b bodyTy -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy val
     RefTy _ t -> go (RNest ctx RefCtx) t val
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
       Branch [v1, v2] -> do
@@ -841,7 +854,7 @@ loadRepVal (Dest valTy destTree) = do
 {-# INLINE loadRepVal #-}
 
 atomToRepVal :: Emits n => SAtom n -> SubstImpM i n (SRepVal n)
-atomToRepVal x = RepVal <$> getType x <*> go x where
+atomToRepVal x = RepVal (getType x) <$> go x where
   go :: Emits n => SAtom n -> SubstImpM i n (Tree (IExpr n))
   go atom = case atom of
     RepValAtom dRepVal -> do
@@ -860,15 +873,13 @@ atomToRepVal x = RepVal <$> getType x <*> go x where
         else buildGarbageVal t <&> \(RepValAtom (RepVal _ tree)) -> tree
       return $ Branch $ tag':xs
     Con HeapVal -> return $ Branch []
-    Var v -> lookupAtomName v >>= \case
+    Var v -> lookupAtomName (atomVarName v) >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
-    PtrVar p -> do
-      PtrBinding ty _ <- lookupEnv p
-      return $ Leaf $ IPtrVar p ty
-    ProjectElt p val -> do
+    PtrVar ty p -> return $ Leaf $ IPtrVar p ty
+    ProjectElt _ p val -> do
       (ps, v) <- return $ asNaryProj p val
-      lookupAtomName v >>= \case
+      lookupAtomName (atomVarName v) >>= \case
         TopDataBound (RepVal _ tree) -> applyProjection (toList ps) tree
         _ -> error "should only be projecting a data atom"
       where
@@ -992,11 +1003,11 @@ buildGarbageVal ty =
 -- === Operations on dests ===
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
-indexDest (Dest destValTy@(TabTy (b:>idxTy) eltTy) tree) i = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp idxTy i
-  leafTys <- typeToTree destValTy
-  Dest eltTy' <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
+indexDest (Dest (TabPi tabTy) tree) i = do
+  eltTy <- instantiate tabTy [i]
+  ord <- ordinalImp (tabIxType tabTy) i
+  leafTys <- typeToTree $ TabPi tabTy
+  Dest eltTy <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
     BufferType ixStruct _ <- return $ getRefBufferType leafTy
     offset <- computeOffsetImp ixStruct ord
     impOffset ptr offset
@@ -1012,11 +1023,14 @@ naryIndexRepVal x (ix:ixs) = do
 {-# INLINE naryIndexRepVal #-}
 
 -- TODO: de-dup with indexDest?
-indexRepVal :: Emits n => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
-indexRepVal (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
-  eltTy' <- applySubst (b@>SubstVal i) eltTy
-  ord <- ordinalImp ixTy i
-  leafTys <- typeToTree tabTy
+indexRepValParam :: Emits n
+  => SRepVal n -> SAtom n -> (SType n -> SType n)
+  -> (IExpr n -> SubstImpM i n (IExpr n))
+  -> SubstImpM i n (SRepVal n)
+indexRepValParam (RepVal (TabPi tabTy) vals) i tyFunc func = do
+  eltTy <- instantiate tabTy [i]
+  ord <- ordinalImp (tabIxType tabTy) i
+  leafTys <- typeToTree (TabPi tabTy)
   vals' <- forM (zipTrees leafTys vals) \(leafTy, ptr) -> do
     BufferPtr (BufferType ixStruct _) <- return $ getIExprInterpretation leafTy
     offset <- computeOffsetImp ixStruct ord
@@ -1024,11 +1038,29 @@ indexRepVal (RepVal tabTy@(TabPi (TabPiType (b:>ixTy) eltTy)) vals) i = do
     -- we represent scalars by value, not by reference, so we do a load
     -- if this is the last index in the table nest.
     case ixStruct of
-      EmptyAbs (Nest _ Empty) -> load ptr'
-      _                       -> return ptr'
-  return $ RepVal eltTy' vals'
-indexRepVal _ _ = error "expected table type"
+      EmptyAbs (Nest _ Empty) -> func ptr' >>= load
+      _                       -> func ptr'
+  -- `func` may have changed the types of the `vals'`.  The caller must also
+  -- supply `tyFunc` to reflect that change in the SType.
+  return $ RepVal (tyFunc eltTy) vals'
+indexRepValParam _ _ _ _ = error "expected table type"
+{-# INLINE indexRepValParam #-}
+
+indexRepVal :: Emits n
+  => RepVal SimpIR n -> SAtom n -> SubstImpM i n (RepVal SimpIR n)
+indexRepVal rep i = indexRepValParam rep i id return
 {-# INLINE indexRepVal #-}
+
+vectorIndexRepVal :: Emits n
+  => RepVal SimpIR n -> SAtom n -> SType n
+  -> SubstImpM i n (RepVal SimpIR n)
+vectorIndexRepVal rep i vty =
+  -- Passing `const vty` here depends on knowing that `vectorIndexRepVal` is
+  -- only called on references of scalar base type, so that the give `vty` is,
+  -- actually, the type of the result of the indexing operation.
+  indexRepValParam rep i (const vty) action where
+    action ptr = castPtrToVectorType ptr (toIVectorType vty)
+{-# INLINE vectorIndexRepVal #-}
 
 projectDest :: Int -> Dest n -> Dest n
 projectDest i (Dest (ProdTy tys) (Branch ds)) =
@@ -1078,8 +1110,8 @@ computeElemCount idxNest' = do
 elemCountPoly :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
 elemCountPoly (Abs bs UnitE) = case bs of
   Empty -> return $ IdxRepVal 1
-  Nest b@(_:>ixTy) rest -> do
-   curSize <- indexSetSize ixTy
+  Nest b@(PairB (LiftB d) (_:>t)) rest -> do
+   curSize <- indexSetSize $ IxType t d
    restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
    sumUsingPolysImp curSize restSizes
 
@@ -1087,10 +1119,10 @@ computeSizeGivenOrdinal
   :: EnvReader m
   => IxBinder SimpIR n l -> IndexStructure SimpIR l
   -> m n (Abs (Binder SimpIR) (Block SimpIR) n)
-computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
+computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = liftBuilder do
   withFreshBinder noHint IdxRepTy \bOrdinal ->
     Abs bOrdinal <$> buildBlock do
-      i <- unsafeFromOrdinal (sink idxTy) $ Var $ sink $ binderName bOrdinal
+      i <- unsafeFromOrdinal (sink $ IxType t d) $ Var $ sink $ binderVar bOrdinal
       idxStruct' <- applySubst (b@>SubstVal i) idxStruct
       elemCountPoly $ sink idxStruct'
 
@@ -1098,10 +1130,10 @@ computeSizeGivenOrdinal (b:>idxTy) idxStruct = liftBuilder do
 -- and a trailing nest of indices that can contain inter-dependencies.
 indexStructureSplit :: IndexStructure SimpIR n -> ([IxType SimpIR n], IndexStructure SimpIR n)
 indexStructureSplit (Abs Empty UnitE) = ([], EmptyAbs Empty)
-indexStructureSplit s@(Abs (Nest b rest) UnitE) =
+indexStructureSplit s@(Abs (Nest (PairB (LiftB d) b) rest) UnitE) =
   case hoist b (EmptyAbs rest) of
     HoistFailure _     -> ([], s)
-    HoistSuccess rest' -> (binderAnn b:ans1, ans2)
+    HoistSuccess rest' -> (IxType (binderType b) d:ans1, ans2)
       where (ans1, ans2) = indexStructureSplit rest'
 
 computeOffset :: forall n. Emits n
@@ -1129,12 +1161,9 @@ hoistDecls
      , BindsNames b, BindsEnv b, RenameB b, SinkableB b)
   => b n l -> SBlock l -> m n (Abs b SBlock n)
 hoistDecls b block = do
-  Abs hoistedDecls rest <- liftEnvReaderM $
-    refreshAbs (Abs b block) \b' (Block _ decls result) ->
+  emitDecls =<< liftEnvReaderM do
+    refreshAbs (Abs b block) \b' (Abs decls result) ->
       hoistDeclsRec b' Empty decls result
-  ab <- emitDecls hoistedDecls rest
-  refreshAbs ab \b'' blockAbs' ->
-    Abs b'' <$> absToBlockInferringTypes blockAbs'
 {-# INLINE hoistDecls #-}
 
 hoistDeclsRec
@@ -1145,7 +1174,7 @@ hoistDeclsRec b declsAbove Empty result =
   return $ Abs Empty $ Abs b $ Abs declsAbove result
 hoistDeclsRec b declsAbove (Nest decl declsBelow) result  = do
   let (Let _ expr) = decl
-  exprIsPure <- isPure expr
+  let exprIsPure = isPure expr
   refreshAbs (Abs decl (Abs declsBelow result))
     \decl' (Abs declsBelow' result') ->
       case exchangeBs (PairB (PairB b declsAbove) decl') of
@@ -1183,7 +1212,7 @@ withFreshIBinder hint ty cont = do
 emitCall
   :: Emits n => PiType SimpIR n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall (PiType bs _ resultTy) f xs = do
+emitCall (PiType bs (EffTy _ resultTy)) f xs = do
   resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
   dest <- allocDest resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x
@@ -1377,30 +1406,27 @@ ordinalImp :: Emits n => IxType SimpIR n -> SAtom n -> SubstImpM i n (IExpr n)
 ordinalImp (IxType _ dict) i = fromScalarAtom =<< case dict of
   IxDictRawFin _ -> return i
   IxDictSpecialized _ d params -> do
-    SpecializedDict _ (Just fs) <- lookupSpecDict d
-    appSpecializedIxMethod (fs !! fromEnum Ordinal) (params ++ [i])
+    appSpecializedIxMethod d Ordinal (params ++ [i])
 
 unsafeFromOrdinalImp :: Emits n => IxType SimpIR n -> IExpr n -> SubstImpM i n (SAtom n)
 unsafeFromOrdinalImp (IxType _ dict) i = do
   let i' = toScalarAtom i
   case dict of
     IxDictRawFin _ -> return i'
-    IxDictSpecialized _ d params -> do
-      SpecializedDict _ (Just fs) <- lookupSpecDict d
-      appSpecializedIxMethod (fs !! fromEnum UnsafeFromOrdinal) (params ++ [i'])
+    IxDictSpecialized _ d params ->
+      appSpecializedIxMethod d UnsafeFromOrdinal (params ++ [i'])
 
 indexSetSizeImp :: Emits n => IxType SimpIR n -> SubstImpM i n (IExpr n)
 indexSetSizeImp (IxType _ dict) = do
-  ans <- case dict of
+  fromScalarAtom =<< case dict of
     IxDictRawFin n -> return n
-    IxDictSpecialized _ d params -> do
-      SpecializedDict _ (Just fs) <- lookupSpecDict d
-      appSpecializedIxMethod (fs !! fromEnum Size) (params ++ [])
-  fromScalarAtom ans
+    IxDictSpecialized _ d params ->
+      appSpecializedIxMethod d Size (params ++ [])
 
-appSpecializedIxMethod :: Emits n => LamExpr SimpIR n -> [SAtom n] -> SubstImpM i n (SAtom n)
-appSpecializedIxMethod simpLam args = do
-  LamExpr bs body <- return simpLam
+appSpecializedIxMethod :: Emits n => SpecDictName n -> IxMethod -> [SAtom n] -> SubstImpM i n (SAtom n)
+appSpecializedIxMethod d method args = do
+  SpecializedDict _ (Just fs) <- lookupSpecDict d
+  TopLam _ _ (LamExpr bs body) <- return $ fs !! fromEnum method
   dropSubst $ extendSubst (bs @@> map SubstVal args) $ translateBlock body
 
 -- === Abstracting link-time objects ===
@@ -1412,7 +1438,7 @@ abstractLinktimeObjects f = do
   let allVars = freeVarsE f
   (funVars, funTys) <- unzip <$> forMFilter (nameSetToList @TopFunNameC allVars) \v ->
     lookupTopFun v >>= \case
-      DexTopFun _ piTy _ _ -> do
+      DexTopFun _ (TopLam _ piTy _) _ -> do
         ty' <- getImpFunType StandardCC piTy
         return $ Just (v, ty')
       FFITopFun _ _ -> return Nothing
@@ -1442,7 +1468,7 @@ isSingletonType topTy = isJust $ checkIsSingleton topTy
   where
     checkIsSingleton :: Type r n -> Maybe ()
     checkIsSingleton ty = case ty of
-      TabPi (TabPiType _ body) -> checkIsSingleton body
+      TabPi (TabPiType _ _ body) -> checkIsSingleton body
       TC (ProdType tys) -> mapM_ checkIsSingleton tys
       _ -> Nothing
 
@@ -1497,7 +1523,7 @@ impInstrTypes instr = case instr of
   DebugPrint _ _  -> return []
   IQueryParallelism _ _ -> return [IIdxRepTy, IIdxRepTy]
   ICall f _ -> lookupTopFun f >>= \case
-    DexTopFun _ piTy _ _ -> do
+    DexTopFun _ (TopLam _ piTy _) _ -> do
       IFunType _ _ resultTys <- getImpFunType StandardCC piTy
       return resultTys
     FFITopFun _ (IFunType _ _ resultTys) -> return resultTys
@@ -1509,7 +1535,7 @@ impInstrTypes instr = case instr of
   where hostPtrTy ty = PtrType (CPU, ty)
 
 instance CheckableE SimpIR ImpFunction where
-  checkE _ = return () -- TODO
+  checkE = renameM -- TODO
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where
@@ -1523,7 +1549,7 @@ instance Pretty (LeafType n) where
 
 instance Pretty (TypeCtxLayer SimpIR n l) where
   pretty = \case
-    TabCtx ix            -> pretty ix
+    TabCtx (PairB _ b)        -> pretty b
     DepPairCtx (RightB UnitB) -> "dep-pair-instantiated"
     DepPairCtx (LeftB b)      -> "dep-pair" <+> pretty b
     RefCtx               -> "refctx"

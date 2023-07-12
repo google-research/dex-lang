@@ -1,0 +1,201 @@
+'# BFGS optimizer
+The BFGS method is a quasi-Newton algorithm for solving unconstrained nonlinear 
+optimization problems. A BFGS iteration entails computing a line search 
+direction based on the gradient and Hessian approximation, finding a new point
+in the line search direction that satisfies the Wolfe conditions, and updating
+the Hessian approximation at the new point. This implementation is based on
+BFGS as described in Nocedal, Jorge; Wright, Stephen J. (2006), Numerical 
+Optimization (2nd ed).
+
+'This example demonstrates Dex's ability to do fast, stateful loops with a 
+statically unknown number of iterations. See `benchmarks/bfgs.py` for a 
+comparison with Jaxopt BFGS on a multiclass logistic regression problem.
+
+def outer_product(x:n=>Float, y:m=>Float) -> (n=>m=>Float) given (n|Ix, m|Ix) =
+  for i:n. for j:m. x[i]* y[j]
+
+def zoom(
+  f_line: (Float)->Float,
+  a_lo_init:Float, 
+  a_hi_init:Float,
+  c1:Float,
+  c2:Float
+) -> Float =
+  -- Zoom line search helper; Algorithm 3.6 from Nocedal and Wright (2006).
+
+  f0 = f_line 0.
+  g0 = grad f_line 0.
+
+  a_hi_ref <- with_state a_hi_init
+  a_lo_ref <- with_state a_lo_init
+  iter \i.
+    a_lo = get a_lo_ref
+    a_hi = get a_hi_ref
+
+    --Find a trial step length between a_lo and a_hi.
+    a_i = 0.5 * (a_lo + a_hi)
+
+    if (a_hi - a_lo) < 0.000001  -- The line search failed.
+      then Done a_i
+      else
+        f_ai = f_line a_i
+        if f_ai > (f0 + c1 * a_i * g0) || f_ai >= f_line a_lo
+          then 
+            a_hi_ref := a_i
+            Continue
+          else
+            g_i = grad f_line a_i
+            if abs g_i <= (-c2 * g0)
+              then Done a_i
+              else
+                if g_i * (a_hi - a_lo) >= 0.
+                  then a_hi_ref := a_lo
+                a_lo_ref := a_i
+                Continue
+
+def zoom_line_search(
+  maxiter:Nat,
+  f: (Float)->Float
+  ) -> Float =
+  --Algorithm 3.5 from Nocedal and Wright (2006).
+  c1 = 0.0001
+  c2 = 0.9
+  a_max = 1.
+
+  f_0 = f 0.
+  g_0 = grad f 0.
+
+  a_ref <- with_state 0.5
+  a_ref_last <- with_state 0.
+
+  iter \i.
+    a_i = get a_ref
+    a_last = get a_ref_last
+    f_i = f a_i
+    if i >= maxiter || f_i > (f_0 + c1 * a_i * g_0) || (f_i >= f a_last && i > 0)
+      then Done (zoom f a_last a_i c1 c2)
+      else
+        g_i = grad f a_i
+        if abs g_i <= (-c2 * g_0)
+          then Done a_i
+          else
+            if g_i >= 0.
+              then Done (zoom f a_i a_last c1 c2)
+              else 
+                a_ref_last := a_i
+                a_ref := 0.5 * (a_i + a_max)
+                Continue
+
+def backtracking_line_search(
+  maxiter:Nat,
+  f: (Float)->Float
+  ) -> Float =
+  -- Algorithm 3.1 in Nocedal and Wright (2006).
+  a_init = 1. 
+  f_0 = f 0.
+  g_0 = grad f 0.
+  rho = 0.5
+  c = 0.0001
+
+  a_ref <- with_state a_init
+  iter \i.
+    a_i = get a_ref
+    if f a_i <= (f_0 + c * a_i * g_0) || i >= maxiter
+      then Done a_i
+      else
+        a_ref := a_i * rho
+        Continue
+
+struct BFGSresults(n|Ix) = 
+  fval : Float
+  x_opt: (n=>Float)
+  error: Float 
+  num_iter: Nat
+  
+def bfgs_minimize(
+  f: (n=>Float)->Float,                 --Objective function.
+  x0: n=>Float,                       --Initial point.
+  H0: n=>n=>Float,                    --Initial inverse Hessian approximation.
+  linesearch: ((Float)->Float)->Float,  --Line search that returns a step size.
+  tol: Float,                         --Convergence tolerance (of the gradient L2 norm).
+  maxiter: Nat                        --Maximum number of BFGS iterations.
+  ) -> BFGSresults n given (n|Ix) =             
+  -- Algorithm 6.1 in Nocedal and Wright (2006).
+
+  xref <- with_state x0 
+  Href <- with_state H0
+  gref <- with_state (grad f x0)
+
+  iter \i.
+    x = get xref
+    g = get gref
+    grad_norm = sqrt $ sum $ for i. g[i] * g[i]
+
+    if grad_norm < tol || i >= maxiter
+      then Done BFGSresults(f x, x, grad_norm, i)
+      else
+        H = get Href
+        search_direction = -H**.g
+        f_line = \s:Float. f (x + s .* search_direction)
+        step_size = linesearch f_line 
+        x_diff = step_size .* search_direction
+        x_next = x + x_diff
+        g_next = grad f x_next
+        grad_diff = g_next - g
+
+        -- Update the inverse Hessian approximation.
+        rho_inv = vdot grad_diff x_diff
+        if not (rho_inv == 0.)
+            then
+                rho = 1. / rho_inv
+                y = (eye - rho .* outer_product x_diff grad_diff)
+                Href := y ** H ** (transpose y) + rho .* outer_product x_diff x_diff
+        
+        xref := x_next
+        gref := g_next
+        Continue
+
+
+def rosenbrock(coord:(Fin 2)=>Float) -> Float =
+  --A standard optimization test case; the optimum is (1, 1).
+  x = coord[0@_]
+  y = coord[1@_]
+  pow (1 - x) 2 + 100 * pow (y - x * x) 2
+
+%bench "rosenbrock"
+bfgs_minimize rosenbrock [10., 10.] eye (\f. backtracking_line_search 15 f) 0.001 100
+> BFGSresults(8.668621e-13, [0.9999993, 0.9999985], 2.538457e-05, 41)
+>
+> rosenbrock
+> Compile time: 618.962 ms
+> Run time:     57.489 us 	(based on 1 run)
+
+def multiclass_logistic_loss(xs: n=>d=>Float, ys: n=>m, w: (d, m)=>Float) -> Float given (n|Ix, d|Ix, m|Ix) =
+  w_arr = for i:d. for j:m. w[(i, j)]
+  logits = xs ** w_arr
+  logit_at_label = for i. logits[i, ys[i]]
+  per_example_loss = for i. logsumexp logits[i] - logit_at_label[i]
+  mean(per_example_loss)
+
+def multiclass_logreg(
+  xs:n=>d=>Float,
+  ys:n=>m,
+  maxiter:Nat,
+  maxls:Nat,
+  tol:Float) -> Float given (n|Ix, d|Ix, m|Ix)=
+  ob_fun = \v. multiclass_logistic_loss xs ys v
+  w0 = zero
+  res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search maxls f) tol maxiter 
+  res.fval
+
+-- Define a version of `multiclass_logreg` with Int instead of Nat labels, callable from Python 
+-- (see benchmarks/bfgs.py).
+def multiclass_logreg_int(
+  xs:(Fin n)=>(Fin d)=>Float,
+  ys:(Fin n)=>Int,
+  num_classes:Int,
+  maxiter:Int,
+  maxls:Int,
+  tol:Float) -> Float given (n, d) =
+  y_ind = Fin (i32_to_n num_classes)
+  multiclass_logreg xs (for i. i32_to_n ys[i] @ y_ind) (i32_to_n maxiter) (i32_to_n maxls) tol

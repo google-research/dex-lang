@@ -209,7 +209,7 @@ example-names := \
   fluidsim \
   sgd psd kernelregression nn \
   quaternions manifold-gradients schrodinger tutorial \
-  latex linear-maps dither mcts md
+  latex linear-maps dither mcts md bfgs
 # TODO: re-enable
 # fft vega-plotting
 
