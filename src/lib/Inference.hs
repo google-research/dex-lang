@@ -134,61 +134,55 @@ inferTopUDecl (UDerivingInstance className instanceBs params) result = do
   --   3) the dictionary type for `wrappedTy`.
   -- All of 1-3 are valid under the binders `instanceBs`. Hence we create an
   -- abstraction wohse body consists of the triple 2), 3), 1).
-  ab :: Abs (Nest (WithRoleExpl CBinder)) (CType `PairE` DictType `PairE` CType) n <- liftInfererM $ solveLocal do
-    withRoleUBinders instanceBs do
-      ClassDef classSourceName _ _ roleExpls paramBinders _ _ <- lookupClassDef (sink className')
-      let expls = snd <$> roleExpls
-      params' <- checkInstanceParams expls paramBinders params
-      case params' of
-        [param] -> do
-          case param of
-            TypeAsAtom newTy@(NewtypeTyCon (UserADTType _ tcName (TyConParams _ tcParams))) -> do
-              tcDef <- lookupTyCon tcName
-              case tcDef of
-                TyConDef _ _ conBs (ADTCons [DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _]) -> do
-                  wrappedTy' <- applySubst (conBs @@> map SubstVal tcParams) wrappedTy
-                  let wrappedDictTy = DictType classSourceName (sink className') [TypeAsAtom wrappedTy']
-                  return (wrappedTy' `PairE` wrappedDictTy `PairE` newTy)
-                TyConDef _ _ _ dataCons ->
-                  throw TypeErr $ "User-defined ADT " ++ pprint newTy ++
-                                  " does not have excatly one (data) constructor " ++
-                                  " that takes exactly one (data) argument" ++
-                                  "\n(data) constructors: " ++ pprint dataCons
-            _ -> throw TypeErr $ "Parameter " ++ pprint param ++ " not a user-defined ADT"
-        _ -> throw TypeErr $ "More than one parameter when deriving instance of class " ++ pprint className ++
-                             "\nparameters: " ++ pprint params'
-  Abs bs' (wrappedTy `PairE` wrappedDictTy `PairE` newTy) <- return ab
-  -- Synthesize the dictionary for `wrappedTy` (after closing over `bs'`):
-  let (roleExpls, bs'') = unzipAttrs bs'
-  let expls = [expl | (_, expl) <- roleExpls]
-  let closedWrappedDictTy = Pi $ CorePiType ImplicitApp expls bs'' (EffTy Pure (DictTy wrappedDictTy))
-  synthWrappedDict <- trySynthTerm closedWrappedDictTy Full
-  -- Extract (superclasses and) methods from the synthesized dictionary for `wrappedTy`:
-  Lam (CoreLamExpr _ (LamExpr binders' (WithoutDecls synthExpr))) <- return synthWrappedDict
-  Abs _ (ListE scs `PairE` ListE methods) <- liftExceptEnvReaderM $
-    refreshAbs (Abs binders' synthExpr) \bs dict' -> do
-      DictCon _ (InstanceDict wrappedInstName wrappedInstParams) <- return dict'
-      InstanceDef _ _ wrappedBinders _ body <- lookupInstanceDef wrappedInstName
-      InstanceBody scs methods <- applySubst (wrappedBinders @@> map SubstVal wrappedInstParams) body
-      return $ Abs bs (ListE scs `PairE` ListE methods)
-  -- TODO: Avoid the `unsafeCoerceE`.
-  let ab' = Abs bs'' $ (unsafeCoerceE (ListE scs `PairE` ListE methods)) `PairE` wrappedTy `PairE` newTy
-  def <- liftEnvReaderM $ refreshAbs ab' \bs body -> do
-      let ListE scs' `PairE` ListE methods' `PairE` wrappedTy' `PairE` newTy' = body
-      case newTy' of
-        NewtypeTyCon (UserADTType sName tcName tcParams) -> do
-          -- Forward isomorphism:
-          fwdAbs <- buildAbs noHint wrappedTy' \x ->
-            return $ NewtypeCon (sink $ UserADTData sName tcName tcParams) (Var x)
-          -- Backward isomorphism:
-          bwdAbs <- buildAbs noHint newTy' \x ->
-            return $ ProjectElt (sink newTy') UnwrapNewtype (Var x)
-          -- Bundled up isomorphisms:
-          let iso = Iso wrappedTy' newTy' fwdAbs bwdAbs
-          -- Convert methods with the constructed isomorphism between `wrappedTy'` and `newTy'`:
-          methods'' <- liftBuilder $ mapM (convertMethodAtom iso) methods'
-          return $ InstanceDef className' roleExpls bs [TypeAsAtom newTy'] $ InstanceBody scs' methods''
-        _ -> error "internal error"
+  ab :: Abs (Nest (WithRoleExpl CBinder))
+            ((ListE CAtom) `PairE` (ListE CAtom) `PairE` CType `PairE` CType)
+            n
+    <- liftInfererM $ solveLocal do
+      withRoleUBinders instanceBs do
+        ClassDef classSourceName _ _ roleExpls paramBinders _ _ <- lookupClassDef (sink className')
+        let expls = snd <$> roleExpls
+        params' <- checkInstanceParams expls paramBinders params
+        case params' of
+          [param] -> do
+            case param of
+              TypeAsAtom newTy@(NewtypeTyCon (UserADTType _ tcName (TyConParams _ tcParams))) -> do
+                tcDef <- lookupTyCon tcName
+                case tcDef of
+                  TyConDef _ _ conBs (ADTCons [DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _]) -> do
+                    wrappedTy' <- applySubst (conBs @@> map SubstVal tcParams) wrappedTy
+                    let wrappedDictTy = DictType classSourceName (sink className') [TypeAsAtom wrappedTy']
+                    -- Synthesize the dictionary for `wrappedTy'`
+                    synthWrappedDict <- trySynthTerm (DictTy wrappedDictTy) Full
+                    -- Extract superclasses and methods from the synthesized dictionary for `wrappedTy'`:
+                    DictCon _ (InstanceDict wrappedInstName wrappedInstParams) <- return synthWrappedDict
+                    InstanceDef _ _ wrappedBinders _ body <- lookupInstanceDef wrappedInstName
+                    InstanceBody scs methods <- applySubst (wrappedBinders @@> map SubstVal wrappedInstParams) body
+                    return $ (ListE scs) `PairE` (ListE methods) `PairE` wrappedTy' `PairE` newTy
+                  TyConDef _ _ _ dataCons ->
+                    throw TypeErr $ "User-defined ADT " ++ pprint newTy ++
+                                    " does not have excatly one (data) constructor " ++
+                                    " that takes exactly one (data) argument" ++
+                                    "\n(data) constructors: " ++ pprint dataCons
+              _ -> throw TypeErr $ "Parameter " ++ pprint param ++ " not a user-defined ADT"
+          _ -> throw TypeErr $ "More than one parameter when deriving instance of class " ++ pprint className ++
+                              "\nparameters: " ++ pprint params'
+  def <- liftEnvReaderM $ refreshAbs ab \bs body -> do
+    let ListE scs' `PairE` ListE methods' `PairE` wrappedTy' `PairE` newTy' = body
+    case newTy' of
+      NewtypeTyCon (UserADTType sName tcName tcParams) -> do
+        -- Forward isomorphism:
+        fwdAbs <- buildAbs noHint wrappedTy' \x ->
+          return $ NewtypeCon (sink $ UserADTData sName tcName tcParams) (Var x)
+        -- Backward isomorphism:
+        bwdAbs <- buildAbs noHint newTy' \x ->
+          return $ ProjectElt (sink newTy') UnwrapNewtype (Var x)
+        -- Bundled up isomorphisms:
+        let iso = Iso wrappedTy' newTy' fwdAbs bwdAbs
+        -- Convert methods with the constructed isomorphism between `wrappedTy'` and `newTy'`:
+        methods'' <- liftBuilder $ mapM (convertMethodAtom iso) methods'
+        let (roleExpls, bs') = unzipAttrs bs
+        return $ InstanceDef className' roleExpls bs' [TypeAsAtom newTy'] $ InstanceBody scs' methods''
+      _ -> error "internal error"
   instanceName <- emitInstanceDef def
   addInstanceSynthCandidate className' instanceName
   UDeclResultDone <$> return result
