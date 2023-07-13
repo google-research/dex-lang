@@ -2700,7 +2700,7 @@ unsafeCoerceNameSet = TrulyUnsafe.unsafeCoerce
 -- XXX: there are privileged functions that depend on `HoistableE` instances
 --      being correct.
 class HoistableE (e::E) where
-  freeVarsE :: e n-> NameSet n
+  freeVarsE :: e n -> NameSet n
   default freeVarsE :: (GenericE e, HoistableE (RepE e)) => e n -> NameSet n
   freeVarsE e = freeVarsE $ fromE e
 
@@ -2758,6 +2758,19 @@ hoistToTop e =
   case nameSetRawNames $ freeVarsE e of
     []          -> HoistSuccess $ unsafeCoerceE e
     leakedNames -> HoistFailure leakedNames
+
+-- User is responsible for making sure that the `NameSet n` really is the set of
+-- free variables of the `e n`.
+data CachedFVs e n = UnsafeCachedFVs {
+  _cachedFVs :: (NameSet n), fromCachedFVs :: (e n) }
+instance HoistableE e => HoistableE (CachedFVs e) where
+  freeVarsE (UnsafeCachedFVs fvs _) = fvs
+
+hoistViaCachedFVs :: (BindsNames b, HoistableE e) =>
+  b n l -> CachedFVs e l -> HoistExcept (e n)
+hoistViaCachedFVs b withFvs = case hoist b withFvs of
+  HoistSuccess withFvs' -> HoistSuccess $ fromCachedFVs withFvs'
+  HoistFailure err -> HoistFailure err
 
 sinkFromTop :: SinkableE e => e VoidS -> e n
 sinkFromTop = unsafeCoerceE
@@ -3293,6 +3306,13 @@ mapNameMap :: (a -> b) -> NameMap c a n -> (NameMap c b n)
 mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
 {-# INLINE mapNameMap #-}
 
+keysNameMap :: NameMap c a n -> [Name c n]
+keysNameMap = map fst . toListNameMap
+{-# INLINE keysNameMap #-}
+
+keySetNameMap :: (Color c) => NameMap c a n -> NameSet n
+keySetNameMap nmap = freeVarsE $ ListE $ keysNameMap nmap
+
 instance SinkableE (NameMap c a) where
   sinkingProofE = undefined
 
@@ -3337,6 +3357,12 @@ mapNameMapE :: (e1 n -> e2 n)
             -> NameMapE c e1 n -> NameMapE c e2 n
 mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
 {-# INLINE mapNameMapE #-}
+
+keysNameMapE :: NameMapE c e n -> [Name c n]
+keysNameMapE (NameMapE nmap) = keysNameMap nmap
+
+keySetNameMapE :: (Color c) => NameMapE c e n -> NameSet n
+keySetNameMapE (NameMapE nmap) = keySetNameMap nmap
 
 instance SinkableE e => SinkableE (NameMapE c e) where
   sinkingProofE = undefined

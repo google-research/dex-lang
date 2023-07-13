@@ -289,18 +289,17 @@ occNest a (Abs decls ans) = case decls of
       \d'@(Let b' (DeclBinding _ expr')) rest -> do
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
-          below <- occNest (sink a) rest
-          checkAllFreeVariablesMentioned below
+          (below, belowfvs) <- isolated do
+            occNest (sink a) rest >>= wrapWithCachedFVs
+          modify (<> belowfvs)
           accessInfo <- getAccessInfo $ binderName d'
           let usage = usageInfo accessInfo
           let dceAttempt = case isPureDecl of
-               False -> ElimFailure d' usage below
+               False -> ElimFailure d' usage $ fromCachedFVs below
                True  ->
-                 -- Or hoistUsingCachedFVs in the monad, if we decide to do
-                 -- that optimization
-                 case hoist d' below of
+                 case hoistViaCachedFVs d' below of
                    HoistSuccess below' -> ElimSuccess below'
-                   HoistFailure _ -> ElimFailure d' usage below
+                   HoistFailure _ -> ElimFailure d' usage $ fromCachedFVs below
           return dceAttempt
     case dceAttempt of
       ElimSuccess below' -> return below'
@@ -320,19 +319,21 @@ occNest a (Abs decls ans) = case decls of
         let binding'' = DeclBinding ann expr
         return $ Abs (Nest (Let b' binding'') ds'') ans''
 
-checkAllFreeVariablesMentioned :: HoistableE e => e n -> OCCM n ()
-checkAllFreeVariablesMentioned e = do
+wrapWithCachedFVs :: forall e n. HoistableE e => e n -> OCCM n (CachedFVs e n)
+wrapWithCachedFVs e = do
+  FV fvMap <- get
+  let fvs = keySetNameMapE fvMap
 #ifdef DEX_DEBUG
-  FV fvs <- get
-  forM_ (nameSetToList (freeVarsE e)) \name ->
-    case lookupNameMapE name fvs of
-      Just _ -> return ()
-      Nothing -> error $ "Free variable map missing free variable " ++ show name
+  let fvsOk = map getRawName (freeVarsList e :: [SAtomName n]) == nameSetRawNames fvs
 #else
-  void $ return e  -- Refer to `e` in this branch to avoid a GHC warning
-  return ()
-{-# INLINE checkAllFreeVariablesMentioned #-}
+  -- Verification of this invariant defeats the performance benefits of
+  -- avoiding the extra traversal (e.g. actually having linear complexity),
+  -- so we only do that in debug builds.
+  let fvsOk = True
 #endif
+  case fvsOk of
+    True -> return $ UnsafeCachedFVs fvs e
+    False -> error $ "Free variables were computed incorrectly."
 
 instance HasOCC (DeclBinding SimpIR) where
   occ a (DeclBinding ann expr) = do
@@ -407,14 +408,11 @@ instance HasOCC (Hof SimpIR) where
       modify (<> useManyTimes bodyFV)
       return body'
     RunReader ini bd -> do
-      ini' <- occ accessOnce ini
       iniIx <- summary ini
-      bd' <- oneShot a [Deterministic [], iniIx]bd
+      bd' <- oneShot a [Deterministic [], iniIx] bd
+      ini' <- occ accessOnce ini
       return $ RunReader ini' bd'
     RunWriter Nothing (BaseMonoid empty combine) bd -> do
-      -- We will process the combining function when we meet it in MExtend ops
-      -- (but we won't attempt to eliminate dead code in it).
-      empty' <- occ accessOnce empty
       -- There is no way to read from the reference in a Writer, so the only way
       -- an indexing expression can depend on it is by referring to the
       -- reference itself.  One way to so refer that is opaque to occurrence
@@ -428,17 +426,20 @@ instance HasOCC (Hof SimpIR) where
       -- different references across loop iterations are not distinguishable.
       -- The same argument holds for the heap parameter.
       bd' <- oneShot a [Deterministic [], Deterministic []] bd
+      -- We will process the combining function when we meet it in MExtend ops
+      -- (but we won't attempt to eliminate dead code in it).
+      empty' <- occ accessOnce empty
       return $ RunWriter Nothing (BaseMonoid empty' combine) bd'
     RunWriter (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
     RunState Nothing ini bd -> do
-      ini' <- occ accessOnce ini
       -- If we wanted to be more precise, the summary for the reference should
       -- be something about the stuff that might flow into the `put` operations
       -- affecting that reference.  Using `IxAll` is a conservative
       -- approximation (in downstream analysis it means "assume I touch every
       -- value").
-      bd' <- oneShot a [Deterministic [], IxAll]bd
+      bd' <- oneShot a [Deterministic [], IxAll] bd
+      ini' <- occ accessOnce ini
       return $ RunState Nothing ini' bd'
     RunState (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
@@ -465,23 +466,25 @@ occWithBinder
   -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
   -> OCCM n a
 occWithBinder (Abs (b:>ty) body) cont = do
-  ty' <- occTy ty
-  refreshAbs (Abs (b:>ty') body) cont
+  (ty', fvs) <- isolated $ occTy ty
+  ans <- refreshAbs (Abs (b:>ty') body) cont
+  modify (<> fvs)
+  return ans
 {-# INLINE occWithBinder #-}
 
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
     MExtend (BaseMonoid empty combine) val -> do
+      valIx <- summary val
+      -- Treat the combining function as inlined here and called once
+      combine' <- oneShot accessOnce [Deterministic [], valIx] combine
       val' <- occ accessOnce val
-      valIx <- summary val'
       -- TODO(precision) The empty value of the monoid is presumably dead here,
       -- but we pretend like it's not to make sure that occurrence analysis
       -- results mention every free variable in the traversed expression.  This
       -- may lead to missing an opportunity to inline something into the empty
       -- value of the given monoid, since references thereto will be overcounted.
       empty' <- occ accessOnce empty
-      -- Treat the combining function as inlined here and called once
-      combine' <- oneShot accessOnce [Deterministic [], valIx] combine
       return $ MExtend (BaseMonoid empty' combine') val'
     -- I'm pretty sure the others are all strict, and not usefully analyzable
     -- for what they do to the incoming access pattern.

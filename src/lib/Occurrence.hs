@@ -727,6 +727,7 @@ instance MaxPlus UsageInfo where
 usageInfo :: AccessInfo n -> UsageInfo
 usageInfo (AccessInfo s dyn) =
   UsageInfo s $ approxConst $ collapse $ interp dyn
+{-# SCC usageInfo #-}
 
 -- === Notes ===
 
