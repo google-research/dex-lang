@@ -88,7 +88,7 @@ instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) w
   getDistinct = lift11 getDistinct
   {-# INLINE getDistinct #-}
 
-instance ( SinkableE w, HoistableE w, Monoid1 w
+instance ( SinkableE w, Monoid1 w
          , HoistableState w, EnvExtender m)
          => EnvExtender (WriterT1 w m) where
   refreshAbs ab cont = WriterT1 \s -> do
@@ -112,6 +112,8 @@ runReaderT1 r m = runReaderT (runReaderT1' m) r
 instance MonadTrans11 (ReaderT1 r) where
   lift11 = ReaderT1 . lift
   {-# INLINE lift11 #-}
+
+deriving instance MonadWriter s (m n) => MonadWriter s (ReaderT1 r m n)
 
 deriving instance MonadState s (m n) => MonadState s (ReaderT1 r m n)
 
