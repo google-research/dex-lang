@@ -171,6 +171,7 @@ BENCHMARKS = [
     DexEndToEnd('fluidsim', 10),
     DexEndToEnd('regression', 10),
     DexEndToEnd('md', 10, baseline_commit='19b16662150ac8a11a9cbc2df67e9f58169ce4ee'),
+    DexEndToEnd('bfgs', 10, baseline_commit='65dce60fe8a4a59e9ed563865b2b9eb9d81a540c'),
     DexRuntime('fused_sum', 5),
     DexRuntime('gaussian', 5),
     DexRuntime('jvp_matmul', 5),
