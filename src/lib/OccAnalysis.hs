@@ -144,12 +144,26 @@ countFreeVarsAsOccurrencesB obj =
   forM_ (freeAtomVarsList $ Abs obj UnitE) \name -> do
     modify (<> FV (singletonNameMapE name $ AccessInfo One accessOnce))
 
--- Run the given action with its own FV state, and return the FVs it
--- accumulates for post-processing.
-isolated :: OCCM n a -> OCCM n (a, FV n)
-isolated action = do
+-- Run the given action with its own FV state, and return the FVs it accumulates
+-- for post-processing.  Merging them back in is up to the caller.
+separately :: OCCM n a -> OCCM n (a, FV n)
+separately action = do
   r <- ask
   lift11 $ lift11 $ runStateT1 (runReaderT1 r action) mempty
+
+-- Run the given action with its own FV state, and process its accumulated FVs
+-- before merging.
+censored :: (FV n -> FV n) -> OCCM n a -> OCCM n a
+censored f act = do
+  (a, fvs) <- separately act
+  modify (<> f fvs)
+  return a
+
+-- Run the given action with its own FV state, then merge its accumulated FVs
+-- afterwards.  (This is only meaningful if the action reads the FV state.)
+isolated :: OCCM n a -> OCCM n a
+isolated = censored id
+{-# INLINE isolated #-}
 
 -- Extend the IxExpr environment
 extend :: (BindsOneName b (AtomNameC SimpIR))
@@ -171,8 +185,8 @@ ixExpr name = do
 -- including statically.
 inlinedLater :: (HoistableE e) => e n -> OCCM n (e n)
 inlinedLater obj = do
-  (_, fvs) <- isolated $ countFreeVarsAsOccurrences obj
-  modify (<> useManyTimesStatic (useManyTimes fvs))
+  void $ censored (useManyTimesStatic . useManyTimes)
+    $ countFreeVarsAsOccurrences obj
   return obj
 
 -- === Computing IxExpr summaries ===
@@ -289,9 +303,7 @@ occNest a (Abs decls ans) = case decls of
       \d'@(Let b' (DeclBinding _ expr')) rest -> do
         exprIx <- summaryExpr $ sink expr'
         extend b' exprIx do
-          (below, belowfvs) <- isolated do
-            occNest (sink a) rest >>= wrapWithCachedFVs
-          modify (<> belowfvs)
+          below <- isolated $ occNest (sink a) rest >>= wrapWithCachedFVs
           accessInfo <- getAccessInfo $ binderName d'
           let usage = usageInfo accessInfo
           let dceAttempt = case isPureDecl of
@@ -350,7 +362,7 @@ instance HasOCC SExpr where
     Case scrut alts (EffTy effs ty) -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
-      (alts', innerFVs) <- unzip <$> mapM (isolated . occAlt a scrutIx) alts
+      (alts', innerFVs) <- unzip <$> mapM (separately . occAlt a scrutIx) alts
       modify (<> foldl' Occ.max zero innerFVs)
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
@@ -399,14 +411,10 @@ instance HasOCC (Hof SimpIR) where
       ixDict' <- inlinedLater ixDict
       occWithBinder (Abs b body) \b' body' -> do
         extend b' (Occ.Var $ binderName b') do
-          (body'', bodyFV) <- isolated (occNest accessOnce body')
-          modify (<> abstractFor b' bodyFV)
+          body'' <- censored (abstractFor b') (occNest accessOnce body')
           return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
-    While body -> While <$> do
-      (body', bodyFV) <- isolated $ occNest accessOnce body
-      modify (<> useManyTimes bodyFV)
-      return body'
+    While body -> While <$> censored useManyTimes (occNest accessOnce body)
     RunReader ini bd -> do
       iniIx <- summary ini
       bd' <- oneShot a [Deterministic [], iniIx] bd
@@ -466,7 +474,7 @@ occWithBinder
   -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
   -> OCCM n a
 occWithBinder (Abs (b:>ty) body) cont = do
-  (ty', fvs) <- isolated $ occTy ty
+  (ty', fvs) <- separately $ occTy ty
   ans <- refreshAbs (Abs (b:>ty') body) cont
   modify (<> fvs)
   return ans
