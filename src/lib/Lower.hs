@@ -66,10 +66,10 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
   lam <- case wantDestStyle of
     True -> do
       refreshAbs (Abs bs body) \bs' body' -> do
-        xs <- bindersToAtoms bs'
-        EffTy _ resultTy <- instantiate (sink piTy) xs
+        let xs = Var <$> bindersVars bs'
+        EffTy _ resultTy <- instantiate piTy xs
         Abs b body'' <- lowerFullySequentialBlock resultTy body'
-        return $ LamExpr (bs' >>> UnaryNest b) body''
+        return $ LamExpr (bs' >>> UnaryNest (PlainBD b)) body''
     False -> do
       refreshAbs (Abs bs body) \bs' body' -> do
         body'' <- lowerFullySequentialBlockNoDest body'
@@ -323,13 +323,13 @@ lowerExprWithDest dest expr = case expr of
       :: SType o -> LamExpr SimpIR i
       -> (Maybe (Dest SimpIR o) -> LamExpr SimpIR o -> LowerM i o (Hof SimpIR o))
       -> LowerM i o (SExpr o)
-    traverseRWS referentTy (LamExpr (BinaryNest hb rb) body) cont = do
+    traverseRWS referentTy lam@(LamExpr (BinaryNest _ rb) _) cont = do
       unpackRWSDest dest >>= \case
         Nothing -> generic
         Just (bodyDest, refDest) -> do
           hof <- cont refDest =<<
             buildEffLam (getNameHint rb) referentTy \hb' rb' ->
-              extendRenamer (hb@>atomVarName hb' <.> rb@>atomVarName rb') do
+              withInstantiated lam [Var hb', Var rb'] \body ->
                 case bodyDest of
                   Nothing -> lowerBlock body
                   Just bd -> lowerBlockWithDest (sink bd) body

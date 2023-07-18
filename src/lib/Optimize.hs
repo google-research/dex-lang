@@ -14,6 +14,7 @@ import Data.Word
 import Data.Bits
 import Data.Bits.Floating
 import Data.List
+import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.State.Strict
 import GHC.Float
@@ -258,8 +259,8 @@ ulExpr expr = case expr of
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ emitSubstBlock block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               getLamExprType body' >>= \case
-                PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
-                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
+                PiType (UnaryNest tb) (EffTy _ valTy) -> do
+                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) tb valTy
                   emitExpr $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
@@ -320,7 +321,7 @@ licmExpr = \case
       Abs decls ans <- buildBlock $ visitBlockEmits body
       -- Now, we process the decls and decide which ones to hoist.
       liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+          seqLICM REmpty mempty b' REmpty decls ans
     PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
     extraDests' <- mapM toAtomVar extraDests
     -- Append the destinations of hoisted Allocs as loop carried values.
@@ -329,12 +330,12 @@ licmExpr = \case
     let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+    let extraDestBs' = fmapNest PlainBD extraDestBs
     body' <- withFreshBinder noHint lbTy \lb' -> do
       (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
-      let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-      block <- applySubst s bodyAbs
+      block <- instantiate (Abs (extraDestBs' >>> UnaryNest lb) bodyAbs) (newCarries <> [oldLoopBinderVal])
       return $ UnaryLamExpr lb' block
     emitSeq dir ix' dests'' body'
   PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
@@ -342,25 +343,25 @@ licmExpr = \case
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
       Abs decls ans <- buildBlock $ visitBlockEmits body
       liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+          seqLICM REmpty mempty b' REmpty decls ans
     PairE (ListE []) (Abs lnb bodyAbs) <- emitDecls $ Abs hdecls destsAndBody
     ixTy <- substM $ binderType b
     body' <- withFreshBinder noHint ixTy \i -> do
-      block <- applyRename (lnb@>binderName i) bodyAbs
+      block <- instantiateNames (Abs lnb bodyAbs) [binderName i]
       return $ UnaryLamExpr i block
     emitHof $ For dir ix' body'
   expr -> visitGeneric expr >>= emitExpr
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]          -- hoisted dests
-        -> AtomNameBinder SimpIR n2 n3   -- loop binder
+        -> BinderAndDecls SimpIR n2 n3   -- loop binder
         -> RNest SDecl n3 n4      -- loop-dependent decls
         -> Nest SDecl m1 m2       -- decls remaining to process
         -> SAtom m2               -- loop result
         -> SubstReaderT AtomSubstVal EnvReaderM m1 n4
              (Abs (Nest SDecl)            -- hoisted decls
                 (PairE (ListE SAtomName)  -- hoisted allocs (these should go in the loop carry)
-                       (Abs (AtomNameBinder SimpIR) -- loop binder
+                       (Abs (BinderAndDecls SimpIR) -- loop binder
                             (Abs (Nest SDecl)       -- non-hoisted decls
                              SAtom))) n1)           -- final result
 seqLICM !top !topDestNames !lb !reg decls ans = case decls of

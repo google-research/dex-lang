@@ -169,10 +169,10 @@ withBuffer cont = do
       body <- buildBlock do
         cont $ sink $ Var $ binderVar b
         return UnitVal
-      let binders = BinaryNest h b
+      let binders = BinaryNest (PlainBD h) (PlainBD b)
       let expls = [Inferred Nothing Unify, Explicit]
       let piTy = CorePiType ExplicitApp expls binders $ EffTy eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
+      let lam = LamExpr (BinaryNest (PlainBD h) (PlainBD b)) body
       return $ Lam $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
 

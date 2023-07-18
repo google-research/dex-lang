@@ -44,26 +44,26 @@ transposeTopFun
   :: (MonadFail1 m, EnvReader m)
   => STopLam n -> m n (STopLam n)
 transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
-  (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
+  (Abs bsNonlin (Abs bLin body), outTyAbs)  <- unpackLinearLamExpr lam
   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
-    outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
-    withFreshBinder "ct" outTy' \bCT -> do
+    outTy <- instantiate outTyAbs (Var <$> bindersVars bsNonlin')
+    withFreshBinder "ct" outTy \bCT -> do
       let ct = Var $ binderVar bCT
       body' <- buildBlock do
         inTy <- substNonlin $ binderType bLin
         withAccumulator inTy \refSubstVal ->
-          extendSubst (bLin @> refSubstVal) $
+          extendSubstBD bLin [refSubstVal] $
             transposeBlock body (sink ct)
       EffTy _ bodyTy <- blockEffTy body'
-      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (EffTy Pure bodyTy)
-      let lamT = LamExpr (bsNonlin' >>> UnaryNest bCT) body'
+      let piTy = PiType  (bsNonlin' >>> UnaryNest (PlainBD bCT)) (EffTy Pure bodyTy)
+      let lamT = LamExpr (bsNonlin' >>> UnaryNest (PlainBD bCT)) body'
       return $ TopLam False piTy lamT
 transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
 
 unpackLinearLamExpr
   :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
-  -> m n ( Abs (Nest SBinder) (Abs SBinder SBlock) n
-         , Abs (Nest SBinder) SType n)
+  -> m n ( Abs SBinders (Abs SBinderAndDecls SBlock) n
+         , Abs SBinders SType n)
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
@@ -338,7 +338,7 @@ transposeHof hof ct = case hof of
   RunState Nothing s (BinaryLamExpr hB refB body) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
+      extendSubstBD hB [RenameNonlin (atomVarName h)] $ extendSubstBD refB [RenameNonlin (atomVarName ref)] $
         extendLinRegions h $
           transposeBlock body (sink ctBody)
       return UnitVal
@@ -347,7 +347,7 @@ transposeHof hof ct = case hof of
     accumTy <- substNonlin $ getType r
     baseMonoid <- tangentBaseMonoidFor accumTy
     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
+      extendSubstBD hB [RenameNonlin (atomVarName h)] $ extendSubstBD refB [RenameNonlin (atomVarName ref)] $
         extendLinRegions h $
           transposeBlock body (sink ct)
       return UnitVal
@@ -356,7 +356,7 @@ transposeHof hof ct = case hof of
     -- TODO: check we have the 0/+ monoid
     (ctBody, ctEff) <- fromPair ct
     void $ emitRunReader noHint ctEff \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
+      extendSubstBD hB [RenameNonlin (atomVarName h)] $ extendSubstBD refB [RenameNonlin (atomVarName ref)] $
         extendLinRegions h $
           transposeBlock body (sink ctBody)
       return UnitVal

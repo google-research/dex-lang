@@ -460,11 +460,11 @@ instance HasOCC (Hof SimpIR) where
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) =
   LamExpr Empty <$> occNest acc body
-oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
+oneShot acc (ix:ixs) (LamExpr (Nest (BD b) bs) body) = do
   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
     extend b' (sink ix) do
       LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
-      return $ LamExpr (Nest b' bs') body'
+      return $ LamExpr (Nest (BD b') bs') body'
 oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.

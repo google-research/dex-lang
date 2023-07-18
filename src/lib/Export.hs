@@ -19,6 +19,7 @@ import Foreign.C.String
 import Foreign.Ptr
 
 import Builder
+import CheapReduction
 import Core
 import Err
 import IRVariants
@@ -119,7 +120,7 @@ goArgs :: (IRRep r)
   => CallingConvention
   -> Nest ExportArg o o'
   -> [CAtomName o']
-  -> Nest (WithAttrB Explicitness (Binder r)) i i'
+  -> Nest (WithAttrB Explicitness (BinderAndDecls r)) i i'
   -> Type r i'
   -> ExportSigM r i o' (ExportedSignature o)
 goArgs cc argSig argVs piBs piRes = case piBs of
@@ -128,10 +129,10 @@ goArgs cc argSig argVs piBs piRes = case piBs of
       StandardCC -> (fromListE $ sink $ ListE argVs) ++ nestToList (sink . binderName) resSig
       XLACC      -> []
       _ -> error $ "calling convention not supported: " ++ show cc
-  Nest (WithAttrB expl (b:>ty)) bs -> do
-    ety <- toExportType ty
+  Nest (WithAttrB expl b) bs -> do
+    ety <- toExportType $ binderType b
     withFreshBinder (getNameHint b) ety \(v:>_) ->
-      extendSubst (b @> Rename (binderName v)) $ do
+      extendSubstBD b [Rename (binderName v)] do
         vis <- case expl of
           Explicit    -> return ExplicitArg
           Inferred _ _ -> return ImplicitArg
@@ -173,8 +174,8 @@ parseTabTy = go []
     go shape = \case
       BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
       NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy d (b:>ixty) a -> do
-        maybeN <- case IxType ixty d of
+      TabTy d b a -> do
+        maybeN <- case IxType (binderType b) d of
           IxType (NewtypeTyCon (Fin n)) _ -> return $ Just n
           IxType _ (IxDictRawFin n) -> return $ Just n
           _ -> return Nothing

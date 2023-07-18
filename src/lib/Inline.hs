@@ -320,15 +320,15 @@ instance Inlinable SLam where
         inlineDecls decls $ inline Stop ans
 
 withBinders
-  :: Nest SBinder i i'
-  -> (forall o'. DExt o o' => Nest SBinder o o' -> InlineM i' o' a)
+  :: SBinders i i'
+  -> (forall o'. DExt o o' => SBinders o o' -> InlineM i' o' a)
   -> InlineM i o a
 withBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-withBinders (Nest (b:>ty) bs) cont = do
+withBinders (Nest (BD (b:>ty)) bs) cont = do
   ty' <- buildScopedAssumeNoDecls $ inline Stop ty
   withFreshBinder (getNameHint b) ty' \b' ->
     extendRenamer (b@>binderName b') do
-      withBinders bs \bs' -> cont $ Nest b' bs'
+      withBinders bs \bs' -> cont $ Nest (BD b') bs'
 
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effTy)  =
@@ -382,8 +382,7 @@ reconstructTabApp ctx expr ixs =
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
       let ixsPref'' = [v | AtomVar v _ <- ixsPref']
       s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref''
-      dropSubst $ extendSubst moreSubst do
+      dropSubst $ extendSubstBD bs (Rename <$> ixsPref'') do
         -- Decision here.  These decls have already been processed by the
         -- inliner once, so their occurrence information is stale (and should
         -- have been erased).  Do we rerun occurrence analysis, or just complete

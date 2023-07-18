@@ -215,6 +215,10 @@ instance IRRep r => BindsEnv (Decl r) where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
   {-# INLINE toEnvFrag #-}
 
+instance IRRep r => BindsEnv (BinderAndDecls r) where
+  toEnvFrag (BD b) = toEnvFrag b
+  {-# INLINE toEnvFrag #-}
+
 instance BindsEnv EnvFrag where
   toEnvFrag frag = frag
   {-# INLINE toEnvFrag #-}
@@ -415,7 +419,7 @@ liftLamExpr f (TopLam d ty (LamExpr bs body)) = liftM (TopLam d ty) $ liftEnvRea
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
-  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
+  PrimOp (Hof (TypedHof _ (For _ _ (LamExpr (UnaryNest b) body)))) ->
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do

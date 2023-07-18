@@ -26,7 +26,6 @@ import Subst
 import PPrint
 import QueryType
 import Types.Core
-import Types.OpNames qualified as P
 import Types.Primitives
 import Util (allM, zipWithZ)
 
@@ -94,10 +93,10 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
 vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, Errs)
 vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
   case popNest bsDestB of
-    Just (PairB bs b) ->
+    Just (PairB bs (BD b)) ->
       refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
-        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
+        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest (PlainBD b'')) body''), errs)
     Nothing -> error "expected a trailing dest binder"
 {-# SCC vectorizeLoops #-}
 
@@ -159,12 +158,12 @@ vectorizeLoopsDecls nest cont =
 vectorizeLoopsLamExpr :: LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
 vectorizeLoopsLamExpr (LamExpr bs body) = case bs of
   Empty -> LamExpr Empty <$> buildBlock (vectorizeLoopsBlock body)
-  Nest (b:>ty) rest -> do
-    ty' <- renameM ty
-    withFreshBinder (getNameHint b) ty' \b' -> do
-      extendRenamer (b @> binderName b') do
+  Nest b rest -> do
+    ty <- renameM $ binderType b
+    withFreshBinder (getNameHint b) ty \b' -> do
+      extendSubstBD b [binderName b'] do
         LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
-        return $ LamExpr (Nest b' bs') body'
+        return $ LamExpr (Nest (BD b') bs') body'
 
 vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
 vectorizeLoopsExpr expr = do
@@ -197,8 +196,8 @@ vectorizeLoopsExpr expr = do
       item' <- renameM item
       itemTy <- return $ getType item'
       lam <- buildEffLam noHint itemTy \hb refb ->
-        extendRenamer (hb' @> atomVarName hb) do
-          extendRenamer (refb' @> atomVarName refb) do
+        extendSubstBD hb' [atomVarName hb] do
+          extendSubstBD refb' [atomVarName refb] do
             vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
     PrimOp (Hof (TypedHof (EffTy _ ty)
@@ -208,8 +207,8 @@ vectorizeLoopsExpr expr = do
       commutativity <- monoidCommutativity monoid'
       PairTy _ accTy <- renameM ty
       lam <- buildEffLam noHint accTy \hb refb ->
-        extendRenamer (hb' @> atomVarName hb) do
-          extendRenamer (refb' @> atomVarName refb) do
+        extendSubstBD hb'[atomVarName hb] do
+          extendSubstBD refb' [atomVarName refb] do
             extendCommuteMap (atomVarName hb) commutativity do
               vectorizeLoopsBlock body
       PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
@@ -257,22 +256,12 @@ monoidCommutativity monoid = case isAdditionMonoid monoid of
   Nothing -> return DoesNotCommute
 {-# INLINE monoidCommutativity #-}
 
+-- XXX: this is wrong. We need to add a mechanism for specifying commutativity
 isAdditionMonoid :: BaseMonoid SimpIR n -> Maybe ()
 isAdditionMonoid monoid = do
   BaseMonoid { baseEmpty = (Con (Lit l))
-             , baseCombine = BinaryLamExpr (b1:>_) (b2:>_) body } <- Just monoid
+             , baseCombine = BinaryLamExpr _ _ _ } <- Just monoid
   unless (_isZeroLit l) Nothing
-  PrimOp (BinOp op (Var b1') (Var b2')) <- exprBlock body
-  unless (op `elem` [P.IAdd, P.FAdd]) Nothing
-  case (binderName b1, atomVarName b1', binderName b2, atomVarName b2') of
-    -- Checking the raw names here because (i) I don't know how to convince the
-    -- name system to let me check the well-typed names (which is because b2
-    -- might shadow b1), and (ii) there are so few patterns that I can just
-    -- enumerate them.
-    (UnsafeMakeName n1, UnsafeMakeName n1', UnsafeMakeName n2, UnsafeMakeName n2') -> do
-      when (n1 == n2) Nothing
-      unless ((n1 == n1' && n2 == n2') || (n1 == n2' && n2 == n1')) Nothing
-      Just ()
 
 _isZeroLit :: LitVal -> Bool
 _isZeroLit = \case
@@ -369,14 +358,14 @@ vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
       vectorizeBlock body >>= \case
         (VVal _ ans) -> return ans
         (VRename v) -> Var <$> toAtomVar v)
-  (Nest (b:>ty) rest, (stab:stabs)) -> do
-    ty' <- vectorizeType ty
+  (Nest b rest, (stab:stabs)) -> do
+    ty' <- vectorizeType $ binderType b
     ty'' <- promoteTypeByStability ty' stab
     withFreshBinder (getNameHint b) ty'' \b' -> do
       var <- toAtomVar $ binderName b'
-      extendSubst (b @> VVal stab (Var var)) do
+      extendSubstBD b [VVal stab (Var var)] do
         LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
-        return $ LamExpr (Nest b' rest') body'
+        return $ LamExpr (Nest (PlainBD b') rest') body'
   _ -> error "Zip error"
 
 vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)

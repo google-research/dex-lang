@@ -16,7 +16,8 @@ module CheapReduction
   , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
-  , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst)
+  , instantiateNames, withInstantiatedNames, assumeConst, tryAsConst
+  , extendSubstBD, arity)
   where
 
 import Control.Applicative
@@ -218,12 +219,9 @@ instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
     -- means that we will follow the full call chain, so it's really expensive!
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
-    TabPi (TabPiType d (b:>t) resultTy) -> do
-      t' <- cheapReduceE t
+    TabPi (TabPiType d b resultTy) -> do
       d' <- cheapReduceE d
-      withFreshBinder (getNameHint b) t' \b' -> do
-        resultTy' <- extendSubst (b@>Rename (binderName b')) $ cheapReduceE resultTy
-        return $ TabPi $ TabPiType d' b' resultTy'
+      cheapReduceBinder b \b' -> TabPi <$> TabPiType d' b' <$> cheapReduceE resultTy
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     NewtypeTyCon (Fin n) -> NewtypeTyCon . Fin <$> cheapReduceE n
@@ -233,6 +231,16 @@ instance IRRep r => CheaplyReducibleE r (Type r) (Type r) where
     _ -> do
       a' <- substM a
       dropSubst $ traverseNames cheapReduceName a'
+
+cheapReduceBinder
+  :: IRRep r
+  => BinderAndDecls r i i'
+  -> (forall o'. DExt o o' => BinderAndDecls r o o' -> CheapReducerM r i' o' a)
+  -> CheapReducerM r i o a
+cheapReduceBinder (BD (b:>ty)) cont = do
+  ty' <- cheapReduceE ty
+  withFreshBinder (getNameHint b) ty' \b' -> do
+    extendSubst (b@>Rename (binderName b')) $ cont (BD b')
 
 cheapReduceDictExpr :: CType o -> DictExpr i -> CheapReducerM CoreIR i o (CAtom o)
 cheapReduceDictExpr resultTy d = case d of
@@ -401,9 +409,9 @@ liftSimpAtom ty simpAtom = case simpAtom of
       (BaseTy _  , Con (Lit v))      -> return $ Con $ Lit v
       (ProdTy tys, Con (ProdCon xs))   -> Con . ProdCon <$> zipWithM rec tys xs
       (SumTy  tys, Con (SumCon _ i x)) -> Con . SumCon tys i <$> rec (tys!!i) x
-      (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
-        x1' <- rec t1 x1
-        t2' <- applySubst (b@>SubstVal x1') t2
+      (DepPairTy dpt, DepPair x1 x2 _) -> do
+        x1' <- rec (depPairLeftTy dpt) x1
+        t2' <- instantiate dpt [x1']
         x2' <- rec t2' x2
         return $ DepPair x1' x2' dpt
       _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty'
@@ -426,8 +434,8 @@ confuseGHC = getDistinct
 -- them. Maybe a common set of low-level type-querying utils that both
 -- CheapReduction and QueryType import?
 
-depPairLeftTy :: DepPairType r n -> Type r n
-depPairLeftTy (DepPairType _ (_:>ty) _) = ty
+depPairLeftTy :: IRRep r => DepPairType r n -> Type r n
+depPairLeftTy (DepPairType _ b _) = binderType b
 {-# INLINE depPairLeftTy #-}
 
 unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
@@ -463,19 +471,33 @@ wrapNewtypesData [] x = x
 wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
-instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
-  applySubst (bs @@> (SubstVal <$> xs)) conDefs
+instantiateTyConDef tyConDef (TyConParams _ xs) = instantiate tyConDef xs
 {-# INLINE instantiateTyConDef #-}
 
 assumeConst
   :: (IRRep r, HoistableE body, SinkableE body, ToBindersAbs e body r) => e n -> body n
 assumeConst e = case toAbs e of Abs bs body -> ignoreHoistFailure $ hoist bs body
 
+arity :: (IRRep r, ToBindersAbs e body r) => e n -> Int
+arity e = case toAbs e of Abs bs _ -> nestLength bs
+
+tryAsConst
+  :: (IRRep r, HoistableE body, SinkableE body, ToBindersAbs e body r) => e n -> Maybe (body n)
+tryAsConst e =
+  case toAbs e of
+    Abs bs body -> case hoist bs body of
+      HoistFailure _ -> Nothing
+      HoistSuccess e' -> Just e'
+
 instantiate
-  :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
-  => e n -> [Atom r n] -> m n (body n)
-instantiate e xs = case toAbs e of
-  Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
+  :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, SinkableE e,
+      ToBindersAbs e body r, Ext h n)
+  => e h -> [Atom r n] -> m n (body n)
+instantiate e xs = do
+   Abs bs body <- sinkM $ toAbs e
+   let bs' = fmapNest (\(BD b) -> b) bs
+   applySubst (bs' @@> (SubstVal <$> xs)) body
+{-# INLINE instantiate #-}
 
 -- "lazy" subst-extending version of `instantiate`
 withInstantiated
@@ -483,14 +505,18 @@ withInstantiated
   => e i -> [Atom r o]
   -> (forall i'. body i' -> m i' o a)
   -> m i o a
-withInstantiated e xs cont = case toAbs e of
-  Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
+withInstantiated e xs cont = do
+  Abs bs body <- return $ toAbs e
+  let bs' = fmapNest (\(BD b) -> b) bs
+  extendSubst (bs' @@> (SubstVal <$> xs)) $ cont body
 
 instantiateNames
-  :: (EnvReader m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
-  => e n -> [AtomName r n] -> m n (body n)
-instantiateNames e vs = case toAbs e of
-  Abs bs body -> applyRename (bs @@> vs) body
+  :: (EnvReader m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r, Ext h n)
+  => e h -> [AtomName r n] -> m n (body n)
+instantiateNames e vs = do
+  Abs bs body <- sinkM $ toAbs e
+  let bs' = fmapNest (\(BD b) -> b) bs
+  applyRename (bs' @@> vs) body
 
 -- "lazy" subst-extending version of `instantiateNames`
 withInstantiatedNames
@@ -498,8 +524,22 @@ withInstantiatedNames
   => e i -> [AtomName r o]
   -> (forall i'. body i' -> m i' o a)
   -> m i o a
-withInstantiatedNames e vs cont = case toAbs e of
-  Abs bs body -> extendRenamer (bs @@> vs) $ cont body
+withInstantiatedNames e vs cont = do
+  Abs bs body <- return $ toAbs e
+  let bs' = fmapNest (\(BD b) -> b) bs
+  extendRenamer (bs' @@> vs) $ cont body
+
+extendSubstBD
+ :: forall v m b r i i' o a
+ . (SubstReader v m, ToBinders b r, IRRep r)
+ => b i i' -> [v (AtomNameC r) o] -> m i' o a -> m i o a
+extendSubstBD bsTop xsTop contTop = go (toBinders bsTop) xsTop contTop
+ where
+   go :: Binders r ii ii' -> [v (AtomNameC r) o] -> m ii' o a -> m ii o a
+   go Empty [] cont = cont
+   go (Nest (BD b) bs) (x:xs) cont = extendSubst (b@>x) $ go bs xs cont
+   go _ _ _ = error "zip error"
+{-# INLINE extendSubstBD #-}
 
 -- Returns a representation type (type of an TypeCon-typed Newtype payload)
 -- given a list of instantiated DataConDefs.
@@ -549,8 +589,8 @@ visitBlock b = visitGeneric (LamExpr Empty b) >>= \case
 
 visitAlt :: Visitor m r i o => Alt r i -> m (Alt r o)
 visitAlt (Abs b body) = do
-  visitGeneric (LamExpr (UnaryNest b) body) >>= \case
-    LamExpr (UnaryNest b') body' -> return $ Abs b' body'
+  visitGeneric (UnaryLamExpr b body) >>= \case
+    UnaryLamExpr b' body' -> return $ Abs b' body'
     _ -> error "not an alt"
 
 traverseOpTerm
@@ -585,16 +625,16 @@ visitPiDefault (PiType bs effty) = do
 
 visitBinders
   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
-  => Nest (Binder r) i i'
-  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
+  => Binders r i i'
+  -> (forall o'. DExt o o' => Binders r o o' -> m i' o' a)
   -> m i o a
 visitBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-visitBinders (Nest (b:>ty) bs) cont = do
+visitBinders (Nest (BD (b:>ty)) bs) cont = do
   ty' <- visitType ty
   withFreshBinder (getNameHint b) ty' \b' -> do
     extendRenamer (b@>binderName b') do
       visitBinders bs \bs' ->
-        cont $ Nest b' bs'
+        cont $ Nest (BD b') bs'
 
 -- XXX: This doesn't handle the `Var`, `ProjectElt`, `SimpInCore` cases. These
 -- should be handled explicitly beforehand. TODO: split out these cases under a
@@ -807,15 +847,6 @@ toAtomVar v = do
   ty <- getType <$> lookupAtomName v
   return $ AtomVar v ty
 
-bindersToVars :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [AtomVar r n]
-bindersToVars bs = do
-  withExtEvidence bs do
-    Distinct <- getDistinct
-    mapM toAtomVar $ nestToNames bs
-
-bindersToAtoms :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [Atom r n]
-bindersToAtoms bs = liftM (Var <$>) $ bindersToVars bs
-
 newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst AtomSubstVal i o) a }
         deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst AtomSubstVal i o))
 
@@ -919,6 +950,7 @@ instance IRRep r => SubstE AtomSubstVal (DepPairType r)
 instance SubstE AtomSubstVal SolverBinding
 instance IRRep r => SubstE AtomSubstVal (DeclBinding r)
 instance IRRep r => SubstB AtomSubstVal (Decl r)
+instance IRRep r => SubstB AtomSubstVal (BinderAndDecls r)
 instance SubstE AtomSubstVal NewtypeTyCon
 instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)

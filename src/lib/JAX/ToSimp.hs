@@ -46,7 +46,7 @@ simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
 
 simplifyJBinders
   :: Nest JBinder i i'
-  -> (forall o'. DExt o o' => Nest SBinder o o' -> JaxSimpM i' o' a)
+  -> (forall o'. DExt o o' => SBinders o o' -> JaxSimpM i' o' a)
   -> JaxSimpM i o a
 simplifyJBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
 simplifyJBinders (Nest jb jbs) cont = case jb of
@@ -55,7 +55,7 @@ simplifyJBinders (Nest jb jbs) cont = case jb of
     ty <- simplifyJTy jTy
     withFreshBinder (getNameHint suffix) ty \b' -> do
       extendSubst (b @> Rename (binderName b')) do
-        simplifyJBinders jbs \bs' -> cont (Nest b' bs')
+        simplifyJBinders jbs \bs' -> cont (Nest (PlainBD b') bs')
 
 simplifyJTy :: JVarType -> JaxSimpM i o (SType o)
 simplifyJTy JArrayName{shape, dtype} = go shape $ simplifyDType dtype where
