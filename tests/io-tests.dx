@@ -49,11 +49,10 @@ unsafe_io \.
     load ptr
 > 3
 
-:p unsafe_io \.
-  with_dynamic_buffer \buf.
-    extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
-    extend_dynamic_buffer buf $ to_list for i:(Fin 1000). ordinal i
-    AsList(_, xs) = load_dynamic_buffer buf
+:p with_stack Nat \stack.
+    stack.extend(for i:(Fin 1000). ordinal i)
+    stack.extend(for i:(Fin 1000). ordinal i)
+    AsList(_, xs) = stack.read()
     sum xs
 > 999000
 

@@ -1449,58 +1449,6 @@ def post_slice(xs:n=>a, start:Post n, end:Post n) -> List a given (n|Ix, a) =
   to_list for i:(Fin slice_size).
     xs[unsafe_from_ordinal(n=n, ordinal i + ordinal start)]
 
-'## Dynamic buffer
-
-struct DynBuffer(a) =
-  size     : Ptr Nat
-  max_size : Ptr Nat
-  buffer   : Ptr (Ptr a)
-
-def with_dynamic_buffer(action: (DynBuffer a) -> {IO} b) -> {IO} b given (a|Storable, b) =
-  initMaxSize = 256
-  sizePtr <- with_alloc 1
-  store(sizePtr, 0)
-  maxSizePtr <- with_alloc 1
-  store(maxSizePtr, initMaxSize)
-  bufferPtr <- with_alloc 1
-  store(bufferPtr, malloc initMaxSize)
-  result = action $ DynBuffer(sizePtr, maxSizePtr, bufferPtr)
-  free $ load bufferPtr
-  result
-
-def maybe_increase_buffer_size(db: DynBuffer a, sizeDelta:Nat) -> {IO} () given (a|Storable) =
-  size     = load db.size
-  max_size = load db.max_size
-  bufPtr   = load db.buffer
-  newSize = sizeDelta + size
-  if newSize > max_size then
-    -- TODO: maybe this should use integer arithmetic?
-    newMaxSize = f_to_n $ 2.0 `pow` (ceil $ log2 $ n_to_f newSize)
-    newBufPtr = malloc newMaxSize
-    memcpy(newBufPtr, bufPtr, size)
-    free bufPtr
-    store(db.max_size, newMaxSize)
-    store(db.buffer  , newBufPtr)
-
-def add_at_nat_ptr(ptr: Ptr Nat, n:Nat) -> {IO} () =
-  store(ptr, load ptr + n)
-
-def extend_dynamic_buffer(buf: DynBuffer a, new:List a) -> {IO} ()  given (a|Storable) =
-  AsList(n, xs) = new
-  maybe_increase_buffer_size(buf, n)
-  bufPtr = load buf.buffer
-  size   = load buf.size
-  store_table(bufPtr +>> size, xs)
-  add_at_nat_ptr(buf.size, n)
-
-def load_dynamic_buffer(buf: DynBuffer a) -> {IO} (List a) given (a|Storable) =
-  bufPtr = load buf.buffer
-  size   = load buf.size
-  AsList(size, table_from_ptr bufPtr)
-
-def push_dynamic_buffer(buf: DynBuffer a, x:a) -> {IO} () given (a|Storable) =
-  extend_dynamic_buffer(buf, to_list [x])
-
 '## Strings and Characters
 
 String : Type = List Char
@@ -1718,46 +1666,6 @@ def bounded_iter(
     then Done fallback
     else body i
 
-'### Environment Variables
-
-def from_c_string(s:CString) -> {IO} (Maybe String) =
-  case c_string_ptr s of
-    Nothing -> Nothing
-    Just(ptr) ->
-      Just do
-        buf <- with_dynamic_buffer
-        i <- iter
-        c = load $ ptr +>> i
-        if c == '\NUL'
-          then Done $ load_dynamic_buffer buf
-          else
-            push_dynamic_buffer(buf, c)
-            Continue
-
-foreign "getenv" getenvFFI : (RawPtr) -> {IO} RawPtr
-
-def get_env(name:String) -> {IO} Maybe String =
-  cStr <- with_c_string name
-  getenvFFI cStr.ptr | CString | from_c_string
-
-def check_env(name:String) -> {IO} Bool =
-  is_just $ get_env name
-
-'### More Stream IO
-
-def fread(stream:Stream ReadMode) -> {IO} String =
-  -- TODO: allow reading longer files!
-  n = 4096
-  ptr:(Ptr Char) <- with_alloc n
-  buf <- with_dynamic_buffer
-  iter \_.
-    numRead = i_to_w32 $ i64_to_i $ freadFFI(ptr.val, 1, n_to_i64 n, stream.ptr)
-    extend_dynamic_buffer(buf, string_from_char_ptr(numRead, ptr))
-    if numRead == n_to_w32 n
-      then Continue
-      else Done ()
-  load_dynamic_buffer buf
-
 '### Print
 
 def get_output_stream() -> {IO} Stream WriteMode =
@@ -1768,20 +1676,6 @@ def print(s:String) -> {IO} () =
   stream = get_output_stream()
   fwrite(stream, s)
   fwrite(stream, "\n")
-
-'### Shelling Out
-
-foreign "popen"   popenFFI   : (RawPtr, RawPtr) -> {IO} RawPtr
-foreign "remove"  removeFFI  : (RawPtr) -> {IO} Int64
-foreign "mkstemp" mkstempFFI : (RawPtr) -> {IO} Int32
-foreign "close"   closeFFI   : (Int32)  -> {IO} Int32
-
-def shell_out(command:String) -> {IO} String =
-  modeStr = "r"
-  with_c_string command \command'.
-    with_c_string modeStr \modeStr'.
-      pipe = Stream $ popenFFI(command'.ptr, modeStr'.ptr)
-      fread pipe
 
 '## Partial functions
 A partial function in this context is a function that can error.
@@ -1797,58 +1691,6 @@ def error(s:String) -> a given (a|Data) = unsafe_io \.
 
 def todo() ->> a given (a|Data) = error "TODO: implement it!"
 
-'### File Operations
-
-def delete_file(f:FilePath) -> {IO} () =
-  s <- with_c_string(f)
-  removeFFI s.ptr
-  ()
-
-def with_file(
-    f:FilePath,
-    mode:StreamMode,
-    action:(Stream mode) -> {IO} a
-    ) -> {IO} a  given (a|Data) =
-  stream = fopen(f, mode)
-  if is_null_raw_ptr stream.ptr
-    then
-      error $ "Unable to open file: " <> f
-    else
-      result = action stream
-      fclose stream
-      result
-
-def write_file(f:FilePath, s:String) -> {IO} () =
-  with_file(f, WriteMode) \stream. fwrite(stream, s)
-
-def read_file(f:FilePath) -> {IO} String =
-  with_file(f, ReadMode) \stream. fread stream
-
-def has_file(f:FilePath) -> {IO} Bool =
-  stream = fopen(f, ReadMode)
-  result = not (is_null_raw_ptr stream.ptr)
-  if result then fclose stream
-  result
-
-'### Temporary Files
-
-def new_temp_file() -> {IO} FilePath =
-  s <- with_c_string "/tmp/dex-XXXXXX"
-  fd = mkstempFFI s.ptr
-  closeFFI fd
-  string_from_char_ptr(15, (Ptr s.ptr))
-
-def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a) =
-  tmpFile = new_temp_file()
-  result = action tmpFile
-  delete_file tmpFile
-  result
-
-def with_temp_files(action: (n=>FilePath) -> {IO} a) -> {IO} a given (n|Ix, a) =
-  tmpFiles = for i. new_temp_file()
-  result = action tmpFiles
-  for i. delete_file tmpFiles[i]
-  result
 
 '### Table operations
 
@@ -2391,11 +2233,6 @@ def evalpoly(coefficients:n=>v, x:Float) -> v given (n|Ix, v|VSpace) =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients[i] + x .* c
 
-'## TestMode
--- TODO: move this to be in Testing Helpers
-
-def dex_test_mode() -> Bool = unsafe_io \. check_env "DEX_TEST_MODE"
-
 '## Exception effect
 -- TODO: move `error` and `todo` to here.
 
@@ -2429,15 +2266,6 @@ instance Subset(b, Either(a,b)) given (a|Data, b|Data)
     Left( x) -> error "Can't project Left branch to Right branch"
     Right(x) -> x
 
-'## Testing Helpers
-
--- -- Reliably causes a segfault if pointers aren't initialized to zero.
--- -- TODO: add this test when we cache modules
--- justSomeDataToTestCaching = toList for i:(Fin 100).
---   if ordinal i == 0
---     then Left (toList [1,2,3])
---     else Right 1
-
 '### Index set for tables
 
 def int_to_reversed_digits(k:Nat) -> a=>b given (a|Ix, b|Ix) =
@@ -2465,8 +2293,7 @@ instance Ix(a=>b) given (a|Ix, b|Ix)
 instance NonEmpty(a=>b) given (a|Ix, b|NonEmpty)
   first_ix = unsafe_from_ordinal 0
 
-'### stack
--- TODO: replace `DynBuffer` with this?
+'### Stack
 
 struct Stack(h:Heap, a|Data) =
   size_ref : Ref h Nat
@@ -2544,12 +2371,137 @@ def with_stack_internal(f:(given (h:Heap), Stack(h, Char)) -> {State h} ()) -> L
     f stack
     stack.read()
 
+'### Environment Variables
+
+def from_c_string(s:CString) -> {IO} (Maybe String) =
+  case c_string_ptr s of
+    Nothing -> Nothing
+    Just(ptr) ->
+      Just do
+        stack <- with_stack Char
+        i <- iter
+        c = load $ ptr +>> i
+        if c == '\NUL'
+          then Done $ stack.read()
+          else
+            stack.push(c)
+            Continue
+
 def show_any(x:a) -> String given (a) = unsafe_coerce(to=String, %showAny(x))
 
 def coerce_table(m|Ix, x:n=>a) -> m => a given (n|Ix, a|Data) =
   if size m == size n
     then unsafe_coerce(to=m=>a, x)
     else error "mismatched sizes in table coercion"
+
+'### GetEnv
+
+foreign "getenv" getenvFFI : (RawPtr) -> {IO} RawPtr
+
+def get_env(name:String) -> {IO} Maybe String =
+  cStr <- with_c_string name
+  getenvFFI cStr.ptr | CString | from_c_string
+
+def check_env(name:String) -> {IO} Bool =
+  is_just $ get_env name
+
+'## Testing Helpers
+
+-- -- Reliably causes a segfault if pointers aren't initialized to zero.
+-- -- TODO: add this test when we cache modules
+-- justSomeDataToTestCaching = toList for i:(Fin 100).
+--   if ordinal i == 0
+--     then Left (toList [1,2,3])
+--     else Right 1
+
+'### TestMode
+
+def dex_test_mode() -> Bool = unsafe_io \. check_env "DEX_TEST_MODE"
+
+
+'### More Stream IO
+
+def fread(stream:Stream ReadMode) -> {IO} String =
+  -- TODO: allow reading longer files!
+  n = 4096
+  ptr:(Ptr Char) <- with_alloc n
+  stack <- with_stack Char
+  iter \_.
+    numRead = i_to_w32 $ i64_to_i $ freadFFI(ptr.val, 1, n_to_i64 n, stream.ptr)
+    AsList(_, new_chars) = string_from_char_ptr(numRead, ptr)
+    stack.extend(new_chars)
+    if numRead == n_to_w32 n
+      then Continue
+      else Done ()
+  stack.read()
+
+
+'### Shelling Out
+
+foreign "popen"   popenFFI   : (RawPtr, RawPtr) -> {IO} RawPtr
+foreign "remove"  removeFFI  : (RawPtr) -> {IO} Int64
+foreign "mkstemp" mkstempFFI : (RawPtr) -> {IO} Int32
+foreign "close"   closeFFI   : (Int32)  -> {IO} Int32
+
+def shell_out(command:String) -> {IO} String =
+  modeStr = "r"
+  with_c_string command \command'.
+    with_c_string modeStr \modeStr'.
+      pipe = Stream $ popenFFI(command'.ptr, modeStr'.ptr)
+      fread pipe
+
+'### File Operations
+
+def delete_file(f:FilePath) -> {IO} () =
+  s <- with_c_string(f)
+  removeFFI s.ptr
+  ()
+
+def with_file(
+    f:FilePath,
+    mode:StreamMode,
+    action:(Stream mode) -> {IO} a
+    ) -> {IO} a  given (a|Data) =
+  stream = fopen(f, mode)
+  if is_null_raw_ptr stream.ptr
+    then
+      error $ "Unable to open file: " <> f
+    else
+      result = action stream
+      fclose stream
+      result
+
+def write_file(f:FilePath, s:String) -> {IO} () =
+  with_file(f, WriteMode) \stream. fwrite(stream, s)
+
+def read_file(f:FilePath) -> {IO} String =
+  with_file(f, ReadMode) \stream. fread stream
+
+def has_file(f:FilePath) -> {IO} Bool =
+  stream = fopen(f, ReadMode)
+  result = not (is_null_raw_ptr stream.ptr)
+  if result then fclose stream
+  result
+
+'### Temporary Files
+
+def new_temp_file() -> {IO} FilePath =
+  s <- with_c_string "/tmp/dex-XXXXXX"
+  fd = mkstempFFI s.ptr
+  closeFFI fd
+  string_from_char_ptr(15, (Ptr s.ptr))
+
+def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a) =
+  tmpFile = new_temp_file()
+  result = action tmpFile
+  delete_file tmpFile
+  result
+
+def with_temp_files(action: (n=>FilePath) -> {IO} a) -> {IO} a given (n|Ix, a) =
+  tmpFiles = for i. new_temp_file()
+  result = action tmpFiles
+  for i. delete_file tmpFiles[i]
+  result
 
 '### Linear Algebra
 
