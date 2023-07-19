@@ -1,0 +1,163 @@
+
+data MyInt = MyIntCon(Int)
+x: MyInt = MyIntCon 42
+
+
+deriving instance Show(MyInt)
+
+-- CHECK: "42"
+show x
+
+
+deriving instance Add(MyInt)
+
+-- CHECK: (MyIntCon 84)
+x + x
+
+-- CHECK: (MyIntCon 42)
+zero + x
+
+-- CHECK: (MyIntCon 42)
+x + zero
+
+z : MyInt = zero
+
+-- CHECK: (MyIntCon 0)
+z
+
+-- CHECK: (MyIntCon 42)
+z + x
+
+-- CHECK: (MyIntCon 42)
+x + z
+
+
+deriving instance Eq(MyInt)
+
+-- CHECK: True
+x == x
+
+-- CHECK: False
+z == x
+
+-- CHECK: False
+x == z
+
+-- CHECK: False
+x /= x
+
+-- CHECK: True
+z /= x
+
+-- CHECK: True
+x /= z
+
+
+-- Test that automatic derivation works when deriving from an instance that was
+-- itself automatically derived.
+data MyInt' = MyIntCon'(MyInt)
+x': MyInt' = MyIntCon' x
+
+
+deriving instance Show(MyInt')
+
+-- CHECK: "42"
+show x'
+
+
+deriving instance Add(MyInt')
+
+-- CHECK: (MyIntCon' (MyIntCon 84))
+x' + x'
+
+-- CHECK: (MyIntCon' (MyIntCon 42))
+zero + x'
+
+-- CHECK: (MyIntCon' (MyIntCon 42))
+x' + zero
+
+z' : MyInt' = zero
+
+-- CHECK: (MyIntCon' (MyIntCon 0))
+z'
+
+-- CHECK: (MyIntCon' (MyIntCon 42))
+z' + x'
+
+-- CHECK: (MyIntCon' (MyIntCon 42))
+x' + z'
+
+
+data MyList(a) = MyListCon(List(a))
+l : MyList(Word8) = MyListCon (AsList 2 ['a', 'b'])
+
+
+deriving instance Monoid(MyList(a)) given (a|Data)
+
+-- CHECK: (MyListCon "abab")
+l <> l
+
+-- CHECK: (MyListCon "ab")
+mempty <> l
+
+-- CHECK: (MyListCon "ab")
+l <> mempty
+
+e : MyList(Word8) = mempty
+
+-- CHECK: (MyListCon "")
+e
+
+-- CHECK: (MyListCon "ab")
+e <> l
+
+-- CHECK: (MyListCon "ab")
+l <> e
+
+
+data MyEither(a: Type, b: Type) =
+  MyLeft(a)
+  MyRight(b)
+
+-- Cannot automatically derive an instance for a data type with more than one
+-- constructor.
+-- CHECK:      Type error:User-defined ADT (MyEither a b) does not have exactly
+-- CHECK-SAME: one (data) constructor that takes exactly one (data) argument
+deriving instance Show(MyEither(a, b)) given (a|Show, b|Show)
+
+instance Show(MyEither(a, b)) given (a|Show, b|Show)
+  def show(y) = case y of
+    MyLeft(y') -> show y'
+    MyRight(z') -> show z'
+
+data MyMy(a:Type, b:Type) = MyMyCons(MyEither(a, b))
+u : MyMy Nat Float32 = MyMyCons(MyRight 23.14)
+
+deriving instance Show(MyMy(c, d)) given (c|Show, d|Show)
+
+-- CHECK: "23.1399994"
+show u
+
+
+data MyMy'(a:Type, b:Type) = MyMyCons'(MyEither(a, b))
+v : MyMy' Nat Nat = MyMyCons'(MyLeft 42)
+
+deriving instance Show(MyMy'(c, c)) given (c|Show)
+
+-- CHECK: "42"
+show v
+
+w : MyMy' Nat Float32 = MyMyCons'(MyLeft 42)
+
+-- The instance of `Show` for `MyMy'(c, c)` that has been automatically derived
+-- above does not yield an instance of `Show` for `MyMy'(Nat, Float32)`.
+-- CHECK:      Type error:Couldn't synthesize a class dictionary for:
+-- CHECK-SAME: (Show (MyMy' Nat Float32))
+show w
+
+-- But a specific instance of `Show` for `MyMy'(Nat, Float32)` can nonetheless
+-- be derived automatically.
+deriving instance Show(MyMy'(Nat, Float32))
+
+-- CHECK: "42"
+show w
