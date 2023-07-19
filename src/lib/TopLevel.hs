@@ -242,7 +242,6 @@ evalSourceBlock mname block = do
       _ -> return ()
     _ -> return ()
   return $ filterLogs block $ addResultCtx block result
-{-# SCC evalSourceBlock #-}
 
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
@@ -529,7 +528,6 @@ evalUExpr expr = do
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
   typed <- checkPass TypePass $ inferTopUExpr renamed
   evalBlock typed
-{-# SCC evalUExpr #-}
 
 whenOpt :: Topper m => a -> (a -> m n a) -> m n a
 whenOpt x act = getConfig <&> optLevel >>= \case
@@ -638,7 +636,6 @@ execUDecl mname decl = do
       vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
       applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
-{-# SCC execUDecl #-}
 
 compileTopLevelFun :: (Topper m, Mut n)
   => CallingConvention -> STopLam n -> m n (ImpFunction n)
@@ -647,7 +644,6 @@ compileTopLevelFun cc fSimp = do
   fLower <- checkPass LowerPass $ lowerFullySequential True fOpt
   flOpt <- loweredOptimizations fLower
   checkPass ImpPass $ toImpFunction cc flOpt
-{-# SCC compileTopLevelFun #-}
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
@@ -716,7 +712,6 @@ packageLLVMCallable impFun = do
   logger <- getFilteredLogger
   let IFunType _ _ resultTypes = impFunType impFun
   return LLVMCallable{..}
-{-# SCC packageLLVMCallable #-}
 
 compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
 compileToObjCode astWithNames = forM astWithNames \ast -> do

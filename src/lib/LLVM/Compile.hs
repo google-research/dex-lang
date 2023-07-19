@@ -49,11 +49,12 @@ compileLLVM :: PassLogger -> LLVMOptLevel -> L.Module -> String -> IO BS.ByteStr
 compileLLVM logger opt ast exportName = do
   tm <- LLVM.Shims.newDefaultHostTargetMachine
   withContext \c -> do
-    Mod.withModuleFromAST c ast \m -> do
+    {-# SCC "LLVM.Internal.Module.withModuleFromAST" #-} Mod.withModuleFromAST c ast \m -> do
       standardCompilationPipeline opt
         logger
         [exportName] tm m
-      Mod.moduleObject tm m
+      {-# SCC "LLVM.Internal.Module.moduleObject" #-} Mod.moduleObject tm m
+{-# SCC compileLLVM #-}
 
 -- === LLVM passes ===
 

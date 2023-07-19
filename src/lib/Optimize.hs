@@ -36,7 +36,6 @@ optimize = dceTop     -- Clean up user code
        >=> unrollLoops
        >=> dceTop     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
-{-# SCC optimize #-}
 
 -- === Peephole optimizations ===
 
@@ -210,6 +209,7 @@ peepholeExpr expr = case expr of
 
 unrollLoops :: EnvReader m => STopLam n -> m n (STopLam n)
 unrollLoops = liftLamExpr unrollLoopsBlock
+{-# SCC unrollLoops #-}
 
 unrollLoopsBlock :: EnvReader m => SBlock n -> m n (SBlock n)
 unrollLoopsBlock b = liftM fst $
@@ -463,10 +463,6 @@ dceBlock' (Abs decls ans) = do
   modify (<> old)
   return block
 
-data CachedFVs e n = UnsafeCachedFVs { _cachedFVs :: (NameSet n), fromCachedFVs :: (e n) }
-instance HoistableE (CachedFVs e) where
-  freeVarsE (UnsafeCachedFVs fvs _) = fvs
-
 wrapWithCachedFVs :: HoistableE e => e n -> DCEM n (CachedFVs e n)
 wrapWithCachedFVs e = do
   FV fvs <- get
@@ -482,12 +478,9 @@ wrapWithCachedFVs e = do
     True -> return $ UnsafeCachedFVs fvs e
     False -> error $ "Free variables were computed incorrectly."
 
-hoistUsingCachedFVs :: (BindsNames b, HoistableE e) => b n l -> e l -> DCEM l (HoistExcept (e n))
-hoistUsingCachedFVs b e = do
-  ec <- wrapWithCachedFVs e
-  return $ case hoist b ec of
-    HoistSuccess e' -> HoistSuccess $ fromCachedFVs e'
-    HoistFailure err -> HoistFailure err
+hoistUsingCachedFVs :: (BindsNames b, HoistableE e) =>
+  b n l -> e l -> DCEM l (HoistExcept (e n))
+hoistUsingCachedFVs b e = hoistViaCachedFVs b <$> wrapWithCachedFVs e
 
 data ElimResult n where
   ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n

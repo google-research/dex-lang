@@ -71,6 +71,14 @@ def parse_any() ->> Parser Char = MkParser \h.
   h.offset := i + 1
   c'
 
+def parse_anything_but(c:Char) -> Parser Char =
+  MkParser \h.
+    i = get h.offset
+    c' = index_list h.input i
+    assert (c /= c')
+    h.offset := i + 1
+    c'
+
 def try(parser:Parser a) -> Parser a given (a) = MkParser \h.
   savedPos = get h.offset
   ans = catch \. parse h parser
@@ -101,6 +109,12 @@ def parse_many(parser:Parser a) -> Parser (List a) given (a|Data) = MkParser \h.
           push results x
           Continue
 
+def parse_some(parser:Parser a) -> Parser (List a) given (a|Data) =
+  MkParser \h.
+    c    = parse h parser
+    rest = parse h $ parse_many parser
+    AsList(_, [c]) <> rest
+
 def parse_unsigned_int() ->> Parser Int = MkParser \h.
   AsList(_, digits) = parse h $ parse_many parse_digit
   yield_state 0 \ref.
@@ -122,3 +136,16 @@ def bracketed(l:Parser (), r:Parser (), body:Parser a) -> Parser a given (a) =
 
 def parens(parser:Parser a) -> Parser a given (a) =
   bracketed (p_char '(') (p_char ')') parser
+
+def split(space:Char, s:String) -> List String =
+  def trailing_spaces(space:Parser (), body:Parser a) -> Parser a given (a) =
+    MkParser \h.
+      ans = parse h body
+      _   = parse h $ parse_many space
+      ans
+  split_parser = MkParser \h.
+    _ = parse h $ parse_many (p_char space)
+    parse h $ parse_many (trailing_spaces (p_char space) (parse_some (parse_anything_but space)))
+  case run_parser s split_parser of
+    Just l -> l
+    Nothing -> AsList _ []

@@ -246,19 +246,18 @@ data SimplifiedBlock n = SimplifiedBlock (SBlock n) (ReconstructAtom n)
 simplifyTopBlock
   :: (TopBuilder m, Mut n) => TopBlock CoreIR n -> m n (SimplifiedTopLam n)
 simplifyTopBlock (TopLam _ _ (LamExpr Empty body)) = do
-  SimplifiedBlock block recon <- liftSimplifyM $ buildSimplifiedBlock $ simplifyBlock body
+  SimplifiedBlock block recon <- liftSimplifyM do
+    {-# SCC "Simplify" #-} buildSimplifiedBlock $ simplifyBlock body
   topLam <- asTopLam $ LamExpr Empty block
   return $ SimplifiedTopLam topLam recon
 simplifyTopBlock _ = error "not a block (nullary lambda)"
-{-# SCC simplifyTopBlock #-}
 
 simplifyTopFunction :: (TopBuilder m, Mut n) => CTopLam n -> m n (STopLam n)
 simplifyTopFunction (TopLam False _ f) = do
   asTopLam =<< liftSimplifyM do
-    (lam, CoerceReconAbs) <- simplifyLam f
+    (lam, CoerceReconAbs) <- {-# SCC "Simplify" #-} simplifyLam f
     return lam
 simplifyTopFunction _ = error "shouldn't be in destination-passing style already"
-{-# SCC simplifyTopFunction #-}
 
 applyReconTop :: (EnvReader m, Fallible1 m) => ReconstructAtom n -> SAtom n -> m n (CAtom n)
 applyReconTop = applyRecon
