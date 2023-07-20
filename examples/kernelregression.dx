@@ -102,39 +102,24 @@ def gp_regress(
   mean_fn: (a) -> Float,
   noise_var: Float
 ) -> ((m=>a) -> MultivariateNormal m) given (n|Ix, m|Ix, a) =
-    prior_gram = for i j. kernel xs[i] xs[j]
-    prior_chol_cov = chol (prior_gram + eye *. noise_var)
-    k_inv_y = chol_solve prior_chol_cov (ys - for i. mean_fn xs[i])
+    prior_gp = gp kernel xs mean_fn noise_var
+    gram_obs_inv_y = chol_solve prior_gp.chol_cov (ys - prior_gp.loc)
     predictive_gp_fn = \xs_pred:m=>a.
-      k_star = for i j. kernel xs[i] xs_pred[j]
-      loc = for i. sum for k. k_star[k, i] * k_inv_y[k] + mean_fn xs_pred[i]
-      gram_pred = for i j. kernel xs_pred[i] xs_pred[j]
-      s = for i. chol_solve prior_chol_cov (transpose k_star)[i]
-      schur = gram_pred - for i j. sum for k. s[i, k] * s[j, k]
-      MultivariateNormal loc (chol (schur + eye *. noise_var))
+      gram_pred_obs = for i j. kernel xs_pred[i] xs[j]
+      loc = gram_pred_obs **. gram_obs_inv_y + (for i. mean_fn xs_pred[i])
+      gram_pred = (for i j. kernel xs_pred[i] xs_pred[j]) + eye *. noise_var
+      gram_obs_inv_gram_pred_obs = for i. chol_solve prior_gp.chol_cov gram_pred_obs[i]
+      schur = gram_pred - gram_obs_inv_gram_pred_obs ** (transpose gram_pred_obs)
+      MultivariateNormal loc (chol schur)
     predictive_gp_fn
 
 def mean_fn(x:Float) -> Float = 0. * x
-gp_predict_fn : (Nxtest=>Float) -> MultivariateNormal Nxtest = gp_regress (\x y. rbf 0.2 x y) xs ys mean_fn 0.5
+gp_predict_fn : (Nxtest=>Float) -> MultivariateNormal Nxtest = gp_regress (\x y. rbf 0.2 x y) xs ys mean_fn 0.0001 
 gp_predict_test = gp_predict_fn xtest
-stddev_pred = lower_tri_diag gp_predict_test.chol_cov
+var_pred = for i. vdot gp_predict_test.chol_cov[i] gp_predict_test.chol_cov[i]
 
-:html show_plot $ xyc_plot xtest gp_predict_test.loc stddev_pred
+:html show_plot $ xyc_plot xtest gp_predict_test.loc (map sqrt var_pred)
 > <html output>
 
-:html show_plot $ xy_plot xtest stddev_pred
+:html show_plot $ xy_plot xtest var_pred
 > <html output>
-
-
-N = Fin 10
-noise_std = 0.001
-[k3, k4, k5] = split_key (new_key 3)
-xs_obs : N=>Float = for i. rand (ixkey k3 i) 
-ys_obs : N=>Float = for i. trueFun xs_obs[i] + noise_std * randn (ixkey k4 i)
-M = Fin 40
-xs_pred : M=>Float = for i. rand (ixkey k5 i)
-gprm_predict : (M=>Float) -> MultivariateNormal M = gp_regress (\x y. rbf 0.2 x y) xs_obs ys_obs mean_fn 0.001
-pred_dist = gprm_predict xs_pred
-stddev_pred
-gp_predict_test.loc
-xtest
