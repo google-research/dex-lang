@@ -19,7 +19,6 @@ import Foreign.C.String
 import Foreign.Ptr
 
 import Builder
-import CheapReduction
 import Core
 import Err
 import IRVariants

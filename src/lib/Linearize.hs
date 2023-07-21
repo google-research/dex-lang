@@ -17,7 +17,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Imp
 import IRVariants
 import MTL1
@@ -73,7 +72,7 @@ extendActiveSubst
 extendActiveSubst b v cont = extendSubst (b@>atomVarName v) $ extendActivePrimals v cont
 
 extendActiveSubstBD :: BinderAndDecls SimpIR i i' -> SAtomVar o -> PrimalM i' o a -> PrimalM i o a
-extendActiveSubstBD (BD b) v cont = extendActiveSubst b v cont
+extendActiveSubstBD (BD b decls) v cont = undefined -- extendActiveSubst b v cont
 
 extendActiveEffs :: Effect SimpIR o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
@@ -235,11 +234,12 @@ data ObligateReconAbs (e::E) (n::S) =
    ObligateRecon (SType n) (ReconAbs SimpIR e n)
 
 instance ReconFunctor MaybeReconAbs where
-  capture locals original toCapture = do
-    (reconVal, recon) <- telescopicCapture locals toCapture
-    case recon of
-      Abs (ReconBinders _ Empty) toCapture' -> return (original, TrivialRecon toCapture')
-      _ -> return (PairVal original reconVal, ReconWithData recon)
+  capture locals original toCapture = undefined
+  -- capture locals original toCapture = do
+  --   (reconVal, recon) <- telescopicCapture locals toCapture
+  --   case recon of
+  --     Abs (ReconBinders _ Empty) toCapture' -> return (original, TrivialRecon toCapture')
+  --     _ -> return (PairVal original reconVal, ReconWithData recon)
 
   reconstruct primalAux recon = case recon of
     TrivialRecon linLam -> return (primalAux, linLam)
@@ -249,11 +249,12 @@ instance ReconFunctor MaybeReconAbs where
       return (primal, linLam')
 
 instance ReconFunctor ObligateReconAbs where
-  capture locals original toCapture = do
-    (reconVal, recon) <- telescopicCapture locals toCapture
-    -- TODO: telescopicCapture should probably return the hoisted type
-    reconValTy <- return $ ignoreHoistFailure $ hoist locals $ getType reconVal
-    return (PairVal original reconVal, ObligateRecon reconValTy recon)
+  capture locals original toCapture = undefined
+  -- capture locals original toCapture = do
+  --   (reconVal, recon) <- telescopicCapture locals toCapture
+  --   -- TODO: telescopicCapture should probably return the hoisted type
+  --   reconValTy <- return $ ignoreHoistFailure $ hoist locals $ getType reconVal
+  --   return (PairVal original reconVal, ObligateRecon reconValTy recon)
 
   reconstruct primalAux recon = case recon of
     ObligateRecon _ reconAbs -> do
@@ -292,29 +293,30 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
 linearizeTopLam :: STopLam n -> [Active] -> DoubleBuilder SimpIR n (STopLam n, STopLam n)
-linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
-  (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = bindersVars bs'
-    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
-      True  -> return $ Just v
-      False -> return $ Nothing
-    (body', linLamAbs) <- extendActivePrimalss activeVs do
-      linearizeBlockDefuncGeneral emptyOutFrag body
-    let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
-    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
-      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
-      withFreshBinder "t" tangentTy \bTangent -> do
-        tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderVar bTangent
-          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> (fmapNest (\(BD b) -> b) bsTangent) @@> map (SubstVal . sink) ts
-          emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest (PlainBD bResidual) (PlainBD bTangent)) tangentBody'
-    return (primalFun, tangentFun)
-  (,) <$> asTopLam primalFun <*> asTopLam tangentFun
+linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = undefined
+-- linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
+--   (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
+--     let allPrimals = bindersVars bs'
+--     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+--       True  -> return $ Just v
+--       False -> return $ Nothing
+--     (body', linLamAbs) <- extendActivePrimalss activeVs do
+--       linearizeBlockDefuncGeneral emptyOutFrag body
+--     let primalFun = LamExpr bs' body'
+--     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
+--     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+--       xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
+--       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+--       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+--       withFreshBinder "t" tangentTy \bTangent -> do
+--         tangentBody' <- buildBlock do
+--           ts <- getUnpacked $ Var $ sink $ binderVar bTangent
+--           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+--                         <.> (fmapNest (\(BD b) -> b) bsTangent) @@> map (SubstVal . sink) ts
+--           emitBlock =<< applySubst substFrag tangentBody
+--         return $ LamExpr (bs' >>> BinaryNest (PlainBD bResidual) (PlainBD bTangent)) tangentBody'
+--     return (primalFun, tangentFun)
+--   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
 linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
 
 -- reify the tangent builder as a lambda
@@ -337,12 +339,6 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   PtrVar _ _      -> emitZeroT
-  ProjectElt _ i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
@@ -431,6 +427,12 @@ linearizeExpr expr = case expr of
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon Nothing (sink ty') xs'
+  ProjectElt _ i x -> undefined
+    -- WithTangent x' tx <- linearizeAtom x
+    -- xi <- normalizeProj i x'
+    -- return $ WithTangent xi do
+    --   t <- tx
+    --   normalizeProj i t
 
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
@@ -674,7 +676,7 @@ linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
       -- ensures that such references can never be *used* once the effect runner
       -- returns, but technically it's legal to return them.
       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr (BD h) (BD b) body', linLam')
+      return (BinaryLamExpr (PlainBD h) (PlainBD b) body', linLam')
 linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)

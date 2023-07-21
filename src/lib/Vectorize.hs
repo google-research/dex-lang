@@ -17,7 +17,6 @@ import Control.Monad.State.Strict
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Lower (DestBlock)
 import MTL1
@@ -28,6 +27,7 @@ import QueryType
 import Types.Core
 import Types.Primitives
 import Util (allM, zipWithZ)
+import Visitor
 
 -- === Vectorization ===
 
@@ -91,13 +91,14 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
            , SubstReader Name)
 
 vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, Errs)
-vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
-  case popNest bsDestB of
-    Just (PairB bs (BD b)) ->
-      refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
-        (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
-        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest (PlainBD b'')) body''), errs)
-    Nothing -> error "expected a trailing dest binder"
+vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = undefined
+-- vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
+--   case popNest bsDestB of
+--     Just (PairB bs (BD b)) ->
+--       refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
+--         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
+--         return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest (PlainBD b'')) body''), errs)
+--     Nothing -> error "expected a trailing dest binder"
 
 liftTopVectorizeM :: (EnvReader m)
   => Word32 -> TopVectorizeM i i a -> m i (a, Errs)
@@ -156,14 +157,15 @@ vectorizeLoopsDecls nest cont =
         vectorizeLoopsDecls rest cont
 
 vectorizeLoopsLamExpr :: LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
-vectorizeLoopsLamExpr (LamExpr bs body) = case bs of
-  Empty -> LamExpr Empty <$> buildBlock (vectorizeLoopsBlock body)
-  Nest b rest -> do
-    ty <- renameM $ binderType b
-    withFreshBinder (getNameHint b) ty \b' -> do
-      extendSubstBD b [binderName b'] do
-        LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
-        return $ LamExpr (Nest (BD b') bs') body'
+vectorizeLoopsLamExpr (LamExpr bs body) = undefined
+-- vectorizeLoopsLamExpr (LamExpr bs body) = case bs of
+--   Empty -> LamExpr Empty <$> buildBlock (vectorizeLoopsBlock body)
+--   Nest b rest -> do
+--     ty <- renameM $ binderType b
+--     withFreshBinder (getNameHint b) ty \b' -> do
+--       extendSubstBD b [binderName b'] do
+--         LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
+--         return $ LamExpr (Nest (BD b') bs') body'
 
 vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
 vectorizeLoopsExpr expr = do
@@ -225,12 +227,13 @@ vectorizeLoopsExpr expr = do
 
 simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
   => IxType SimpIR n -> m n (Maybe Word32)
-simplifyIxSize ixty = do
-  sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
-  cheapReduce sizeMethod >>= \case
-    Just (IdxRepVal n) -> return $ Just n
-    _ -> return Nothing
-{-# INLINE simplifyIxSize #-}
+simplifyIxSize ixty = undefined
+-- simplifyIxSize ixty = do
+--   sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
+--   cheapReduce sizeMethod >>= \case
+--     Just (IdxRepVal n) -> return $ Just n
+--     _ -> return Nothing
+-- {-# INLINE simplifyIxSize #-}
 
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
@@ -396,6 +399,16 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
           throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
     Atom atom -> vectorizeAtom atom
     PrimOp op -> vectorizePrimOp op
+    -- Vectors of base newtypes are already newtype-stripped.
+    ProjectElt _ (ProjectProduct i) x -> undefined
+    -- ProjectElt _ (ProjectProduct i) x -> do
+    --   VVal vv x' <- vectorizeAtom x
+    --   ov <- case vv of
+    --     ProdStability sbs -> return $ sbs !! i
+    --     _ -> throwVectErr "Invalid projection"
+    --   x'' <- normalizeProj (ProjectProduct i) x'
+    --   return $ VVal ov x''
+    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     _ -> throwVectErr $ "Cannot vectorize expr: " ++ pprint expr
 
 vectorizeDAMOp :: Emits o => DAMOp SimpIR i -> VectorizeM i o (VAtom o)
@@ -527,15 +540,6 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     Var v -> lookupSubstM (atomVarName v) >>= \case
       VRename v' -> VVal Uniform . Var <$> toAtomVar v'
       v' -> return v'
-    -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt _ (ProjectProduct i) x -> do
-      VVal vv x' <- vectorizeAtom x
-      ov <- case vv of
-        ProdStability sbs -> return $ sbs !! i
-        _ -> throwVectErr "Invalid projection"
-      x'' <- normalizeProj (ProjectProduct i) x'
-      return $ VVal ov x''
-    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst

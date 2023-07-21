@@ -15,12 +15,12 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
 import QueryType
 import Util (enumerate)
+import Visitor
 
 newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR) (BuilderM CoreIR) n a }
         deriving ( Functor, Applicative, Monad, EnvReader, MonadReader (Atom CoreIR n)
@@ -78,7 +78,6 @@ showAnyRec atom = case getType atom of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -94,7 +93,7 @@ showAnyRec atom = case getType atom of
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+      charTab <- getProj 1 =<< unwrapNewtype atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
@@ -113,15 +112,16 @@ showAnyRec atom = case getType atom of
               rec =<< projectStruct i atom
       where
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
-        showDataCon (DataConDef sn _ _ projss) arg = do
-          case projss of
-            [] -> emitLit sn
-            _ -> parens do
-              emitLit (sn ++ " ")
-              sepBy " " $ projss <&> \projs ->
-                -- we use `init` to strip off the `UnwrapCompoundNewtype` since
-                -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+        showDataCon (DataConDef sn _ _ projss) arg = undefined
+        -- showDataCon (DataConDef sn _ _ projss) arg = do
+        --   case projss of
+        --     [] -> emitLit sn
+        --     _ -> parens do
+        --       emitLit (sn ++ " ")
+        --       sepBy " " $ projss <&> \projs ->
+        --         -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+        --         -- we're already under the case alternative
+        --         rec =<< normalizeNaryProj (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
@@ -200,7 +200,7 @@ stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
   emitExpr $ TabCon Nothing t (map charRepVal s)
 
-finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
+finTabTyCore :: CBuilderEmits m n => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = do
   d <- mkDictAtom $ IxFin n
   return $ IxType (FinTy n) (IxDictAtom d) ==> eltTy

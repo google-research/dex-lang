@@ -21,7 +21,6 @@ import Unsafe.Coerce
 import Builder
 import Core
 import Imp
-import CheapReduction
 import IRVariants
 import Name
 import Subst
@@ -29,6 +28,7 @@ import QueryType
 import Types.Core
 import Types.Primitives
 import Util (enumerate)
+import Visitor
 
 -- === For loop resolution ===
 
@@ -64,12 +64,12 @@ type DestBlock = Abs (SBinder) SBlock
 lowerFullySequential :: EnvReader m => Bool -> STopLam n -> m n (STopLam n)
 lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftEnvReaderM $ do
   lam <- case wantDestStyle of
-    True -> do
-      refreshAbs (Abs bs body) \bs' body' -> do
-        let xs = Var <$> bindersVars bs'
-        EffTy _ resultTy <- instantiate piTy xs
-        Abs b body'' <- lowerFullySequentialBlock resultTy body'
-        return $ LamExpr (bs' >>> UnaryNest (PlainBD b)) body''
+    -- True -> do
+    --   refreshAbs (Abs bs body) \bs' body' -> do
+    --     let xs = Var <$> bindersVars bs'
+    --     EffTy _ resultTy <- instantiate piTy xs
+    --     Abs b body'' <- lowerFullySequentialBlock resultTy body'
+    --     return $ LamExpr (bs' >>> UnaryNest (PlainBD b)) body''
     False -> do
       refreshAbs (Abs bs body) \bs' body' -> do
         body'' <- lowerFullySequentialBlockNoDest body'
@@ -143,7 +143,7 @@ lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
       let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
-        dest <- normalizeProj (ProjectProduct 0) destProd
+        dest <- getProj 0 destProd
         idest <- emitOp =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
       ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
@@ -237,12 +237,13 @@ lookupDest = flip lookupNameMap
 --
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
-decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
-  ProjectElt _ p x -> do
-    (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
-  _ -> return Nothing
+decomposeDest dest = undefined
+-- decomposeDest dest = \case
+--   Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
+--   ProjectElt _ p x -> do
+--     (ps, v) <- return $ asNaryProj p x
+--     return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
+--   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
 lowerBlockWithDest dest (Abs decls ans) = do
@@ -349,11 +350,12 @@ lowerExprWithDest dest expr = case expr of
         ProjDest _ _ -> return Nothing
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
-place pd x = case pd of
-  FullDest d   -> void $ emitOp $ DAMOp $ Place d x
-  ProjDest p d -> do
-    x' <- normalizeNaryProj (NE.toList p) x
-    void $ emitOp $ DAMOp $ Place d x'
+place pd x = undefined
+-- place pd x = case pd of
+--   FullDest d   -> void $ emitOp $ DAMOp $ Place d x
+--   ProjDest p d -> do
+--     x' <- normalizeNaryProj (NE.toList p) x
+--     void $ emitOp $ DAMOp $ Place d x'
 
 -- === Extensions to the name system ===
 

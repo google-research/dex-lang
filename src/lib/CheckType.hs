@@ -15,12 +15,12 @@ import Control.Monad.Reader
 import Control.Monad.State.Class
 import Data.Functor
 
-import CheapReduction
 import Core
 import Err
 import IRVariants
 import MTL1
 import Name
+import Builder
 import Subst
 import PPrint ()
 import QueryType
@@ -87,15 +87,16 @@ parallelAffines actions = TyperM $ do
 -- === typeable things ===
 
 checkTypesEq :: IRRep r => Type r o -> Type r o -> TyperM r i o ()
-checkTypesEq reqTy ty = alphaEq reqTy ty >>= \case
-  True  -> return ()
-  False -> {-# SCC typeNormalization #-} do
-    reqTy' <- cheapNormalize reqTy
-    ty'    <- cheapNormalize ty
-    alphaEq reqTy' ty' >>= \case
-      True  -> return ()
-      False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
-{-# INLINE checkTypesEq #-}
+checkTypesEq reqTy ty = undefined
+-- checkTypesEq reqTy ty = alphaEq reqTy ty >>= \case
+--   True  -> return ()
+--   False -> {-# SCC typeNormalization #-} do
+--     reqTy' <- cheapNormalize reqTy
+--     ty'    <- cheapNormalize ty
+--     alphaEq reqTy' ty' >>= \case
+--       True  -> return ()
+--       False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
+-- {-# INLINE checkTypesEq #-}
 
 class SinkableE e => CheckableE (r::IR) (e::E) | e -> r where
   checkE :: e i -> TyperM r i o (e o)
@@ -179,27 +180,6 @@ instance IRRep r => CheckableE r (Atom r) where
       con' <- typeCheckNewtypeCon con xTy
       return $ NewtypeCon con' x'
     SimpInCore x -> SimpInCore <$> checkE x
-    DictHole ctx ty access -> do
-      ty' <- ty |: TyKind
-      return $ DictHole ctx ty' access
-    ProjectElt resultTy UnwrapNewtype x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', NewtypeTyCon con) <- checkAndGetType x
-      resultTy'' <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectElt resultTy' UnwrapNewtype x'
-    ProjectElt resultTy (ProjectProduct i) x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', xTy) <- checkAndGetType x
-      resultTy'' <- case xTy of
-        ProdTy tys -> return $ tys !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do
-          xFst <- normalizeProj (ProjectProduct 0) x'
-          checkInstantiation t [xFst]
-        _ -> throw TypeErr $ "Not a product type:" ++ pprint xTy
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectElt resultTy' (ProjectProduct i) x'
     TypeAsAtom ty -> TypeAsAtom <$> checkE ty
 
 instance IRRep r => CheckableE r (AtomVar r) where
@@ -224,25 +204,6 @@ instance IRRep r => CheckableE r (Type r) where
       void $ checkInstantiation (Abs paramBs UnitE) params'
       return $ DictTy (DictType sn className' params')
     TyVar v -> TyVar <$> checkE v
-    ProjectEltTy resultTy UnwrapNewtype x -> do
-      resultTy' <- resultTy |: TyKind
-      x' <- checkE x
-      NewtypeTyCon con <- return $ getType x'
-      ty <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' ty
-      return $ ProjectEltTy resultTy' UnwrapNewtype x'
-    ProjectEltTy resultTy (ProjectProduct i) x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', ty) <- checkAndGetType x
-      resultTy'' <- case ty of
-        ProdTy tys -> return $ tys !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do
-          xFst <- normalizeProj (ProjectProduct 0) x'
-          instantiate t [xFst]
-        _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectEltTy resultTy' (ProjectProduct i) x'
 
 instance CheckableE CoreIR SimpInCore where
   checkE x = renameM x -- TODO: check
@@ -255,7 +216,10 @@ instance (ToBinding ann c, Color c, CheckableE r ann) => CheckableB r (BinderP c
         cont b'
 
 instance IRRep r => CheckableB r (BinderAndDecls r) where
-  checkB (BD b) cont = checkB b \b' -> cont $ BD b'
+  checkB (BD b ds) cont = checkB b \b' -> checkB ds \ds' -> cont $ BD b' ds'
+
+instance IRRep r => CheckableB r (Decl r) where
+  checkB _ _ = undefined
 
 checkBinderType
   :: (IRRep r) => Type r o -> Binder r i i'
@@ -270,7 +234,7 @@ checkBinderAndDecls
   :: (IRRep r) => Type r o -> BinderAndDecls r i i'
   -> (forall o'. DExt o o' => BinderAndDecls r o o' -> TyperM r i' o' a)
   -> TyperM r i o a
-checkBinderAndDecls ty (BD b) cont = checkBinderType ty b \b' -> cont (BD b')
+checkBinderAndDecls ty _ _ = undefined
 
 instance IRRep r => CheckableWithEffects r (Expr r) where
   checkWithEffects allowedEffs expr = addContext ("Checking expr:\n" ++ pprint expr) case expr of
@@ -309,14 +273,14 @@ instance IRRep r => CheckableWithEffects r (Expr r) where
           checkTypesEq (sink reqBinderTy) (sink $ binderType b')
           Abs b' <$> checkBlock (sink effTy') body
       return $ Case scrut' alts' effTy'
-    ApplyMethod effTy dict i args -> do
-      effTy' <- checkEffTy allowedEffs effTy
-      dict' <- checkE dict
-      args' <- mapM checkE args
-      methodTy <- getMethodType dict' i
-      effTy'' <- checkInstantiation methodTy args'
-      checkAlphaEq  effTy' effTy''
-      return $ ApplyMethod effTy' dict' i args'
+    -- ApplyMethod effTy dict i args -> do
+    --   effTy' <- checkEffTy allowedEffs effTy
+    --   dict' <- checkE dict
+    --   args' <- mapM checkE args
+    --   methodTy <- getMethodType dict' i
+    --   effTy'' <- checkInstantiation methodTy args'
+    --   checkAlphaEq  effTy' effTy''
+    --   return $ ApplyMethod effTy' dict' i args'
     TabCon maybeD ty xs -> do
       ty'@(TabPi (TabPiType _ b restTy)) <- ty |: TyKind
       maybeD' <- mapM renameM maybeD -- TODO: check
@@ -327,6 +291,27 @@ instance IRRep r => CheckableWithEffects r (Expr r) where
         -- each index from the ix dict.
         HoistFailure _    -> forM xs checkE
       return $ TabCon maybeD' ty' xs'
+    DictHole ctx ty access -> do
+      ty' <- ty |: TyKind
+      return $ DictHole ctx ty' access
+    ProjectElt resultTy UnwrapNewtype x -> undefined
+    --   resultTy' <- resultTy |: TyKind
+    --   (x', NewtypeTyCon con) <- checkAndGetType x
+    --   resultTy'' <- snd <$> unwrapNewtypeType con
+    --   checkTypesEq resultTy' resultTy''
+    --   return $ ProjectElt resultTy' UnwrapNewtype x'
+    -- ProjectElt resultTy (ProjectProduct i) x -> do
+    --   resultTy' <- resultTy |: TyKind
+    --   (x', xTy) <- checkAndGetType x
+    --   resultTy'' <- case xTy of
+    --     ProdTy tys -> return $ tys !! i
+    --     DepPairTy t | i == 0 -> return $ depPairLeftTy t
+    --     DepPairTy t | i == 1 -> do
+    --       xFst <- normalizeProj (ProjectProduct 0) x'
+    --       checkInstantiation t [xFst]
+    --     _ -> throw TypeErr $ "Not a product type:" ++ pprint xTy
+    --   checkTypesEq resultTy' resultTy''
+    --   return $ ProjectElt resultTy' (ProjectProduct i) x'
 
 instance CheckableE CoreIR TyConParams where
   checkE (TyConParams expls params) = TyConParams expls <$> mapM checkE params
@@ -489,17 +474,17 @@ instance IRRep r => CheckableWithEffects r (PrimOp r) where
           eltTy' <- checkInstantiation tabTy [i']
           checkTypesEq givenTy' (TC $ RefType h eltTy')
           return $ IndexRef givenTy' i'
-        ProjRef givenTy p -> do
-          givenTy' <- givenTy |: TyKind
-          resultEltTy <- case p of
-            ProjectProduct i -> do
-              ProdTy tys <- return s
-              return $ tys !! i
-            UnwrapNewtype -> do
-              NewtypeTyCon tc <- return s
-              snd <$> unwrapNewtypeType tc
-          checkTypesEq givenTy' (TC $ RefType h resultEltTy)
-          return $ ProjRef givenTy' p
+        -- ProjRef givenTy p -> do
+        --   givenTy' <- givenTy |: TyKind
+        --   resultEltTy <- case p of
+        --     ProjectProduct i -> do
+        --       ProdTy tys <- return s
+        --       return $ tys !! i
+        --     UnwrapNewtype -> do
+        --       NewtypeTyCon tc <- return s
+        --       snd <$> unwrapNewtypeType tc
+        --   checkTypesEq givenTy' (TC $ RefType h resultEltTy)
+        --   return $ ProjRef givenTy' p
       return $ RefOp ref' m'
 
 instance IRRep r => CheckableE r (EffTy r) where
@@ -582,12 +567,13 @@ instance IRRep r => CheckableWithEffects r (MiscOp r) where
       ty|:TyKind
 
 checkSomeSumType :: IRRep r => Type r o -> TyperM r i o [Type r o]
-checkSomeSumType = \case
-  SumTy cases -> return cases
-  NewtypeTyCon con -> do
-    (_, SumTy cases) <- unwrapNewtypeType con
-    return cases
-  t -> error $ "not some sum type: " ++ pprint t
+checkSomeSumType = undefined -- need to produce TypeBlock instead? Or just use Emits?
+-- checkSomeSumType = \case
+--   SumTy cases -> return cases
+--   NewtypeTyCon con -> do
+--     (_, SumTy cases) <- unwrapNewtypeType con
+--     return cases
+--   t -> error $ "not some sum type: " ++ pprint t
 
 instance IRRep r => CheckableE r (VectorOp r) where
   checkE = \case
@@ -786,11 +772,11 @@ checkInstantiation abTop xsTop = do
  where
   go :: Abs (Binders r) body o' -> [Atom r o'] -> TyperM r i o' (body o')
   go (Abs Empty body) [] = return body
-  go (Abs (Nest (BD b) bs) body) (x:xs) = do
-    checkTypesEq (getType x) (binderType b)
-    rest <- applySubst (b@>SubstVal x) (Abs bs body)
-    go rest xs
-  go _ _ = throw ZipErr "Wrong number of args"
+  -- go (Abs (Nest (BD b) bs) body) (x:xs) = do
+  --   checkTypesEq (getType x) (binderType b)
+  --   rest <- applySubst (b@>SubstVal x) (Abs bs body)
+  --   go rest xs
+  -- go _ _ = throw ZipErr "Wrong number of args"
 
 checkIntBaseType :: Fallible m => BaseType -> m ()
 checkIntBaseType t = case t of

@@ -49,7 +49,6 @@ import CheckType (checkTypes)
 #endif
 import Core
 import ConcreteSyntax
-import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -277,10 +276,10 @@ evalSourceBlock' mname block = case sbContents block of
     --       "Can't export functions with captured pointers (not implemented)."
     --     _ -> return $ Con $ Lit val
     --   logTop $ ExportedFun name f
-    GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
-      logTop $ TextOut $ pprintCanonicalized ty
+    -- GetType -> do  -- TODO: don't actually evaluate it
+    --   val <- evalUExpr expr
+    --   ty <- cheapNormalize $ getType val
+    --   logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
     ty <- evalUType =<< parseExpr cTy
@@ -328,9 +327,14 @@ evalSourceBlock' mname block = case sbContents block of
         $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
-    GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
-      logTop $ TextOut $ pprintCanonicalized ty
+    -- GetNameType v -> do
+    --   ty <- cheapNormalize =<< sourceNameType v
+    --   logTop $ TextOut $ pprintCanonicalized ty
+          -- sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
+          -- sourceNameType v = do
+          --   lookupSourceMap v >>= \case
+          --     Nothing -> throw UnboundVarErr $ pprint v
+          --     Just uvar -> getUVarType uvar
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
     ProseBlock _ -> return ()

@@ -40,6 +40,14 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import QueryType
+
+-- === Various helpers ===
+
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
 
 -- === Typeclasses for monads ===
 
@@ -216,7 +224,7 @@ instance IRRep r => BindsEnv (Decl r) where
   {-# INLINE toEnvFrag #-}
 
 instance IRRep r => BindsEnv (BinderAndDecls r) where
-  toEnvFrag (BD b) = toEnvFrag b
+  toEnvFrag (BD b d) = toEnvFrag (PairB b d)
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv EnvFrag where

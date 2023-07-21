@@ -11,7 +11,6 @@ import Data.List.NonEmpty qualified as NE
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Name
 import Subst
@@ -19,6 +18,7 @@ import Occurrence hiding (Var)
 import Optimize
 import Types.Core
 import Types.Primitives
+import Visitor
 
 -- === External API ===
 
@@ -280,10 +280,6 @@ inlineExpr ctx = \case
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
   Var name -> inlineName ctx name
-  ProjectElt _ i x -> do
-    let (idxs, v) = asNaryProj i x
-    ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
-    reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 
 inlineName :: Emits o => Context SExpr e o -> SAtomVar i -> InlineM i o (e o)
@@ -323,11 +319,11 @@ withBinders
   -> (forall o'. DExt o o' => SBinders o o' -> InlineM i' o' a)
   -> InlineM i o a
 withBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
-withBinders (Nest (BD (b:>ty)) bs) cont = do
-  ty' <- buildScopedAssumeNoDecls $ inline Stop ty
-  withFreshBinder (getNameHint b) ty' \b' ->
-    extendRenamer (b@>binderName b') do
-      withBinders bs \bs' -> cont $ Nest (BD b') bs'
+-- withBinders (Nest (BD (b:>ty)) bs) cont = do
+--   ty' <- buildScopedAssumeNoDecls $ inline Stop ty
+--   withFreshBinder (getNameHint b) ty' \b' ->
+--     extendRenamer (b@>binderName b') do
+--       withBinders bs \bs' -> cont $ Nest (BD b') bs'
 
 instance Inlinable (PiType SimpIR) where
   inline ctx (PiType bs effTy)  =

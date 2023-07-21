@@ -15,7 +15,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Err
 import Imp
 import IRVariants
@@ -43,22 +42,23 @@ runTransposeM cont = runReaderT1 (ListE []) $ runSubstReaderT idSubst $ cont
 transposeTopFun
   :: (MonadFail1 m, EnvReader m)
   => STopLam n -> m n (STopLam n)
-transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
-  (Abs bsNonlin (Abs bLin body), outTyAbs)  <- unpackLinearLamExpr lam
-  refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
-    outTy <- instantiate outTyAbs (Var <$> bindersVars bsNonlin')
-    withFreshBinder "ct" outTy \bCT -> do
-      let ct = Var $ binderVar bCT
-      body' <- buildBlock do
-        inTy <- substNonlin $ binderType bLin
-        withAccumulator inTy \refSubstVal ->
-          extendSubstBD bLin [refSubstVal] $
-            transposeBlock body (sink ct)
-      EffTy _ bodyTy <- blockEffTy body'
-      let piTy = PiType  (bsNonlin' >>> UnaryNest (PlainBD bCT)) (EffTy Pure bodyTy)
-      let lamT = LamExpr (bsNonlin' >>> UnaryNest (PlainBD bCT)) body'
-      return $ TopLam False piTy lamT
-transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
+transposeTopFun (TopLam False _ lam) = undefined
+-- transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
+--   (Abs bsNonlin (Abs bLin body), outTyAbs)  <- unpackLinearLamExpr lam
+--   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
+--     outTy <- instantiate outTyAbs (Var <$> bindersVars bsNonlin')
+--     withFreshBinder "ct" outTy \bCT -> do
+--       let ct = Var $ binderVar bCT
+--       body' <- buildBlock do
+--         inTy <- substNonlin $ binderType bLin
+--         withAccumulator inTy \refSubstVal ->
+--           extendSubstBD bLin [refSubstVal] $
+--             transposeBlock body (sink ct)
+--       EffTy _ bodyTy <- blockEffTy body'
+--       let piTy = PiType  (bsNonlin' >>> UnaryNest (PlainBD bCT)) (EffTy Pure bodyTy)
+--       let lamT = LamExpr (bsNonlin' >>> UnaryNest (PlainBD bCT)) body'
+--       return $ TopLam False piTy lamT
+-- transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
 
 unpackLinearLamExpr
   :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
@@ -216,15 +216,6 @@ transposeExpr expr ct = case expr of
             refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      ProjectElt _ i' x' -> do
-        let (idxs, v) = asNaryProj i' x'
-        lookupSubstM (atomVarName v) >>= \case
-          RenameNonlin _ -> error "an error, probably"
-          LinRef ref -> do
-            ref' <- getNaryProjRef (toList idxs) ref
-            refProj <- naryIndexRef ref' (toList is')
-            emitCTToRef refProj ct
-          LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
   Case e alts _ -> do
@@ -245,6 +236,15 @@ transposeExpr expr ct = case expr of
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
+  ProjectElt _ i' x' -> undefined
+  -- ProjectElt _ i' x' -> do
+  --   let (idxs, v) = asNaryProj i' x'
+  --   lookupSubstM (atomVarName v) >>= \case
+  --     RenameNonlin _ -> error "an error, probably"
+  --     LinRef ref -> do
+  --       ref' <- getNaryProjRef (toList idxs) ref
+  --       emitCTToRef ref' ct
+  --     LinTrivial -> return ()
 
 transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
@@ -315,14 +315,6 @@ transposeAtom atom ct = case atom of
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
   PtrVar _ _      -> notTangent
-  ProjectElt _ i' x' -> do
-    let (idxs, v) = asNaryProj i' x'
-    lookupSubstM (atomVarName v) >>= \case
-      RenameNonlin _ -> error "an error, probably"
-      LinRef ref -> do
-        ref' <- getNaryProjRef (toList idxs) ref
-        emitCTToRef ref' ct
-      LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 

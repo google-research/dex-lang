@@ -12,9 +12,9 @@ import Core
 import Err
 import Types.Core
 import Inference
+import Builder
 import IRVariants
 import QueryType
-import CheapReduction
 import Name
 import Subst
 import MTL1
@@ -131,13 +131,14 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Abs paramRoles UnitE <- getClassRoleBinders name
     params' <- traverseRoleBinders f paramRoles params
     return $ DictTy $ DictType sn name params'
-  TabPi tabTy@(TabPiType (IxDictAtom d) b _) -> do
-    iTy <- f' TypeParam TyKind $ binderType b
-    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy
-    d'   <- f DictParam dictTy d
-    withFreshBinder (getNameHint b) iTy \b' -> do
-      resultTy' <- instantiate tabTy [Var $ binderVar b'] >>= (f' TypeParam TyKind)
-      return $ TabTy (IxDictAtom d') (PlainBD b') resultTy'
+  TabPi tabTy@(TabPiType (IxDictAtom d) b _) -> undefined
+  -- TabPi tabTy@(TabPiType (IxDictAtom d) b _) -> do
+  --   iTy <- f' TypeParam TyKind $ binderType b
+  --   dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy
+  --   d'   <- f DictParam dictTy d
+  --   withFreshBinder (getNameHint b) iTy \b' -> do
+  --     resultTy' <- instantiate tabTy [Var $ binderVar b'] >>= (f' TypeParam TyKind)
+  --     return $ TabTy (IxDictAtom d') (PlainBD b') resultTy'
   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
   TabPi t -> return $ TabPi t
   TC tc -> TC <$> case tc of

@@ -41,7 +41,7 @@ import Types.Imp
 import Types.Misc
 import Types.Primitives
 import Types.Source
-import QueryTypePure
+import QueryType
 import Util (Tree (..))
 
 -- A DocPrec is a slightly context-aware Doc, specifically one that
@@ -160,7 +160,8 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
   where pretty (b:>ty) = p b <> ":" <> p ty
 
 instance IRRep r => Pretty (BinderAndDecls r n l) where
-  pretty (BD b) = pretty b
+  pretty (BD b Empty) = pretty b
+  pretty (BD b ds) = pretty b <> pretty ds
 
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
@@ -172,6 +173,8 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ProjectElt _ idxs v) = atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+  prettyPrec (DictHole _ e _) = atPrec LowestPrec $ "synthesize" <+> pApp e
 
 prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
@@ -254,10 +257,8 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
-    DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
     TypeAsAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
@@ -270,8 +271,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -327,16 +326,16 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (BD (b:>ty)) body) = let
+  pretty (TabPiType dict (BD (b:>ty) ds) body) = let
     prettyBody = case body of
       Pi subpi -> pretty subpi
       _ -> pLowest body
     prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
+      IxDictRawFin n -> if binderName b `isFreeIn` (Abs ds body)
         then parens $ p b <> ":" <> prettyTy
         else prettyTy
         where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
+      _ -> prettyBinderHelper (b:>ty) (Abs ds body)
     in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to

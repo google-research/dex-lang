@@ -49,7 +49,7 @@ library
                      , Builder
                      , CUDA
                      , Cat
-                     , CheapReduction
+                     , Visitor
                      , CheckType
                      , ConcreteSyntax
                      , Core
@@ -96,7 +96,6 @@ library
                      , Types.OpNames
                      , Types.Source
                      , QueryType
-                     , QueryTypePure
                      , Util
                      , Vectorize
   if flag(live)
