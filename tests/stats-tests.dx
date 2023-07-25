@@ -249,7 +249,23 @@ rand_vec 5 (\k. draw (Uniform 2.0 5.0) k) (new_key 0) :: Fin 5=>Float
 
 draw (Uniform 2.0 5.0) (new_key 0) :: Float
 
-chol_cov : ((i:Fin 2)=>(..i)=>Float) = [[0.2], [-0.3, 0.1]]
+chol_cov_mat : Fin 2=>Fin 2=>Float = [[0.2, 0.], [-0.3, 0.1]]
+
+> Compiler bug!
+> > Please report this at github.com/google-research/dex-lang/i
+> >
+> > Unexpected table: chol_co.1
+> > CallStack (from HasCallStack):
+> >   error, called at src/lib/Simplify.hs:571:22 in dex-0.1.0.
+-- chol_cov = for i:(Fin 2). for j:(..i). chol_cov_mat[i, inject(to=Fin 2, j)]
+-- chol_cov = for i:(Fin 2). for j:(..i). chol_cov_mat[i, (ordinal j)@_]
+-- chol_cov = for i:(Fin 2). for j:(..i). chol_cov_mat[i, inject j]
+
+-- I think this used to work.
+> > Type error:
+> > Expected: (RangeTo (Fin 2) 0)
+> >   Actual: (Fin 1)
+chol_cov : (i:Fin 2)=>(..i)=>Float = [[0.2], [-0.3, 0.1]] 
 loc : (Fin 2=>Float) = [1., 2.]
 draw (MultivariateNormal loc chol_cov) (new_key 0) :: (Fin 2=>Float)
 > [0.706645, 2.599938]
