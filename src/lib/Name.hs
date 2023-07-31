@@ -3316,53 +3316,59 @@ keySetNameMap nmap = freeVarsE $ ListE $ keysNameMap nmap
 instance SinkableE (NameMap c a) where
   sinkingProofE = undefined
 
-newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
+newtype NameMapE (c::C) (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
   deriving (Eq, Semigroup, Monoid, Store)
 
 -- Filters out the entry(ies) for the binder being hoisted above,
 -- and hoists the values of the remaining entries.
 hoistNameMapE :: (BindsNames b, HoistableE e, ShowE e)
               => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
-hoistNameMapE b (NameMapE nmap) =
-  NameMapE <$> (traverseNameMap (hoist b) $ hoistFilterNameMap b nmap) where
+hoistNameMapE b (UnsafeNameMapE raw) =
+  UnsafeNameMapE <$> traverse (hoist b) diff
+  where
+    diff = raw `R.difference` frag
+    UnsafeMakeScopeFrag frag = toScopeFrag b
 {-# INLINE hoistNameMapE #-}
 
 insertNameMapE :: Name c n -> e n -> NameMapE c e n -> NameMapE c e n
-insertNameMapE n x (NameMapE nmap) = NameMapE $ insertNameMap n x nmap
+insertNameMapE (UnsafeMakeName n) x (UnsafeNameMapE raw)
+  = UnsafeNameMapE $ R.insert n x raw
 {-# INLINE insertNameMapE #-}
 
 lookupNameMapE :: Name c n -> NameMapE c e n -> Maybe (e n)
-lookupNameMapE n (NameMapE nmap) = lookupNameMap n nmap
+lookupNameMapE (UnsafeMakeName n) (UnsafeNameMapE raw) = R.lookup n raw
 {-# INLINE lookupNameMapE #-}
 
 singletonNameMapE :: Name c n -> e n -> NameMapE c e n
-singletonNameMapE n x = NameMapE $ singletonNameMap n x
+singletonNameMapE (UnsafeMakeName n) x = UnsafeNameMapE $ R.singleton n x
 {-# INLINE singletonNameMapE #-}
 
 toListNameMapE :: NameMapE c e n -> [(Name c n, (e n))]
-toListNameMapE (NameMapE nmap) = toListNameMap nmap
+toListNameMapE (UnsafeNameMapE raw) =
+  R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
 {-# INLINE toListNameMapE #-}
 
 unionWithNameMapE :: (e n -> e n -> e n) -> NameMapE c e n -> NameMapE c e n -> NameMapE c e n
-unionWithNameMapE f (NameMapE nmap1) (NameMapE nmap2) =
-  NameMapE $ unionWithNameMap f nmap1 nmap2
+unionWithNameMapE f (UnsafeNameMapE raw1) (UnsafeNameMapE raw2) =
+  UnsafeNameMapE $ R.unionWith f raw1 raw2
 {-# INLINE unionWithNameMapE #-}
 
 traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n))
                  -> NameMapE c e1 n -> f (NameMapE c e2 n)
-traverseNameMapE f (NameMapE nmap) = NameMapE <$> traverseNameMap f nmap
+traverseNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE <$> traverse f raw
 {-# INLINE traverseNameMapE #-}
 
 mapNameMapE :: (e1 n -> e2 n)
             -> NameMapE c e1 n -> NameMapE c e2 n
-mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
+mapNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE $ fmap f raw
 {-# INLINE mapNameMapE #-}
 
 keysNameMapE :: NameMapE c e n -> [Name c n]
-keysNameMapE (NameMapE nmap) = keysNameMap nmap
+keysNameMapE = map fst . toListNameMapE
+{-# INLINE keysNameMapE #-}
 
 keySetNameMapE :: (Color c) => NameMapE c e n -> NameSet n
-keySetNameMapE (NameMapE nmap) = keySetNameMap nmap
+keySetNameMapE nmap = freeVarsE $ ListE $ keysNameMapE nmap
 
 instance SinkableE e => SinkableE (NameMapE c e) where
   sinkingProofE = undefined

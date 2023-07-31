@@ -93,7 +93,10 @@ instance (MaxPlus a) => MaxPlus (NameMap c a n) where
   max  = unionWithNameMap max
   plus = unionWithNameMap plus
 
-deriving instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n)
+instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n) where
+  zero = mempty
+  max  = unionWithNameMapE max
+  plus = unionWithNameMapE plus
 
 -- === Access ===
 
