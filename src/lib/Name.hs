@@ -3256,11 +3256,26 @@ instance HoistableB b => HoistableB (WithAttrB a b) where
 
 -- === extra data structures ===
 
--- A map from names in some scope to values that do not contain names.  This is
--- not trying to enforce completeness -- a name in the scope can fail to be in
--- the map.
+-- A map from names in some scope to values that may contain names
+-- from the same scope.  This is not trying to enforce completeness --
+-- a name in the scope can fail to be in the map.
 
--- Hoisting the map removes entries that are no longer in scope.
+-- Hoisting the map removes entries for names that are no longer in
+-- scope, and then attempts to hoist the remaining values.
+
+-- This structure is useful for bottom-up code traversals.  Once one
+-- has traversed some term in scope n, one may be carrying information
+-- associated with (some of) the free variables of the term.  These
+-- free variables are necessarily in the scope n, though they need by
+-- no means be all the names in the scope n (that's what a Subst is
+-- for).  But, if the traversal is alpha-invariant, it cannot be
+-- carrying any information about names bound within the term, only
+-- the free ones.
+--
+-- Further, if the information being carried is E-kinded, the names
+-- therein should be resolvable in the same scope n, since those are
+-- the only names that are given meaning by the context of the term
+-- being traversed.
 
 newtype NameMapE (c::C) (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
   deriving (Eq, Semigroup, Monoid, Store)
@@ -3329,6 +3344,9 @@ instance RenameE e => RenameE (NameMapE c e) where
 
 instance HoistableE e => HoistableE (NameMapE c e) where
   freeVarsE = undefined
+
+-- A small short-cut: When the information in a NameMapE does not, in
+-- fact, reference any names, hoisting the entries cannot fail.
 
 type NameMap (c::C) (a:: *) = NameMapE c (LiftE a)
 
