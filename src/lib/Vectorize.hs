@@ -131,7 +131,7 @@ askVectorByteWidth :: TopVectorizeM i o Word32
 askVectorByteWidth = TopVectorizeM $ SubstReaderT $ lift $ lift11 (fromLiftE <$> ask)
 
 extendCommuteMap :: AtomName SimpIR o -> MonoidCommutes -> TopVectorizeM i o a -> TopVectorizeM i o a
-extendCommuteMap name commutativity = local $ insertNameMap name commutativity
+extendCommuteMap name commutativity = local $ insertNameMapE name $ LiftE commutativity
 
 vectorizeLoopsDestBlock :: DestBlock i
   -> TopVectorizeM i o (DestBlock o)
@@ -309,9 +309,9 @@ vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
   safe (RWSEffect Writer (Var h)) = do
     h' <- renameM $ atomVarName h
     commuteMap <- ask
-    case lookupNameMap h' commuteMap of
-      Just Commutes -> return True
-      Just DoesNotCommute -> return False
+    case lookupNameMapE h' commuteMap of
+      Just (LiftE Commutes) -> return True
+      Just (LiftE DoesNotCommute) -> return False
       Nothing -> error $ "Handle " ++ pprint h ++ " not present in commute map?"
   safe _ = return False
 

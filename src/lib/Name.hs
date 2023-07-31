@@ -481,7 +481,7 @@ newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEm
         deriving (Show, Eq, Generic)
 
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-        deriving (Show, Eq, Generic, Monoid, Semigroup)
+        deriving (Show, Eq, Ord, Generic, Monoid, Semigroup)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
@@ -3262,60 +3262,6 @@ instance HoistableB b => HoistableB (WithAttrB a b) where
 
 -- Hoisting the map removes entries that are no longer in scope.
 
-newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
-                                 deriving (Eq, Semigroup, Monoid, Store)
-
-hoistFilterNameMap :: BindsNames b => b n l -> NameMap c a l -> NameMap c a n
-hoistFilterNameMap b (UnsafeNameMap raw) =
-  UnsafeNameMap $ raw `R.difference` frag
-  where UnsafeMakeScopeFrag frag = toScopeFrag b
-{-# INLINE hoistFilterNameMap #-}
-
-insertNameMap :: Name c n -> a -> NameMap c a n -> NameMap c a n
-insertNameMap (UnsafeMakeName n) x (UnsafeNameMap raw) = UnsafeNameMap $ R.insert n x raw
-{-# INLINE insertNameMap #-}
-
-lookupNameMap :: Name c n -> NameMap c a n -> Maybe a
-lookupNameMap (UnsafeMakeName n) (UnsafeNameMap raw) = R.lookup n raw
-{-# INLINE lookupNameMap #-}
-
-singletonNameMap :: Name c n -> a -> NameMap c a n
-singletonNameMap (UnsafeMakeName n) x = UnsafeNameMap $ R.singleton n x
-{-# INLINE singletonNameMap #-}
-
-toListNameMap :: NameMap c a n -> [(Name c n, a)]
-toListNameMap (UnsafeNameMap raw) = R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
-{-# INLINE toListNameMap #-}
-
-unionWithNameMap :: (a -> a -> a) -> NameMap c a n -> NameMap c a n -> NameMap c a n
-unionWithNameMap f (UnsafeNameMap raw1) (UnsafeNameMap raw2) =
-  UnsafeNameMap $ R.unionWith f raw1 raw2
-{-# INLINE unionWithNameMap #-}
-
-unionsWithNameMap :: (Foldable f) => (a -> a -> a) -> f (NameMap c a n) -> NameMap c a n
-unionsWithNameMap func maps =
-  foldl' (unionWithNameMap func) mempty maps
-{-# INLINE unionsWithNameMap #-}
-
-traverseNameMap :: (Applicative f) => (a -> f b)
-                 -> NameMap c a n -> f (NameMap c b n)
-traverseNameMap f (UnsafeNameMap raw) = UnsafeNameMap <$> traverse f raw
-{-# INLINE traverseNameMap #-}
-
-mapNameMap :: (a -> b) -> NameMap c a n -> (NameMap c b n)
-mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
-{-# INLINE mapNameMap #-}
-
-keysNameMap :: NameMap c a n -> [Name c n]
-keysNameMap = map fst . toListNameMap
-{-# INLINE keysNameMap #-}
-
-keySetNameMap :: (Color c) => NameMap c a n -> NameSet n
-keySetNameMap nmap = freeVarsE $ ListE $ keysNameMap nmap
-
-instance SinkableE (NameMap c a) where
-  sinkingProofE = undefined
-
 newtype NameMapE (c::C) (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
   deriving (Eq, Semigroup, Monoid, Store)
 
@@ -3353,6 +3299,11 @@ unionWithNameMapE f (UnsafeNameMapE raw1) (UnsafeNameMapE raw2) =
   UnsafeNameMapE $ R.unionWith f raw1 raw2
 {-# INLINE unionWithNameMapE #-}
 
+unionsWithNameMapE :: (Foldable f) => (e n -> e n -> e n) -> f (NameMapE c e n) -> NameMapE c e n
+unionsWithNameMapE func maps =
+  foldl' (unionWithNameMapE func) mempty maps
+{-# INLINE unionsWithNameMapE #-}
+
 traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n))
                  -> NameMapE c e1 n -> f (NameMapE c e2 n)
 traverseNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE <$> traverse f raw
@@ -3378,6 +3329,13 @@ instance RenameE e => RenameE (NameMapE c e) where
 
 instance HoistableE e => HoistableE (NameMapE c e) where
   freeVarsE = undefined
+
+type NameMap (c::C) (a:: *) = NameMapE c (LiftE a)
+
+hoistNameMap :: (BindsNames b, Show a)
+  => b n l -> NameMap c a l -> (NameMap c a n)
+hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
+{-# INLINE hoistNameMap #-}
 
 -- === E-kinded IR coercions ===
 

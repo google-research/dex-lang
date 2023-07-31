@@ -217,17 +217,18 @@ lowerCase maybeDest scrut alts resultTy = do
 -- so that it never allocates scratch space for its result, but will put it directly in
 -- the corresponding slice of the full 2D buffer.
 
-type DestAssignment (i'::S) (o::S) = AtomNameMap SimpIR (ProjDest o) i'
+type DestAssignment (i'::S) (o::S) = NameMap (AtomNameC SimpIR) (ProjDest o) i'
 
 data ProjDest o
   = FullDest (Dest SimpIR o)
   | ProjDest (NE.NonEmpty Projection) (Dest SimpIR o)  -- dest corresponds to the projection applied to name
+  deriving (Show)
 
 instance SinkableE ProjDest where
   sinkingProofE = todoSinkableProof
 
 lookupDest :: DestAssignment i' o -> SAtomName i' -> Maybe (ProjDest o)
-lookupDest = flip lookupNameMap
+lookupDest dests = fmap fromLiftE . flip lookupNameMapE dests
 
 -- Matches up the free variables of the atom, with the given dest. For example, if the
 -- atom is a pair of two variables, the dest might be split into per-component dests,
@@ -238,10 +239,10 @@ lookupDest = flip lookupNameMap
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
+  Var v -> return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ FullDest dest
   ProjectElt _ p x -> do
     (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
+    return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ ProjDest ps dest
   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
@@ -258,7 +259,7 @@ lowerBlockWithDest dest (Abs decls ans) = do
         Just DistinctBetween -> do
           s' <- traverseDeclNestWithDestS destMap s decls
           -- But we have to emit explicit writes, for all the vars that are not defined in decls!
-          forM_ (toListNameMap $ hoistFilterNameMap decls destMap) \(n, d) -> do
+          forM_ (toListNameMapE $ hoistNameMap decls destMap) \(n, (LiftE d)) -> do
             x <- case s ! n of
               Rename v -> Var <$> toAtomVar v
               SubstVal a -> return a
