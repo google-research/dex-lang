@@ -481,7 +481,7 @@ newtype NonEmptyListE (e::E) (n::S) = NonEmptyListE { fromNonEmptyListE :: NonEm
         deriving (Show, Eq, Generic)
 
 newtype LiftE (a:: *) (n::S) = LiftE { fromLiftE :: a }
-        deriving (Show, Eq, Generic, Monoid, Semigroup)
+        deriving (Show, Eq, Ord, Generic, Monoid, Semigroup)
 
 newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
@@ -3256,113 +3256,85 @@ instance HoistableB b => HoistableB (WithAttrB a b) where
 
 -- === extra data structures ===
 
--- A map from names in some scope to values that do not contain names.  This is
--- not trying to enforce completeness -- a name in the scope can fail to be in
--- the map.
+-- A map from names in some scope to values that may contain names
+-- from the same scope.  This is not trying to enforce completeness --
+-- a name in the scope can fail to be in the map.
 
--- Hoisting the map removes entries that are no longer in scope.
+-- Hoisting the map removes entries for names that are no longer in
+-- scope, and then attempts to hoist the remaining values.
 
-newtype NameMap (c::C) (a:: *) (n::S) = UnsafeNameMap (RawNameMap a)
-                                 deriving (Eq, Semigroup, Monoid, Store)
+-- This structure is useful for bottom-up code traversals.  Once one
+-- has traversed some term in scope n, one may be carrying information
+-- associated with (some of) the free variables of the term.  These
+-- free variables are necessarily in the scope n, though they need by
+-- no means be all the names in the scope n (that's what a Subst is
+-- for).  But, if the traversal is alpha-invariant, it cannot be
+-- carrying any information about names bound within the term, only
+-- the free ones.
+--
+-- Further, if the information being carried is E-kinded, the names
+-- therein should be resolvable in the same scope n, since those are
+-- the only names that are given meaning by the context of the term
+-- being traversed.
 
-hoistFilterNameMap :: BindsNames b => b n l -> NameMap c a l -> NameMap c a n
-hoistFilterNameMap b (UnsafeNameMap raw) =
-  UnsafeNameMap $ raw `R.difference` frag
-  where UnsafeMakeScopeFrag frag = toScopeFrag b
-{-# INLINE hoistFilterNameMap #-}
-
-insertNameMap :: Name c n -> a -> NameMap c a n -> NameMap c a n
-insertNameMap (UnsafeMakeName n) x (UnsafeNameMap raw) = UnsafeNameMap $ R.insert n x raw
-{-# INLINE insertNameMap #-}
-
-lookupNameMap :: Name c n -> NameMap c a n -> Maybe a
-lookupNameMap (UnsafeMakeName n) (UnsafeNameMap raw) = R.lookup n raw
-{-# INLINE lookupNameMap #-}
-
-singletonNameMap :: Name c n -> a -> NameMap c a n
-singletonNameMap (UnsafeMakeName n) x = UnsafeNameMap $ R.singleton n x
-{-# INLINE singletonNameMap #-}
-
-toListNameMap :: NameMap c a n -> [(Name c n, a)]
-toListNameMap (UnsafeNameMap raw) = R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
-{-# INLINE toListNameMap #-}
-
-unionWithNameMap :: (a -> a -> a) -> NameMap c a n -> NameMap c a n -> NameMap c a n
-unionWithNameMap f (UnsafeNameMap raw1) (UnsafeNameMap raw2) =
-  UnsafeNameMap $ R.unionWith f raw1 raw2
-{-# INLINE unionWithNameMap #-}
-
-unionsWithNameMap :: (Foldable f) => (a -> a -> a) -> f (NameMap c a n) -> NameMap c a n
-unionsWithNameMap func maps =
-  foldl' (unionWithNameMap func) mempty maps
-{-# INLINE unionsWithNameMap #-}
-
-traverseNameMap :: (Applicative f) => (a -> f b)
-                 -> NameMap c a n -> f (NameMap c b n)
-traverseNameMap f (UnsafeNameMap raw) = UnsafeNameMap <$> traverse f raw
-{-# INLINE traverseNameMap #-}
-
-mapNameMap :: (a -> b) -> NameMap c a n -> (NameMap c b n)
-mapNameMap f (UnsafeNameMap raw) = UnsafeNameMap $ fmap f raw
-{-# INLINE mapNameMap #-}
-
-keysNameMap :: NameMap c a n -> [Name c n]
-keysNameMap = map fst . toListNameMap
-{-# INLINE keysNameMap #-}
-
-keySetNameMap :: (Color c) => NameMap c a n -> NameSet n
-keySetNameMap nmap = freeVarsE $ ListE $ keysNameMap nmap
-
-instance SinkableE (NameMap c a) where
-  sinkingProofE = undefined
-
-newtype NameMapE (c::C) (e:: E) (n::S) = NameMapE (NameMap c (e n) n)
+newtype NameMapE (c::C) (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
   deriving (Eq, Semigroup, Monoid, Store)
 
 -- Filters out the entry(ies) for the binder being hoisted above,
 -- and hoists the values of the remaining entries.
 hoistNameMapE :: (BindsNames b, HoistableE e, ShowE e)
               => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
-hoistNameMapE b (NameMapE nmap) =
-  NameMapE <$> (traverseNameMap (hoist b) $ hoistFilterNameMap b nmap) where
+hoistNameMapE b (UnsafeNameMapE raw) =
+  UnsafeNameMapE <$> traverse (hoist b) diff
+  where
+    diff = raw `R.difference` frag
+    UnsafeMakeScopeFrag frag = toScopeFrag b
 {-# INLINE hoistNameMapE #-}
 
 insertNameMapE :: Name c n -> e n -> NameMapE c e n -> NameMapE c e n
-insertNameMapE n x (NameMapE nmap) = NameMapE $ insertNameMap n x nmap
+insertNameMapE (UnsafeMakeName n) x (UnsafeNameMapE raw)
+  = UnsafeNameMapE $ R.insert n x raw
 {-# INLINE insertNameMapE #-}
 
 lookupNameMapE :: Name c n -> NameMapE c e n -> Maybe (e n)
-lookupNameMapE n (NameMapE nmap) = lookupNameMap n nmap
+lookupNameMapE (UnsafeMakeName n) (UnsafeNameMapE raw) = R.lookup n raw
 {-# INLINE lookupNameMapE #-}
 
 singletonNameMapE :: Name c n -> e n -> NameMapE c e n
-singletonNameMapE n x = NameMapE $ singletonNameMap n x
+singletonNameMapE (UnsafeMakeName n) x = UnsafeNameMapE $ R.singleton n x
 {-# INLINE singletonNameMapE #-}
 
 toListNameMapE :: NameMapE c e n -> [(Name c n, (e n))]
-toListNameMapE (NameMapE nmap) = toListNameMap nmap
+toListNameMapE (UnsafeNameMapE raw) =
+  R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
 {-# INLINE toListNameMapE #-}
 
 unionWithNameMapE :: (e n -> e n -> e n) -> NameMapE c e n -> NameMapE c e n -> NameMapE c e n
-unionWithNameMapE f (NameMapE nmap1) (NameMapE nmap2) =
-  NameMapE $ unionWithNameMap f nmap1 nmap2
+unionWithNameMapE f (UnsafeNameMapE raw1) (UnsafeNameMapE raw2) =
+  UnsafeNameMapE $ R.unionWith f raw1 raw2
 {-# INLINE unionWithNameMapE #-}
+
+unionsWithNameMapE :: (Foldable f) => (e n -> e n -> e n) -> f (NameMapE c e n) -> NameMapE c e n
+unionsWithNameMapE func maps =
+  foldl' (unionWithNameMapE func) mempty maps
+{-# INLINE unionsWithNameMapE #-}
 
 traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n))
                  -> NameMapE c e1 n -> f (NameMapE c e2 n)
-traverseNameMapE f (NameMapE nmap) = NameMapE <$> traverseNameMap f nmap
+traverseNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE <$> traverse f raw
 {-# INLINE traverseNameMapE #-}
 
 mapNameMapE :: (e1 n -> e2 n)
             -> NameMapE c e1 n -> NameMapE c e2 n
-mapNameMapE f (NameMapE nmap) = NameMapE $ mapNameMap f nmap
+mapNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE $ fmap f raw
 {-# INLINE mapNameMapE #-}
 
 keysNameMapE :: NameMapE c e n -> [Name c n]
-keysNameMapE (NameMapE nmap) = keysNameMap nmap
+keysNameMapE = map fst . toListNameMapE
+{-# INLINE keysNameMapE #-}
 
 keySetNameMapE :: (Color c) => NameMapE c e n -> NameSet n
-keySetNameMapE (NameMapE nmap) = keySetNameMap nmap
+keySetNameMapE nmap = freeVarsE $ ListE $ keysNameMapE nmap
 
 instance SinkableE e => SinkableE (NameMapE c e) where
   sinkingProofE = undefined
@@ -3372,6 +3344,16 @@ instance RenameE e => RenameE (NameMapE c e) where
 
 instance HoistableE e => HoistableE (NameMapE c e) where
   freeVarsE = undefined
+
+-- A small short-cut: When the information in a NameMapE does not, in
+-- fact, reference any names, hoisting the entries cannot fail.
+
+type NameMap (c::C) (a:: *) = NameMapE c (LiftE a)
+
+hoistNameMap :: (BindsNames b, Show a)
+  => b n l -> NameMap c a l -> (NameMap c a n)
+hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
+{-# INLINE hoistNameMap #-}
 
 -- === E-kinded IR coercions ===
 

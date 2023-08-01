@@ -482,5 +482,3 @@ freshNameM hint = do
   Distinct <- getDistinct
   return $ withFresh hint scope \b -> Abs b (binderName b)
 {-# INLINE freshNameM #-}
-
-type AtomNameMap r = NameMap (AtomNameC r)

@@ -88,12 +88,10 @@ class MaxPlus a where
   max :: a -> a -> a
   plus :: a -> a -> a
 
-instance (MaxPlus a) => MaxPlus (NameMap c a n) where
+instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n) where
   zero = mempty
-  max  = unionWithNameMap max
-  plus = unionWithNameMap plus
-
-deriving instance (MaxPlus (e n)) => MaxPlus (NameMapE c e n)
+  max  = unionWithNameMapE max
+  plus = unionWithNameMapE plus
 
 -- === Access ===
 

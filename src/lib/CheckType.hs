@@ -56,12 +56,13 @@ liftTyperM cont =
 affineUsed :: AtomName r o -> TyperM r i o ()
 affineUsed name = TyperM $ do
   affines <- get
-  case lookupNameMap name affines of
-    Just n -> if n > 0 then
-                throw TypeErr $ "Affine name " ++ pprint name ++ " used " ++ show (n + 1) ++ " times."
-              else
-                put $ insertNameMap name (n + 1) affines
-    Nothing -> put $ insertNameMap name 1 affines
+  case lookupNameMapE name affines of
+    Just (LiftE n) ->
+        if n > 0 then
+          throw TypeErr $ "Affine name " ++ pprint name ++ " used " ++ show (n + 1) ++ " times."
+        else
+          put $ insertNameMapE name (LiftE $ n + 1) affines
+    Nothing -> put $ insertNameMapE name (LiftE 1) affines
 
 parallelAffines :: [TyperM r i o a] -> TyperM r i o [a]
 parallelAffines actions = TyperM $ do
@@ -77,7 +78,7 @@ parallelAffines actions = TyperM $ do
     result <- runTyperT' act
     (result,) <$> get
   put affines
-  forM_ (toListNameMap $ unionsWithNameMap max isolateds) \(name, ct) ->
+  forM_ (toListNameMapE $ unionsWithNameMapE max isolateds) \(name, (LiftE ct)) ->
     case ct of
       0 -> return ()
       1 -> runTyperT' $ affineUsed name

@@ -223,8 +223,8 @@ instance HoistableState UnitE where
   hoistState _ _ UnitE = UnitE
   {-# INLINE hoistState #-}
 
-instance HoistableState (NameMap c a) where
-  hoistState _ b m = hoistFilterNameMap b m
+instance Show a => HoistableState (NameMap c a) where
+  hoistState _ b m = hoistNameMap b m
   {-# INLINE hoistState #-}
 
 -------------------- ScopedT1 --------------------
