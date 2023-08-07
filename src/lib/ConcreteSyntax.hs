@@ -263,7 +263,7 @@ structDef = do
 
 funDefLetWithAnn :: Parser (LetAnn, CDef)
 funDefLetWithAnn = do
-  ann <- noInline <|> return PlainLet
+  ann <- letAnn <|> return PlainLet
   def <- funDefLet
   return (ann, def)
 
@@ -327,12 +327,17 @@ topLetOrExpr = withSrc topLet >>= \case
 
 topLet :: Parser CTopDecl'
 topLet = do
-  lAnn <- noInline <|> return PlainLet
+  lAnn <- letAnn <|> return PlainLet
   decl <- cDecl
   return $ CSDecl lAnn decl
 
-noInline :: Parser LetAnn
-noInline = (char '@' >> string "noinline"   $> NoInlineLet) <* nextLine
+letAnn :: Parser LetAnn
+letAnn = do
+  _ <- char '@'
+  ann <-  (string "noinline" $> NoInlineLet)
+      <|> (string "inline"   $> TypeTransparent)
+  _ <- mayBreak sc
+  return ann
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
@@ -561,6 +566,9 @@ cIf = mayNotBreak do
   (cons, alt) <- thenSameLine <|> thenNewLine
   return $ CIf predicate cons alt
 
+cType :: Parser Group'
+cType = keyWord TypeKW >> return (CPrim (UPrimTC P.TypeKind) [])
+
 thenSameLine :: Parser (CSBlock, Maybe CSBlock)
 thenSameLine = do
   keyWord ThenKW
@@ -632,6 +640,7 @@ leafGroup = do
       'r'  -> cFor  <|> cIdentifier
       'c'  -> cCase <|> cIdentifier
       'i'  -> cIf   <|> cIdentifier
+      'T'  -> cType <|> cIdentifier
       _    -> cIdentifier
 
   postfixGroup :: Parser (Bin', Group)

@@ -10,6 +10,7 @@
 
 module Subst where
 
+import Data.Functor ((<&>))
 import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
@@ -18,9 +19,13 @@ import Control.Monad.State.Strict
 import Name
 import IRVariants
 import Types.Core
+import Types.Imp
 import Core
 import qualified RawName as R
 import Err
+import PPrint()
+import QueryTypePure
+import Visit
 
 -- === SubstReader class ===
 
@@ -127,6 +132,20 @@ substM e = do
   subst <- getSubst
   substM' subst e
 {-# INLINE substM #-}
+
+substMB :: (SubstReader v m, EnvExtender2 m, SinkableB b, SubstB v b, FromName v, ProvesExt b)
+       => b i i'
+       -> (forall o'. DExt o o' => b o o' -> m i' o' a)
+       -> m i o a
+substMB b cont = do
+  subst <- getSubst
+  env <- unsafeGetEnv
+  Distinct <- getDistinct
+  substB (env, subst) b \(env', subst') b' ->
+    withExtEvidence b' do
+      withLocalEnv env' $ withSubst subst' do
+        cont b'
+{-# INLINE substMB #-}
 
 substM' :: (EnvReader m, SinkableE e, SubstE v e, FromName v)
        => Subst v i o -> e i -> m o (e o)
@@ -245,10 +264,6 @@ data SubstVal (atom::IR->E) (c::C) (n::S) where
   Rename   :: Name c n -> SubstVal atom c n
 type AtomSubstVal = SubstVal Atom
 
-type family IsAtomName (c::C) where
-  IsAtomName (AtomNameC r) = True
-  IsAtomName _             = False
-
 instance (Color c, IsAtomName c ~ False) => SubstE (SubstVal atom) (Name c) where
   substE (_, env) v = case env ! v of Rename v' -> v'
 
@@ -348,6 +363,11 @@ instance (SinkableV v, ScopeReader m, EnvExtender m)
     refreshAbs ab \b e -> do
       subst' <- sinkM subst
       let SubstReaderT (ReaderT cont') = cont b e
+      cont' subst'
+  withLocalEnv env cont = SubstReaderT $ ReaderT \subst ->
+    withLocalEnv env do
+      subst' <- sinkM subst
+      let SubstReaderT (ReaderT cont') = cont
       cont' subst'
   {-# INLINE refreshAbs #-}
 
@@ -498,3 +518,138 @@ instance (SubstE v e0, SubstE v e1, SubstE v e2,
     Case6 e -> Case6 $ substE env e
     Case7 e -> Case7 $ substE env e
   {-# INLINE substE #-}
+
+visitAtomDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Atom r i -> m i o (Atom r o)
+visitAtomDefault atom = case atom of
+  Var _          -> atomSubstM atom
+  SimpInCore _   -> atomSubstM atom
+  _ -> visitAtomPartial atom
+
+visitTypeDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Type r i -> m i o (Type r o)
+visitTypeDefault = \case
+  TyVar v          -> atomSubstM $ TyVar v
+  x -> visitTypePartial x
+
+-- visitBinders
+--   :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
+--   => Binders r i i'
+--   -> (forall o'. DExt o o' => Binders r o o' -> m i' o' a)
+--   -> m i o a
+-- visitBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+-- visitBinders (Nest (BD (b:>ty)) bs) cont = do
+--   ty' <- visitType ty
+--   withFreshBinder (getNameHint b) ty' \b' -> do
+--     extendRenamer (b@>binderName b') do
+--       visitBinders bs \bs' ->
+--         cont $ Nest (BD b') bs'
+
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
+
+newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst AtomSubstVal i o) a }
+        deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst AtomSubstVal i o))
+
+substV :: (Distinct o, SubstE AtomSubstVal e) => e i -> SubstVisitor i o (e o)
+substV x = ask <&> \env -> substE env x
+
+instance Distinct o => NonAtomRenamer (SubstVisitor i o) i o where
+  renameN = substV
+
+instance (Distinct o, IRRep r) => Visitor (SubstVisitor i o) r i o where
+  visitType = substV
+  visitAtom = substV
+  visitLam  = substV
+  visitPi   = substV
+
+instance Color c => SubstE AtomSubstVal (AtomSubstVal c) where
+  substE (_, env) (Rename name) = env ! name
+  substE env (SubstVal val) = SubstVal $ substE env val
+
+instance SubstV (SubstVal Atom) (SubstVal Atom) where
+
+instance IRRep r => SubstE AtomSubstVal (Atom r) where
+  substE es@(_, subst) = \case
+    Var (AtomVar v ty) -> case subst!v of
+      Rename v' -> Var $ AtomVar v' (substE es ty)
+      SubstVal x -> x
+    SimpInCore x   -> SimpInCore (substE es x)
+    atom -> runReader (runSubstVisitor $ visitAtomPartial atom) es
+
+instance IRRep r => SubstE AtomSubstVal (Type r) where
+  substE es@(_, subst) = \case
+    TyVar (AtomVar v ty) -> case subst ! v of
+      Rename v' -> TyVar $ AtomVar v' (substE es ty)
+      SubstVal (Type t) -> t
+      SubstVal atom -> error $ "bad substitution: " ++ pprint v ++ " -> " ++ pprint atom
+    ty -> runReader (runSubstVisitor $ visitTypePartial ty) es
+
+instance SubstE AtomSubstVal SimpInCore
+
+instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
+  substE env (EffectRow effs tailVar) = do
+    let effs' = eSetFromList $ map (substE env) (eSetToList effs)
+    let tailEffRow = case tailVar of
+          NoTail -> EffectRow mempty NoTail
+          EffectRowTail (AtomVar v _) -> case snd env ! v of
+            Rename        v'  -> do
+              let v'' = runEnvReaderM (fst env) $ toAtomVar v'
+              EffectRow mempty (EffectRowTail v'')
+            SubstVal (Var v') -> EffectRow mempty (EffectRowTail v')
+            SubstVal (Eff r)  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
+
+instance IRRep r => SubstE AtomSubstVal (Effect r)
+
+instance SubstE AtomSubstVal SpecializationSpec where
+  substE env (AppSpecialization (AtomVar f _) ab) = do
+    let f' = case snd env ! f of
+               Rename v -> runEnvReaderM (fst env) $ toAtomVar v
+               SubstVal (Var v) -> v
+               _ -> error "bad substitution"
+    AppSpecialization f' (substE env ab)
+
+instance SubstE AtomSubstVal EffectDef
+instance SubstE AtomSubstVal EffectOpType
+instance SubstE AtomSubstVal IExpr
+instance IRRep r => SubstE AtomSubstVal (RepVal r)
+instance SubstE AtomSubstVal TyConParams
+instance SubstE AtomSubstVal DataConDef
+instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
+instance IRRep r => SubstE AtomSubstVal (DAMOp r)
+instance IRRep r => SubstE AtomSubstVal (TypedHof r)
+instance IRRep r => SubstE AtomSubstVal (Hof r)
+instance IRRep r => SubstE AtomSubstVal (TC r)
+instance IRRep r => SubstE AtomSubstVal (Con r)
+instance IRRep r => SubstE AtomSubstVal (MiscOp r)
+instance IRRep r => SubstE AtomSubstVal (VectorOp r)
+instance IRRep r => SubstE AtomSubstVal (MemOp r)
+instance IRRep r => SubstE AtomSubstVal (PrimOp r)
+instance IRRep r => SubstE AtomSubstVal (RefOp r)
+instance IRRep r => SubstE AtomSubstVal (EffTy r)
+instance IRRep r => SubstE AtomSubstVal (Expr r)
+instance IRRep r => SubstE AtomSubstVal (GenericOpRep const r)
+instance SubstE AtomSubstVal InstanceBody
+instance SubstE AtomSubstVal DictType
+instance SubstE AtomSubstVal DictExpr
+instance IRRep r => SubstE AtomSubstVal (LamExpr r)
+instance SubstE AtomSubstVal CorePiType
+instance SubstE AtomSubstVal CoreLamExpr
+instance IRRep r => SubstE AtomSubstVal (TabPiType r)
+instance IRRep r => SubstE AtomSubstVal (PiType r)
+instance IRRep r => SubstE AtomSubstVal (DepPairType r)
+instance SubstE AtomSubstVal SolverBinding
+instance IRRep r => SubstE AtomSubstVal (DeclBinding r)
+instance IRRep r => SubstB AtomSubstVal (Decl r)
+instance IRRep r => SubstB AtomSubstVal (BinderAndDecls r)
+instance SubstE AtomSubstVal NewtypeTyCon
+instance SubstE AtomSubstVal NewtypeCon
+instance IRRep r => SubstE AtomSubstVal (IxDict r)
+instance IRRep r => SubstE AtomSubstVal (IxType r)
+instance SubstE AtomSubstVal DataConDefs

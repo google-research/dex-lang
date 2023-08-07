@@ -354,7 +354,9 @@ class Monad m => StreamReader r m | m -> r where
 
 newtype StreamReaderT1 (r:: *) (m::MonadKind1) (n::S) (a:: *) =
   StreamReaderT1 { runStreamReaderT1' :: StateT1 (LiftE [r]) m n a }
-  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader, MonadTrans11)
+  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader, EnvExtender, MonadTrans11)
+
+deriving instance (Monad1 m, Fallible1 m) => Fallible (StreamReaderT1 r m n)
 
 instance Monad1 m => StreamReader r (StreamReaderT1 r m n) where
   readStream = StreamReaderT1 $ state \(LiftE rs) ->

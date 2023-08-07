@@ -17,17 +17,17 @@ import Control.Monad.State.Strict
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Lower (DestBlock)
 import MTL1
 import Name
 import Subst
 import PPrint
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives
 import Util (allM, zipWithZ)
+import Visit
 
 -- === Vectorization ===
 
@@ -93,10 +93,10 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
 vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, Errs)
 vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
   case popNest bsDestB of
-    Just (PairB bs (BD b)) ->
+    Just (PairB bs b) ->
       refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
-        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest (PlainBD b'')) body''), errs)
+        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
     Nothing -> error "expected a trailing dest binder"
 
 liftTopVectorizeM :: (EnvReader m)
@@ -133,12 +133,13 @@ extendCommuteMap name commutativity = local $ insertNameMap name commutativity
 
 vectorizeLoopsDestBlock :: DestBlock i
   -> TopVectorizeM i o (DestBlock o)
-vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
-  destTy' <- renameM destTy
-  withFreshBinder (getNameHint destb) destTy' \destb' -> do
-    extendRenamer (destb @> binderName destb') do
-      Abs destb' <$> buildBlock (vectorizeLoopsBlock body)
-{-# SCC vectorizeLoopsDestBlock #-}
+vectorizeLoopsDestBlock = undefined
+-- vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
+--   destTy' <- renameM destTy
+--   withFreshBinder (getNameHint destb) destTy' \destb' -> do
+--     extendRenamer (destb @> binderName destb') do
+--       Abs destb' <$> buildBlock (vectorizeLoopsBlock body)
+-- {-# SCC vectorizeLoopsDestBlock #-}
 
 vectorizeLoopsBlock :: (Emits o)
   => Block SimpIR i -> TopVectorizeM i o (SAtom o)
@@ -158,12 +159,12 @@ vectorizeLoopsDecls nest cont =
 vectorizeLoopsLamExpr :: LamExpr SimpIR i -> TopVectorizeM i o (LamExpr SimpIR o)
 vectorizeLoopsLamExpr (LamExpr bs body) = case bs of
   Empty -> LamExpr Empty <$> buildBlock (vectorizeLoopsBlock body)
-  Nest b rest -> do
-    ty <- renameM $ binderType b
-    withFreshBinder (getNameHint b) ty \b' -> do
-      extendSubstBD b [binderName b'] do
-        LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
-        return $ LamExpr (Nest (BD b') bs') body'
+  -- Nest b rest -> do
+  --   ty <- renameM $ binderType b
+  --   withFreshBinder (getNameHint b) ty \b' -> do
+  --     extendSubstBD b [binderName b'] do
+  --       LamExpr bs' body' <- vectorizeLoopsLamExpr $ LamExpr rest body
+  --       return $ LamExpr (Nest (BD b') bs') body'
 
 vectorizeLoopsExpr :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
 vectorizeLoopsExpr expr = do
@@ -192,26 +193,26 @@ vectorizeLoopsExpr expr = do
               modify (<> LiftE errs')
               recurSeq expr
         _ -> recurSeq expr
-    PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
-      item' <- renameM item
-      itemTy <- return $ getType item'
-      lam <- buildEffLam noHint itemTy \hb refb ->
-        extendSubstBD hb' [atomVarName hb] do
-          extendSubstBD refb' [atomVarName refb] do
-            vectorizeLoopsBlock body
-      PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
-    PrimOp (Hof (TypedHof (EffTy _ ty)
-                 (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
-      dest' <- renameM dest
-      monoid' <- renameM monoid
-      commutativity <- monoidCommutativity monoid'
-      PairTy _ accTy <- renameM ty
-      lam <- buildEffLam noHint accTy \hb refb ->
-        extendSubstBD hb'[atomVarName hb] do
-          extendSubstBD refb' [atomVarName refb] do
-            extendCommuteMap (atomVarName hb) commutativity do
-              vectorizeLoopsBlock body
-      PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
+    -- PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
+    --   item' <- renameM item
+    --   itemTy <- return $ getType item'
+    --   lam <- buildEffLam noHint itemTy \hb refb ->
+    --     extendSubstBD hb' [atomVarName hb] do
+    --       extendSubstBD refb' [atomVarName refb] do
+    --         vectorizeLoopsBlock body
+    --   PrimOp . Hof <$> mkTypedHof (RunReader item' lam)
+    -- PrimOp (Hof (TypedHof (EffTy _ ty)
+    --              (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
+    --   dest' <- renameM dest
+    --   monoid' <- renameM monoid
+    --   commutativity <- monoidCommutativity monoid'
+    --   PairTy _ accTy <- renameM ty
+    --   lam <- buildEffLam noHint accTy \hb refb ->
+    --     extendSubstBD hb'[atomVarName hb] do
+    --       extendSubstBD refb' [atomVarName refb] do
+    --         extendCommuteMap (atomVarName hb) commutativity do
+    --           vectorizeLoopsBlock body
+    --   PrimOp . Hof <$> mkTypedHof (RunWriter (Just dest') monoid' lam)
     _ -> renameM expr
   where
     recurSeq :: (Emits o) => SExpr i -> TopVectorizeM i o (SExpr o)
@@ -225,12 +226,13 @@ vectorizeLoopsExpr expr = do
 
 simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
   => IxType SimpIR n -> m n (Maybe Word32)
-simplifyIxSize ixty = do
-  sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
-  cheapReduce sizeMethod >>= \case
-    Just (IdxRepVal n) -> return $ Just n
-    _ -> return Nothing
-{-# INLINE simplifyIxSize #-}
+simplifyIxSize ixty = undefined
+-- simplifyIxSize ixty = do
+--   sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
+--   case sizeMethod of
+--     IdxRepVal n -> return $ Just n
+--     _ -> return Nothing
+-- {-# INLINE simplifyIxSize #-}
 
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
@@ -306,25 +308,26 @@ vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
 
 vectorizeSeq :: Word32 -> IxType SimpIR i -> LamExpr SimpIR i
   -> TopVectorizeM i o (LamExpr SimpIR o)
-vectorizeSeq loopWidth ixty (UnaryLamExpr (b:>ty) body) = do
-  newLoopTy <- case ty of
-    ProdTy [_ixType, ref] -> do
-      ref' <- renameM ref
-      return $ ProdTy [IdxRepTy, ref']
-    _ -> error "Unexpected seq binder type"
-  ixty' <- renameM ixty
-  liftVectorizeM loopWidth $
-    buildUnaryLamExpr (getNameHint b) newLoopTy \ci -> do
-      -- The per-tile loop iterates on `Fin`
-      (viOrd, dest) <- fromPair $ Var ci
-      iOrd <- imul viOrd $ IdxRepVal loopWidth
-      -- TODO: It would be nice to cancel this UnsafeFromOrdinal with the
-      -- Ordinal that will be taken later when indexing, but that should
-      -- probably be a separate pass.
-      i <- applyIxMethod (sink $ ixTypeDict ixty') UnsafeFromOrdinal [iOrd]
-      extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)) $
-        vectorizeBlock body $> UnitVal
-vectorizeSeq _ _ _ = error "expected a unary lambda expression"
+vectorizeSeq loopWidth ixty (UnaryLamExpr (BD decls (b:>ty)) body) = undefined
+-- vectorizeSeq loopWidth ixty (UnaryLamExpr (b:>ty) body) = do
+--   newLoopTy <- case ty of
+--     ProdTy [_ixType, ref] -> do
+--       ref' <- renameM ref
+--       return $ ProdTy [IdxRepTy, ref']
+--     _ -> error "Unexpected seq binder type"
+--   ixty' <- renameM ixty
+--   liftVectorizeM loopWidth $
+--     buildUnaryLamExpr (getNameHint b) newLoopTy \ci -> do
+--       -- The per-tile loop iterates on `Fin`
+--       (viOrd, dest) <- fromPair $ Var ci
+--       iOrd <- imul viOrd $ IdxRepVal loopWidth
+--       -- TODO: It would be nice to cancel this UnsafeFromOrdinal with the
+--       -- Ordinal that will be taken later when indexing, but that should
+--       -- probably be a separate pass.
+--       i <- applyIxMethod (sink $ ixTypeDict ixty') UnsafeFromOrdinal [iOrd]
+--       extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)) $
+--         vectorizeBlock body $> UnitVal
+-- vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
@@ -352,21 +355,22 @@ getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
 -- of the value returned by the LamExpr.
 vectorizeLamExpr :: LamExpr SimpIR i -> [Stability]
   -> VectorizeM i o (LamExpr SimpIR o)
-vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
-  (Empty, []) -> do
-    LamExpr Empty <$> buildBlock (do
-      vectorizeBlock body >>= \case
-        (VVal _ ans) -> return ans
-        (VRename v) -> Var <$> toAtomVar v)
-  (Nest b rest, (stab:stabs)) -> do
-    ty' <- vectorizeType $ binderType b
-    ty'' <- promoteTypeByStability ty' stab
-    withFreshBinder (getNameHint b) ty'' \b' -> do
-      var <- toAtomVar $ binderName b'
-      extendSubstBD b [VVal stab (Var var)] do
-        LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
-        return $ LamExpr (Nest (PlainBD b') rest') body'
-  _ -> error "Zip error"
+vectorizeLamExpr (LamExpr bs body) argStabilities = undefined
+-- vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
+--   (Empty, []) -> do
+--     LamExpr Empty <$> buildBlock (do
+--       vectorizeBlock body >>= \case
+--         (VVal _ ans) -> return ans
+--         (VRename v) -> Var <$> toAtomVar v)
+--   (Nest b rest, (stab:stabs)) -> do
+--     ty' <- vectorizeType $ binderType b
+--     ty'' <- promoteTypeByStability ty' stab
+--     withFreshBinder (getNameHint b) ty'' \b' -> do
+--       var <- toAtomVar $ binderName b'
+--       extendSubstBD b [VVal stab (Var var)] do
+--         LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
+--         return $ LamExpr (Nest (PlainBD b') rest') body'
+--   _ -> error "Zip error"
 
 vectorizeBlock :: Emits o => SBlock i -> VectorizeM i o (VAtom o)
 vectorizeBlock block@(Abs decls (ans :: SAtom i')) =
@@ -387,8 +391,8 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
       VVal Uniform tbl' <- vectorizeAtom tbl
       VVal Contiguous ix' <- vectorizeAtom ix
       case getType tbl' of
-        TabTy _ tb a -> do
-          vty <- getVectorType =<< case hoist tb a of
+        TabTy _ tb (Abs decls a) -> do
+          vty <- getVectorType =<< case hoist (PairB tb decls) a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
           VVal Varying <$> emitOp (VectorOp $ VectorIdx tbl' ix' vty)
@@ -442,8 +446,8 @@ vectorizeRefOp ref' op =
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
       case getType ref of
-        TC (RefType _ (TabTy _ tb a)) -> do
-          vty <- getVectorType =<< case hoist tb a of
+        TC (RefType _ (TabTy _ tb (Abs decls a))) -> do
+          vty <- getVectorType =<< case hoist (PairB tb decls) a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
           VVal Contiguous <$> emitOp (VectorOp $ VectorSubref ref i vty)
@@ -527,15 +531,6 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     Var v -> lookupSubstM (atomVarName v) >>= \case
       VRename v' -> VVal Uniform . Var <$> toAtomVar v'
       v' -> return v'
-    -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt _ (ProjectProduct i) x -> do
-      VVal vv x' <- vectorizeAtom x
-      ov <- case vv of
-        ProdStability sbs -> return $ sbs !! i
-        _ -> throwVectErr "Invalid projection"
-      x'' <- normalizeProj (ProjectProduct i) x'
-      return $ VVal ov x''
-    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst
@@ -598,7 +593,7 @@ instance NonAtomRenamer (CalcWidthM i o) i o where renameN = renameM
 instance Visitor (CalcWidthM i o) SimpIR i o where
   visitAtom = visitAtomDefault
   visitType = visitTypeDefault
-  visitPi   = visitPiDefault
+  visitPi   = undefined
   visitLam  = visitLamNoEmits
 
 instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where

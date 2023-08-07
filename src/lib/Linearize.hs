@@ -17,7 +17,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Imp
 import IRVariants
 import MTL1
@@ -25,10 +24,11 @@ import Name
 import Subst
 import {-# SOURCE #-} Simplify (linearizeTopFun)
 import PPrint
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives
 import Util (bindM2, enumerate)
+import Visit
 
 -- === linearization monad ===
 
@@ -73,7 +73,8 @@ extendActiveSubst
 extendActiveSubst b v cont = extendSubst (b@>atomVarName v) $ extendActivePrimals v cont
 
 extendActiveSubstBD :: BinderAndDecls SimpIR i i' -> SAtomVar o -> PrimalM i' o a -> PrimalM i o a
-extendActiveSubstBD (BD b) v cont = extendActiveSubst b v cont
+extendActiveSubstBD (BD _ b) v cont = undefined
+-- extendActiveSubstBD (BD b) v cont = extendActiveSubst b v cont
 
 extendActiveEffs :: Effect SimpIR o -> PrimalM i o a -> PrimalM i o a
 extendActiveEffs eff = local \primals ->
@@ -235,11 +236,12 @@ data ObligateReconAbs (e::E) (n::S) =
    ObligateRecon (SType n) (ReconAbs SimpIR e n)
 
 instance ReconFunctor MaybeReconAbs where
-  capture locals original toCapture = do
-    (reconVal, recon) <- telescopicCapture locals toCapture
-    case recon of
-      Abs (ReconBinders _ Empty) toCapture' -> return (original, TrivialRecon toCapture')
-      _ -> return (PairVal original reconVal, ReconWithData recon)
+  capture locals original toCapture = undefined
+  -- capture locals original toCapture = do
+  --   (reconVal, recon) <- telescopicCapture locals toCapture
+  --   case recon of
+  --     Abs (ReconBinders _ Empty) toCapture' -> return (original, TrivialRecon toCapture')
+  --     _ -> return (PairVal original reconVal, ReconWithData recon)
 
   reconstruct primalAux recon = case recon of
     TrivialRecon linLam -> return (primalAux, linLam)
@@ -249,11 +251,12 @@ instance ReconFunctor MaybeReconAbs where
       return (primal, linLam')
 
 instance ReconFunctor ObligateReconAbs where
-  capture locals original toCapture = do
-    (reconVal, recon) <- telescopicCapture locals toCapture
-    -- TODO: telescopicCapture should probably return the hoisted type
-    reconValTy <- return $ ignoreHoistFailure $ hoist locals $ getType reconVal
-    return (PairVal original reconVal, ObligateRecon reconValTy recon)
+  capture locals original toCapture = undefined
+  -- capture locals original toCapture = do
+  --   (reconVal, recon) <- telescopicCapture locals toCapture
+  --   -- TODO: telescopicCapture should probably return the hoisted type
+  --   reconValTy <- return $ ignoreHoistFailure $ hoist locals $ getType reconVal
+  --   return (PairVal original reconVal, ObligateRecon reconValTy recon)
 
   reconstruct primalAux recon = case recon of
     ObligateRecon _ reconAbs -> do
@@ -279,10 +282,11 @@ linearizeBlockDefuncGeneral locals block = do
 
 -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
 applyLinLam :: Emits o => SLam i -> SubstReaderT AtomSubstVal TangentM i o (Atom SimpIR o)
-applyLinLam lam = do
-  TangentArgs args <- liftSubstReaderT $ getTangentArgs
-  withInstantiated lam (Var <$> args) \body ->
-    substM body >>= emitBlock
+applyLinLam lam = undefined
+-- applyLinLam lam = do
+--   TangentArgs args <- liftSubstReaderT $ getTangentArgs
+--   withInstantiated lam (Var <$> args) \body ->
+--     substM body >>= emitBlock
 
 -- === actual linearization passs ===
 
@@ -292,40 +296,42 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
 linearizeTopLam :: STopLam n -> [Active] -> DoubleBuilder SimpIR n (STopLam n, STopLam n)
-linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
-  (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = bindersVars bs'
-    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
-      True  -> return $ Just v
-      False -> return $ Nothing
-    (body', linLamAbs) <- extendActivePrimalss activeVs do
-      linearizeBlockDefuncGeneral emptyOutFrag body
-    let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
-    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
-      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
-      withFreshBinder "t" tangentTy \bTangent -> do
-        tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderVar bTangent
-          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> (fmapNest (\(BD b) -> b) bsTangent) @@> map (SubstVal . sink) ts
-          emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest (PlainBD bResidual) (PlainBD bTangent)) tangentBody'
-    return (primalFun, tangentFun)
-  (,) <$> asTopLam primalFun <*> asTopLam tangentFun
-linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
+linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = undefined
+-- linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
+--   (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
+--     let allPrimals = bindersVars bs'
+--     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+--       True  -> return $ Just v
+--       False -> return $ Nothing
+--     (body', linLamAbs) <- extendActivePrimalss activeVs do
+--       linearizeBlockDefuncGeneral emptyOutFrag body
+--     let primalFun = LamExpr bs' body'
+--     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
+--     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+--       xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
+--       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+--       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+--       withFreshBinder "t" tangentTy \bTangent -> do
+--         tangentBody' <- buildBlock do
+--           ts <- getUnpacked $ Var $ sink $ binderVar bTangent
+--           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+--                         <.> (fmapNest (\(BD b) -> b) bsTangent) @@> map (SubstVal . sink) ts
+--           emitBlock =<< applySubst substFrag tangentBody
+--         return $ LamExpr (bs' >>> BinaryNest (PlainBD bResidual) (PlainBD bTangent)) tangentBody'
+--     return (primalFun, tangentFun)
+--   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
+-- linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
-linearizeLambdaApp (UnaryLamExpr b body) x = do
-  vp <- emit $ Atom x
-  extendActiveSubst b vp do
-    WithTangent primalResult tangentAction <- linearizeBlock body
-    tanFun <- tangentFunAsLambda tangentAction
-    return (primalResult, tanFun)
-linearizeLambdaApp _ _ = error "not implemented"
+linearizeLambdaApp (UnaryLamExpr b body) x = undefined
+-- linearizeLambdaApp (UnaryLamExpr b body) x = do
+--   vp <- emit $ Atom x
+--   extendActiveSubst b vp do
+--     WithTangent primalResult tangentAction <- linearizeBlock body
+--     tanFun <- tangentFunAsLambda tangentAction
+--     return (primalResult, tanFun)
+-- linearizeLambdaApp _ _ = error "not implemented"
 
 linearizeAtom :: Emits o => Atom SimpIR i -> LinM i o SAtom SAtom
 linearizeAtom atom = case atom of
@@ -337,12 +343,12 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   PtrVar _ _      -> emitZeroT
-  ProjectElt _ i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
+  -- ProjectElt _ i x -> do
+  --   WithTangent x' tx <- linearizeAtom x
+  --   xi <- normalizeProj i x'
+  --   return $ WithTangent xi do
+  --     t <- tx
+  --     normalizeProj i t
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
@@ -402,31 +408,31 @@ linearizeExpr expr = case expr of
     zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
       \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
   PrimOp op      -> linearizeOp op
-  Case e alts (EffTy effs resultTy) -> do
-    e' <- renameM e
-    effs' <- renameM effs
-    resultTy' <- renameM resultTy
-    isActive e' >>= \case
-      True -> notImplemented
-      False -> do
-        (alts', recons) <- unzip <$> buildCaseAlts e' \i b' -> do
-          Abs b body <- return $ alts !! i
-          extendSubst (b@>binderName b') do
-            (block, recon) <- linearizeBlockDefuncGeneral (toScopeFrag b') body
-            return (Abs b' block, recon)
-        let tys = recons <&> \(ObligateRecon t _) -> t
-        alts'' <- forM (enumerate alts') \(i, alt) -> do
-          injectAltResult tys i alt
-        let fullResultTy = PairTy resultTy' $ SumTy tys
-        result <- emitExpr $ Case e' alts'' (EffTy effs' fullResultTy)
-        (primal, residualss) <- fromPair result
-        resultTangentType <- tangentType resultTy'
-        return $ WithTangent primal do
-          buildCase (sink residualss) (sink resultTangentType) \i residuals -> do
-            ObligateRecon _ (Abs bs linLam) <- return $ sinkList recons !! i
-            residuals' <- unpackTelescope bs residuals
-            withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
-              applyLinLam linLam
+  -- Case e alts (EffTy effs resultTy) -> do
+  --   e' <- renameM e
+  --   effs' <- renameM effs
+  --   resultTy' <- renameM resultTy
+  --   isActive e' >>= \case
+  --     True -> notImplemented
+  --     False -> do
+  --       (alts', recons) <- unzip <$> buildCaseAlts e' \i b' -> do
+  --         Abs b body <- return $ alts !! i
+  --         extendSubst (b@>binderName b') do
+  --           (block, recon) <- linearizeBlockDefuncGeneral (toScopeFrag b') body
+  --           return (Abs b' block, recon)
+  --       let tys = recons <&> \(ObligateRecon t _) -> t
+  --       alts'' <- forM (enumerate alts') \(i, alt) -> do
+  --         injectAltResult tys i alt
+  --       let fullResultTy = PairTy resultTy' $ SumTy tys
+  --       result <- emitExpr $ Case e' alts'' (EffTy effs' fullResultTy)
+  --       (primal, residualss) <- fromPair result
+  --       resultTangentType <- tangentType resultTy'
+  --       return $ WithTangent primal do
+  --         buildCase (sink residualss) (sink resultTangentType) \i residuals -> do
+  --           ObligateRecon _ (Abs bs linLam) <- return $ sinkList recons !! i
+  --           residuals' <- unpackTelescope bs residuals
+  --           withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
+  --             applyLinLam linLam
   TabCon _ ty xs -> do
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
@@ -589,28 +595,28 @@ linearizePrimCon con = case con of
 
 linearizeHof :: Emits o => Hof SimpIR i -> LinM i o SAtom SAtom
 linearizeHof hof = case hof of
-  For d ixTy' lam -> do
-    UnaryLamExpr ib body <- return lam
-    ixTy <- renameM ixTy'
-    (lam', Abs ib' linLam) <- withFreshBinder noHint (ixTypeType ixTy) \ib' -> do
-      (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
-      return (UnaryLamExpr ib' block', Abs ib' linLam)
-    primalsAux <- emitHof $ For d ixTy lam'
-    case linLam of
-      TrivialRecon linLam' ->
-        return $ WithTangent primalsAux do
-          Abs ib'' linLam'' <- sinkM (Abs ib' linLam')
-          withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
-            extendSubst (ib''@>Rename (atomVarName i')) $ applyLinLam linLam''
-      ReconWithData reconAbs -> do
-        primals <- buildMap primalsAux getFst
-        return $ WithTangent primals do
-          Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
-          withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
-            extendSubst (ib''@> Rename (atomVarName i')) do
-              residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
-              extendSubst (bs @@> (SubstVal <$> residuals')) $
-                applyLinLam linLam'
+  -- For d ixTy' lam -> do
+  --   UnaryLamExpr ib body <- return lam
+  --   ixTy <- renameM ixTy'
+  --   (lam', Abs ib' linLam) <- withFreshBinder noHint (ixTypeType ixTy) \ib' -> do
+  --     (block', linLam) <- extendSubst (ib@>binderName ib') $ linearizeBlockDefunc body
+  --     return (UnaryLamExpr ib' block', Abs ib' linLam)
+  --   primalsAux <- emitHof $ For d ixTy lam'
+  --   case linLam of
+  --     TrivialRecon linLam' ->
+  --       return $ WithTangent primalsAux do
+  --         Abs ib'' linLam'' <- sinkM (Abs ib' linLam')
+  --         withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
+  --           extendSubst (ib''@>Rename (atomVarName i')) $ applyLinLam linLam''
+  --     ReconWithData reconAbs -> do
+  --       primals <- buildMap primalsAux getFst
+  --       return $ WithTangent primals do
+  --         Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
+  --         withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
+  --           extendSubst (ib''@> Rename (atomVarName i')) do
+  --             residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
+  --             extendSubst (bs @@> (SubstVal <$> residuals')) $
+  --               applyLinLam linLam'
   RunReader r lam -> do
     WithTangent r' rLin <- linearizeAtom r
     (lam', recon) <- linearizeEffectFun Reader lam
@@ -660,22 +666,23 @@ linearizeHof hof = case hof of
   _ -> error $ "not implemented: " ++ pprint hof
 
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
-linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  withFreshBinder noHint (TC HeapType) \h -> do
-    bTy <- extendSubstBD hB [binderName h] $ renameM $ binderType refB
-    withFreshBinder noHint bTy \b -> do
-      let ref = binderVar b
-      hVar <- sinkM $ binderVar h
-      (body', linLam) <- extendActiveSubstBD hB hVar $ extendActiveSubstBD refB ref $
-        -- TODO: maybe we should check whether we need to extend the active effects
-        extendActiveEffs (RWSEffect rws (Var hVar)) do
-          linearizeBlockDefunc body
-      -- TODO: this assumes that references aren't returned. Our type system
-      -- ensures that such references can never be *used* once the effect runner
-      -- returns, but technically it's legal to return them.
-      let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr (BD h) (BD b) body', linLam')
-linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
+linearizeEffectFun rws (BinaryLamExpr hB refB body) = undefined
+-- linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
+--   withFreshBinder noHint (TC HeapType) \h -> do
+--     bTy <- extendSubstBD hB [binderName h] $ renameM $ binderType refB
+--     withFreshBinder noHint bTy \b -> do
+--       let ref = binderVar b
+--       hVar <- sinkM $ binderVar h
+--       (body', linLam) <- extendActiveSubstBD hB hVar $ extendActiveSubstBD refB ref $
+--         -- TODO: maybe we should check whether we need to extend the active effects
+--         extendActiveEffs (RWSEffect rws (Var hVar)) do
+--           linearizeBlockDefunc body
+--       -- TODO: this assumes that references aren't returned. Our type system
+--       -- ensures that such references can never be *used* once the effect runner
+--       -- returns, but technically it's legal to return them.
+--       let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
+--       return (BinaryLamExpr (PlainBD h) (PlainBD b) body', linLam')
+-- linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 withT :: PrimalM i o (e1 o)
       -> (forall o'. (Emits o', DExt o o') => TangentM o' (e2 o'))

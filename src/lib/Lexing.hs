@@ -85,6 +85,7 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | ImportKW | ForeignKW | NamedInstanceKW
              | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
              | CustomLinearizationKW | CustomLinearizationSymbolicKW | PassKW
+             | TypeKW
   deriving (Enum)
 
 keyWordToken :: KeyWord -> String
@@ -119,6 +120,7 @@ keyWordToken = \case
   CustomLinearizationKW -> "custom-linearization"
   CustomLinearizationSymbolicKW -> "custom-linearization-symbolic"
   PassKW          -> "pass"
+  TypeKW          -> "Type"
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string (fromString $ keyWordToken kw)

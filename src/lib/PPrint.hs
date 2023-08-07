@@ -160,7 +160,7 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
   where pretty (b:>ty) = p b <> ":" <> p ty
 
 instance IRRep r => Pretty (BinderAndDecls r n l) where
-  pretty (BD b) = pretty b
+  pretty (BD _ b) = pretty b
 
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
@@ -172,22 +172,18 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ProjectElt _ idxs v) = atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+  prettyPrec (DictHole _ e _ ) = atPrec LowestPrec $ "synthesize" <+> pApp e
 
 prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
-  nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
+  nest 2 (foldMap (\alt -> hardline <> pretty alt) alts
           <> effectLine effs)
   where
     effectLine :: IRRep r => EffectRow r n -> Doc ann
     effectLine Pure = ""
     effectLine row = hardline <> "case annotated with effects" <+> p row
-
-prettyAlt :: IRRep r => Alt r n -> Doc ann
-prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (p body)
-
-prettyBinderNoAnn :: Binder r n l -> Doc ann
-prettyBinderNoAnn (b:>_) = p b
 
 instance (IRRep r, PrettyPrecE e) => Pretty     (Abs (Binder r) e n) where pretty = prettyFromPrettyPrec
 instance (IRRep r, PrettyPrecE e) => PrettyPrec (Abs (Binder r) e n) where
@@ -202,8 +198,9 @@ instance IRRep r => Pretty (Decl r n l) where
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
-  pretty (PiType bs (EffTy effs resultTy)) =
-    (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
+  pretty = undefined
+  -- pretty (PiType bs (EffTy effs resultTy)) =
+  --   (spaced $ fromNest $ bs) <+> "->" <+> "{" <> p effs <> "}" <+> p resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
@@ -254,10 +251,8 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
-    DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
     TypeAsAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
@@ -270,15 +265,13 @@ instance IRRep r => PrettyPrec (Type r n) where
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
     TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
   prettyPrec = \case
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
     LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
-    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
+    ACase e alts _ -> undefined -- atPrec AppPrec $ "acase" <+> p e <+> p alts
     TabLam _ _ -> atPrec AppPrec $ "tablam"
 
 instance IRRep r => Pretty (RepVal r n) where
@@ -299,7 +292,7 @@ forStr Fwd = "for"
 forStr Rev = "rof"
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl expls bs (EffTy eff resultTy)) =
+  pretty (CorePiType appExpl expls bs (Abs _ (EffTy eff resultTy))) =
     prettyBindersWithExpl expls bs <+> p appExpl <> prettyEff <> p resultTy
     where
       prettyEff = case eff of
@@ -327,17 +320,14 @@ withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
 instance IRRep r => Pretty (TabPiType r n) where
-  pretty (TabPiType dict (BD (b:>ty)) body) = let
-    prettyBody = case body of
-      Pi subpi -> pretty subpi
-      _ -> pLowest body
+  pretty (TabPiType dict (BD _ (b:>ty)) body@(Abs _ body')) = let
     prettyBinder = case dict of
       IxDictRawFin n -> if binderName b `isFreeIn` body
         then parens $ p b <> ":" <> prettyTy
         else prettyTy
         where prettyTy = "RawFin" <+> p n
       _ -> prettyBinderHelper (b:>ty) body
-    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
+    in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> pLowest body')
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
 -- reduce clutter in prints and error messages, but when debugging synthesis we
@@ -455,7 +445,7 @@ instance Pretty ParamRole where
   pretty r = p (show r)
 
 instance Pretty (InstanceDef n) where
-  pretty (InstanceDef className _ bs params _) =
+  pretty (InstanceDef className _ bs _ params _) =
     "Instance" <+> p className <+> pretty bs <+> p params
 
 deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
@@ -870,11 +860,11 @@ instance PrettyPrec (NewtypeTyCon n) where
     Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     EffectRowKind -> atPrec ArgPrec "EffKind"
-    UserADTType "RangeTo"      _ (TyConParams _ [i]) -> atPrec LowestPrec $ ".."  <> pApp i
-    UserADTType "RangeToExc"   _ (TyConParams _ [i]) -> atPrec LowestPrec $ "..<" <> pApp i
-    UserADTType "RangeFrom"    _ (TyConParams _ [i]) -> atPrec LowestPrec $ pApp i <>  ".."
-    UserADTType "RangeFromExc" _ (TyConParams _ [i]) -> atPrec LowestPrec $ pApp i <> "<.."
-    UserADTType name _ (TyConParams infs params) -> case (infs, params) of
+    UserADTType "RangeTo"      _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ ".."  <> pApp i
+    UserADTType "RangeToExc"   _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ "..<" <> pApp i
+    UserADTType "RangeFrom"    _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ pApp i <>  ".."
+    UserADTType "RangeFromExc" _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ pApp i <> "<.."
+    UserADTType name _ (TyConParams infs params) _ -> case (infs, params) of
       ([], []) -> atPrec ArgPrec $ p name
       ([Explicit, Explicit], [l, r])
         | Just sym <- fromInfix (fromString name) ->

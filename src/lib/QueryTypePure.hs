@@ -50,14 +50,14 @@ typeBinOp binop xTy = case binop of
   IAdd   -> xTy;  ISub   -> xTy
   IMul   -> xTy;  IDiv   -> xTy
   IRem   -> xTy;
-  ICmp _ -> Scalar Word8Type
   FAdd   -> xTy;  FSub   -> xTy
   FMul   -> xTy;  FDiv   -> xTy;
   FPow   -> xTy
-  FCmp _ -> Scalar Word8Type
   BAnd   -> xTy;  BOr    -> xTy
   BXor   -> xTy
   BShL   -> xTy;  BShR   -> xTy
+  ICmp _ -> Scalar Word8Type
+  FCmp _ -> Scalar Word8Type
 
 typeUnOp :: UnOp -> BaseType -> BaseType
 typeUnOp = const id  -- All unary ops preserve the type of the input
@@ -76,11 +76,9 @@ instance IRRep r => HasType r (Atom r) where
     Eff _ -> EffKind
     PtrVar t _ -> PtrTy t
     DictCon ty _ -> ty
-    NewtypeCon con _ -> getNewtypeType con
+    NewtypeCon con x -> getNewtypeType con (getType x)
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
-    DictHole _ ty _ -> ty
     TypeAsAtom ty -> getType ty
 
 instance IRRep r => HasType r (Type r) where
@@ -92,7 +90,6 @@ instance IRRep r => HasType r (Type r) where
     TC _        -> TyKind
     DictTy _    -> TyKind
     TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -104,11 +101,11 @@ instance HasType CoreIR SimpInCore where
 instance HasType CoreIR NewtypeTyCon where
   getType _ = TyKind
 
-getNewtypeType :: NewtypeCon n -> CType n
-getNewtypeType con = case con of
+getNewtypeType :: NewtypeCon n -> CType n -> CType n
+getNewtypeType con repTy = case con of
   NatCon          -> NewtypeTyCon Nat
   FinCon n        -> NewtypeTyCon $ Fin n
-  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params
+  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params repTy
 
 instance IRRep r => HasType r (Con r) where
   getType = \case
@@ -127,6 +124,8 @@ instance IRRep r => HasType r (Expr r) where
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    ProjectElt t _ _ -> t
+    DictHole _ ty _ -> ty
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -140,8 +139,12 @@ instance IRRep r => HasType r (DAMOp r) where
 
 instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
-    BinOp op x _ -> TC $ BaseType $ typeBinOp op $ getTypeBaseType x
-    UnOp  op x   -> TC $ BaseType $ typeUnOp  op $ getTypeBaseType x
+    BinOp op x _ -> case op of
+      ICmp _ -> boolTy
+      FCmp _ -> boolTy
+      _ -> getType x
+      where boolTy = TC $ BaseType $ Scalar Word8Type
+    UnOp  _ x   -> getType x
     Hof  (TypedHof (EffTy _ ty) _) -> ty
     MemOp op -> getType op
     MiscOp op -> getType op
@@ -201,14 +204,11 @@ rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (PlainBD (b:>IdxRepTy)) tabTy
+    DepPairTy $ DepPairType ExplicitDepPair (PlainBD (b:>IdxRepTy)) $ Abs Empty tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
 rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
-
-tabIxType :: IRRep r => TabPiType r n -> IxType r n
-tabIxType (TabPiType d b _) = IxType (binderType b) d
 
 typesAsBinderNest
   :: (SinkableE e, HoistableE e, IRRep r)
@@ -217,16 +217,23 @@ typesAsBinderNest types body =
   case toConstBinderNest types body of
     Abs bs body' -> Abs (fmapNest PlainBD bs) body'
 
+typeBlocksAsBinderNest
+  :: (SinkableE e, HoistableE e, IRRep r)
+  => [TypeBlock r n] -> e n -> Abs (Binders r) e n
+typeBlocksAsBinderNest types body = undefined
+  -- case toConstBinderNest types body of
+  --   Abs bs body' -> Abs (fmapNest PlainBD bs) body'
+
 nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
 nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
   Abs bs (PairE eff' resultTy') -> do
     let expls = nestToList (const Explicit) bs
-    CorePiType ExplicitApp expls bs $ EffTy eff' resultTy'
+    CorePiType ExplicitApp expls bs $ Abs Empty $ EffTy eff' resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
-    Abs b resultTy' -> TabPiType d (PlainBD (b:>t)) resultTy'
+    Abs b resultTy' -> TabPiType d (PlainBD (b:>t)) (Abs Empty resultTy')
 
 corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
 corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy
@@ -263,6 +270,8 @@ instance IRRep r => HasEffects (Expr r) r where
     TabCon _ _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
+    ProjectElt _ _ _ -> Pure
+    DictHole _ _ _ -> Pure
 
 instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr

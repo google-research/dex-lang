@@ -65,11 +65,7 @@ class (EnvReader m, Monad1 m) => EnvExtender (m::MonadKind1) where
     => Abs b e n
     -> (forall l. DExt n l => b n l -> e l -> m l a)
     -> m n a
-
-class Monad2 m => EnvReaderI (m::MonadKind2) where
-   getEnvI :: m i o (Env i)
-   getDistinctI :: m i o (DistinctEvidence i)
-   withEnvI :: Distinct i' => Env i' -> m i' o a -> m i o a
+  withLocalEnv :: DExt n l => Env l -> m l a -> m n a
 
 type EnvReader2   (m::MonadKind2) = forall (n::S). EnvReader   (m n)
 type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
@@ -119,6 +115,9 @@ instance Monad m => EnvExtender (EnvReaderT m) where
          let env' = extendOutMap env $ toEnvFrag b
          runReaderT (runEnvReaderT' $ cont b e) (Distinct, env')
   {-# INLINE refreshAbs #-}
+  withLocalEnv env cont = EnvReaderT $ ReaderT
+    \_ -> runReaderT (runEnvReaderT' cont) (Distinct, env)
+  {-# INLINE withLocalEnv #-}
 
 instance Monad m => ScopeReader (EnvReaderT m) where
   getDistinct = EnvReaderT $ asks fst
@@ -216,7 +215,7 @@ instance IRRep r => BindsEnv (Decl r) where
   {-# INLINE toEnvFrag #-}
 
 instance IRRep r => BindsEnv (BinderAndDecls r) where
-  toEnvFrag (BD b) = toEnvFrag b
+  toEnvFrag (BD d b) = toEnvFrag (PairB d b)
   {-# INLINE toEnvFrag #-}
 
 instance BindsEnv EnvFrag where
@@ -377,6 +376,17 @@ withFreshBinder hint binding cont = do
   Abs b v <- freshNameM hint
   refreshAbs (Abs (b:>binding) v) \b' _ -> cont b'
 {-# INLINE withFreshBinder #-}
+
+withFreshBD
+  :: (IRRep r, EnvExtender m)
+  => NameHint -> TypeBlock r n
+  -> (forall l. DExt n l => BinderAndDecls r n l -> m l a)
+  -> m n a
+withFreshBD hint tyBlock cont = do
+  refreshAbs tyBlock \decls ty -> do
+    withFreshBinder hint ty \b -> do
+      cont $ BD decls b
+{-# INLINE withFreshBD #-}
 
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)

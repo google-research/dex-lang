@@ -11,8 +11,8 @@ import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
+import Builder()
 import Core
-import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -20,7 +20,8 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
-import QueryType
+import QueryTypePure
+import Visit
 
 -- === External API ===
 
@@ -90,9 +91,10 @@ instance HoistableState FV where
 -- the entry for the binder itself, and the type of NameMapE cannot represent a
 -- map from names in `l` to E-kinded things with names in `n` (though maybe it
 -- should be changed?)
-abstractFor :: DExt n l => Binder SimpIR n l -> FV l -> FV l
-abstractFor (b:>_) (FV fvs) = FV $ mapNameMapE update fvs where
-  update (AccessInfo s dyn) = sink $ AccessInfo s $ ForEach b dyn
+abstractFor :: DExt n l => BinderAndDecls SimpIR n l -> FV l -> FV l
+abstractFor =  undefined
+-- (b:>_) (FV fvs) = FV $ mapNameMapE update fvs where
+--   update (AccessInfo s dyn) = sink $ AccessInfo s $ ForEach b dyn
 
 -- Change all the AccessInfos to assume their objects are dynamically used many
 -- times, as in the body of a `while`.
@@ -239,7 +241,6 @@ instance HasOCC SAtom where
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
       return $ Var (AtomVar n ty')
-    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
     atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where
@@ -259,15 +260,16 @@ instance HasOCC SLam where
     return lam
 
 instance HasOCC (PiType SimpIR) where
-  occ _ (PiType bs effTy) = do
-    -- The way this and hoistState are written, the pass will crash if any of
-    -- the AccessInfos reference this binder.
-    piTy@(PiType bs' _) <- refreshAbs (Abs bs effTy) \b effTy' ->
-      -- I (dougalm) am not sure about this. I'm just trying to mimic the old
-      -- behavior when this would go through the `HasOCC PairE` instance.
-      PiType b <$> occGeneric accessOnce effTy'
-    countFreeVarsAsOccurrencesB bs'
-    return piTy
+  occ _ (PiType bs effTy) = undefined
+  -- occ _ (PiType bs effTy) = do
+  --   -- The way this and hoistState are written, the pass will crash if any of
+  --   -- the AccessInfos reference this binder.
+  --   piTy@(PiType bs' _) <- refreshAbs (Abs bs effTy) \b effTy' ->
+  --     -- I (dougalm) am not sure about this. I'm just trying to mimic the old
+  --     -- behavior when this would go through the `HasOCC PairE` instance.
+  --     PiType b <$> occGeneric accessOnce effTy'
+  --   countFreeVarsAsOccurrencesB bs'
+  --   return piTy
 
 instance HasOCC (EffTy SimpIR) where
   occ _ (EffTy effs ty) = do
@@ -369,19 +371,20 @@ instance HasOCC SExpr where
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
 occAlt :: Access n -> IxExpr n -> Alt SimpIR n -> OCCM n (Alt SimpIR n)
-occAlt acc scrut alt = do
-  (Abs (b':>ty) body') <- refreshAbs alt \b@(nb:>_) body -> do
-    -- We use `unknown` here as a conservative approximation of the case binder
-    -- being the scrutinee with the top constructor removed.  If we statically
-    -- knew what that constructor was we could remove it, but I guess that
-    -- case-of-known-constructor optimization would have already eliminated this
-    -- case statement in that event.
-    scrutIx <- unknown $ sink scrut
-    extend nb scrutIx do
-      body' <- occNest (sink acc) body
-      return $ Abs b body'
-  ty' <- occTy ty
-  return $ Abs (b':>ty') body'
+occAlt acc scrut alt = undefined
+-- occAlt acc scrut alt = do
+--   (Abs (b':>ty) body') <- refreshAbs alt \b@(nb:>_) body -> do
+--     -- We use `unknown` here as a conservative approximation of the case binder
+--     -- being the scrutinee with the top constructor removed.  If we statically
+--     -- knew what that constructor was we could remove it, but I guess that
+--     -- case-of-known-constructor optimization would have already eliminated this
+--     -- case statement in that event.
+--     scrutIx <- unknown $ sink scrut
+--     extend nb scrutIx do
+--       body' <- occNest (sink acc) body
+--       return $ Abs b body'
+--   ty' <- occTy ty
+--   return $ Abs (b':>ty') body'
 
 occurrenceAndSummary :: SAtom n -> OCCM n (IxExpr n, SAtom n)
 occurrenceAndSummary atom = do
@@ -394,14 +397,14 @@ instance HasOCC (TypedHof SimpIR) where
 
 instance HasOCC (Hof SimpIR) where
   occ a hof = case hof of
-    For ann ixDict (UnaryLamExpr b body) -> do
-      ixDict' <- inlinedLater ixDict
-      occWithBinder (Abs b body) \b' body' -> do
-        extend b' (Occ.Var $ binderName b') do
-          (body'', bodyFV) <- isolated (occNest accessOnce body')
-          modify (<> abstractFor b' bodyFV)
-          return $ For ann ixDict' (UnaryLamExpr b' body'')
-    For _ _ _ -> error "For body should be a unary lambda expression"
+    -- For ann ixDict (UnaryLamExpr b body) -> do
+    --   ixDict' <- inlinedLater ixDict
+    --   occWithBinder (Abs b body) \b' body' -> do
+    --     extend b' (Occ.Var $ binderName b') do
+    --       (body'', bodyFV) <- isolated (occNest accessOnce body')
+    --       modify (<> abstractFor b' bodyFV)
+    --       return $ For ann ixDict' (UnaryLamExpr b' body'')
+    -- For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> do
       (body', bodyFV) <- isolated $ occNest accessOnce body
       modify (<> useManyTimes bodyFV)
@@ -451,23 +454,24 @@ instance HasOCC (Hof SimpIR) where
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) =
   LamExpr Empty <$> occNest acc body
-oneShot acc (ix:ixs) (LamExpr (Nest (BD b) bs) body) = do
-  occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
-    extend b' (sink ix) do
-      LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
-      return $ LamExpr (Nest (BD b') bs') body'
-oneShot _ _ _ = error "zip error"
+-- oneShot acc (ix:ixs) (LamExpr (Nest (BD b) bs) body) = do
+--   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
+--     extend b' (sink ix) do
+--       LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
+--       return $ LamExpr (Nest (BD b') bs') body'
+-- oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
 occWithBinder
   :: (RenameE e)
-  => Abs (Binder SimpIR) e n
-  -> (forall l. DExt n l => Binder SimpIR n l -> e l -> OCCM l a)
+  => Abs (BinderAndDecls SimpIR) e n
+  -> (forall l. DExt n l => BinderAndDecls SimpIR n l -> e l -> OCCM l a)
   -> OCCM n a
-occWithBinder (Abs (b:>ty) body) cont = do
-  ty' <- occTy ty
-  refreshAbs (Abs (b:>ty') body) cont
-{-# INLINE occWithBinder #-}
+occWithBinder _ _ = undefined
+-- occWithBinder (Abs (b:>ty) body) cont = do
+--   ty' <- occTy ty
+--   refreshAbs (Abs (b:>ty') body) cont
+-- {-# INLINE occWithBinder #-}
 
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case

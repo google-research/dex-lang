@@ -49,7 +49,6 @@ library
                      , Builder
                      , CUDA
                      , Cat
-                     , CheapReduction
                      , CheckType
                      , ConcreteSyntax
                      , Core
@@ -95,10 +94,10 @@ library
                      , Types.Primitives
                      , Types.OpNames
                      , Types.Source
-                     , QueryType
                      , QueryTypePure
                      , Util
                      , Vectorize
+                     , Visit
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval

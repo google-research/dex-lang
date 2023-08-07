@@ -21,14 +21,14 @@ import Unsafe.Coerce
 import Builder
 import Core
 import Imp
-import CheapReduction
 import IRVariants
 import Name
 import Subst
-import QueryType
+import QueryTypePure
 import Types.Core
 import Types.Primitives
 import Util (enumerate)
+import Visit
 
 -- === For loop resolution ===
 
@@ -59,7 +59,7 @@ import Util (enumerate)
 -- destination to a sub-block or sub-expression, hence "desintation
 -- passing style").
 
-type DestBlock = Abs (SBinder) SBlock
+type DestBlock = Abs (SBinderAndDecls) SBlock
 
 lowerFullySequential :: EnvReader m => Bool -> STopLam n -> m n (STopLam n)
 lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftEnvReaderM $ do
@@ -67,9 +67,11 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
     True -> do
       refreshAbs (Abs bs body) \bs' body' -> do
         let xs = Var <$> bindersVars bs'
-        EffTy _ resultTy <- instantiate piTy xs
+        resultTy <- liftBuilder $ buildScoped do
+          EffTy _ resultTy <- instantiate piTy (sink <$> xs)
+          return resultTy
         Abs b body'' <- lowerFullySequentialBlock resultTy body'
-        return $ LamExpr (bs' >>> UnaryNest (PlainBD b)) body''
+        return $ LamExpr (bs' >>> UnaryNest b) body''
     False -> do
       refreshAbs (Abs bs body) \bs' body' -> do
         body'' <- lowerFullySequentialBlockNoDest body'
@@ -78,10 +80,10 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
   return $ TopLam wantDestStyle piTy' lam
 lowerFullySequential _ (TopLam True _ _) = error "already in destination style"
 
-lowerFullySequentialBlock :: EnvReader m => SType n -> SBlock n -> m n (DestBlock n)
-lowerFullySequentialBlock resultTy b = liftAtomSubstBuilder do
-  let resultDestTy = RawRefTy resultTy
-  withFreshBinder (getNameHint @String "ans") resultDestTy \destBinder -> do
+lowerFullySequentialBlock :: EnvReader m => TypeBlock SimpIR n -> SBlock n -> m n (DestBlock n)
+lowerFullySequentialBlock (Abs decls resultTy) b = liftAtomSubstBuilder do
+  let resultDestTy = Abs decls $ RawRefTy resultTy
+  withFreshBD (getNameHint @String "ans") resultDestTy \destBinder -> do
     Abs destBinder <$> buildBlock do
       let dest = Var $ sink $ binderVar destBinder
       lowerBlockWithDest dest b $> UnitVal
@@ -102,7 +104,7 @@ instance ExprVisitorEmits (LowerM i o) SimpIR i o where
 instance Visitor (LowerM i o) SimpIR i o where
   visitAtom = visitAtomDefault
   visitType = visitTypeDefault
-  visitPi   = visitPiDefault
+  visitPi   = visitPiEmits
   visitLam  = visitLamEmits
 
 lowerExpr :: Emits o => SExpr i -> LowerM i o (SAtom o)
@@ -126,76 +128,79 @@ lowerFor
   :: Emits o
   => SType o -> Maybe (Dest SimpIR o) -> ForAnn -> IxType SimpIR i -> LamExpr SimpIR i
   -> LowerM i o (SExpr o)
-lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
-  ixTy' <- substM ixTy
-  ty' <- substM ty
-  case isSingletonType ansTy of
-    True -> do
-      body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
-        (i, _) <- fromPair $ Var b'
-        extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
-      void $ emitSeq dir ixTy' UnitVal body'
-      Atom . fromJust <$> singletonTypeVal ansTy
-    False -> do
-      initDest <- ProdVal . (:[]) <$> case maybeDest of
-        Just  d -> return d
-        Nothing -> emitOp $ DAMOp $ AllocDest ansTy
-      let destTy = getType initDest
-      body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
-        (i, destProd) <- fromPair $ Var b'
-        dest <- normalizeProj (ProjectProduct 0) destProd
-        idest <- emitOp =<< mkIndexRef dest i
-        extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
-      return $ PrimOp $ DAMOp $ Freeze ans
-lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
+lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (BD _ (ib:>ty)) body) = undefined
+-- lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
+--   ixTy' <- substM ixTy
+--   ty' <- substM ty
+--   case isSingletonType ansTy of
+--     True -> do
+--       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
+--         (i, _) <- fromPair $ Var b'
+--         extendSubst (ib @> SubstVal i) $ lowerBlock body $> UnitVal
+--       void $ emitSeq dir ixTy' UnitVal body'
+--       Atom . fromJust <$> singletonTypeVal ansTy
+--     False -> do
+--       initDest <- ProdVal . (:[]) <$> case maybeDest of
+--         Just  d -> return d
+--         Nothing -> emitOp $ DAMOp $ AllocDest ansTy
+--       let destTy = getType initDest
+--       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
+--         (i, destProd) <- fromPair $ Var b'
+--         dest <- normalizeProj (ProjectProduct 0) destProd
+--         idest <- emitOp =<< mkIndexRef dest i
+--         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
+--       ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
+--       return $ PrimOp $ DAMOp $ Freeze ans
+-- lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: forall i o. Emits o
   => Maybe (Dest SimpIR o) -> SType i -> [SAtom i] -> LowerM i o (SExpr o)
-lowerTabCon maybeDest tabTy elems = do
-  TabPi tabTy' <- substM tabTy
-  dest <- case maybeDest of
-    Just  d -> return d
-    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest $ TabPi tabTy'
-  Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
-    buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ Var $ sink ord
-  -- This is emitting a chain of RememberDest ops to force `dest` to be used
-  -- linearly, and to force reads of the `Freeze dest'` result not to be
-  -- reordered in front of the writes.
-  -- TODO: We technically don't need to sequentialize the writes, since the
-  -- slices are all independent of each other.  Do we need a new `JoinDests`
-  -- operation to represent that pattern?
-  let go incoming_dest [] = return incoming_dest
-      go incoming_dest ((ord, e):rest) = do
-        i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
-          lowerBlock ufoBlock
-        carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
-          idest <- indexRef (Var local_dest) (sink i)
-          place (FullDest idest) =<< visitAtom e
-          return UnitVal
-        go carried_dest rest
-  dest' <- go dest (enumerate elems)
-  return $ PrimOp $ DAMOp $ Freeze dest'
+lowerTabCon maybeDest tabTy elems = undefined
+-- lowerTabCon maybeDest tabTy elems = do
+--   TabPi tabTy' <- substM tabTy
+--   dest <- case maybeDest of
+--     Just  d -> return d
+--     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest $ TabPi tabTy'
+--   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
+--     buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ Var $ sink ord
+--   -- This is emitting a chain of RememberDest ops to force `dest` to be used
+--   -- linearly, and to force reads of the `Freeze dest'` result not to be
+--   -- reordered in front of the writes.
+--   -- TODO: We technically don't need to sequentialize the writes, since the
+--   -- slices are all independent of each other.  Do we need a new `JoinDests`
+--   -- operation to represent that pattern?
+--   let go incoming_dest [] = return incoming_dest
+--       go incoming_dest ((ord, e):rest) = do
+--         i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
+--           lowerBlock ufoBlock
+--         carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
+--           idest <- indexRef (Var local_dest) (sink i)
+--           place (FullDest idest) =<< visitAtom e
+--           return UnitVal
+--         go carried_dest rest
+--   dest' <- go dest (enumerate elems)
+--   return $ PrimOp $ DAMOp $ Freeze dest'
 
 lowerCase :: Emits o
   => Maybe (Dest SimpIR o) -> SAtom i -> [Alt SimpIR i] -> SType i
   -> LowerM i o (SExpr o)
-lowerCase maybeDest scrut alts resultTy = do
-  resultTy' <- substM resultTy
-  dest <- case maybeDest of
-    Just  d -> return d
-    Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest resultTy'
-  scrut' <- visitAtom scrut
-  dest' <- buildRememberDest "case_dest" dest \local_dest -> do
-    alts' <- forM alts \(Abs (b:>ty) body) -> do
-      ty' <- substM ty
-      buildAbs (getNameHint b) ty' \b' ->
-        extendSubst (b @> Rename (atomVarName b')) $
-          buildBlock do
-            lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
-    void $ mkCase (sink scrut') UnitTy alts' >>= emitExpr
-    return UnitVal
-  return $ PrimOp $ DAMOp $ Freeze dest'
+lowerCase maybeDest scrut alts resultTy = undefined
+-- lowerCase maybeDest scrut alts resultTy = do
+--   resultTy' <- substM resultTy
+--   dest <- case maybeDest of
+--     Just  d -> return d
+--     Nothing -> emitExpr $ PrimOp $ DAMOp $ AllocDest resultTy'
+--   scrut' <- visitAtom scrut
+--   dest' <- buildRememberDest "case_dest" dest \local_dest -> do
+--     alts' <- forM alts \(Abs (b:>ty) body) -> do
+--       ty' <- substM ty
+--       buildAbs (getNameHint b) ty' \b' ->
+--         extendSubst (b @> Rename (atomVarName b')) $
+--           buildBlock do
+--             lowerBlockWithDest (Var $ sink $ local_dest) body $> UnitVal
+--     void $ mkCase (sink scrut') UnitTy alts' >>= emitExpr
+--     return UnitVal
+--   return $ PrimOp $ DAMOp $ Freeze dest'
 
 -- Destination-passing traversals
 --
@@ -239,9 +244,6 @@ lookupDest = flip lookupNameMap
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
   Var v -> return $ Just $ singletonNameMap (atomVarName v) $ FullDest dest
-  ProjectElt _ p x -> do
-    (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMap (atomVarName v) $ ProjDest ps dest
   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
@@ -323,36 +325,37 @@ lowerExprWithDest dest expr = case expr of
       :: SType o -> LamExpr SimpIR i
       -> (Maybe (Dest SimpIR o) -> LamExpr SimpIR o -> LowerM i o (Hof SimpIR o))
       -> LowerM i o (SExpr o)
-    traverseRWS referentTy lam@(LamExpr (BinaryNest _ rb) _) cont = do
-      unpackRWSDest dest >>= \case
-        Nothing -> generic
-        Just (bodyDest, refDest) -> do
-          hof <- cont refDest =<<
-            buildEffLam (getNameHint rb) referentTy \hb' rb' ->
-              withInstantiated lam [Var hb', Var rb'] \body ->
-                case bodyDest of
-                  Nothing -> lowerBlock body
-                  Just bd -> lowerBlockWithDest (sink bd) body
-          PrimOp . Hof <$> mkTypedHof hof
+    traverseRWS referentTy lam@(LamExpr (BinaryNest _ rb) _) cont = undefined
+    -- traverseRWS referentTy lam@(LamExpr (BinaryNest _ rb) _) cont = do
+    --   unpackRWSDest dest >>= \case
+    --     Nothing -> generic
+    --     Just (bodyDest, refDest) -> do
+    --       hof <- cont refDest =<<
+    --         buildEffLam (getNameHint rb) referentTy \hb' rb' ->
+    --           withInstantiated lam [Var hb', Var rb'] \body ->
+    --             case bodyDest of
+    --               Nothing -> lowerBlock body
+    --               Just bd -> lowerBlockWithDest (sink bd) body
+    --       PrimOp . Hof <$> mkTypedHof hof
 
     traverseRWS _ _ _ = error "Expected a binary lambda expression"
 
-    unpackRWSDest = \case
-      Nothing -> return Nothing
-      Just d -> case d of
-        FullDest fd -> do
-          bd <- getProjRef (ProjectProduct 0) fd
-          rd <- getProjRef (ProjectProduct 1) fd
-          return $ Just (Just bd, Just rd)
-        ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
-        ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
-        ProjDest _ _ -> return Nothing
+    -- unpackRWSDest = \case
+    --   Nothing -> return Nothing
+    --   Just d -> case d of
+    --     FullDest fd -> do
+    --       bd <- getProjRef (ProjectProduct 0) fd
+    --       rd <- getProjRef (ProjectProduct 1) fd
+    --       return $ Just (Just bd, Just rd)
+    --     ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
+    --     ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
+    --     ProjDest _ _ -> return Nothing
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
   FullDest d   -> void $ emitOp $ DAMOp $ Place d x
   ProjDest p d -> do
-    x' <- normalizeNaryProj (NE.toList p) x
+    x' <- getNaryProj (NE.toList p) x
     void $ emitOp $ DAMOp $ Place d x'
 
 -- === Extensions to the name system ===

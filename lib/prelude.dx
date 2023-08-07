@@ -5,9 +5,7 @@
 '## Essentials
 ### Primitive Types
 
-Type = %TyKind()
 Heap = %HeapType()
-Effects = %EffKind()
 
 Int64 = %Int64()
 Int32 = %Int32()
