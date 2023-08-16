@@ -1235,7 +1235,7 @@ buildImpFunction cc argHintsTys body = do
   return $ ImpFunction impFun $ Abs bs $ ImpBlock decls results
 
 buildImpNaryAbs
-  :: (SinkableE e, HasNamesE e, RenameE e, HoistableE e)
+  :: HasNamesE e
   => [(NameHint, IType)]
   -> (forall l. (Emits l, DExt n l) => [(Name ImpNameC l, BaseType)] -> SubstImpM i l (e l))
   -> SubstImpM i n (Abs (Nest IBinder) (Abs (Nest ImpDecl) e) n)

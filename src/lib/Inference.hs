@@ -163,51 +163,32 @@ getInstanceType (InstanceDef className roleExpls bs params _) = liftEnvReaderM d
 
 -- === Inferer interface ===
 
-class ( MonadFail1 m, Fallible1 m, Catchable1 m, CtxReader1 m, Builder CoreIR m )
-      => InfBuilder (m::MonadKind1) where
-
-  -- XXX: we should almost always used the zonking `buildDeclsInf` ,
-  -- except where it's not possible because the result isn't atom-substitutable,
-  -- such as the source map at the top level.
-  buildDeclsInfUnzonked
-    :: (SinkableE e, HoistableE e, RenameE e)
-    => EmitsInf n
-    => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
-    -> m n (Abs (Nest CDecl) e n)
-
-  buildAbsInf
-    :: (SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e)
-    => EmitsInf n
-    => NameHint -> Explicitness -> CType n
-    -> (forall l. (EmitsInf l, DExt n l) => CAtomVar l -> m l (e l))
-    -> m n (Abs CBinder e n)
-
 buildAbsInfWithExpl
-  :: (InfBuilder m, SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e)
+  :: (HasNamesE e, SubstE AtomSubstVal e)
   => EmitsInf n
   => NameHint -> Explicitness -> CType n
-  -> (forall l. (EmitsInf l, DExt n l) => CAtomVar l -> m l (e l))
-  -> m n (Abs (WithExpl CBinder) e n)
+  -> (forall l. (EmitsInf l, DExt n l) => CAtomVar l -> InfererM i l (e l))
+  -> InfererM i n (Abs (WithExpl CBinder) e n)
 buildAbsInfWithExpl hint expl ty cont = do
   Abs b e <- buildAbsInf hint expl ty cont
   return $ Abs (WithAttrB expl b) e
 
 buildNaryAbsInfWithExpl
-  :: (Inferer m, SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e, Inferer m)
+  :: (HasNamesE e, SubstE AtomSubstVal e)
   => EmitsInf n
   => [Explicitness] -> EmptyAbs (Nest CBinder) n
-  -> (forall l. (EmitsInf l, DExt n l) => [CAtomVar l] -> m i l (e l))
-  -> m i n (Abs (Nest (WithExpl CBinder)) e n)
+  -> (forall l. (EmitsInf l, DExt n l) => [CAtomVar l] -> InfererM i l (e l))
+  -> InfererM i n (Abs (Nest (WithExpl CBinder)) e n)
 buildNaryAbsInfWithExpl expls bs cont = do
   Abs bs' e <- buildNaryAbsInf expls bs cont
   return $ Abs (zipAttrs expls bs') e
 
 buildNaryAbsInf
-  :: (SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e, Inferer m)
+  :: (HasNamesE e, SubstE AtomSubstVal e)
   => EmitsInf n
   => [Explicitness] -> EmptyAbs (Nest CBinder) n
-  -> (forall l. (EmitsInf l, DExt n l) => [CAtomVar l] -> m i l (e l))
-  -> m i n (Abs (Nest CBinder) e n)
+  -> (forall l. (EmitsInf l, DExt n l) => [CAtomVar l] -> InfererM i l (e l))
+  -> InfererM i n (Abs (Nest CBinder) e n)
 buildNaryAbsInf [] (Abs Empty UnitE) cont = getDistinct >>= \Distinct -> Abs Empty <$> cont []
 buildNaryAbsInf (expl:expls) (Abs (Nest (b:>ty) bs) UnitE) cont =
   prependAbs <$> buildAbsInf (getNameHint b) expl ty \v -> do
@@ -216,20 +197,11 @@ buildNaryAbsInf (expl:expls) (Abs (Nest (b:>ty) bs) UnitE) cont =
 buildNaryAbsInf _ _ _ = error "zip error"
 
 buildDeclsInf
-  :: (SubstE AtomSubstVal e, RenameE e, Solver m, InfBuilder m)
-  => (SinkableE e, HoistableE e)
+  :: (HasNamesE e, SubstE AtomSubstVal e)
   => EmitsInf n
-  => (forall l. (EmitsBoth l, DExt n l) => m l (e l))
-  -> m n (Abs (Nest CDecl) e n)
+  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (e l))
+  -> InfererM i n (Abs (Nest CDecl) e n)
 buildDeclsInf cont = buildDeclsInfUnzonked $ cont >>= zonk
-
-type InfBuilder2 (m::MonadKind2) = forall i. InfBuilder (m i)
-
-class (SubstReader Name m, InfBuilder2 m, Solver2 m)
-      => Inferer (m::MonadKind2) where
-  liftSolverMInf :: EmitsInf o => SolverM o a -> m i o a
-  addDefault :: CAtomName o -> DefaultType -> m i o ()
-  getDefaults :: m i o (Defaults o)
 
 applyDefaults :: EmitsInf o => InfererM i o ()
 applyDefaults = do
@@ -429,8 +401,8 @@ extendOutMapWithConstraints env us ss (Constraints allCs) = case tryUnsnoc allCs
     (env'', us'', ss''')
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
-  { runInfererM' :: SubstReaderT Name (InplaceT InfOutMap InfOutFrag FallibleM) i o a }
-  deriving (Functor, Applicative, Monad, MonadFail,
+  { runInfererM' :: SubstReaderT Name (InplaceT InfOutMap InfOutFrag SearcherM) i o a }
+  deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
             ScopeReader, Fallible, Catchable, CtxReader, SubstReader Name)
 
 liftInfererMSubst :: (Fallible2 m, SubstReader Name m, EnvReader2 m)
@@ -440,7 +412,7 @@ liftInfererMSubst cont = do
   subst <- getSubst
   Distinct <- getDistinct
   (InfOutFrag REmpty _ _, result) <-
-    liftExcept $ runFallibleM $ runInplaceT (initInfOutMap env) $
+    liftExcept $ liftM fromJust $ runSearcherM $ runInplaceT (initInfOutMap env) $
       runSubstReaderT subst $ runInfererM' $ cont
   return result
 
@@ -481,29 +453,34 @@ emitInfererM hint emission = do
   return $ AtomVar v $ getType emission
 {-# INLINE emitInfererM #-}
 
-instance Solver (InfererM i) where
-  extendSolverSubst v ty = do
-   InfererM $ SubstReaderT $ lift $
-     void $ extendTrivialInplaceT $
-       InfOutFrag REmpty mempty (singleConstraint v ty)
-  {-# INLINE extendSolverSubst #-}
+extendSolverSubst :: CAtomName n -> CAtom n -> InfererM i n ()
+extendSolverSubst v ty = do
+ InfererM $ SubstReaderT $ lift $
+   void $ extendTrivialInplaceT $
+     InfOutFrag REmpty mempty (singleConstraint v ty)
+{-# INLINE extendSolverSubst #-}
 
-  zonk e = InfererM $ SubstReaderT $ lift do
-    Distinct <- getDistinct
-    solverOutMap <- getOutMapInplaceT
-    return $ zonkWithOutMap solverOutMap e
-  {-# INLINE zonk #-}
+zonk :: (SubstE AtomSubstVal e, SinkableE e) => e n -> InfererM i n (e n)
+zonk e = InfererM $ SubstReaderT $ lift do
+  Distinct <- getDistinct
+  solverOutMap <- getOutMapInplaceT
+  return $ zonkWithOutMap solverOutMap e
+{-# INLINE zonk #-}
 
-  emitSolver binding = emitInfererM (getNameHint @String "?") $ RightE binding
-  {-# INLINE emitSolver #-}
+emitSolver :: EmitsInf n => SolverBinding n -> InfererM i n (CAtomVar n)
+emitSolver binding = emitInfererM (getNameHint @String "?") $ RightE binding
+{-# INLINE emitSolver #-}
 
-  solveLocal cont = do
-    Abs (InfOutFrag unsolvedInfVars _ _) result <- dceInfFrag =<< runLocalInfererM cont
-    case unRNest unsolvedInfVars of
-      Empty -> return result
-      Nest (b:>RightE (InfVarBound ty (ctx, desc))) _ -> addSrcContext ctx $
-        throw TypeErr $ formatAmbiguousVarErr (binderName b) ty desc
-      _ -> error "shouldn't be possible"
+solveLocal :: HasNamesE e
+           => (forall l. (EmitsInf l, Ext n l, Distinct l) => InfererM i l (e l))
+           -> InfererM i n (e n)
+solveLocal cont = do
+  Abs (InfOutFrag unsolvedInfVars _ _) result <- dceInfFrag =<< runLocalInfererM cont
+  case unRNest unsolvedInfVars of
+    Empty -> return result
+    Nest (b:>RightE (InfVarBound ty (ctx, desc))) _ -> addSrcContext ctx $
+      throw TypeErr $ formatAmbiguousVarErr (binderName b) ty desc
+    _ -> error "shouldn't be possible"
 
 formatAmbiguousVarErr :: CAtomName n -> CType n' -> InfVarDesc -> String
 formatAmbiguousVarErr infVar ty = \case
@@ -516,39 +493,52 @@ formatAmbiguousVarErr infVar ty = \case
   MiscInfVar ->
     "Ambiguous type variable: " ++ pprint infVar ++ ": " ++ pprint ty
 
-instance InfBuilder (InfererM i) where
-  buildDeclsInfUnzonked cont = do
-    InfererM $ SubstReaderT $ ReaderT \env -> do
-      Abs frag result <- locallyMutableInplaceT (do
-        Emits    <- fabricateEmitsEvidenceM
-        EmitsInf <- fabricateEmitsInfEvidenceM
-        runSubstReaderT (sink env) $ runInfererM' cont)
-        (\d e -> return $ Abs d e)
-      extendInplaceT =<< hoistThroughDecls frag result
+-- XXX: we should almost always used the zonking `buildDeclsInf` ,
+-- except where it's not possible because the result isn't atom-substitutable,
+-- such as the source map at the top level.
+buildDeclsInfUnzonked
+  :: (SinkableE e, HoistableE e, RenameE e)
+  => EmitsInf n
+  => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (e l))
+  -> InfererM i n (Abs (Nest CDecl) e n)
+buildDeclsInfUnzonked cont = do
+  InfererM $ SubstReaderT $ ReaderT \env -> do
+    Abs frag result <- locallyMutableInplaceT (do
+      Emits    <- fabricateEmitsEvidenceM
+      EmitsInf <- fabricateEmitsInfEvidenceM
+      runSubstReaderT (sink env) $ runInfererM' cont)
+      (\d e -> return $ Abs d e)
+    extendInplaceT =<< hoistThroughDecls frag result
 
-  buildAbsInf hint expl ty cont = do
-    ab <- InfererM $ SubstReaderT $ ReaderT \env -> do
-      extendInplaceT =<< withFreshBinder hint ty \bWithTy@(b:>_) -> do
-        ab <- locallyMutableInplaceT (do
-          v <- sinkM $ binderVar bWithTy
-          extendInplaceTLocal (extendSynthCandidatesInf expl $ atomVarName v) do
-            EmitsInf <- fabricateEmitsInfEvidenceM
-            -- zonking is needed so that dceInfFrag works properly
-            runSubstReaderT (sink env) (runInfererM' $ cont v >>= zonk))
-          (\d e -> return $ Abs d e)
-        ab' <- dceInfFrag ab
-        refreshAbs ab' \infFrag result -> do
-          case exchangeBs $ PairB b infFrag of
-            HoistSuccess (PairB infFrag' b') -> do
-              return $ withSubscopeDistinct b' $
-                Abs infFrag' $ Abs b' result
-            HoistFailure vs -> do
-              throw EscapedNameErr $ (pprint vs)
-                ++ "\nFailed to exchange binders in buildAbsInf"
-                ++ "\n" ++ pprint infFrag
-    Abs b e <- return ab
-    ty' <- zonk ty
-    return $ Abs (b:>ty') e
+buildAbsInf
+  :: (SinkableE e, HoistableE e, RenameE e, SubstE AtomSubstVal e)
+  => EmitsInf n
+  => NameHint -> Explicitness -> CType n
+  -> (forall l. (EmitsInf l, DExt n l) => CAtomVar l -> InfererM i l (e l))
+  -> InfererM i n (Abs CBinder e n)
+buildAbsInf hint expl ty cont = do
+  ab <- InfererM $ SubstReaderT $ ReaderT \env -> do
+    extendInplaceT =<< withFreshBinder hint ty \bWithTy@(b:>_) -> do
+      ab <- locallyMutableInplaceT (do
+        v <- sinkM $ binderVar bWithTy
+        extendInplaceTLocal (extendSynthCandidatesInf expl $ atomVarName v) do
+          EmitsInf <- fabricateEmitsInfEvidenceM
+          -- zonking is needed so that dceInfFrag works properly
+          runSubstReaderT (sink env) (runInfererM' $ cont v >>= zonk))
+        (\d e -> return $ Abs d e)
+      ab' <- dceInfFrag ab
+      refreshAbs ab' \infFrag result -> do
+        case exchangeBs $ PairB b infFrag of
+          HoistSuccess (PairB infFrag' b') -> do
+            return $ withSubscopeDistinct b' $
+              Abs infFrag' $ Abs b' result
+          HoistFailure vs -> do
+            throw EscapedNameErr $ (pprint vs)
+              ++ "\nFailed to exchange binders in buildAbsInf"
+              ++ "\n" ++ pprint infFrag
+  Abs b e <- return ab
+  ty' <- zonk ty
+  return $ Abs (b:>ty') e
 
 dceInfFrag
   :: (EnvReader m, EnvExtender m, Fallible1 m, RenameE e, HoistableE e)
@@ -560,23 +550,19 @@ dceInfFrag ab@(Abs frag@(InfOutFrag bs _ _) e) =
       Abs frag' (Abs Empty e') -> return $ Abs frag' e'
       _ -> error "Shouldn't have any decls without `Emits` constraint"
 
-instance Inferer InfererM where
-  liftSolverMInf m = InfererM $ SubstReaderT $ lift $
-    liftBetweenInplaceTs (liftExcept . liftM fromJust . runSearcherM) id liftSolverOutFrag $
-      runSolverM' m
-  {-# INLINE liftSolverMInf #-}
+addDefault :: CAtomName o -> DefaultType ->InfererM  i o ()
+addDefault v defaultType =
+  InfererM $ SubstReaderT $ lift $
+    extendTrivialInplaceT $ InfOutFrag REmpty defaults mempty
+  where
+    defaults = case defaultType of
+      IntDefault -> Defaults (freeVarsE v) mempty
+      NatDefault -> Defaults mempty (freeVarsE v)
 
-  addDefault v defaultType =
-    InfererM $ SubstReaderT $ lift $
-      extendTrivialInplaceT $ InfOutFrag REmpty defaults mempty
-    where
-      defaults = case defaultType of
-        IntDefault -> Defaults (freeVarsE v) mempty
-        NatDefault -> Defaults mempty (freeVarsE v)
-
-  getDefaults = InfererM $ SubstReaderT $ lift do
-    InfOutMap _ _ defaults _ _ <- getOutMapInplaceT
-    return defaults
+getDefaults :: InfererM i o (Defaults o)
+getDefaults = InfererM $ SubstReaderT $ lift do
+  InfOutMap _ _ defaults _ _ <- getOutMapInplaceT
+  return defaults
 
 instance Builder CoreIR (InfererM i) where
   rawEmitDecl hint ann expr = do
@@ -1800,7 +1786,7 @@ identifySuperclasses ab = do
     return $ Abs bs' e
 
 withUBinders
-  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e)
   => UAnnExplBinders req i i'
   -> (forall o'. (EmitsInf o', DExt o o') => [CAtomVar o'] -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (WithExpl CBinder)) e o)
@@ -1815,7 +1801,7 @@ withUBinders bs cont = case bs of
   _ -> error "zip error"
 
 withConstraintBinders
-  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, RenameE e, SinkableE e)
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e)
   => [UConstraint i]
   -> CAtomVar o
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i o' (e o'))
@@ -1829,7 +1815,7 @@ withConstraintBinders (c:cs) v cont = do
     withConstraintBinders cs (sink v) cont
 
 withRoleUBinders
-  :: forall i i' o e req. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e, SinkableE e)
+  :: forall i i' o e req. (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e)
   => UAnnExplBinders req i i'
   -> (forall o'. (EmitsInf o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (WithRoleExpl CBinder)) e o)
@@ -1918,7 +1904,7 @@ checkULam (ULamExpr (_, lamBs) lamAppExpl lamEffs lamResultTy body)
   coreLamExpr piAppExpl expls' $ Abs bs' body'
 
 checkLamBinders
-  :: (EmitsInf o, SinkableE e, HoistableE e, SubstE AtomSubstVal e, RenameE e)
+  :: (EmitsInf o, HasNamesE e, SubstE AtomSubstVal e)
   => [Explicitness] -> Nest CBinder o any
   -> Nest UOptAnnBinder i i'
   -> (forall o'. (EmitsInf o', DExt o o') => [CAtomVar o'] -> InfererM i' o' (e o'))
@@ -2056,14 +2042,14 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
       bindLetPats ps args $ cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
-inferParams :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
+inferParams :: (EmitsBoth o, HasNamesE e, SubstE AtomSubstVal e)
             => SourceName -> [RoleExpl] -> Abs (Nest CBinder) e o -> InfererM i o (TyConParams o, e o)
 inferParams sourceName roleExpls (Abs paramBs bodyTop) = do
   let expls = snd <$> roleExpls
   (params, e') <- go expls (Abs paramBs bodyTop)
   return (TyConParams expls params, e')
  where
-  go :: (EmitsBoth o, HasNamesE e, SinkableE e, SubstE AtomSubstVal e)
+  go :: (EmitsBoth o, HasNamesE e, SubstE AtomSubstVal e)
      => [Explicitness] -> Abs (Nest CBinder) e o -> InfererM i o ([CAtom o], e o)
   go [] (Abs Empty body) = return ([], body)
   go (expl:expls) (Abs (Nest (b:>ty) bs) body) = do
@@ -2236,14 +2222,6 @@ newtype SolverSubst n = SolverSubst (M.Map (CAtomName n) (CAtom n))
 instance Pretty (SolverSubst n) where
   pretty (SolverSubst m) = pretty $ M.toList m
 
-class (CtxReader1 m, EnvReader m) => Solver (m::MonadKind1) where
-  zonk :: (SubstE AtomSubstVal e, SinkableE e) => e n -> m n (e n)
-  extendSolverSubst :: CAtomName n -> CAtom n -> m n ()
-  emitSolver :: EmitsInf n => SolverBinding n -> m n (CAtomVar n)
-  solveLocal :: (SinkableE e, HoistableE e, RenameE e)
-             => (forall l. (EmitsInf l, Ext n l, Distinct l) => m l (e l))
-             -> m n (e n)
-
 type SolverOutMap = InfOutMap
 
 data SolverOutFrag (n::S) (l::S) =
@@ -2285,10 +2263,7 @@ instance ExtOutMap InfOutMap SolverOutFrag where
   extendOutMap infOutMap outFrag =
     extendOutMap infOutMap $ liftSolverOutFrag outFrag
 
-newtype SolverM (n::S) (a:: *) =
-  SolverM { runSolverM' :: InplaceT SolverOutMap SolverOutFrag SearcherM n a }
-  deriving (Functor, Applicative, Monad, MonadFail, Alternative, Searcher,
-            ScopeReader, Fallible, CtxReader)
+type SolverM = InfererM VoidS
 
 liftSolverM :: EnvReader m => SolverM n a -> m n (Except a)
 liftSolverM cont = do
@@ -2296,17 +2271,11 @@ liftSolverM cont = do
   Distinct <- getDistinct
   return do
     maybeResult <- runSearcherM $ runInplaceT (initInfOutMap env) $
-                   runSolverM' $ cont
+                   runSubstReaderT (newSubst absurdNameFunction) $ runInfererM' cont
     case maybeResult of
       Nothing -> throw TypeErr "No solution"
       Just (_, result) -> return result
 {-# INLINE liftSolverM #-}
-
-instance EnvReader SolverM where
-  unsafeGetEnv = SolverM do
-    InfOutMap env _ _ _ _ <- getOutMapInplaceT
-    return env
-  {-# INLINE unsafeGetEnv #-}
 
 newtype SolverEmission (n::S) (l::S) = SolverEmission (BinderP (AtomNameC CoreIR) SolverBinding n l)
 instance ExtOutMap SolverOutMap SolverEmission where
@@ -2315,51 +2284,15 @@ instance ExtOutFrag SolverOutFrag SolverEmission where
   extendOutFrag (SolverOutFrag es substs) (SolverEmission e) =
     withSubscopeDistinct e $ SolverOutFrag (RNest es e) (sink substs)
 
-instance Solver SolverM where
-  extendSolverSubst v ty = SolverM $
-    void $ extendTrivialInplaceT $
-      SolverOutFrag REmpty (singleConstraint v ty)
-  {-# INLINE extendSolverSubst #-}
-
-  zonk e = SolverM do
-    Distinct <- getDistinct
-    solverOutMap <- getOutMapInplaceT
-    return $ zonkWithOutMap solverOutMap $ sink e
-  {-# INLINE zonk #-}
-
-  emitSolver binding = do
-    v <- SolverM $ freshExtendSubInplaceT (getNameHint @String "?") \b ->
-      (SolverEmission (b:>binding), binderName b)
-    toAtomVar v
-  {-# INLINE emitSolver #-}
-
-  solveLocal cont = SolverM do
-    results <- locallyMutableInplaceT (do
-      Distinct <- getDistinct
-      EmitsInf <- fabricateEmitsInfEvidenceM
-      runSolverM' cont) (\d e -> return $ Abs d e)
-    Abs (SolverOutFrag unsolvedInfNames _) result <- return results
-    case unsolvedInfNames of
-      REmpty -> return result
-      _      -> case hoist unsolvedInfNames result of
-        HoistSuccess result' -> return result'
-        HoistFailure vs ->
-          throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
-  {-# INLINE solveLocal #-}
-
-instance Unifier SolverM
-
-freshInferenceName :: (EmitsInf n, Solver m) => InfVarDesc -> Kind CoreIR n -> m n (CAtomVar n)
+freshInferenceName :: EmitsInf n => InfVarDesc -> Kind CoreIR n -> InfererM i n (CAtomVar n)
 freshInferenceName desc k = do
   ctx <- srcPosCtx <$> getErrCtx
   emitSolver $ InfVarBound k (ctx, desc)
 {-# INLINE freshInferenceName #-}
 
-freshSkolemName :: (EmitsInf n, Solver m) => Kind CoreIR n -> m n (CAtomVar n)
+freshSkolemName :: EmitsInf n => Kind CoreIR n -> InfererM i n (CAtomVar n)
 freshSkolemName k = emitSolver $ SkolemBound k
 {-# INLINE freshSkolemName #-}
-
-type Solver2 (m::MonadKind2) = forall i. Solver (m i)
 
 emptySolverSubst :: SolverSubst n
 emptySolverSubst = SolverSubst mempty
@@ -2428,9 +2361,7 @@ constrainEq t1 t2 = do
          ++ (case infVars of
                Empty -> ""
                _ -> "\n(Solving for: " ++ pprint (nestToList pprint infVars) ++ ")")
-  void $ addContext msg $ liftSolverMInf $ unify t1' t2'
-
-class (Alternative1 m, Searcher1 m, Fallible1 m, Solver m) => Unifier m
+  void $ addContext msg $ withSubst (newSubst absurdNameFunction) $ unify t1' t2'
 
 class (AlphaEqE e, SinkableE e, SubstE AtomSubstVal e) => Unifiable (e::E) where
   unifyZonked :: EmitsInf n => e n -> e n -> SolverM n ()
@@ -2585,19 +2516,19 @@ isSkolemName v = lookupEnv v >>= \case
   _ -> return False
 {-# INLINE isSkolemName #-}
 
-freshType :: (EmitsInf n, Solver m) => m n (CType n)
+freshType :: EmitsInf n => InfererM i n (CType n)
 freshType = TyVar <$> freshInferenceName MiscInfVar TyKind
 {-# INLINE freshType #-}
 
-freshAtom :: (EmitsInf n, Solver m) => Type CoreIR n -> m n (CAtom n)
+freshAtom :: EmitsInf n => Type CoreIR n -> InfererM i n (CAtom n)
 freshAtom t = Var <$> freshInferenceName MiscInfVar t
 {-# INLINE freshAtom #-}
 
-freshEff :: (EmitsInf n, Solver m) => m n (EffectRow CoreIR n)
+freshEff :: EmitsInf n => InfererM i n (EffectRow CoreIR n)
 freshEff = EffectRow mempty . EffectRowTail <$> freshInferenceName MiscInfVar EffKind
 {-# INLINE freshEff #-}
 
-renameForPrinting :: (EnvReader m, HoistableE e, SinkableE e, RenameE e)
+renameForPrinting :: (EnvReader m, HasNamesE e)
                    => e n -> m n (Abs (Nest (AtomNameBinder CoreIR)) e n)
 renameForPrinting e = do
   infVars <- filterM isInferenceVar $ freeAtomVarsList e
@@ -2889,7 +2820,7 @@ coreLamExpr appExpl expls ab = liftEnvReaderM do
     return $ CoreLamExpr (CorePiType appExpl expls bs' (EffTy effs' resultTy)) (LamExpr bs' body')
 
 withGivenBinders
-  :: (SinkableE e, RenameE e) => [Explicitness] -> Abs (Nest CBinder) e n
+  :: HasNamesE e => [Explicitness] -> Abs (Nest CBinder) e n
   -> (forall l. DExt n l => Nest CBinder n l -> e l -> SyntherM l a)
   -> SyntherM n a
 withGivenBinders explsTop (Abs bsTop e) contTop =
@@ -3123,7 +3054,7 @@ buildBlockInf cont = do
 {-# INLINE buildBlockInf #-}
 
 buildBlockInfWithRecon
-  :: (EmitsInf n, RenameE e, HoistableE e, SinkableE e)
+  :: (EmitsInf n, HasNamesE e)
   => (forall l. (EmitsBoth l, DExt n l) => InfererM i l (e l))
   -> InfererM i n (PairE CBlock (ReconAbs CoreIR e) n)
 buildBlockInfWithRecon cont = do

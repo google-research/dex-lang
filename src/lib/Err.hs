@@ -347,6 +347,10 @@ instance Alternative SearcherM where
       Just ans -> return $ Just ans
       Nothing -> m2
 
+instance Catchable SearcherM where
+  SearcherM (MaybeT m) `catchErr` handler = SearcherM $ MaybeT $
+    m `catchErr` \errs -> runMaybeT $ runSearcherM' $ handler errs
+
 instance Searcher SearcherM where
   (<!>) = (<|>)
   {-# INLINE (<!>) #-}

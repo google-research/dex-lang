@@ -228,7 +228,7 @@ class SinkableB b => RenameB (b::B) where
 class (SinkableV v , forall c. Color c => RenameE (v c)) => RenameV (v::V)
 
 
-type HasNamesE e = (RenameE e, HoistableE e)
+type HasNamesE e = (RenameE e, SinkableE e, HoistableE e)
 type HasNamesB = RenameB
 
 instance RenameV Name
@@ -3050,6 +3050,12 @@ toSubstPairs (UnsafeMakeSubst m) =
 
 data WithRenamer e i o where
   WithRenamer :: SubstFrag Name i i' o -> e i' -> WithRenamer e i o
+
+instance Category UnitB where
+  id = UnitB
+  {-# INLINE id #-}
+  UnitB . UnitB = UnitB
+  {-# INLINE (.) #-}
 
 instance Category (Nest b) where
   id = Empty

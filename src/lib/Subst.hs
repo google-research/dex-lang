@@ -302,7 +302,8 @@ instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
 
 deriving instance (Monad1 m, MonadFail1   m) => MonadFail   (SubstReaderT v m i o)
 deriving instance (Monad1 m, Alternative1 m) => Alternative (SubstReaderT v m i o)
-deriving instance (Fallible1 m) => Fallible (SubstReaderT v m i o)
+deriving instance Fallible1  m => Fallible  (SubstReaderT v m i o)
+deriving instance Searcher1  m => Searcher  (SubstReaderT v m i o)
 deriving instance Catchable1 m => Catchable (SubstReaderT v m i o)
 deriving instance CtxReader1 m => CtxReader (SubstReaderT v m i o)
 
