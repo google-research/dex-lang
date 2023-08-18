@@ -233,9 +233,6 @@ instance IRRep r => PrettyPrec (DepPairType r n) where
   prettyPrec (DepPairType _ b rhs) =
     atPrec ArgPrec $ align $ group $ parensSep (spaceIfColinear <> "&> ") [p b, p rhs]
 
-instance Pretty (EffectOpType n) where
-  pretty (EffectOpType pol ty) = "[" <+> p pol <+> ":" <+> p ty <+> "]"
-
 instance Pretty (CoreLamExpr n) where
   pretty (CoreLamExpr _ lam) = p lam
 
@@ -254,7 +251,6 @@ instance IRRep r => PrettyPrec (Atom r n) where
     ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
-    DictHole _ e _ -> atPrec LowestPrec $ "synthesize" <+> pApp e
     TypeAsAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
@@ -399,6 +395,7 @@ instance Pretty IxMethod where
 instance Pretty (SolverBinding n) where
   pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty
   pretty (SkolemBound  ty  ) = "Skolem variable of type:"    <+> p ty
+  pretty (DictBound    ty  ) = "Dictionary variable of type:"  <+> p ty
 
 instance Pretty (Binding c n) where
   pretty b = case b of
@@ -623,10 +620,10 @@ instance Pretty (UAlt n) where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
 
 instance Pretty (UTopDecl n l) where
-  pretty (UDataDefDecl (UDataDef nm (_, bs) dataCons) bTyCon bDataCons) =
+  pretty (UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons) =
     "data" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines (zip (toList $ fromNest bDataCons) dataCons))
-  pretty (UStructDecl bTyCon (UStructDef nm (_, bs) fields defs)) =
+  pretty (UStructDecl bTyCon (UStructDef nm bs fields defs)) =
     "struct" <+> p bTyCon <+> p nm <+> spaced (fromNest bs) <+> "where" <> nest 2
        (prettyLines fields <> prettyLines defs)
   pretty (UInterface params methodTys interfaceName methodNames) =
@@ -641,14 +638,6 @@ instance Pretty (UTopDecl n l) where
   pretty (UInstance className bs params methods (LeftB v) _) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> prettyLines methods
-  pretty (UEffectDecl opTys effName opNames) =
-    "effect" <+> p effName <> hardline <> foldMap (<>hardline) ops
-    where ops = [ p pol <+> p b <> ":" <>  p (unsafeCoerceE ty)
-                 | (b, UEffectOpType pol ty) <- zip (toList $ fromNest opNames) opTys]
-  pretty (UHandlerDecl effName bodyTyArg tyArgs retEff retTy opDefs name) =
-    "handler" <+> p name <+> "of" <+> p effName <+> p bodyTyArg <+> p tyArgs
-    <+> ":" <+> p retEff <+> p retTy <> hardline
-    <> foldMap ((<>hardline) . p) opDefs
   pretty (ULocalDecl decl) = p decl
 
 instance Pretty (UDecl' n l) where
@@ -656,15 +645,6 @@ instance Pretty (UDecl' n l) where
     align $ p ann <+> p b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UExprDecl expr) = p expr
   pretty UPass = "pass"
-
-instance Pretty (UEffectOpDef n) where
-  pretty (UEffectOpDef rp n body) = p rp <+> p n <+> "=" <+> p body
-  pretty (UReturnOpDef body) = "return =" <+> p body
-
-instance Pretty UResumePolicy where
-  pretty UNoResume = "jmp"
-  pretty ULinearResume = "def"
-  pretty UAnyResume = "ctl"
 
 instance Pretty (UEffectRow n) where
   pretty (UEffectRow x Nothing) = encloseSep "<" ">" "," $ (p <$> toList x)
@@ -676,15 +656,10 @@ prettyBinderNest bs = nest 6 $ line' <> (sep $ map p $ fromNest bs)
 instance Pretty (UDataDefTrail n) where
   pretty (UDataDefTrail bs) = p $ fromNest bs
 
-instance Pretty (UAnnBinder req n l) where
-  pretty (UAnnBinder b ty cs) = p b <> ":" <> p ty <> printConstraints cs
+instance Pretty (UAnnBinder n l) where
+  pretty (UAnnBinder _ b ty _) = p b <> ":" <> p ty
 
-printConstraints :: Pretty a => [a] -> Doc ann
-printConstraints = \case
-  [] -> mempty
-  c:cs -> "|" <> pretty c <> printConstraints cs
-
-instance Pretty (UAnn req n) where
+instance Pretty (UAnn n) where
   pretty (UAnn ty) = ":" <> p ty
   pretty UNoAnn = mempty
 
@@ -716,9 +691,7 @@ instance Pretty (Cache n) where
   pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
-  pretty scs =
-       "lambda dicts:"   <+> p (lambdaDicts scs) <> hardline
-    <> "instance dicts:" <+> p (M.toList $ instanceDicts scs)
+  pretty scs = "instance dicts:" <+> p (M.toList $ instanceDicts scs)
 
 instance Pretty (LoadedModules n) where
   pretty _ = "<loaded modules>"

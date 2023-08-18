@@ -43,7 +43,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
                , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
-import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..) )
+import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
 import Err
 import IRVariants
 
@@ -247,6 +247,17 @@ instance Color c => RenameB (NameBinder c) where
                    _ -> sink env <>> b @> (fromName $ binderName b')
       cont (scope', env') b'
 
+-- === E-kinded functor ===
+
+class FunctorE (f::E -> E) where
+  fmapE :: (forall l. e l -> e' l) -> f e n -> f e' n
+
+instance FunctorE ListE where
+  fmapE f (ListE xs) = ListE (fmap f xs)
+
+instance FunctorE (Abs b) where
+  fmapE f (Abs b e) = Abs b (f e)
+
 -- === monadic type classes for reading and extending envs and scopes ===
 
 data WithScope (e::E) (n::S) where
@@ -261,6 +272,10 @@ instance SinkableE e => SinkableE (WithScope e) where
 class Monad1 m => ScopeReader (m::MonadKind1) where
   unsafeGetScope :: m n (Scope n)
   getDistinct :: m n (DistinctEvidence n)
+
+withDistinct :: ScopeReader m => (Distinct n => m n a) -> m n a
+withDistinct cont = getDistinct >>= \Distinct -> cont
+{-# INLINE withDistinct #-}
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   -- We normally use the EnvReader version, `refreshAbs`, but sometime we're
@@ -470,6 +485,9 @@ forgetEitherE (RightE x) = x
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
         deriving (Show, Eq, Generic)
 
+newtype RListE (e::E) (n::S) = RListE { fromRListE :: (SnocList (e n)) }
+        deriving (Show, Eq, Generic)
+
 newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
                                     deriving (Semigroup, Monoid)
 
@@ -524,6 +542,9 @@ deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
 data WithAttrB (a:: *) (b::B) (n::S) (l::S) =
   WithAttrB {getAttr :: a , withoutAttr :: b n l }
   deriving (Show, Generic)
+
+pattern ZipB :: [a] -> Nest b n l -> Nest (WithAttrB a b) n l
+pattern ZipB attrs bs <- (unzipAttrs -> (attrs, bs))
 
 unzipAttrs :: Nest (WithAttrB a b) n l -> ([a], Nest b n l)
 unzipAttrs Empty = ([], Empty)
@@ -859,9 +880,6 @@ type MonadIO2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadIO (m n l)
 
 type Catchable1 (m :: MonadKind1) = forall (n::S)        . Catchable (m n  )
 type Catchable2 (m :: MonadKind2) = forall (n::S) (l::S) . Catchable (m n l)
-
-type Searcher1 (m :: MonadKind1) = forall (n::S)        . Searcher (m n  )
-type Searcher2 (m :: MonadKind2) = forall (n::S) (l::S) . Searcher (m n l)
 
 type CtxReader1 (m :: MonadKind1) = forall (n::S)        . CtxReader (m n  )
 type CtxReader2 (m :: MonadKind2) = forall (n::S) (l::S) . CtxReader (m n l)
@@ -1316,12 +1334,6 @@ instance (Monad1 m, Alternative (m n)) => Alternative (OutReaderT e m n) where
       f1 env <|> f2 env
   {-# INLINE (<|>) #-}
 
-instance Searcher1 m => Searcher (OutReaderT e m n) where
-  OutReaderT (ReaderT f1) <!> OutReaderT (ReaderT f2) =
-    OutReaderT $ ReaderT \env ->
-      f1 env <!> f2 env
-  {-# INLINE (<!>) #-}
-
 instance MonadWriter w (m n) => MonadWriter w (OutReaderT e m n) where
   tell w = OutReaderT $ lift $ tell w
   {-# INLINE tell #-}
@@ -1549,7 +1561,7 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, 
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
-  throwErrs errs = UnsafeMakeInplaceT \_ _ -> throwErrs errs
+  throwErr errs = UnsafeMakeInplaceT \_ _ -> throwErr errs
   addErrCtx ctx cont = UnsafeMakeInplaceT \env decls ->
     addErrCtx ctx $ unsafeRunInplaceT cont env decls
   {-# INLINE addErrCtx #-}
@@ -1566,13 +1578,6 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
     f1 env decls <|> f2 env decls
   {-# INLINE (<|>) #-}
-
-instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
-           Monad m, Alternative m, Searcher m)
-         => Searcher (InplaceT bindings decls m n) where
-  UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
-    f1 env decls <!> f2 env decls
-  {-# INLINE (<!>) #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
            Catchable m)
@@ -2004,11 +2009,11 @@ instance (SinkableE k, SinkableE v, OrdE k) => SinkableE (MapE k v) where
       itemsE = ListE $ toPairE <$> M.toList m
       newItems = fromPairE <$> (fromListE $ sinkingProofE fresh itemsE)
 
-instance SinkableE e => SinkableE (ListE e) where
-  sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
-
 instance SinkableE e => SinkableE (NonEmptyListE e) where
   sinkingProofE fresh (NonEmptyListE xs) = NonEmptyListE $ fmap (sinkingProofE fresh) xs
+
+instance SinkableE e => SinkableE (ListE e) where
+  sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
 
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
@@ -2016,10 +2021,27 @@ instance AlphaEqE e => AlphaEqE (ListE e) where
     | otherwise              = zipErr
 
 instance Monoid (ListE e n) where
-  mempty = ListE []
+  mempty = ListE mempty
 
 instance Semigroup (ListE e n) where
   ListE xs <> ListE ys = ListE $ xs <> ys
+
+instance SinkableE e => SinkableE (RListE e) where
+  sinkingProofE fresh (RListE xs) = RListE $ fmap (sinkingProofE fresh) xs
+
+instance RenameE e => RenameE (RListE e) where
+  renameE env (RListE xs) = RListE $ fmap (renameE env) xs
+
+instance AlphaEqE e => AlphaEqE (RListE e) where
+  alphaEqE (RListE xs) (RListE ys)
+    | length xs == length ys = mapM_ (uncurry alphaEqE) (zip (fromReversedList xs) (fromReversedList ys))
+    | otherwise              = zipErr
+
+instance Monoid (RListE e n) where
+  mempty = RListE mempty
+
+instance Semigroup (RListE e n) where
+  RListE xs <> RListE ys = RListE $ xs <> ys
 
 instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
   type RepE (HashMapE k v) = ListE (PairE k v)
@@ -2148,6 +2170,9 @@ instance (PrettyE e1, PrettyE e2) => Pretty (EitherE e1 e2 n) where
 
 instance PrettyE e => Pretty (ListE e n) where
   pretty (ListE e) = pretty e
+
+instance PrettyE e => Pretty (RListE e n) where
+  pretty (RListE e) = pretty $ unsnoc e
 
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )
@@ -2744,6 +2769,10 @@ ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
 ignoreHoistFailure (HoistFailure _) = error "hoist failure"
 
+-- TODO: make this a no-op in the non-debug build
+hardHoist :: (HasCallStack, BindsNames b, HoistableE e) => b n l -> e l -> e n
+hardHoist b e = ignoreHoistFailure $ hoist b e
+
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
   case R.disjoint fvs frag of
@@ -2887,6 +2916,9 @@ instance HoistableB UnitB where
 
 instance HoistableE e => HoistableE (ListE e) where
   freeVarsE (ListE xs) = foldMap freeVarsE xs
+
+instance HoistableE e => HoistableE (RListE e) where
+  freeVarsE (RListE xs) = foldMap freeVarsE xs
 
 -- === environments ===
 

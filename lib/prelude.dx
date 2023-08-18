@@ -32,7 +32,7 @@ interface Data(a:Type)
 
 '### Casting
 
-def internal_cast(x:from) -> to given (from, to) =
+def internal_cast(x:from) -> to given (from:Type, to:Type) =
   %cast(to, x)
 
 def unsafe_coerce(x:from) -> to given (from|Data, to|Data) = %unsafeCoerce(to, x)
@@ -266,7 +266,7 @@ instance Mul(())
 '#### Integral
 Integer-like things.
 
-interface Integral(a)
+interface Integral(a:Type)
   idiv : (a,a)->a
   rem  : (a,a)->a
 
@@ -298,7 +298,7 @@ instance Integral(Nat)
 Rational-like things.
 Includes floating point and two field rational representations.
 
-interface Fractional(a)
+interface Fractional(a:Type)
   divide : (a, a) -> a
 
 instance Fractional(Float64)
@@ -314,7 +314,7 @@ interface Ix(n|Data)
   ordinal : (n) -> Nat
   unsafe_from_ordinal : (Nat) -> n
 
-def size(n|Ix) -> Nat = size'(n=n)
+def size(n:Type|Ix) -> Nat = size'(n=n)
 
 def Fin(n:Nat) -> Type = %Fin(n)
 
@@ -323,42 +323,42 @@ def (-|)(x: Nat, y:Nat) -> Nat =
   x' = nat_to_rep x
   y' = nat_to_rep y
   requires_clamp = %ilt(x', y')
-  rep_to_nat %select(requires_clamp, 0, (%isub(x', y')))
+  rep_to_nat %select(requires_clamp, 0::NatRep, (%isub(x', y')))
 
 def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   x' = nat_to_rep x
   y' = nat_to_rep y
   rep_to_nat %isub(x', y')
 
--- `(i..)` parses as `RangeFrom _ i`
+-- `(i..)` parses as `RangeFrom(i)`
 -- TODO: need to a way to indicate constructor as private
-struct RangeFrom(q:Type, i:q) = val : Nat
+struct RangeFrom(i:q) given (q:Type) = val : Nat
 
--- `(i<..)` parses as `RangeFromExc _ i`
-struct RangeFromExc(q:Type, i:q) = val : Nat
+-- `(i<..)` parses as `RangeFromExc i`
+struct RangeFromExc(i:q) given (q:Type) = val : Nat
 
--- `(..i)` parses as `RangeTo _ i`
-struct RangeTo(q:Type, i:q) = val : Nat
+-- `(..i)` parses as `RangeTo i`
+struct RangeTo(i:q) given (q:Type) = val : Nat
 
--- `(..<i)` parses as `RangeToExc _ i`
-struct RangeToExc(q:Type, i:q) = val : Nat
+-- `(..<i)` parses as `RangeToExc i`
+struct RangeToExc(i:q) given (q:Type) = val : Nat
 
-instance Ix(RangeFrom q i) given (q|Ix, i:q)
+instance Ix(RangeFrom i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i)
   def ordinal(j) = j.val
   def unsafe_from_ordinal(j) = RangeFrom(j)
 
-instance Ix(RangeFromExc q i) given (q|Ix, i:q)
+instance Ix(RangeFromExc i) given (q|Ix, i:q)
   def size'() = unsafe_nat_diff(size q, ordinal i + 1)
   def ordinal(j) = j.val
   def unsafe_from_ordinal(j) = RangeFromExc(j)
 
-instance Ix(RangeTo q i) given (q|Ix, i:q)
+instance Ix(RangeTo i) given (q|Ix, i:q)
   def size'() = ordinal i + 1
   def ordinal(j) = j.val
   def unsafe_from_ordinal(j) = RangeTo(j)
 
-instance Ix(RangeToExc q i) given (q|Ix, i:q)
+instance Ix(RangeToExc i) given (q|Ix, i:q)
   def size'() = ordinal i
   def ordinal(j) = j.val
   def unsafe_from_ordinal(j) = RangeToExc(j)
@@ -368,7 +368,7 @@ instance Ix(())
   def ordinal(_) = 0
   def unsafe_from_ordinal(_) = ()
 
-def iota(n|Ix) -> n=>Nat = for i. ordinal i
+def iota(n:Type|Ix) -> n=>Nat = for i. ordinal i
 
 '## Arithmetic instances for table types
 
@@ -408,10 +408,10 @@ instance Mul(n=>a) given (a|Mul, n|Ix)
 
 '## Basic polymorphic functions and types
 
-def fst(pair:(a, b)) -> a given (a, b) = pair.0
-def snd(pair:(a, b)) -> b given (a, b) = pair.1
+def fst(pair:(a, b)) -> a given (a:Type, b:Type) = pair.0
+def snd(pair:(a, b)) -> b given (a:Type, b:Type) = pair.1
 
-def swap(pair:(a, b)) -> (b, a) given (a, b) =
+def swap(pair:(a, b)) -> (b, a) given (a:Type, b:Type) =
   (x, y) = pair
   (y, x)
 
@@ -443,7 +443,7 @@ instance Ix((a, b, c)) given (a|Ix, b|Ix, c|Ix)
     (i, j, k) = tup
     ordinal((i,(j,k)))
   def unsafe_from_ordinal(o) =
-    (i, (j, k)) = unsafe_from_ordinal o
+    (i, (j, k)) = unsafe_from_ordinal(n=(a,(b,c))::Type, o)
     (i, j, k)
 
 instance Ix((a, b, c, d)) given (a|Ix, b|Ix, c|Ix, d|Ix)
@@ -452,7 +452,7 @@ instance Ix((a, b, c, d)) given (a|Ix, b|Ix, c|Ix, d|Ix)
     (i, j, k, m) = tup
     ordinal((i,(j,(k,m))))
   def unsafe_from_ordinal(o) =
-    (i, (j, (k, m))) = unsafe_from_ordinal o
+    (i, (j, (k, m))) = unsafe_from_ordinal(n=(a,(b,(c,d)))::Type, o)
     (i, j, k, m)
 
 '## Vector spaces
@@ -519,7 +519,7 @@ TODO: move these with the others?
 
 -- Can't use `%select` because it lowers to `ISelect`, which requires
 -- `a` to be a `BaseTy`.
-def select(p:Bool, x:a, y:a) -> a given (a) =
+def select(p:Bool, x:a, y:a) -> a given (a:Type) =
   case p of
     True  -> x
     False -> y
@@ -547,14 +547,14 @@ data Maybe(a:Type) =
   Nothing
   Just(a)
 
-def is_nothing(x:Maybe a) -> Bool given (a) =
+def is_nothing(x:Maybe a) -> Bool given (a:Type) =
   case x of
     Nothing -> True
     Just(_) -> False
 
-def is_just(x:Maybe a) -> Bool given (a) = not $ is_nothing x
+def is_just(x:Maybe a) -> Bool given (a:Type) = not $ is_nothing x
 
-def maybe(d:b, f:(a)->b, x:Maybe a) -> b given (a, b) =
+def maybe(d:b, f:(a)->b, x:Maybe a) -> b given (a:Type, b:Type) =
   case x of
     Nothing  -> d
     Just(x') -> f x'
@@ -593,7 +593,6 @@ def i_to_n(x:Int) -> Maybe Nat =
 
 '### Monoid
 A [monoid](https://en.wikipedia.org/wiki/Monoid) is a things that have an associative binary operator and an identity element.
-This is a very useful and general calls of things.
 It includes:
  - Addition and Multiplication of Numbers
  - Boolean Logic
@@ -626,55 +625,55 @@ named-instance MulMonoid(a|Mul) -> Monoid(a)
 
 '## Effects
 
-def Ref(r:Heap, a|Data) -> Type = %Ref(r, a)
-def get(ref:Ref h s)       -> {State h} s  given (h, s) = %get(ref)
-def (:=)(ref:Ref h s, x:s) -> {State h} () given (h, s) = %put(ref, x)
+def Ref(r:Heap, a:Type|Data) -> Type = %Ref(r, a)
+def get(ref:Ref h s)       -> {State h} s  given (h:Heap, s|Data) = %get(ref)
+def (:=)(ref:Ref h s, x:s) -> {State h} () given (h:Heap, s|Data) = %put(ref, x)
 
-def ask(ref:Ref h r) -> {Read h} r given (h, r) = %ask(ref)
+def ask(ref:Ref h r) -> {Read h} r given (h:Heap, r|Data) = %ask(ref)
 
 data AccumMonoidData(h:Heap, w:Type) = UnsafeMkAccumMonoidData(b:Type, Monoid b)
 
-interface AccumMonoid(h:Heap, w)
+interface AccumMonoid(h:Heap, w:Type)
   getAccumMonoidData : AccumMonoidData(h, w)
 
-instance AccumMonoid(h, n=>w) given (n|Ix, h, w) (am:AccumMonoid(h, w))
+instance AccumMonoid(h, n=>w) given (n|Ix, h:Heap, w:Type) (am:AccumMonoid(h, w))
   getAccumMonoidData =
     UnsafeMkAccumMonoidData(b, bm) = %applyMethod0(am)
     UnsafeMkAccumMonoidData(b, bm)
 
 def (+=)(ref:Ref h w, x:w) -> {Accum h} ()
-  given (h, w) (am:AccumMonoid(h, w)) =
+  given (h:Heap, w|Data) (am:AccumMonoid(h, w)) =
   UnsafeMkAccumMonoidData(b, bm) = %applyMethod0(am)
   empty = %applyMethod0(bm)
   %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y), x)
 
-def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h) = %indexRef(ref, i)
-def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b, a|Data, h) = ref.0
-def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b|Data, h) = ref.1
+def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h:Heap) = %indexRef(ref, i)
+def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b|Data, a|Data, h:Heap) = ref.0
+def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a|Data, b|Data, h:Heap) = ref.1
 
 def run_reader(
     init:r,
-    action:(given (h), Ref h r) -> {Read h|eff} a
-    ) -> {|eff} a  given (r|Data, a, eff) =
+    action:(given (h:Heap), Ref h r) -> {Read h|eff} a
+    ) -> {|eff} a  given (r|Data, a:Type, eff:Effects) =
   def explicitAction(h':Heap, ref:Ref h' r) -> {Read h'|eff} a = action ref
   %runReader(init, explicitAction)
 
 def with_reader(
     init:r,
-    action: (given (h), Ref(h,r)) -> {Read h|eff} a
-    ) -> {|eff} a  given (r|Data, a, eff) =
+    action: (given (h:Heap), Ref(h,r)) -> {Read h|eff} a
+    ) -> {|eff} a  given (r|Data, a:Type, eff:Effects) =
   run_reader(init, action)
 
 def MonoidLifter(b:Type, w:Type) -> Type =
-  (given (h) (AccumMonoid(h, b))) ->> AccumMonoid(h, w)
+  (given (h:Heap) (AccumMonoid(h, b))) ->> AccumMonoid(h, w)
 
-named-instance mk_accum_monoid (given (h, w), d:AccumMonoidData(h, w)) -> AccumMonoid(h, w)
+named-instance mk_accum_monoid (given (h:Heap, w:Type), d:AccumMonoidData(h, w)) -> AccumMonoid(h, w)
   getAccumMonoidData = d
 
 def run_accum(
     bm:Monoid b,
-    action: (given (h) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
-    ) -> {|eff} (a, w)  given (a, b, w|Data, eff) (MonoidLifter(b,w)) =
+    action: (given (h:Heap) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
+    ) -> {|eff} (a, w)  given (a:Type, b:Type, w|Data, eff:Effects) (MonoidLifter(b,w)) =
   empty = %applyMethod0(bm)
   def explicitAction(h':Heap, ref:Ref h' w) -> {Accum h'|eff} a =
     accumMonoidData : AccumMonoidData h' b = UnsafeMkAccumMonoidData b bm
@@ -684,32 +683,32 @@ def run_accum(
 
 def yield_accum(
     m:Monoid b,
-    action: (given (h) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
-    ) -> {|eff} w  given (a, b, w|Data, eff) (MonoidLifter b w) =
+    action: (given (h:Heap) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
+    ) -> {|eff} w  given (a:Type, b:Type, w|Data, eff:Effects) (MonoidLifter b w) =
   snd $ run_accum(m, action)
 
 def run_state(
     init:s,
-    action: (given (h), Ref h s) -> {State h |eff} a
-    ) -> {|eff} (a,s)  given (a, s|Data, eff) =
+    action: (given (h:Heap), Ref h s) -> {State h |eff} a
+    ) -> {|eff} (a,s)  given (a:Type, s|Data, eff:Effects) =
   def explicitAction(h':Heap, ref:Ref h' s) -> {State h'|eff} a = action ref
   %runState(init, explicitAction)
 
 def with_state(
     init:s,
-    action: (given (h), Ref h s) -> {State h |eff} a
-    ) -> {|eff} a  given (a, s|Data, eff) =
+    action: (given (h:Heap), Ref h s) -> {State h |eff} a
+    ) -> {|eff} a  given (a:Type, s|Data, eff:Effects) =
   fst $ run_state(init, action)
 
 def yield_state(
     init:s,
-    action: (given (h), Ref h s) -> {State h |eff} a
-    ) -> {|eff} s  given (a, s|Data, eff) =
+    action: (given (h:Heap), Ref h s) -> {State h |eff} a
+    ) -> {|eff} s  given (a:Type, s|Data, eff:Effects) =
   snd $ run_state(init, action)
 
 def unsafe_io(
     f:()->{IO|eff} a
-    ) -> {|eff} a  given (a, eff)  =
+    ) -> {|eff} a  given (a:Type, eff:Effects)  =
   f' : (() -> {IO|eff} a) = \. f()
   %runIO(f')
 
@@ -849,10 +848,10 @@ instance Ord(Nat)
   def (<)(x, y) = nat_to_rep x < nat_to_rep y
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-instance Eq(Fin n) given (n)
+instance Eq(Fin n) given (n:Nat)
   def (==)(x, y) = ordinal x == ordinal y
 
-instance Ord(Fin n) given (n)
+instance Ord(Fin n) given (n:Nat)
   def (>)(x, y) = ordinal x > ordinal y
   def (<)(x, y) = ordinal x < ordinal y
 
@@ -870,7 +869,7 @@ instance Ix(Maybe a) given (a|Ix)
     Nothing -> size a
   def unsafe_from_ordinal(o) =
     case o == size a of
-      False -> Just $ unsafe_from_ordinal o
+      False -> Just $ unsafe_from_ordinal(n=a, o)
       True  -> Nothing
 
 interface NonEmpty(n|Ix)
@@ -916,32 +915,19 @@ def left_fence(p:Post n) -> Maybe n given (n|Ix) =
   ix = ordinal p
   if ix == 0
     then Nothing
-    else Just $ unsafe_from_ordinal $ ix -| 1
+    else Just $ unsafe_from_ordinal(n=n, ix -| 1)
 
 def right_fence(p:Post n) -> Maybe n given (n|Ix) =
   ix = ordinal p
   if ix == size n
     then Nothing
-    else Just $ unsafe_from_ordinal ix
+    else Just $ unsafe_from_ordinal(n=n, ix)
 
 def last_ix() ->> n given (n|NonEmpty) =
   unsafe_from_ordinal(unsafe_i_to_n(n_to_i(size n) - 1))
 
 instance NonEmpty(Post n) given (n|Ix)
   first_ix = unsafe_from_ordinal(n=Post n, 0)
-
-def scan(
-    init:a,
-    body:(n, a)->(a,b)
-    ) -> (a, n=>b)  given (a|Data, b, n|Ix) =
-  swap $ run_state(init) \s. for i.
-    c = get s
-    (c', y) = body(i, c)
-    s := c'
-    y
-
-def fold(init:a, body:(n,a)->a) -> a  given (n|Ix, a|Data) =
-  fst $ scan init \i x. (body(i, x), ())
 
 def compare(x:a, y:a) -> Ordering given (a|Ord) =
   if x < y
@@ -961,42 +947,32 @@ instance Monoid(Ordering)
 instance Eq(n=>a) given (n|Ix, a|Eq)
   def (==)(xs, ys) =
     yield_accum AndMonoid \ref.
-      for i. ref += xs[i] == ys[i]
-
-instance Ord(n=>a) given (n|Ix, a|Ord)
-  def (>)(xs, ys) =
-    f: Ordering =
-        fold EQ $ \i c. c <> compare(xs[i], ys[i])
-    f == GT
-  def (<)(xs, ys) =
-    f: Ordering =
-        fold EQ $ \i c. c <> compare(xs[i], ys[i])
-    f == LT
+      for i:n. ref += xs[i] == ys[i]
 
 '## Subset class
 
-interface Subset(subset, superset)
+interface Subset(subset:Type, superset:Type)
   inject'         : (subset) -> superset
   project'        : (superset) -> Maybe subset
   unsafe_project' : (superset) -> subset
 
 -- wrappers with more helpful implicit arg names
-def inject(x:from)         -> to       given (to, from) (Subset(from, to)) = inject'(x)
-def project(x:from)        -> Maybe to given (to, from) (Subset(to, from)) = project'(x)
-def unsafe_project(x:from) -> to       given (to, from) (Subset(to, from)) = unsafe_project'(x)
+def inject(x:from)         -> to       given (to:Type, from:Type) (Subset(from, to)) = inject'(x)
+def project(x:from)        -> Maybe to given (to:Type, from:Type) (Subset(to, from)) = project'(x)
+def unsafe_project(x:from) -> to       given (to:Type, from:Type) (Subset(to, from)) = unsafe_project'(x)
 
 
-instance Subset(a, c) given (a, b, c) (Subset(a, b), Subset(b, c))
+instance Subset(a, c) given (a:Type, b:Type, c:Type) (Subset(a, b), Subset(b, c))
   def inject'(x) = inject $ inject(to=b, x)
   def project'(x) = case project(to=b, x) of
     Nothing -> Nothing
     Just(y)-> project y
   def unsafe_project'(x) = unsafe_project $ unsafe_project(to=b, x)
 
-def unsafe_project_rangefrom(j:q) -> RangeFrom(q, i) given (q|Ix, i:q) =
+def unsafe_project_rangefrom(j:q) -> RangeFrom(i) given (q|Ix, i:q) =
   RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
-instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
+instance Subset(RangeFrom(i), q) given (q|Ix, i:q)
   def inject'(j) =
     unsafe_from_ordinal $ j.val + ordinal i
   def project'(j) =
@@ -1007,7 +983,7 @@ instance Subset(RangeFrom(q, i), q) given (q|Ix, i:q)
       else Just $ RangeFrom $ unsafe_nat_diff(j', i')
   def unsafe_project'(j) = RangeFrom unsafe_nat_diff(ordinal j, ordinal i)
 
-instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
+instance Subset(RangeFromExc(i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal $ j.val + ordinal i + 1
   def project'(j) =
     j' = ordinal j
@@ -1018,7 +994,7 @@ instance Subset(RangeFromExc(q, i), q) given (q|Ix, i:q)
   def unsafe_project'(j) =
     RangeFromExc unsafe_nat_diff(ordinal j, ordinal i + 1)
 
-instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
+instance Subset(RangeTo(i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
   def project'(j) =
     j' = ordinal j
@@ -1028,7 +1004,7 @@ instance Subset(RangeTo(q, i), q) given (q|Ix, i:q)
       else Just $ RangeTo j'
   def unsafe_project'(j) = RangeTo (ordinal j)
 
-instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
+instance Subset(RangeToExc(i), q) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
   def project'(j) =
     j' = ordinal j
@@ -1038,7 +1014,7 @@ instance Subset(RangeToExc(q, i), q) given (q|Ix, i:q)
       else Just $ RangeToExc j'
   def unsafe_project'(j) = RangeToExc (ordinal j)
 
-instance Subset(RangeToExc(q, i), RangeTo(q, i)) given (q|Ix, i:q)
+instance Subset(RangeToExc(i), RangeTo(i)) given (q|Ix, i:q)
   def inject'(j) = unsafe_from_ordinal j.val
   def project'(j) =
     j' = ordinal j
@@ -1140,7 +1116,7 @@ instance Floating(Float32)
 struct Ptr(a:Type) =
   val : RawPtr
 
-def cast_ptr(ptr: Ptr a) -> Ptr b given (a, b) = Ptr(ptr.val)
+def cast_ptr(ptr: Ptr from) -> Ptr to given (from:Type, to:Type) = Ptr(ptr.val)
 
 interface Storable(a|Data)
   store : (Ptr a, a) -> {IO} ()
@@ -1168,11 +1144,11 @@ instance Storable(Float32)
   def storage_size() = 4
 
 instance Storable(Nat)
-  def store(ptr, x) = store(Ptr(ptr.val), nat_to_rep x)
+  def store(ptr, x) = store(cast_ptr(ptr, to=%Word32()), nat_to_rep x)
   def load(ptr) = rep_to_nat $ load(Ptr(ptr.val))
   def storage_size() = storage_size(a=NatRep)
 
-instance Storable(Ptr a) given (a)
+instance Storable(Ptr a) given (a:Type)
   def store(ptr, x) = %ptrStore(internal_cast(to=%PtrPtr(), ptr.val), x.val)
   def load(ptr) = Ptr(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
   def storage_size() = 8  -- TODO: something more portable?
@@ -1183,7 +1159,7 @@ def malloc(n:Nat) -> {IO} (Ptr a) given (a|Storable)  =
   numBytes = storage_size(a=a) * n
   Ptr(%alloc(nat_to_rep numBytes))
 
-def free(ptr:Ptr a) -> {IO} () given (a) = %free(ptr.val)
+def free(ptr:Ptr a) -> {IO} () given (a:Type) = %free(ptr.val)
 
 def (+>>)(ptr:Ptr a, i:Nat) -> Ptr a given (a|Storable) =
   i' = nat_to_rep $ i * storage_size(a=a)
@@ -1191,7 +1167,7 @@ def (+>>)(ptr:Ptr a, i:Nat) -> Ptr a given (a|Storable) =
 
 -- TODO: consider making a Storable instance for tables instead
 def store_table(ptr: Ptr a, tab:n=>a) -> {IO} () given (a|Storable, n|Ix) =
-  for_ i. store(ptr +>> ordinal i, tab[i])
+  for_ i:n. store(ptr +>> ordinal i, tab[i])
 
 def memcpy(dest:Ptr a, src:Ptr a, n:Nat) -> {IO} () given (a|Storable) =
   for_ i:(Fin n).
@@ -1201,10 +1177,11 @@ def memcpy(dest:Ptr a, src:Ptr a, n:Nat) -> {IO} () given (a|Storable) =
 -- TODO: generalize these brackets to allow other effects
 -- TODO: make sure that freeing happens even if there are run-time errors
 def with_alloc(
+    a|Storable,
     n:Nat,
     action: (Ptr a) -> {IO} b
-    ) -> {IO} b  given (a|Storable,  b) =
-  ptr = malloc n
+    ) -> {IO} b  given (b:Type) =
+  ptr = malloc(a=a, n)
   result = action ptr
   free ptr
   result
@@ -1212,9 +1189,9 @@ def with_alloc(
 def with_table_ptr(
     xs:n=>a,
     action: (Ptr a) -> {IO} b
-    ) -> {IO} b  given (a|Storable, b, n|Ix) =
-  ptr <- with_alloc(size n)
-  for i. store(ptr +>> ordinal i, xs[i])
+    ) -> {IO} b  given (a|Storable, b:Type, n|Ix) =
+  ptr <- with_alloc(a, size n)
+  for i:n. store(ptr +>> ordinal i, xs[i])
   action ptr
 
 def table_from_ptr(ptr:Ptr a) -> {IO} n=>a given (a|Storable, n|Ix) =
@@ -1224,22 +1201,31 @@ def table_from_ptr(ptr:Ptr a) -> {IO} n=>a given (a|Storable, n|Ix) =
 
 pi : Float = 3.141592653589793
 
-def id(x:a) -> a given (a) = x
-def dup(x:a) -> (a, a) given (a) = (x, x)
-def map(f:(a)->{|eff} b, xs: n=>a) -> {|eff} (n=>b)  given (a, b, n|Ix, eff) =
-  for i. f xs[i]
+def id(x:a) -> a given (a:Type) = x
+def dup(x:a) -> (a, a) given (a:Type) = (x, x)
 -- map, flipped so that the function goes last
-def each(xs: n=>a, f:(a)->{|eff} b) -> {|eff} (n=>b)  given (a, b, n|Ix, eff) =
+def each(xs: n=>a, f:(a)->{|eff} b) -> {|eff} (n=>b)  given (a:Type, b:Type, n|Ix, eff:Effects) =
   for i. f xs[i]
 
-def zip(xs:n=>a, ys:n=>b) -> (n=>(a,b)) given (a, b, n|Ix) = for i. (xs[i], ys[i])
-def unzip(xys:n=>(a,b)) -> (n=>a , n=>b) given (a, b, n|Ix)= (each xys fst, each xys snd)
-def fanout(x:a) -> n=>a given (n|Ix, a) = for i. x
+def zip(xs:n=>a, ys:n=>b) -> (n=>(a,b)) given (a:Type, b:Type, n|Ix) = for i. (xs[i], ys[i])
+def unzip(xys:n=>(a,b)) -> (n=>a , n=>b) given (a:Type, b:Type, n|Ix) =
+  (each xys \xy. fst(xy), each xys \xy. snd(xy))
+def fanout(x:a) -> n=>a given (n|Ix, a:Type) = for i. x
 def sq(x:a) -> a given (a|Mul) = x * x
-def abs(x:a) -> a given (a|Sub|Ord) = select(x > zero, x, zero - x)
+def abs(x:a) -> a given (a|Sub|Ord) = select(x > zero, x, (zero::a) - x)
 def mod(x:a, y:a) -> a given (a|Add|Integral) = rem(y + rem(x, y), y)
-def (>>>)(f:(a) -> b, g:(b) -> c) -> (a) -> c given (a, b, c) = \x. g(f(x))
-def (<<<)(f:(b) -> c, g:(a) -> b) -> (a) -> c given (a, b, c) = \x. f(g(x))
+def (>>>)(f:(a) -> b, g:(b) -> c) -> (a) -> c given (a:Type, b:Type, c:Type) = \x. g(f(x))
+def (<<<)(f:(b) -> c, g:(a) -> b) -> (a) -> c given (a:Type, b:Type, c:Type) = \x. f(g(x))
+
+def flatten2D(mat:n=>m=>a) -> (n,m)=>a given (n|Ix, m|Ix, a:Type) =
+  for pair.
+    (i, j) = pair
+    mat[i,j]
+
+def flatten3D(array:l=>n=>m=>a) -> (l,n,m)=>a given (l|Ix, n|Ix, m|Ix, a:Type) =
+  for triple.
+    (i, j, k) = triple
+    array[i,j,k]
 
 '## Table Operations
 
@@ -1267,23 +1253,34 @@ instance Floating(n=>a) given (a|Floating, n|Ix)
 
 '### Reductions
 
+def scan(
+    init:c,
+    xs: n=>a,
+    body:(n, a, c)->(b, c)
+    ) -> (n=>b, c)  given (a:Type, b:Type, c|Data, n|Ix) =
+  run_state(init) \ref. for i:n.
+    carry = get ref
+    (y, carry') = body(i, xs[i], carry)
+    ref := carry'
+    y
+
+def fold(init:c, xs:n=>a, body:(n, a, c)-> c) -> c  given (a:Type, n|Ix, c|Data) =
+  snd $ scan(init, xs) \i x carry. ((), body(i, x, carry))
+
 -- `combine` should be a commutative and associative, and form a
 -- commutative monoid with `identity`
-def reduce(identity:a, combine:(a,a)->a, xs:n=>a) -> a given (a|Data, n|Ix) =
+def reduce(xs:n=>a, identity:a, combine:(a,a)->a) -> a given (a|Data, n|Ix) =
   -- TODO: implement with the accumulator effect
-  fold identity \i c. combine(c, xs[i])
+  fold(identity, xs) \i x c. combine(c, x)
 
--- TODO: call this `scan` and call the current `scan` something else
-def scan'(init:a, body:(n,a)->a) -> n=>a given (a|Data, n|Ix) =
-  snd $ scan init \i x. dup(body(i, x))
 def fsum(xs:n=>Float) -> Float given (n|Ix) =
-  yield_accum(AddMonoid Float) \ref. for i. ref += xs[i]
-def sum(xs:n=>v) -> v given (n|Ix, v|Add) = reduce(zero, (+), xs)
-def prod(xs:n=>v) -> v given (n|Ix, v|Mul) = reduce(one , (*), xs)
+  yield_accum(AddMonoid Float) \ref. each xs \x. ref += x
+def sum(xs:n=>v) -> v given (n|Ix, v|Add) = reduce(xs, zero, (+))
+def prod(xs:n=>v) -> v given (n|Ix, v|Mul) = reduce(xs, one , (*))
 def mean(xs:n=>v) -> v given (n|Ix, v|VSpace) = sum xs / n_to_f (size n)
 def std(xs:n=>v) -> v given (n|Ix, v|Mul|Sub|VSpace|Floating) = sqrt $ mean (each xs sq) - sq (mean xs)
-def any(xs:n=>Bool) -> Bool given (n|Ix) = reduce(False, (||), xs)
-def all(xs:n=>Bool) -> Bool given (n|Ix) = reduce(True , (&&), xs)
+def any(xs:n=>Bool) -> Bool given (n|Ix) = reduce(xs, False, (||))
+def all(xs:n=>Bool) -> Bool given (n|Ix) = reduce(xs, True , (&&))
 
 '### apply_n
 
@@ -1296,15 +1293,15 @@ TODO: Move this to be with reductions?
 It's a kind of `scan`.
 
 def cumsum(xs: n=>a) -> n=>a given (n|Ix, a|Add) =
-  total <- with_state zero
-  for i.
+  total <- with_state (zero::a)
+  for i:n.
     newTotal = get total + xs[i]
     total := newTotal
     newTotal
 
 def cumsum_low(xs: n=>a) -> n=>a given (n|Ix, a|Add) =
-  total <- with_state zero
-  for i.
+  total <- with_state (zero::a)
+  for i:n.
     oldTotal = get total
     total := oldTotal + xs[i]
     oldTotal
@@ -1314,18 +1311,18 @@ def cumsum_low(xs: n=>a) -> n=>a given (n|Ix, a|Add) =
 '### AD operations
 
 -- TODO: add vector space constraints
-def linearize(f:(a)->b, x:a) -> (b, (a)->b) given (a, b) =
-  %linearize(\x. f x, x)
+def linearize(f:(a)->b, x:a) -> (b, (a)->b) given (a:Type, b:Type) =
+  %linearize(\x:a. f x, x)
 
-def jvp(f:(a)->b, x:a, t:a) -> b given (a, b) = (snd $ linearize(f, x))(t)
-def transpose_linear(f:(a)->b) -> (b)->a given (a, b) = \ct.
-  %linearTranspose(\x. f x, ct)
+def jvp(f:(a)->b, x:a, t:a) -> b given (a:Type, b:Type) = (snd $ linearize(f, x))(t)
+def transpose_linear(f:(a)->b) -> (b)->a given (a:Type, b:Type) = \ct.
+  %linearTranspose(\x:a. f x, ct)
 
-def vjp(f:(a)->b, x:a) -> (b, (b)->a) given (a, b) =
+def vjp(f:(a)->b, x:a) -> (b, (b)->a) given (a:Type, b:Type) =
   (y, df) = linearize(f, x)
   (y, transpose_linear df)
 
-def grad(f:(a)->Float, x:a) -> a given (a) = (snd vjp(f, x))(1.0)
+def grad(f:(a)->Float, x:a) -> a given (a:Type) = (snd vjp(f, x))(1.0)
 
 def deriv(f:(Float)->Float, x:Float) -> Float = jvp(f, x, 1.0)
 
@@ -1333,7 +1330,7 @@ def deriv_rev(f:(Float)->Float, x:Float) -> Float = (snd vjp(f, x))(1.0)
 
 -- XXX: Watch out when editing this data type! We depend on its structure
 -- deep inside the compiler (mostly in linearization and during rule registration).
-data SymbolicTangent(a) =
+data SymbolicTangent(a:Type) =
   ZeroTangent
   SomeTangent(a)
 
@@ -1345,15 +1342,15 @@ def someTangent(x:SymbolicTangent a) -> a given (a|VSpace) =
 '### Approximate Equality
 TODO: move this outside the AD section to be with equality?
 
-interface HasAllClose(a)
+interface HasAllClose(a:Type)
   allclose : (a, a, a, a) -> Bool
 
-interface HasDefaultTolerance(a)
+interface HasDefaultTolerance(a:Type)
   default_atol : a
   default_rtol : a
 
 def (~~)(x:a, y:a) -> Bool given (a|HasAllClose|HasDefaultTolerance) =
-  allclose(default_atol, default_rtol, x, y)
+  allclose(a=a, default_atol, default_rtol, x, y)
 
 instance HasAllClose(Float32)
   def allclose(atol, rtol, x, y) = abs (x - y) <= (atol + rtol * abs y)
@@ -1402,7 +1399,7 @@ def check_deriv(f:(Float)->Float, x:Float) -> Bool =
 
 '## Length-erased lists
 
-data List(a)=
+data List(a:Type) =
   AsList(n:Nat, elements:(Fin n => a))
 
 instance Eq(List a) given (a|Eq)
@@ -1414,15 +1411,15 @@ instance Eq(List a) given (a|Eq)
       else all for i:(Fin nx).
         xs[i] == ys[unsafe_from_ordinal (ordinal i)]
 
-def unsafe_cast_table(xs:from=>a) -> to=>a given (to|Ix, from|Ix, a) =
+def unsafe_cast_table(xs:from=>a) -> to=>a given (to|Ix, from|Ix, a:Type) =
   for i. xs[unsafe_from_ordinal (ordinal i)]
 
-def to_list(xs:n=>a) -> List a given (n|Ix, a) =
+def to_list(xs:n=>a) -> List a given (n|Ix, a:Type) =
   n' = size n
-  AsList(_, unsafe_cast_table(to=Fin n', xs))
+  AsList(n', unsafe_cast_table(to=Fin n', xs))
 
 instance Monoid(List a) given (a|Data)
-  mempty = AsList(_, [])
+  mempty = to_list([] :: Fin 0 => a)
   def (<>)(x, y) =
     AsList(nx,xs) = x
     AsList(ny,ys) = y
@@ -1440,11 +1437,11 @@ named-instance ListMonoid (a|Data) -> Monoid(List a)
 -- TODO Eliminate or reimplement this operation, since it costs O(n)
 -- where n is the length of the list held in the reference.
 def append(list: Ref(h, List a), x:a) -> {Accum h} ()
-      given (a|Data, h) (AccumMonoid(h, List a)) =
+      given (a|Data, h:Heap) (AccumMonoid(h, List a)) =
   list += to_list [x]
 
 -- TODO: replace `slice` with this?
-def post_slice(xs:n=>a, start:Post n, end:Post n) -> List a given (n|Ix, a) =
+def post_slice(xs:n=>a, start:Post n, end:Post n) -> List a given (n|Ix, a:Type) =
   slice_size = unsafe_nat_diff(ordinal end, ordinal start)
   to_list for i:(Fin slice_size).
     xs[unsafe_from_ordinal(n=n, ordinal i + ordinal start)]
@@ -1466,7 +1463,7 @@ struct CString =
 def with_c_string(
     s:String,
     action: (CString) -> {IO} a
-    ) -> {IO} a given (a) =
+    ) -> {IO} a given (a:Type) =
   AsList(n, s') = s <> "\NUL"
   with_table_ptr s' \ptr. action CString(ptr.val)
 
@@ -1477,7 +1474,7 @@ No particular promises are made to exactly what that representation will contain
 In particular it is **not** promised to be parseable.
 Nor does it promise a particular level of precision for numeric values.
 
-interface Show(a)
+interface Show(a:Type)
   show : (a) -> String
 
 instance Show(String)
@@ -1535,7 +1532,7 @@ instance Show((a, b, c, d)) given (a|Show, b|Show, c|Show, d|Show)
 '### Parse interface
 For types that can be parsed from a `String`.
 
-interface Parse(a)
+interface Parse(a:Type)
   parseString : (String) -> Maybe a
 
 foreign "strtof" strtofFFI : (RawPtr, RawPtr) -> {IO} Float
@@ -1544,7 +1541,7 @@ instance Parse(Float)
   def parseString(str) = unsafe_io \.
     AsList(str_len, _) = str
     with_c_string str \cStr.
-      with_alloc 1 \end_ptr:(Ptr (Ptr Char)).
+      with_alloc (Ptr Char) 1 \end_ptr.
         result = strtofFFI(cStr.ptr, end_ptr.val)
         str_end_ptr = load end_ptr
         consumed = raw_ptr_to_i64 str_end_ptr.val - raw_ptr_to_i64 cStr.ptr
@@ -1585,7 +1582,7 @@ FilePath : Type = String
 def is_null_raw_ptr(ptr:RawPtr) -> Bool =
   raw_ptr_to_i64 ptr == 0
 
-def from_nullable_raw_ptr(ptr:RawPtr) -> Maybe (Ptr a) given (a) =
+def from_nullable_raw_ptr(ptr:RawPtr) -> Maybe (Ptr a) given (a:Type) =
   if is_null_raw_ptr ptr
     then Nothing
     else Just $ Ptr ptr
@@ -1615,7 +1612,7 @@ def fopen(path:String, mode:StreamMode) -> {IO} (Stream mode) =
     with_c_string modeStr \cMode.
       Stream $ fopenFFI(cPath.ptr, cMode.ptr)
 
-def fclose(stream:Stream mode) -> {IO} () given (mode) =
+def fclose(stream:Stream mode) -> {IO} () given (mode:StreamMode) =
   fcloseFFI stream.ptr
   ()
 
@@ -1629,7 +1626,7 @@ def fwrite(stream:Stream WriteMode, s:String) -> {IO} () =
 '### Iteration
 TODO: move this out of the file-system section
 
-def while(body: () -> {|eff} Bool) -> {|eff} () given (eff) =
+def while(body: () -> {|eff} Bool) -> {|eff} () given (eff:Effects) =
   body' : () -> {|eff} Word8 = \. b_to_w8 $ body()
   %while(body')
 
@@ -1637,19 +1634,14 @@ data IterResult(a|Data) =
   Continue
   Done(a)
 
--- TODO: can we improve effect inference so we don't need this?
-def lift_state(ref: Ref(h, c), f:(a) -> {|eff} b, x:a) -> {State h|eff} b
-      given (a, b, c, h, eff) =
-  f x
-
 -- A little iteration combinator
-def iter(body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a|Data, eff) =
-  result = yield_state Nothing \resultRef.
-    i <- with_state 0
+def iter(body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a|Data, eff:Effects) =
+  result = yield_state (Nothing::Maybe a) \resultRef.
+    i <- with_state (0::Nat)
     while \.
       continue = is_nothing $ get resultRef
       if continue then
-        case lift_state(resultRef, (\x. lift_state(i, body, x)), get i) of
+        case body(get(i)) of
           Continue -> i := get i + 1
           Done(result) -> resultRef := Just result
       continue
@@ -1661,7 +1653,7 @@ def bounded_iter(
     maxIters:Nat,
     fallback:a,
     body:(Nat) -> {|eff} IterResult a
-    ) -> {|eff} a given (a|Data, eff) = iter \i.
+    ) -> {|eff} a given (a|Data, eff:Effects) = iter \i.
   if i >= maxIters
     then Done fallback
     else body i
@@ -1691,7 +1683,6 @@ def error(s:String) -> a given (a|Data) = unsafe_io \.
 
 def todo() ->> a given (a|Data) = error "TODO: implement it!"
 
-
 '### Table operations
 
 @noinline
@@ -1720,12 +1711,12 @@ def cast_table(xs:to=>a) -> from=>a given (from|Ix, to|Ix, a|Data) =
 def asidx(i:Nat) -> n given (n|Ix) = from_ordinal i
 def (@)(i:Nat, n|Ix) -> n = from_ordinal i
 
-def slice(xs:n=>a, start:Nat, m|Ix) -> m=>a given (n|Ix, a) =
+def slice(xs:n=>a, start:Nat, m|Ix) -> m=>a given (n|Ix, a:Type) =
   for i. xs[from_ordinal (ordinal i + start)]
 
-def head(xs:n=>a) -> a given (n|Ix, a) = xs[0@_]
+def head(xs:n=>a) -> a given (n|Ix, a:Type) = xs[0@_]
 
-def tail(xs:n=>a, start:Nat) -> List a given (n|Ix, a) =
+def tail(xs:n=>a, start:Nat) -> List a given (n|Ix, a:Type) =
   numElts = size n -| start
   to_list $ slice(xs, start, Fin numElts)
 
@@ -1742,8 +1733,8 @@ Key = Word64
 @noinline
 def threefry_2x32(k:Word64, count:Word64) -> Word64 =
   -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
-  rotations1 = [13, 15, 26, 6]
-  rotations2 = [17, 29, 16, 24]
+  rotations1 : Fin 4 => Int32 = [13, 15, 26, 6]
+  rotations2 : Fin 4 => Int32 = [17, 29, 16, 24]
 
   k0 = low_word k
   k1 = high_word k
@@ -1758,9 +1749,9 @@ def threefry_2x32(k:Word64, count:Word64) -> Word64 =
   rotations = [rotations1, rotations2]
   ks = [k1, k2, k0]
   (x, y) = yield_state (x, y) \ref. for i:(Fin 5).
-    for j.
+    for j:(Fin 4).
       (x, y) = get ref
-      rotationIndex = unsafe_from_ordinal (ordinal i `mod` 2)
+      rotationIndex : Fin 2 = unsafe_from_ordinal (ordinal i `mod` 2)
       rot = rotations[rotationIndex, j]
       x = x + y
       y = (y .<<. rot) .|. (y .>>. (32 - rot))
@@ -1777,7 +1768,7 @@ def hash(x:Key, y:Nat) -> Key =
   y64 = n_to_w64 y
   threefry_2x32(x, y64)
 def new_key(x:Nat) -> Key = hash(0, x)
-def many(f:(Key)->a, k:Key, i:n) -> a given (a, n|Ix) = f hash(k, ordinal i)
+def many(f:(Key)->a, k:Key, i:n) -> a given (a:Type, n|Ix) = f hash(k, ordinal i)
 def ixkey(k:Key, i:n) -> Key given (n|Ix) = hash(k, ordinal i)
 def split_key(k:Key) -> Fin n => Key given (n:Nat) = for i. ixkey(k, i)
 
@@ -1786,19 +1777,19 @@ These functions generate samples taken from, different distributions.
 Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution. Note that additional standard distributions are provided by the `stats` library.
 
 def rand(k:Key) -> Float =
-  exponent_bits = 1065353216 -- 1065353216 = 127 << 23
+  exponent_bits : Word32 = 1065353216 -- 1065353216 = 127 << 23
   mantissa_bits = (high_word k .&. 8388607)  -- 8388607 == (1 << 23) - 1
   bits = exponent_bits .|. mantissa_bits
   %bitcast(Float, bits) - 1.0
 
-def rand_vec(n:Nat, f: (Key) -> a, k: Key) -> Fin n => a  given (a) =
+def rand_vec(n:Nat, f: (Key) -> a, k: Key) -> Fin n => a  given (a:Type) =
   for i:(Fin n). f ixkey(k, i)
 
-def rand_mat(n:Nat, m:Nat, f: (Key) -> a, k: Key) -> Fin n => Fin m => a given (a) =
+def rand_mat(n:Nat, m:Nat, f: (Key) -> a, k: Key) -> Fin n => Fin m => a given (a:Type) =
   for i j. f ixkey(k, (i, j))
 
 def randn(k:Key) -> Float =
-  [k1, k2] = split_key k
+  [k1, k2] = split_key(n=2, k)
   -- rand is uniform between 0 and 1, but implemented such that it rounds to 0
   -- (in float32) once every few million draws, but never rounds to 1.
   u1 = 1.0 - (rand k1)
@@ -1823,12 +1814,12 @@ instance InnerProd(Float)
   def inner_prod(x, y) = x * y
 
 instance InnerProd(n=>a) given (a|InnerProd, n|Ix)
-  def inner_prod(x, y) =sum for i. inner_prod(x[i], y[i])
+  def inner_prod(x, y) =sum for i:n. inner_prod(x[i], y[i])
 
 '## Arbitrary
 Type class for generating example values
 
-interface Arbitrary(a)
+interface Arbitrary(a:Type)
   arb : (Key) -> a
 
 instance Arbitrary(Bool)
@@ -1860,10 +1851,10 @@ instance Arbitrary((i:n)=>(i<..) => a) given (n|Ix, a|Arbitrary)
 
 instance Arbitrary((a, b)) given (a|Arbitrary, b|Arbitrary)
   def arb(key) =
-    [k1, k2] = split_key key
+    [k1, k2] = split_key(n=2, key)
     (arb k1, arb k2)
 
-instance Arbitrary(Fin n) given (n)
+instance Arbitrary(Fin n) given (n:Nat)
   def arb(key) = rand_idx key
 
 '## Ord on Arrays
@@ -1888,7 +1879,7 @@ def search_sorted(xs:n=>a, x:a) -> Post n given (n|Ix, a|Ord) =
     else if x < xs[from_ordinal 0]
       then first_ix
       else
-        low  <- with_state(0)
+        low  <- with_state(0::Nat)
         high <- with_state(size n)
         _ <- iter
         numLeft = n_to_i (get high) - n_to_i (get low)
@@ -1911,40 +1902,41 @@ def search_sorted_exact(xs:n=>a, x:a) -> Maybe n given (n|Ix, a|Ord) =
 
 '### min / max etc
 
-def min_by(f:(a)->o, x:a, y:a) -> a given (o|Ord, a) = select(f x < f y, x, y)
-def max_by(f:(a)->o, x:a, y:a) -> a given (o|Ord, a) = select(f x > f y, x, y)
+def min_by(f:(a)->o, x:a, y:a) -> a given (o|Ord, a:Type) = select(f x < f y, x, y)
+def max_by(f:(a)->o, x:a, y:a) -> a given (o|Ord, a:Type) = select(f x > f y, x, y)
 
 def min(x1: o, x2: o) -> o given (o|Ord) = min_by(id, x1, x2)
 def max(x1: o, x2: o) -> o given (o|Ord) = max_by(id, x1, x2)
 
-def minimum_by(f:(a)->o, xs:n=>a) -> a given (a|Data, o|Ord, n|Ix) =
-  reduce(xs[0@_], \x y. min_by(f, x, y), xs)
-def maximum_by(f:(a)->o, xs:n=>a) -> a given (a|Data, o|Ord, n|Ix) =
-  reduce(xs[0@_], \x y. max_by(f, x, y), xs)
+def minimum_by(xs:n=>a, f:(a)->o) -> a given (a|Data, o|Ord, n|Ix) =
+  reduce(xs, xs[0@_], \x y. min_by(f, x, y))
+def maximum_by(xs:n=>a, f:(a)->o) -> a given (a|Data, o|Ord, n|Ix) =
+  reduce(xs, xs[0@_], \x y. max_by(f, x, y))
 
-def minimum(xs:n=>o) -> o given (n|Ix, o|Ord) = minimum_by(id, xs)
-def maximum(xs:n=>o) -> o given (n|Ix, o|Ord) = maximum_by(id, xs)
+def minimum(xs:n=>o) -> o given (n|Ix, o|Ord) = minimum_by(xs, id)
+def maximum(xs:n=>o) -> o given (n|Ix, o|Ord) = maximum_by(xs, id)
 
 '### argmin/argmax
 -- TODO: put in same section as `searchsorted`
 
-def argscan(comp:(o,o)->Bool, xs:n=>o) -> n given (o|Ord, n|Ix) =
-  zeroth = (0@_, xs[0@_])
-  compare = \p1 p2.
+def argscan(xs:n=>a, comp:(a,a)->Bool) -> n given (a|Ord, n|Ix) =
+  AccumTy : Type = (n, a)
+  zeroth : AccumTy = (0@_, xs[0@_])
+  compare = \p1:AccumTy p2:AccumTy.
     (idx1, x1) = p1
     (idx2, x2) = p2
     select(comp(x1, x2), (idx1, x1), (idx2, x2))
-  zipped = for i. (i, xs[i])
-  fst $ reduce(zeroth, compare, zipped)
+  zipped = for i:n. (i, xs[i])
+  fst $ reduce(zipped, zeroth, compare)
 
-def argmin(xs:n=>o) -> n given (n|Ix, o|Ord) = argscan((<), xs)
-def argmax(xs:n=>o) -> n given (n|Ix, o|Ord) = argscan((>), xs)
+def argmin(xs:n=>a) -> n given (n|Ix, a|Ord) = argscan(xs, (<))
+def argmax(xs:n=>a) -> n given (n|Ix, a|Ord) = argscan(xs, (>))
 
 def lexical_order(
-    compareElements:(n,n)->Bool,
-    compareLengths: (Nat,Nat)->Bool,
     xList:List n,
-    yList:List n
+    yList:List n,
+    compareElements:(n,n)->Bool,
+    compareLengths: (Nat,Nat)->Bool
     ) -> Bool  given (n|Ord) =
   -- Orders Lists according to the order of their elements,
   -- in the same way a dictionary does.
@@ -1973,8 +1965,8 @@ def lexical_order(
             False -> Done False
 
 instance Ord(List n) given (n|Ord)
-  def (>)(xs, ys) = lexical_order((>), (>), xs, ys)
-  def (<)(xs, ys) = lexical_order((<), (<), xs, ys)
+  def (>)(xs, ys) = lexical_order(xs, ys, (>), (>))
+  def (<)(xs, ys) = lexical_order(xs, ys, (<), (<))
 
 '### clip
 
@@ -2033,13 +2025,13 @@ TODO: all of these should be in some other section
 def reflect(i:n) -> n given (n|Ix) =
   unsafe_from_ordinal $ unsafe_nat_diff(size n, ordinal i + 1)
 
-def reverse(x:n=>a) -> n=>a given (n|Ix, a) =
-  for i. x[reflect i]
+def reverse(x:n=>a) -> n=>a given (n|Ix, a:Type) =
+  for i:n. x[reflect i]
 
 def wrap_periodic(n|Ix, i:Nat) -> n =
   unsafe_from_ordinal(n=n, i `mod` size n)
 
-def pad_to(m|Ix, x:a, xs:n=>a) -> m=>a given (n|Ix, a) =
+def pad_to(m|Ix, x:a, xs:n=>a) -> m=>a given (n|Ix, a:Type) =
   n' = size n
   for i.
     i' = ordinal i
@@ -2062,7 +2054,7 @@ def is_power_of_2(x:Nat) -> Bool =
   x' = nat_to_rep x
   if x' == 0
     then False
-    else 0 == %and(x', (%isub(x', 1::NatRep)))
+    else %and(x', (%isub(x', 1::NatRep))) == 0
 
 -- This computes the integer part of the binary logarithm of the input.
 -- TODO: natlog2 0 should do something other than underflow the answer.
@@ -2071,8 +2063,8 @@ def is_power_of_2(x:Nat) -> Bool =
 -- we have with a fixed-point argument.
 -- https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
 def natlog2(x:Nat) -> Nat =
-  tmp = yield_state 0 \ans.
-    cmp <- run_state 1
+  tmp = yield_state (0::Nat) \ans.
+    cmp <- run_state (1::Nat)
     while \.
       if x >= (get cmp)
         then
@@ -2093,7 +2085,7 @@ def general_integer_power(
     one:a, base:a,
     power:Nat
     ) -> a given (a|Data) =
-  iters = if power == 0 then 0 else 1 + natlog2 power
+  iters : Nat = if power == 0 then 0 else 1 + natlog2 power
   -- Implements exponentiation by squaring.
   -- This could be nicer if there were a way to explicitly
   -- specify which typelcass instance to use for Mul.
@@ -2109,33 +2101,33 @@ def general_integer_power(
 def intpow(base:a, power:Nat) -> a given (a|Mul) =
   general_integer_power((*), one, base, power)
 
-def from_just(x:Maybe a) -> a given (a) = case x of Just(x') -> x'
+def from_just(x:Maybe a) -> a given (a:Type) = case x of Just(x') -> x'
 
-def any_sat(f:(a)->Bool, xs:n=>a) -> Bool given (a, n|Ix) = any(each xs f)
+def any_sat(xs:n=>a, f:(a)->Bool) -> Bool given (a:Type, n|Ix) = any(each xs f)
 
-def seq_maybes(xs: n=>Maybe a) -> Maybe (n => a) given (n|Ix, a) =
+def seq_maybes(xs: n=>Maybe a) -> Maybe (n => a) given (n|Ix, a:Type) =
   -- is it possible to implement this safely? (i.e. without using partial
   -- functions)
-  case any_sat(is_nothing, xs) of
+  case any_sat(xs, is_nothing) of
     True  -> Nothing
     False -> Just $ each xs from_just
 
 def linear_search(xs:n=>a, query:a) -> Maybe n given (n|Ix, a|Eq) =
-  yield_state Nothing \ref. for i.
+  yield_state Nothing \ref. for i:n.
     case xs[i] == query of
       True  -> ref := Just i
       False -> ()
 
-def list_length(l:List a) -> Nat given (a) =
+def list_length(l:List a) -> Nat given (a:Type) =
   AsList(n, _) = l
   n
 
 -- This is for efficiency (rather than using `<>` repeatedly)
 -- TODO: we want this for any monoid but this implementation won't work.
-def concat(lists:n=>(List a)) -> List a given (a, n|Ix) =
-  totalSize = sum for i. list_length lists[i]
-  to_list $ with_state 0 \listIdx.
-    eltIdx <- with_state 0
+def concat(lists:n=>(List a)) -> List a given (a:Type, n|Ix) =
+  totalSize = sum for i:n. list_length lists[i]
+  to_list $ with_state (0::Nat) \listIdx.
+    eltIdx <- with_state (0::Nat)
     for i:(Fin totalSize).
       while \.
         continue = get eltIdx >= list_length (lists[(get listIdx)@_])
@@ -2151,8 +2143,10 @@ def concat(lists:n=>(List a)) -> List a given (a, n|Ix) =
       xs[eltIdxVal@_]
 
 def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
-  (num_res, res_inds) = yield_state (0::Nat, for i:n. Nothing) \ref.
-    for i. case xs[i] of
+  StateTy : Type = (Nat, n=>Maybe n)
+  init_state : StateTy = (0, for i. Nothing)
+  (num_res, res_inds) = yield_state init_state \ref.
+    for i:n. case xs[i] of
       Just(_) ->
         ix = get ref.0
         ref.1 ! (unsafe_from_ordinal ix) := Just i
@@ -2166,10 +2160,10 @@ def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
       Nothing -> todo -- Impossible
 
 def filter(xs:n=>a, condition:(a)->Bool) -> List a given (a|Data, n|Ix) =
-  cat_maybes $ for i. if condition xs[i] then Just xs[i] else Nothing
+  cat_maybes $ for i:n. if condition xs[i] then Just xs[i] else Nothing
 
 def arg_filter(xs:n=>a, condition:(a)->Bool) -> List n given (a|Data, n|Ix) =
-  cat_maybes $ for i. if condition xs[i] then Just i else Nothing
+  cat_maybes $ for i:n. if condition xs[i] then Just i else Nothing
 
 -- TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
 def prev_ix(i:n) -> Maybe n given (n|Ix) =
@@ -2178,15 +2172,15 @@ def prev_ix(i:n) -> Maybe n given (n|Ix) =
     Just(i_prev) -> unsafe_from_ordinal(i_prev) | Just
 
 def lines(source:String) -> List String =
-  AsList(_, s) = source
-  AsList(num_lines, newline_ixs) = cat_maybes for i_char.
+  AsList(num_chars, s) = source
+  AsList(num_lines, newline_ixs) = cat_maybes for i_char:(Fin num_chars).
     if s[i_char] == '\n'
       then Just(i_char)
       else Nothing
   to_list for i_line:(Fin num_lines).
     start = case prev_ix i_line of
-      Nothing -> first_ix
       Just(i) -> right_post newline_ixs[i]
+      Nothing -> first_ix
     end = left_post newline_ixs[i_line]
     post_slice(s, start, end)
 
@@ -2201,7 +2195,7 @@ def normalize_pdf(xs: d=>Float) -> d=>Float given (d|Ix) = xs / sum xs
 
 def cdf_for_categorical(logprobs: n=>Float) -> n=>Float given (n|Ix) =
   maxLogProb = maximum logprobs
-  cumsum_low $ normalize_pdf $ for i. exp(logprobs[i] - maxLogProb)
+  cumsum_low $ normalize_pdf $ for i:n. exp(logprobs[i] - maxLogProb)
 
 def categorical(logprobs: n=>Float, key: Key) -> n given (n|Ix) =
   categorical_from_cdf(cdf_for_categorical logprobs, key)
@@ -2210,11 +2204,11 @@ def categorical(logprobs: n=>Float, key: Key) -> n given (n|Ix) =
 -- (alternatively we could rely on hoisting of loop constants)
 def categorical_batch(logprobs: n=>Float, key: Key) -> m=>n given (n|Ix, m|Ix) =
   cdf = cdf_for_categorical logprobs
-  for i. categorical_from_cdf(cdf, ixkey(key, i))
+  for i:m. categorical_from_cdf(cdf, ixkey(key, i))
 
 def logsumexp(x: n=>Float) -> Float given (n|Ix) =
   m = maximum x
-  m + (log $ sum for i. exp (x[i] - m))
+  m + (log $ sum for i:n. exp (x[i] - m))
 
 def logsoftmax(x: n=>Float) -> n=>Float given (n|Ix) =
   lse = logsumexp x
@@ -2222,25 +2216,25 @@ def logsoftmax(x: n=>Float) -> n=>Float given (n|Ix) =
 
 def softmax(x: n=>Float) -> n=>Float given (n|Ix) =
   m = maximum x
-  e =  for i. exp (x[i] - m)
+  e =  for i:n. exp (x[i] - m)
   s = sum e
   for i. e[i] / s
 
 '## Polynomials
 TODO: Move this somewhere else
 
-def evalpoly(coefficients:n=>v, x:Float) -> v given (n|Ix, v|VSpace) =
+def evalpoly(coeffs:n=>v, x:Float) -> v given (n|Ix, v|VSpace) =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
-  fold zero \i c. coefficients[i] + x .* c
+  fold zero coeffs \i coeff c. coeff + x .* c
 
 '## Exception effect
 -- TODO: move `error` and `todo` to here.
 
-def catch(f:() -> {Except|eff} a) -> {|eff} Maybe a given (a, eff)=
+def catch(f:() -> {Except|eff} a) -> {|eff} Maybe a given (a:Type, eff:Effects)=
   f' : (() -> {Except|eff} a) = \. f()
   %catchException(f')
 
-def throw() -> {Except} a given (a) =
+def throw() -> {Except} a given (a:Type) =
   %throwException(a)
 
 def assert(b:Bool) -> {Except} () =
@@ -2270,16 +2264,16 @@ instance Subset(b, Either(a,b)) given (a|Data, b|Data)
 
 def int_to_reversed_digits(k:Nat) -> a=>b given (a|Ix, b|Ix) =
   base = size b
-  snd $ scan k \_ cur_k.
+  fst $ scan k (for i:a. ()) \_ _ cur_k.
     next_k = cur_k `idiv` base
     digit  = cur_k `mod` base
-    (next_k, unsafe_from_ordinal(n=b, digit))
+    (unsafe_from_ordinal(n=b, digit), next_k)
 
 def reversed_digits_to_int(digits: a=>b) -> Nat given (a|Ix, b|Ix) =
   base = size b
-  fst $ fold (0, 1) \j pair.
+  fst $ fold (0::Nat, 1::Nat) digits \j digit pair.
     (cur_k, cur_base) = pair
-    next_k = cur_k + ordinal digits[j] * cur_base
+    next_k = cur_k + ordinal digit * cur_base
     next_base = cur_base * base
     (next_k, next_base)
 
@@ -2352,18 +2346,19 @@ struct Stack(h:Heap, a|Data) =
         self.size_ref := n_new
         Just $ get buf!(unsafe_from_ordinal n_new)
 
-stack_init_size = 16
+stack_init_size : Nat = 16
+
 def with_stack(
     a|Data,
     action:(given (h:Heap), Stack(h, a)) -> {State h|eff} r
-    ) -> {|eff} r  given (eff, r) =
-  init_stack = to_list for i:(Fin stack_init_size). uninitialized_value()
-  with_state (0, init_stack) \ref . action(Stack(ref.0, ref.1))
+    ) -> {|eff} r  given (eff:Effects, r:Type) =
+  init_stack = to_list for i:(Fin stack_init_size). uninitialized_value() :: a
+  with_state (0::Nat, init_stack) \ref . action(Stack(ref.0, ref.1))
 
-def stack_extend_internal(stack:Stack(h, Char), x:Fin n=>Char) -> {State h} () given (n, h) =
+def stack_extend_internal(stack:Stack(h, Char), x:Fin n=>Char) -> {State h} () given (n:Nat, h:Heap) =
   stack.extend(x)
 
-def stack_push_internal(stack:Stack(h, Char), x:Char) -> {State h} () given (h) =
+def stack_push_internal(stack:Stack(h, Char), x:Char) -> {State h} () given (h:Heap) =
   stack.push(x)
 
 def with_stack_internal(f:(given (h:Heap), Stack(h, Char)) -> {State h} ()) -> List Char =
@@ -2387,7 +2382,7 @@ def from_c_string(s:CString) -> {IO} (Maybe String) =
             stack.push(c)
             Continue
 
-def show_any(x:a) -> String given (a) = unsafe_coerce(to=String, %showAny(x))
+def show_any(x:a) -> String given (a:Type) = unsafe_coerce(to=String, %showAny(x))
 
 def coerce_table(m|Ix, x:n=>a) -> m => a given (n|Ix, a|Data) =
   if size m == size n
@@ -2423,18 +2418,17 @@ def dex_test_mode() -> Bool = unsafe_io \. check_env "DEX_TEST_MODE"
 
 def fread(stream:Stream ReadMode) -> {IO} String =
   -- TODO: allow reading longer files!
-  n = 4096
-  ptr:(Ptr Char) <- with_alloc n
+  n : Nat = 4096
+  ptr <- with_alloc(Char, n)
   stack <- with_stack Char
   iter \_.
     numRead = i_to_w32 $ i64_to_i $ freadFFI(ptr.val, 1, n_to_i64 n, stream.ptr)
     AsList(_, new_chars) = string_from_char_ptr(numRead, ptr)
     stack.extend(new_chars)
-    if numRead == n_to_w32 n
-      then Continue
-      else Done ()
+    case numRead == n_to_w32 n of
+      True  -> Continue :: IterResult ()
+      False -> Done ()
   stack.read()
-
 
 '### Shelling Out
 
@@ -2447,8 +2441,7 @@ def shell_out(command:String) -> {IO} String =
   modeStr = "r"
   with_c_string command \command'.
     with_c_string modeStr \modeStr'.
-      pipe = Stream $ popenFFI(command'.ptr, modeStr'.ptr)
-      fread pipe
+      fread $ Stream $ popenFFI(command'.ptr, modeStr'.ptr)
 
 '### File Operations
 
@@ -2491,16 +2484,16 @@ def new_temp_file() -> {IO} FilePath =
   closeFFI fd
   string_from_char_ptr(15, (Ptr s.ptr))
 
-def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a) =
+def with_temp_file(action: (FilePath) -> {IO} a) -> {IO} a given (a:Type) =
   tmpFile = new_temp_file()
   result = action tmpFile
   delete_file tmpFile
   result
 
-def with_temp_files(action: (n=>FilePath) -> {IO} a) -> {IO} a given (n|Ix, a) =
-  tmpFiles = for i. new_temp_file()
+def with_temp_files(n|Ix, action: (n=>FilePath) -> {IO} a) -> {IO} a given (a:Type) =
+  tmpFiles = for i:n. new_temp_file()
   result = action tmpFiles
-  for i. delete_file tmpFiles[i]
+  each tmpFiles delete_file
   result
 
 '### Linear Algebra
@@ -2509,12 +2502,12 @@ def linspace(n|Ix, low:Float, high:Float) -> n=>Float =
   dx = (high - low) / n_to_f (size n)
   for i:n. low + n_to_f (ordinal i) * dx
 
-def transpose(x:n=>m=>a) -> m=>n=>a given (n|Ix, m|Ix, a) = for i j. x[j,i]
-def vdot(x:n=>Float, y:n=>Float) -> Float given (n|Ix) = fsum for i. x[i] * y[i]
-def dot(s:n=>Float, vs:n=>v) -> v given (n|Ix, v|VSpace) = sum for j. s[j] .* vs[j]
+def transpose(x:n=>m=>a) -> m=>n=>a given (n|Ix, m|Ix, a:Type) = for i j. x[j,i]
+def vdot(x:n=>Float, y:n=>Float) -> Float given (n|Ix) = fsum for i:n. x[i] * y[i]
+def dot(s:n=>Float, vs:n=>v) -> v given (n|Ix, v|VSpace) = sum for j:n. s[j] .* vs[j]
 
 def naive_matmul(x: l=>m=>Float, y: m=>n=>Float) -> (l=>n=>Float) given (l|Ix, m|Ix, n|Ix) =
-  for i k. fsum for j. x[i,j] * y[j,k]
+  for i k. fsum for j:m. x[i,j] * y[j,k]
 
 -- A `FullTileIx` type represents `tile_ix`th full tile (of size
 -- `tile_size`) iterating over the index set `n`.
@@ -2552,7 +2545,7 @@ def tile(
     n|Ix,
     tile_size: Nat,
     body:(m:Type, given () (Ix m, Subset(m, n))) -> {|eff} ()
-    ) -> {|eff} ()  given (eff) =
+    ) -> {|eff} ()  given (eff:Effects) =
   num_tiles = size n `idiv` tile_size
   coda_size = size n `rem` tile_size
   coda_offset = num_tiles * tile_size
@@ -2567,9 +2560,9 @@ def tiled_matmul(
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
   -- Tile sizes picked for axch's laptop
-  l_tile_size = 32
-  n_tile_size = 128
-  m_tile_size = 8
+  l_tile_size : Nat = 32
+  n_tile_size : Nat = 128
+  m_tile_size : Nat = 8
   yield_accum (AddMonoid Float) \result.
     tile(l, l_tile_size) \l_set.
       tile(n, n_tile_size) \n_set.
@@ -2577,9 +2570,9 @@ def tiled_matmul(
           for_ l_offset:l_set.
             l_ix = inject(to=l, l_offset)
             for_ m_offset:m_set.
-              m_ix = inject m_offset
+              m_ix = inject(to=m, m_offset)
               for_ n_offset:n_set.
-                n_ix = inject n_offset
+                n_ix = inject(to=n, n_offset)
                 result!l_ix!n_ix += x[l_ix][m_ix] * y[m_ix][n_ix]
 
 -- matmul. Better symbol to use? `@`?
@@ -2592,8 +2585,9 @@ def (**)(
 def matmul_linearization(
     x: l=>m=>Float,
     y: m=>n=>Float
-    ) -> _ given (l|Ix, m|Ix, n|Ix) =
-  def lin(xt: l=>m=>Float, yt: m=>n=>Float) -> _ =
+    ) -> (l=>n=>Float, (l=>m=>Float, m=>n=>Float)->l=>n=>Float)
+    given (l|Ix, m|Ix, n|Ix) =
+  def lin(xt: l=>m=>Float, yt: m=>n=>Float) -> l=>n=>Float =
     x ** yt + xt ** y
   (x ** y, lin)
 
@@ -2605,7 +2599,7 @@ def(.**)(v: n=>Float, mat: n=>m=>Float) -> (m=>Float) given (n|Ix, m|Ix) =
   transpose mat **. v
 
 def inner(x:n=>Float, mat:n=>m=>Float, y:m=>Float) -> Float given (n|Ix, m|Ix) =
-  fsum for p.
+  fsum for p:(n,m).
     (i,j) = p
     x[i] * mat[i,j] * y[j]
 

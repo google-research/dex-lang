@@ -38,11 +38,11 @@ import Util (enumerate, transitiveClosureM, bindM2, toSnocList, (...))
 
 -- === Ordinary (local) builder class ===
 
-class (EnvReader m, EnvExtender m, Fallible1 m, IRRep r)
+class (EnvReader m, Fallible1 m, IRRep r)
       => Builder (r::IR) (m::MonadKind1) | m -> r where
   rawEmitDecl :: Emits n => NameHint -> LetAnn -> Expr r n -> m n (AtomVar r n)
 
-class Builder r m => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
+class (EnvExtender m, Builder r m) => ScopableBuilder (r::IR) (m::MonadKind1) | m -> r where
   buildScopedAndThen
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -252,9 +252,9 @@ instance ( IRRep r, RenameB frag, HoistableB frag, OutFrag frag
   {-# INLINE refreshAbs #-}
 
 instance (SinkableV v, HoistingTopBuilder f m) => HoistingTopBuilder f (SubstReaderT v m i) where
-  emitHoistedEnv ab = SubstReaderT $ lift $ emitHoistedEnv ab
+  emitHoistedEnv ab = liftSubstReaderT $ emitHoistedEnv ab
   {-# INLINE emitHoistedEnv #-}
-  canHoistToTop e = SubstReaderT $ lift $ canHoistToTop e
+  canHoistToTop e = liftSubstReaderT $ canHoistToTop e
   {-# INLINE canHoistToTop #-}
 
 -- === Top-level builder class ===
@@ -302,7 +302,7 @@ emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 
 addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
 addInstanceSynthCandidate className instanceName =
-  emitSynthCandidates $ SynthCandidates [] (M.singleton className [instanceName])
+  emitSynthCandidates $ SynthCandidates (M.singleton className [instanceName])
 
 updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n -> m n ()
 updateTransposeRelation f1 f2 =
@@ -401,13 +401,13 @@ instance Fallible m => TopBuilder (TopBuilderT m) where
   {-# INLINE localTopBuilder #-}
 
 instance (SinkableV v, TopBuilder m) => TopBuilder (SubstReaderT v m i) where
-  emitBinding hint binding = SubstReaderT $ lift $ emitBinding hint binding
+  emitBinding hint binding = liftSubstReaderT $ emitBinding hint binding
   {-# INLINE emitBinding #-}
-  emitEnv ab = SubstReaderT $ lift $ emitEnv ab
+  emitEnv ab = liftSubstReaderT $ emitEnv ab
   {-# INLINE emitEnv #-}
-  emitNamelessEnv bs = SubstReaderT $ lift $ emitNamelessEnv bs
+  emitNamelessEnv bs = liftSubstReaderT $ emitNamelessEnv bs
   {-# INLINE emitNamelessEnv #-}
-  localTopBuilder cont = SubstReaderT $ ReaderT \env -> do
+  localTopBuilder cont = SubstReaderT \env -> do
     localTopBuilder do
       Distinct <- getDistinct
       runReaderT (runSubstReaderT' cont) (sink env)
@@ -440,7 +440,7 @@ type BuilderEmissions r = RNest (Decl r)
 newtype BuilderT (r::IR) (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
-           , Catchable, CtxReader, ScopeReader, Alternative, Searcher
+           , Catchable, CtxReader, ScopeReader, Alternative
            , MonadWriter w, MonadReader r')
 
 type BuilderM (r::IR) = BuilderT r HardFailM
@@ -514,14 +514,14 @@ instance (IRRep r, Fallible m) => EnvExtender (BuilderT r m) where
   {-# INLINE refreshAbs #-}
 
 instance (SinkableV v, ScopableBuilder r m) => ScopableBuilder r (SubstReaderT v m i) where
-  buildScopedAndThen cont1 cont2 = SubstReaderT $ ReaderT \env ->
+  buildScopedAndThen cont1 cont2 = SubstReaderT \env ->
     buildScopedAndThen
       (runReaderT (runSubstReaderT' cont1) (sink env))
       (\d e -> runReaderT (runSubstReaderT' $ cont2 d e) (sink env))
   {-# INLINE buildScopedAndThen #-}
 
 instance (SinkableV v, Builder r m) => Builder r (SubstReaderT v m i) where
-  rawEmitDecl hint ann expr = SubstReaderT $ lift $ emitDecl hint ann expr
+  rawEmitDecl hint ann expr = liftSubstReaderT $ emitDecl hint ann expr
   {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (OutReaderT e m) where
@@ -553,6 +553,10 @@ instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (ReaderT1 e m) 
 instance (SinkableE e, Builder r m) => Builder r (ReaderT1 e m) where
   rawEmitDecl hint ann expr =
     ReaderT1 $ lift $ emitDecl hint ann expr
+  {-# INLINE rawEmitDecl #-}
+
+instance (DiffStateE s d, Builder r m) => Builder r (DiffStateT1 s d m) where
+  rawEmitDecl hint ann expr = lift11 $ rawEmitDecl hint ann expr
   {-# INLINE rawEmitDecl #-}
 
 instance (SinkableE e, HoistableState e, Builder r m) => Builder r (StateT1 e m) where

@@ -205,8 +205,6 @@ getUVarType = \case
     ClassDef _ _ _ roleExpls bs _ _ <- lookupClassDef v
     return $ Pi $ CorePiType ExplicitApp (map snd roleExpls) bs $ EffTy Pure TyKind
   UMethodVar  v -> getMethodNameType v
-  UEffectVar   _ -> error "not implemented"
-  UEffectOpVar _ -> error "not implemented"
 
 getMethodNameType :: EnvReader m => MethodName n -> m n (CType n)
 getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
@@ -427,4 +425,4 @@ checkExtends allowed (EffectRow effs effTail) = do
   forM_ (eSetToList effs) \eff -> unless (eff `eSetMember` allowedEffs) $
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
-
+{-# INLINE checkExtends #-}

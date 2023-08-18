@@ -25,7 +25,6 @@ import Data.Maybe (fromJust, isJust)
 import Data.Text.Prettyprint.Doc
 import Control.Category
 import Control.Monad.Identity
-import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
@@ -246,14 +245,14 @@ instance ImpBuilder ImpM where
   {-# INLINE extendAllocsToFree #-}
 
 instance ImpBuilder m => ImpBuilder (SubstReaderT AtomSubstVal m i) where
-  emitMultiReturnInstr instr = SubstReaderT $ lift $ emitMultiReturnInstr instr
+  emitMultiReturnInstr instr = liftSubstReaderT $ emitMultiReturnInstr instr
   {-# INLINE emitMultiReturnInstr #-}
-  emitDeclsImp ab = SubstReaderT $ lift $ emitDeclsImp ab
+  emitDeclsImp ab = liftSubstReaderT $ emitDeclsImp ab
   {-# INLINE emitDeclsImp #-}
-  buildScopedImp cont = SubstReaderT $ ReaderT \env ->
+  buildScopedImp cont = SubstReaderT \env ->
     buildScopedImp $ runSubstReaderT (sink env) $ cont
   {-# INLINE buildScopedImp #-}
-  extendAllocsToFree ptr = SubstReaderT $ lift $ extendAllocsToFree ptr
+  extendAllocsToFree ptr = liftSubstReaderT $ extendAllocsToFree ptr
   {-# INLINE extendAllocsToFree #-}
 
 instance ImpBuilder m => Imper (SubstReaderT AtomSubstVal m)

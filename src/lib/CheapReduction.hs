@@ -20,7 +20,6 @@ module CheapReduction
   where
 
 import Control.Applicative
-import Control.Monad.Trans
 import Control.Monad.Writer.Strict  hiding (Alt)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -42,7 +41,6 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Util
-import {-# SOURCE #-} Inference (trySynthTerm)
 
 -- Carry out the reductions we are willing to carry out during type
 -- inference.  The goal is to support type aliases like `Int = Int32`
@@ -102,9 +100,9 @@ class ( Alternative2 m, SubstReader AtomSubstVal m
   lookupCache :: AtomName r o -> m i o (Maybe (Maybe (Atom r o)))
 
 instance IRRep r => CheapReducer (CheapReducerM r) r where
-  updateCache v u = CheapReducerM $ SubstReaderT $ lift $ lift11 $
+  updateCache v u = CheapReducerM $ liftSubstReaderT $ lift11 $
     modify (MapE . M.insert v (toMaybeE u) . fromMapE)
-  lookupCache v = CheapReducerM $ SubstReaderT $ lift $ lift11 $
+  lookupCache v = CheapReducerM $ liftSubstReaderT $ lift11 $
     fmap fromMaybeE <$> gets (M.lookup v . fromMapE)
 
 liftCheapReducerM
@@ -185,11 +183,6 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     -- TODO: we don't collect the dict holes here, so there's a danger of
     -- dropping them if they turn out to be phantom.
     Lam _ -> substM a
-    DictHole ctx ty' access -> do
-      ty <- cheapReduceE ty'
-      runFallibleT1 (trySynthTerm ty access) >>= \case
-        Success d -> return d
-        Failure _ -> return $ DictHole ctx ty access
     -- We traverse the Atom constructors that might contain lambda expressions
     -- explicitly, to make sure that we can skip normalizing free vars inside those.
     Con con -> Con <$> traverseOp con cheapReduceE cheapReduceE (error "unexpected lambda")
@@ -315,6 +308,9 @@ instance (CheaplyReducibleE r e1 e1', CheaplyReducibleE r e2 e2')
   => CheaplyReducibleE r (EitherE e1 e2) (EitherE e1' e2') where
     cheapReduceE (LeftE e) = LeftE <$> cheapReduceE e
     cheapReduceE (RightE e) = RightE <$> cheapReduceE e
+
+instance CheaplyReducibleE r e e' => CheaplyReducibleE r (ListE e) (ListE e') where
+  cheapReduceE (ListE xs) = ListE <$> mapM cheapReduceE xs
 
 -- XXX: TODO: figure out exactly what our normalization invariants are. We
 -- shouldn't have to choose `normalizeProj` or `asNaryProj` on a
@@ -616,7 +612,6 @@ visitAtomPartial = \case
   Eff eff   -> Eff     <$> visitGeneric eff
   DictCon t d -> DictCon <$> visitType t <*> visitGeneric d
   NewtypeCon con x -> NewtypeCon <$> visitGeneric con <*> visitGeneric x
-  DictHole ctx ty access -> DictHole ctx <$> visitGeneric ty <*> pure access
   TypeAsAtom t -> TypeAsAtom <$> visitGeneric t
   RepValAtom repVal -> RepValAtom <$> visitGeneric repVal
 

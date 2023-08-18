@@ -98,7 +98,6 @@ tryAsDataAtom atom = do
     Lam _           -> notData
     DictCon _ _     -> notData
     Eff _           -> notData
-    DictHole _ _ _  -> notData
     TypeAsAtom _    -> notData
     where
       notData = error $ "Not runtime-representable data: " ++ pprint atom
@@ -629,7 +628,6 @@ simplifyAtom atom = confuseGHC >>= \_ -> case atom of
   Eff eff -> Eff <$> substM eff
   PtrVar t v -> PtrVar t <$> substM v
   DictCon t d -> (DictCon <$> substM t <*> substM d) >>= cheapNormalize
-  DictHole _ _ _ -> error "shouldn't have dict holes past inference"
   NewtypeCon _ _ -> substM atom
   ProjectElt _ i x -> normalizeProj i =<< simplifyAtom x
   SimpInCore _ -> substM atom

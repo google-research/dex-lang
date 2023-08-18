@@ -363,8 +363,6 @@ runEnvQuery query = do
             UDataConVar  v' -> pprint <$> lookupEnv v'
             UClassVar    v' -> pprint <$> lookupEnv v'
             UMethodVar   v' -> pprint <$> lookupEnv v'
-            UEffectVar   v' -> pprint <$> lookupEnv v'
-            UEffectOpVar v' -> pprint <$> lookupEnv v'
             UPunVar v' -> do
               val <- lookupEnv v'
               return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
@@ -536,12 +534,7 @@ whenOpt x act = getConfig <&> optLevel >>= \case
 
 evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
 evalBlock typed = do
-  -- Be careful when adding new compilation passes here.  If you do, be sure to
-  -- also check compileTopLevelFun, below, and Export.prepareFunctionForExport.
-  -- In most cases it should be easiest to add new passes to simpOptimizations or
-  -- loweredOptimizations, below, because those are reused in all three places.
-  synthed <- checkPass SynthPass $ synthTopE typed
-  SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock synthed
+  SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
   opt <- simpOptimizations simp
   simpResult <- case opt of
     TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result

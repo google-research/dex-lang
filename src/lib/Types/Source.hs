@@ -95,13 +95,6 @@ data CTopDecl'
       SourceName  -- Interface name
       ExplicitParams
       [(SourceName, Group)]  -- Method declarations
-  | CEffectDecl SourceName [(SourceName, UResumePolicy, Group)]
-  | CHandlerDecl SourceName -- Handler name
-      SourceName -- Effect name
-      SourceName -- Body type parameter
-      Group -- Handler arguments
-      Group -- Handler type annotation
-      [(SourceName, Maybe UResumePolicy, CSBlock)] -- Handler methods
   -- header, givens (may be empty), methods, optional name.  The header should contain
   -- the prerequisites, class name, and class arguments.
   | CInstanceDecl CInstanceDef
@@ -216,9 +209,7 @@ data UVar (n::S) =
  | UTyConVar    (Name TyConNameC    n)
  | UDataConVar  (Name DataConNameC  n)
  | UClassVar    (Name ClassNameC    n)
- | UEffectVar   (Name EffectNameC   n)
  | UMethodVar   (Name MethodNameC   n)
- | UEffectOpVar (Name EffectOpNameC n)
  | UPunVar      (Name TyConNameC n) -- for names also used as data constructors
    deriving (Eq, Ord, Show, Generic)
 
@@ -274,12 +265,9 @@ data FieldName' =
  | FieldNum  Int
   deriving (Show, Eq, Ord)
 
-type UAnnExplBinders req n l = ([Explicitness], Nest (UAnnBinder req) n l)
-type UOptAnnExplBinders n l = UAnnExplBinders AnnOptional n l
-
 data ULamExpr (n::S) where
   ULamExpr
-    :: UOptAnnExplBinders n l  -- args
+    :: Nest UAnnBinder n l  -- args
     -> AppExplicitness
     -> Maybe (UEffectRow l)               -- optional effect
     -> Maybe (UType l)                    -- optional result type
@@ -287,33 +275,33 @@ data ULamExpr (n::S) where
     -> ULamExpr n
 
 data UPiExpr (n::S) where
-  UPiExpr :: UOptAnnExplBinders n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
+  UPiExpr :: Nest UAnnBinder n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
 
 data UTabPiExpr (n::S) where
-  UTabPiExpr :: UOptAnnBinder n l -> UType l -> UTabPiExpr n
+  UTabPiExpr :: UAnnBinder n l -> UType l -> UTabPiExpr n
 
 data UDepPairType (n::S) where
-  UDepPairType :: DepPairExplicitness -> UOptAnnBinder n l -> UType l -> UDepPairType n
+  UDepPairType :: DepPairExplicitness -> UAnnBinder n l -> UType l -> UDepPairType n
 
-type UConDef (n::S) (l::S) = (SourceName, Nest UReqAnnBinder n l)
+type UConDef (n::S) (l::S) = (SourceName, Nest UAnnBinder n l)
 
 data UDataDef (n::S) where
   UDataDef
     :: SourceName  -- source name for pretty printing
-    -> UOptAnnExplBinders n l
+    -> Nest UAnnBinder n l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
     -> UDataDef n
 
 data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
-    -> UOptAnnExplBinders n l
+    -> Nest UAnnBinder n l
     -> [(SourceName, UType l)]                    -- named payloads
     -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
 
 data UDataDefTrail (l::S) where
-  UDataDefTrail :: Nest UReqAnnBinder l l' -> UDataDefTrail l
+  UDataDefTrail :: Nest UAnnBinder l l' -> UDataDefTrail l
 
 data UTopDecl (n::S) (l::S) where
   ULocalDecl :: UDecl n l -> UTopDecl n l
@@ -327,41 +315,23 @@ data UTopDecl (n::S) (l::S) where
     -> UStructDef l                        -- actual definition
     -> UTopDecl n l
   UInterface
-    :: UOptAnnExplBinders n p   -- parameter binders
+    :: Nest UAnnBinder n p   -- parameter binders
     ->   [UType p]                         -- method types
     -> UBinder ClassNameC n l'             -- class name
     ->   Nest (UBinder MethodNameC) l' l   -- method names
     -> UTopDecl n l
   UInstance
     :: SourceNameOr (Name ClassNameC) n  -- class name
-    -> UOptAnnExplBinders n l'
+    -> Nest UAnnBinder n l'
     ->   [UExpr l']                      -- class parameters
     ->   [UMethodDef l']                 -- method definitions
     -- Maybe we should make a separate color (namespace) for instance names?
     -> MaybeB UAtomBinder n l    -- optional instance name
     -> AppExplicitness           -- explicitness (only relevant for named instances)
     -> UTopDecl n l
-  UEffectDecl
-    :: [UEffectOpType n]                  -- operation types
-    -> UBinder EffectNameC n l'           -- effect name
-    -> Nest (UBinder EffectOpNameC) l' l  -- operation names
-    -> UTopDecl n l
-  UHandlerDecl
-    :: SourceNameOr (Name EffectNameC) n  -- effect name
-    -> UAtomBinder n b                    -- body type argument
-    -> UOptAnnExplBinders b l'            -- type args
-    ->   UEffectRow l'                    -- returning effect
-    ->   UType l'                         -- returning type
-    ->   [UEffectOpDef l']                -- operation definitions
-    -> UBinder HandlerNameC n l           -- handler name
-    -> UTopDecl n l
 
 type UType = UExpr
 type UConstraint = UExpr
-
-data UEffectOpType (n::S) where
-  UEffectOpType :: UResumePolicy -> UType s -> UEffectOpType s
-  deriving (Show, Generic)
 
 data UResumePolicy =
     UNoResume
@@ -373,31 +343,17 @@ instance Hashable UResumePolicy
 instance Store UResumePolicy
 
 data UForExpr (n::S) where
-  UForExpr :: UOptAnnBinder n l -> UBlock l -> UForExpr n
+  UForExpr :: UAnnBinder n l -> UBlock l -> UForExpr n
 
 type UMethodDef = WithSrcE UMethodDef'
 data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
   deriving (Show, Generic)
 
-data UEffectOpDef (n::S) =
-    UEffectOpDef UResumePolicy (SourceNameOr (Name EffectOpNameC) n) (UExpr n)
-  | UReturnOpDef (UExpr n)
+data UAnn (n::S) = UAnn (UType n) | UNoAnn deriving Show
+
+data UAnnBinder (n::S) (l::S) =
+  UAnnBinder Explicitness (UAtomBinder n l) (UAnn n) [UConstraint n]
   deriving (Show, Generic)
-
-data AnnRequirement = AnnRequired | AnnOptional
-
-data UAnn (annReq::AnnRequirement) (n::S) where
-  UAnn   :: UType n -> UAnn annReq      n
-  UNoAnn ::            UAnn AnnOptional n
-deriving instance Show (UAnn annReq n)
-
-
-data UAnnBinder (annReq::AnnRequirement) (n::S) (l::S) =
-  UAnnBinder (UAtomBinder n l) (UAnn annReq n) [UConstraint n]
-  deriving (Show, Generic)
-
-type UReqAnnBinder = UAnnBinder AnnRequired :: B
-type UOptAnnBinder = UAnnBinder AnnOptional :: B
 
 data UAlt (n::S) where
   UAlt :: UPat n l -> UBlock l -> UAlt n
@@ -419,8 +375,8 @@ pattern UPatIgnore = UPatBinder UIgnore
 class HasSourceName a where
   getSourceName :: a -> SourceName
 
-instance HasSourceName (UAnnBinder req n l) where
-  getSourceName (UAnnBinder b _ _) = getSourceName b
+instance HasSourceName (UAnnBinder n l) where
+  getSourceName (UAnnBinder _ b _ _) = getSourceName b
 
 instance HasSourceName (UBinder c n l) where
   getSourceName = \case
@@ -447,6 +403,12 @@ instance HasSrcPos (WithSrcE (a::E) (n::S)) where
 
 instance HasSrcPos (WithSrcB (b::B) (n::S) (n::S)) where
   srcPos (WithSrcB pos _) = pos
+
+instance HasSrcPos (UBinder c n l) where
+  srcPos = \case
+    UBindSource ctx _ -> ctx
+    UIgnore -> SrcPosCtx Nothing Nothing
+    UBind ctx _ _ -> ctx
 
 -- === SourceMap ===
 
@@ -529,7 +491,7 @@ data PrintBackend =
 
 data OutFormat = Printed (Maybe PrintBackend) | RenderHtml  deriving (Show, Eq, Generic)
 
-data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass | JitPass
+data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | JitPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
               | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass | OccAnalysisPass
               | InlinePass
@@ -537,8 +499,7 @@ data PassName = Parse | RenamePass | TypePass | SynthPass | SimpPass | ImpPass |
 
 instance Show PassName where
   show p = case p of
-    Parse    -> "parse" ; RenamePass -> "rename";
-    TypePass -> "typed"   ; SynthPass -> "synth"
+    Parse    -> "parse" ; RenamePass -> "rename"; TypePass -> "typed"
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass   -> "llvm"
     LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
@@ -627,19 +588,16 @@ instance Pretty (SourceMap n) where
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
 instance GenericE UVar where
-  type RepE UVar = EitherE8 (Name (AtomNameC CoreIR)) (Name TyConNameC)
+  type RepE UVar = EitherE6 (Name (AtomNameC CoreIR)) (Name TyConNameC)
                             (Name DataConNameC)  (Name ClassNameC)
-                            (Name MethodNameC)   (Name EffectNameC)
-                            (Name EffectOpNameC) (Name TyConNameC)
+                            (Name MethodNameC)   (Name TyConNameC)
   fromE name = case name of
     UAtomVar     v -> Case0 v
     UTyConVar    v -> Case1 v
     UDataConVar  v -> Case2 v
     UClassVar    v -> Case3 v
     UMethodVar   v -> Case4 v
-    UEffectVar   v -> Case5 v
-    UEffectOpVar v -> Case6 v
-    UPunVar      v -> Case7 v
+    UPunVar      v -> Case5 v
   {-# INLINE fromE #-}
 
   toE name = case name of
@@ -648,9 +606,8 @@ instance GenericE UVar where
     Case2 v -> UDataConVar  v
     Case3 v -> UClassVar    v
     Case4 v -> UMethodVar   v
-    Case5 v -> UEffectVar   v
-    Case6 v -> UEffectOpVar v
-    Case7 v -> UPunVar v
+    Case5 v -> UPunVar v
+    _ -> error "impossible"
   {-# INLINE toE #-}
 
 instance Pretty (UVar n) where
@@ -660,8 +617,6 @@ instance Pretty (UVar n) where
     UDataConVar  v -> "Data constructor name: " <> pretty v
     UClassVar    v -> "Class name: " <> pretty v
     UMethodVar   v -> "Method name: " <> pretty v
-    UEffectVar   v -> "Effect name: " <> pretty v
-    UEffectOpVar v -> "Effect operation name: " <> pretty v
     UPunVar      v -> "Shared type constructor / data constructor name: " <> pretty v
 
 -- TODO: name subst instances for the rest of UExpr
@@ -710,12 +665,12 @@ instance Color c => RenameB (UBinder c) where
     UIgnore -> cont env UIgnore
     UBind ctx sn b -> renameB env b \env' b' -> cont env' $ UBind ctx sn b'
 
-instance ProvesExt  (UAnnBinder  req) where
-instance BindsNames  (UAnnBinder req) where
-  toScopeFrag (UAnnBinder b _ _) = toScopeFrag b
+instance ProvesExt  UAnnBinder where
+instance BindsNames  UAnnBinder where
+  toScopeFrag (UAnnBinder _ b _ _) = toScopeFrag b
 
-instance BindsAtMostOneName (UAnnBinder req) (AtomNameC CoreIR) where
-  UAnnBinder b _ _ @> x = b @> x
+instance BindsAtMostOneName UAnnBinder (AtomNameC CoreIR) where
+  UAnnBinder _ b _ _ @> x = b @> x
 
 instance GenericE (WithSrcE e) where
   type RepE (WithSrcE e) = PairE (LiftE SrcPosCtx) e
@@ -770,8 +725,8 @@ instance IsString (UBinder s VoidS VoidS) where
 instance IsString (UPat' VoidS VoidS) where
   fromString = UPatBinder . fromString
 
-instance IsString (UOptAnnBinder VoidS VoidS) where
-  fromString s = UAnnBinder (fromString s) UNoAnn []
+instance IsString (UAnnBinder VoidS VoidS) where
+  fromString s = UAnnBinder Explicit (fromString s) UNoAnn []
 
 instance IsString (UExpr' VoidS) where
   fromString = UVar . fromString

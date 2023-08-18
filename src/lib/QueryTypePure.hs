@@ -30,6 +30,7 @@ instance IRRep r => HasType r (AtomBinding r) where
     MiscBound   ty                 -> ty
     SolverBound (InfVarBound ty _) -> ty
     SolverBound (SkolemBound ty)   -> ty
+    SolverBound (DictBound   ty)   -> ty
     NoinlineFun ty _               -> ty
     TopDataBound (RepVal ty _)     -> ty
     FFIFunBound piTy _ -> Pi piTy
@@ -80,7 +81,6 @@ instance IRRep r => HasType r (Atom r) where
     RepValAtom (RepVal ty _) -> ty
     ProjectElt t _ _ -> t
     SimpInCore x -> getType x
-    DictHole _ ty _ -> ty
     TypeAsAtom ty -> getType ty
 
 instance IRRep r => HasType r (Type r) where

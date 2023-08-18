@@ -58,8 +58,6 @@ data Atom (r::IR) (n::S) where
  Eff          :: EffectRow CoreIR n            -> Atom CoreIR n
  DictCon      :: Type CoreIR n -> DictExpr n   -> Atom CoreIR n
  NewtypeCon   :: NewtypeCon n -> Atom CoreIR n -> Atom CoreIR n
- DictHole     :: AlwaysEqual SrcPosCtx -> Type CoreIR n -> RequiredMethodAccess
-              -> Atom CoreIR n
  TypeAsAtom   :: Type CoreIR n                 -> Atom CoreIR n
  -- === Shims between IRs ===
  SimpInCore   :: SimpInCore n    -> Atom CoreIR n
@@ -623,10 +621,8 @@ data TopEnvUpdate n =
  | UpdateFieldDef           (TyConName n) SourceName (CAtomName n)
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
--- TODO: make these `Name n` instead of `Atom n` so they're usable as cache keys.
 data SynthCandidates n = SynthCandidates
-  { lambdaDicts       :: [AtomName CoreIR n]
-  , instanceDicts     :: M.Map (ClassName n) [InstanceName n] }
+  { instanceDicts     :: M.Map (ClassName n) [InstanceName n] }
   deriving (Show, Generic)
 
 emptyImportStatus :: ImportStatus n
@@ -811,6 +807,7 @@ data InfVarDesc =
 data SolverBinding (n::S) =
    InfVarBound (CType n) InfVarCtx
  | SkolemBound (CType n)
+ | DictBound   (CType n)
    deriving (Show, Generic)
 
 -- Context for why we created an inference variable.
@@ -1458,12 +1455,9 @@ instance IRRep r => GenericE (Atom r) where
   {- ProjectElt -} (Type r `PairE` LiftE Projection `PairE` Atom r)
   {- Lam -}        (WhenCore r CoreLamExpr)
   {- DepPair -}    (Atom r `PairE` Atom r `PairE` DepPairType r)
-         ) (EitherE4
+         ) (EitherE3
   {- DictCon  -}   (WhenCore r (CType `PairE` DictExpr))
   {- NewtypeCon -}     (WhenCore r (NewtypeCon `PairE` Atom r))
-  {- DictHole -}       (WhenCore r (LiftE (AlwaysEqual SrcPosCtx) `PairE`
-                                    (Type CoreIR) `PairE`
-                                    (LiftE RequiredMethodAccess)))
   {- Con -}        (Con r)
          ) (EitherE5
   {- Eff -}        ( WhenCore r (EffectRow r))
@@ -1480,8 +1474,7 @@ instance IRRep r => GenericE (Atom r) where
     DepPair l r ty    -> Case0 (Case3 $ l `PairE` r `PairE` ty)
     DictCon t d         -> Case1 $ Case0 $ WhenIRE $ t `PairE` d
     NewtypeCon c x      -> Case1 $ Case1 $ WhenIRE (c `PairE` x)
-    DictHole s t access -> Case1 $ Case2 $ WhenIRE (LiftE s `PairE` t `PairE` LiftE access)
-    Con con             -> Case1 $ Case3 con
+    Con con             -> Case1 $ Case2 con
     Eff effs      -> Case2 $ Case0 $ WhenIRE effs
     PtrVar t v    -> Case2 $ Case1 $ LiftE t `PairE` v
     RepValAtom rv -> Case2 $ Case2 $ WhenIRE $ rv
@@ -1499,8 +1492,7 @@ instance IRRep r => GenericE (Atom r) where
     Case1 val -> case val of
       Case0 (WhenIRE (t `PairE` d)) -> DictCon t d
       Case1 (WhenIRE (c `PairE` x)) -> NewtypeCon c x
-      Case2 (WhenIRE (LiftE s `PairE` t `PairE` LiftE access)) -> DictHole s t access
-      Case3 con -> Con con
+      Case2 con -> Con con
       _ -> error "impossible"
     Case2 val -> case val of
       Case0 (WhenIRE effs) -> Eff effs
@@ -2119,12 +2111,11 @@ deriving instance IRRep r => Show (DepPairType r n)
 deriving via WrapE (DepPairType r) n instance IRRep r => Generic (DepPairType r n)
 
 instance GenericE SynthCandidates where
-  type RepE SynthCandidates =
-    ListE (AtomName CoreIR) `PairE` ListE (PairE ClassName (ListE InstanceName))
-  fromE (SynthCandidates xs ys) = ListE xs `PairE` ListE ys'
+  type RepE SynthCandidates = ListE (PairE ClassName (ListE InstanceName))
+  fromE (SynthCandidates ys) = ListE ys'
     where ys' = map (\(k,vs) -> PairE k (ListE vs)) (M.toList ys)
   {-# INLINE fromE #-}
-  toE (ListE xs `PairE` ListE ys) = SynthCandidates xs ys'
+  toE (ListE ys) = SynthCandidates ys'
     where ys' = M.fromList $ map (\(PairE k (ListE vs)) -> (k,vs)) ys
   {-# INLINE toE #-}
 
@@ -2259,17 +2250,20 @@ instance AlphaEqE       LinearizationSpec
 instance AlphaHashableE LinearizationSpec
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE2
+  type RepE SolverBinding = EitherE3
                                   (PairE CType (LiftE InfVarCtx))
+                                  CType
                                   CType
   fromE = \case
     InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
     SkolemBound  ty     -> Case1 ty
+    DictBound    ty     -> Case2 ty
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
     Case1 ty                    -> SkolemBound  ty
+    Case2 ty                    -> DictBound    ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -2455,11 +2449,10 @@ instance IRRep r => BindsOneName (Decl r) (AtomNameC r) where
   {-# INLINE binderName #-}
 
 instance Semigroup (SynthCandidates n) where
-  SynthCandidates xs ys <> SynthCandidates xs' ys' =
-    SynthCandidates (xs<>xs') (M.unionWith (<>) ys ys')
+  SynthCandidates xs <> SynthCandidates xs' = SynthCandidates (M.unionWith (<>) xs xs')
 
 instance Monoid (SynthCandidates n) where
-  mempty = SynthCandidates mempty mempty
+  mempty = SynthCandidates mempty
 
 instance GenericB EnvFrag where
   type RepB EnvFrag = RecSubstFrag Binding

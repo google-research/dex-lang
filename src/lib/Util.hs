@@ -306,7 +306,7 @@ getAlternative xs = asum $ map pure xs
 {-# INLINE getAlternative #-}
 
 newtype SnocList a = ReversedList { fromReversedList :: [a] }
-        deriving Functor -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
+        deriving (Show, Eq, Ord, Generic, Functor) -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
 
 instance Semigroup (SnocList a) where
   (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
@@ -319,6 +319,10 @@ instance Monoid (SnocList a) where
 instance Foldable SnocList where
   foldMap f (ReversedList xs) = foldMap f (reverse xs)
   {-# INLINE foldMap #-}
+
+instance Traversable SnocList where
+  traverse f (ReversedList xs) = ReversedList . reverse <$> traverse f (reverse xs)
+  {-# INLINE traverse #-}
 
 snoc :: SnocList a -> a -> SnocList a
 snoc (ReversedList xs) x = ReversedList (x:xs)

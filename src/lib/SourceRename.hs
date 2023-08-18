@@ -148,13 +148,6 @@ instance SourceRenamableE (SourceNameOr (Name ClassNameC)) where
       _ -> throw TypeErr $ "Not a class name: " ++ pprint sourceName
   sourceRenameE _ = error "Shouldn't be source-renaming internal names"
 
-instance SourceRenamableE (SourceNameOr (Name EffectNameC)) where
-  sourceRenameE (SourceName pos sourceName) = do
-    lookupSourceName sourceName >>= \case
-      UEffectVar v -> return $ InternalName pos sourceName v
-      _ -> throw TypeErr $ "Not an effect name: " ++ pprint sourceName
-  sourceRenameE _ = error "Shouldn't be source-renaming internal names"
-
 instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrInternalName c) where
   sourceRenameE (SourceOrInternalName x) = SourceOrInternalName <$> sourceRenameE x
 
@@ -164,25 +157,24 @@ instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) 
 instance SourceRenamableB (UBinder (AtomNameC CoreIR)) where
   sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
 
-instance SourceRenamableE (UAnn req) where
+instance SourceRenamableE UAnn where
   sourceRenameE UNoAnn = return UNoAnn
   sourceRenameE (UAnn ann) = UAnn <$> sourceRenameE ann
 
-instance SourceRenamableB (UAnnBinder req) where
-  sourceRenameB (UAnnBinder b ann cs) cont = do
+instance SourceRenamableB UAnnBinder where
+  sourceRenameB (UAnnBinder expl b ann cs) cont = do
     ann' <- sourceRenameE ann
-    cs'  <- mapM sourceRenameE cs
-    sourceRenameB b \b' ->
-      cont $ UAnnBinder b' ann' cs'
+    cs' <- mapM sourceRenameE cs
+    sourceRenameB b \b' -> cont $ UAnnBinder expl b' ann' cs'
 
 instance SourceRenamableE UExpr' where
   sourceRenameE expr = setMayShadow True case expr of
     UVar v -> UVar <$> sourceRenameE v
     ULit l -> return $ ULit l
     ULam lam -> ULam <$> sourceRenameE lam
-    UPi (UPiExpr (attrs, pats) appExpl eff body) ->
+    UPi (UPiExpr pats appExpl eff body) ->
       sourceRenameB pats \pats' ->
-        UPi <$> (UPiExpr (attrs, pats') <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
+        UPi <$> (UPiExpr pats' <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
     UApp f xs ys -> UApp <$> sourceRenameE f
        <*> forM xs sourceRenameE
        <*> forM ys (\(name, y) -> (name,) <$> sourceRenameE y)
@@ -245,26 +237,20 @@ instance SourceRenamableB UTopDecl where
       sourceRenameUBinder UPunVar tyConName \tyConName' -> do
         structDef' <- sourceRenameE structDef
         cont $ UStructDecl tyConName' structDef'
-    UInterface (attrs, paramBs) methodTys className methodNames -> do
+    UInterface paramBs methodTys className methodNames -> do
       Abs paramBs' (ListE methodTys') <-
         sourceRenameB paramBs \paramBs' -> do
           methodTys' <- mapM sourceRenameE methodTys
           return $ Abs paramBs' $ ListE methodTys'
       sourceRenameUBinder UClassVar className \className' ->
         sourceRenameUBinderNest UMethodVar methodNames \methodNames' ->
-          cont $ UInterface (attrs, paramBs') methodTys' className' methodNames'
-    UInstance className (roleExpls, conditions) params methodDefs instanceName expl -> do
+          cont $ UInterface paramBs' methodTys' className' methodNames'
+    UInstance className conditions params methodDefs instanceName expl -> do
       className' <- sourceRenameE className
       Abs conditions' (PairE (ListE params') (ListE methodDefs')) <-
         sourceRenameE $ Abs conditions (PairE (ListE params) $ ListE methodDefs)
       sourceRenameB instanceName \instanceName' ->
-        cont $ UInstance className' (roleExpls, conditions') params' methodDefs' instanceName' expl
-    UEffectDecl opTypes effName opNames -> do
-      opTypes' <- mapM (\(UEffectOpType p ty) -> (UEffectOpType p) <$> sourceRenameE ty) opTypes
-      sourceRenameUBinder UEffectVar effName \effName' ->
-        sourceRenameUBinderNest UEffectOpVar opNames \opNames' ->
-          cont $ UEffectDecl opTypes' effName' opNames'
-    UHandlerDecl _ _ _ _ _ _ _ -> error "not implemented"
+        cont $ UInstance className' conditions' params' methodDefs' instanceName' expl
 
 instance SourceRenamableB UDecl' where
   sourceRenameB decl cont = case decl of
@@ -277,8 +263,8 @@ instance SourceRenamableB UDecl' where
     UPass -> cont UPass
 
 instance SourceRenamableE ULamExpr where
-  sourceRenameE (ULamExpr (expls, args) expl effs resultTy body) =
-    sourceRenameB args \args' -> ULamExpr (expls, args')
+  sourceRenameE (ULamExpr args expl effs resultTy body) =
+    sourceRenameB args \args' -> ULamExpr args'
       <$> pure expl
       <*> mapM sourceRenameE effs
       <*> mapM sourceRenameE resultTy
@@ -336,15 +322,15 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
   UIgnore -> cont UIgnore
 
 instance SourceRenamableE UDataDef where
-  sourceRenameE (UDataDef tyConName (expls, paramBs) dataCons) = do
+  sourceRenameE (UDataDef tyConName paramBs dataCons) = do
     sourceRenameB paramBs \paramBs' -> do
       dataCons' <- forM dataCons \(dataConName, argBs) -> do
         argBs' <- sourceRenameE argBs
         return (dataConName, argBs')
-      return $ UDataDef tyConName (expls, paramBs') dataCons'
+      return $ UDataDef tyConName paramBs' dataCons'
 
 instance SourceRenamableE UStructDef where
-  sourceRenameE (UStructDef tyConName (expls, paramBs) fields methods) = do
+  sourceRenameE (UStructDef tyConName paramBs fields methods) = do
     sourceRenameB paramBs \paramBs' -> do
       fields' <- forM fields \(fieldName, ty) -> do
         ty' <- sourceRenameE ty
@@ -352,7 +338,7 @@ instance SourceRenamableE UStructDef where
       methods' <- forM methods \(ann, methodName, lam) -> do
         lam' <- sourceRenameE lam
         return (ann, methodName, lam')
-      return $ UStructDef tyConName (expls, paramBs') fields' methods'
+      return $ UStructDef tyConName paramBs' fields' methods'
 
 instance SourceRenamableE UDataDefTrail where
   sourceRenameE (UDataDefTrail args) = sourceRenameB args \args' ->
@@ -376,14 +362,6 @@ instance SourceRenamableE UMethodDef' where
     lookupSourceName v >>= \case
       UMethodVar v' -> UMethodDef (InternalName pos v v') <$> sourceRenameE expr
       _ -> throw TypeErr $ "not a method name: " ++ pprint v
-
-instance SourceRenamableE UEffectOpDef where
-  sourceRenameE (UReturnOpDef expr) = do
-    UReturnOpDef <$> sourceRenameE expr
-  sourceRenameE (UEffectOpDef rp ~(SourceName pos v) expr) = do
-    lookupSourceName v >>= \case
-      UEffectOpVar v' -> UEffectOpDef rp (InternalName pos v v') <$> sourceRenameE expr
-      _ -> throw TypeErr $ "not an effect operation name: " ++ pprint v
 
 instance SourceRenamableB b => SourceRenamableB (Nest b) where
   sourceRenameB (Nest b bs) cont =
@@ -489,9 +467,6 @@ instance HasSourceNames UTopDecl where
     UInterface _ _ ~(UBindSource _ className) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName _ -> sourceNames instanceName
-    UEffectDecl _ ~(UBindSource _ effName) opNames -> do
-      S.singleton effName <> sourceNames opNames
-    UHandlerDecl _ _ _ _ _ _ handlerName -> sourceNames handlerName
 
 instance HasSourceNames UDecl' where
   sourceNames = \case

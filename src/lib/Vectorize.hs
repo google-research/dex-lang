@@ -85,13 +85,13 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
       SubstReaderT Name
         (ReaderT1 CommuteMap
           (ReaderT1 (LiftE Word32)
-            (StateT1 (LiftE Errs) (BuilderT SimpIR FallibleM)))) i o a }
+            (StateT1 (LiftE [Err]) (BuilderT SimpIR FallibleM)))) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (CommuteMap o)
-           , MonadState (LiftE Errs o), Fallible, ScopeReader, EnvReader
+           , MonadState (LiftE [Err] o), Fallible, ScopeReader, EnvReader
            , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
            , SubstReader Name)
 
-vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, Errs)
+vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, [Err])
 vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
   case popNest bsDestB of
     Just (PairB bs b) ->
@@ -102,7 +102,7 @@ vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
 {-# SCC vectorizeLoops #-}
 
 liftTopVectorizeM :: (EnvReader m)
-  => Word32 -> TopVectorizeM i i a -> m i (a, Errs)
+  => Word32 -> TopVectorizeM i i a -> m i (a, [Err])
 liftTopVectorizeM vectorByteWidth action = do
   fallible <- liftBuilderT $
     flip runStateT1 mempty $ runReaderT1 (LiftE vectorByteWidth) $
@@ -111,7 +111,7 @@ liftTopVectorizeM vectorByteWidth action = do
   case runFallibleM fallible of
     -- The failure case should not occur: vectorization errors should have been
     -- caught inside `vectorizeLoopsDecls` (and should have been added to the
-    -- `Errs` state of the `StateT` instance that is run with `runStateT` above).
+    -- `Err` state of the `StateT` instance that is run with `runStateT` above).
     Failure errs -> error $ pprint errs
     Success (a, (LiftE errs)) -> return $ (a, errs)
 
@@ -123,12 +123,11 @@ addVectErrCtx name payload m =
 throwVectErr :: Fallible m => String -> m a
 throwVectErr msg = throwErr (Err MiscErr mempty msg)
 
-prependCtxToErrs :: ErrCtx -> Errs -> Errs
-prependCtxToErrs ctx (Errs errs) =
-  Errs $ map (\(Err ty ctx' msg) -> Err ty (ctx <> ctx') msg) errs
+prependCtxToErr :: ErrCtx -> Err -> Err
+prependCtxToErr ctx (Err ty ctx' msg) = Err ty (ctx <> ctx') msg
 
 askVectorByteWidth :: TopVectorizeM i o Word32
-askVectorByteWidth = TopVectorizeM $ SubstReaderT $ lift $ lift11 (fromLiftE <$> ask)
+askVectorByteWidth = TopVectorizeM $ liftSubstReaderT $ lift11 (fromLiftE <$> ask)
 
 extendCommuteMap :: AtomName SimpIR o -> MonoidCommutes -> TopVectorizeM i o a -> TopVectorizeM i o a
 extendCommuteMap name commutativity = local $ insertNameMapE name $ LiftE commutativity
@@ -186,11 +185,11 @@ vectorizeLoopsExpr expr = do
                 seqOp <- mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body'
                 return $ PrimOp $ DAMOp seqOp)
               else renameM expr)
-          `catchErr` \errs -> do
+          `catchErr` \err -> do
               let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
                   ctx = mempty { messageCtx = [msg] }
-                  errs' = prependCtxToErrs ctx errs
-              modify (<> LiftE errs')
+                  err' = prependCtxToErr ctx err
+              modify (\(LiftE errs) -> LiftE (err':errs))
               recurSeq expr
         _ -> recurSeq expr
     PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
@@ -352,12 +351,12 @@ liftVectorizeM loopWidth action = do
   let fallible = flip runReaderT loopWidth act
   case runFallibleM fallible of
     Success a -> return a
-    Failure errs -> throwErrs errs  -- re-raise inside ambient monad
+    Failure errs -> throwErr errs  -- re-raise inside ambient monad
   where
     vSubst subst val = VRename $ subst ! val
 
 getLoopWidth :: VectorizeM i o Word32
-getLoopWidth = VectorizeM $ SubstReaderT $ ReaderT $ const $ ask
+getLoopWidth = VectorizeM $ SubstReaderT $ const $ ask
 
 -- TODO When needed, can code a variant of this that also returns the Stability
 -- of the value returned by the LamExpr.

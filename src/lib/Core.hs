@@ -79,7 +79,7 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
   EnvReaderT {runEnvReaderT' :: ReaderT (DistinctEvidence n, Env n) m a }
   deriving ( Functor, Applicative, Monad, MonadFail
-           , MonadWriter w, Fallible, Searcher, Alternative)
+           , MonadWriter w, Fallible, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
 type FallibleEnvReaderM = EnvReaderT FallibleM
@@ -131,6 +131,15 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
   {-# INLINE liftIO #-}
 
 deriving instance (Monad m, MonadState s m) => MonadState s (EnvReaderT m o)
+
+instance (Monad m, CtxReader m) => CtxReader (EnvReaderT m o) where
+  getErrCtx = EnvReaderT $ lift getErrCtx
+  {-# INLINE getErrCtx #-}
+
+instance (Monad m, Catchable m) => Catchable (EnvReaderT m o) where
+  catchErr (EnvReaderT (ReaderT m)) f = EnvReaderT $ ReaderT \env ->
+    m env `catchErr` \err -> runReaderT (runEnvReaderT' $ f err) env
+  {-# INLINE catchErr #-}
 
 -- === Instances for Name monads ===
 
@@ -388,12 +397,6 @@ withFreshBinders (binding:rest) cont = do
     withFreshBinders rest' \bs vs ->
       cont (Nest b bs)
            (sink (binderName b) : vs)
-
-getInstanceDicts :: EnvReader m => ClassName n -> m n [InstanceName n]
-getInstanceDicts name = do
-  env <- withEnv moduleEnv
-  return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
-{-# INLINE getInstanceDicts #-}
 
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, CorePiType, respectively) up to the given maxDepth, and return the

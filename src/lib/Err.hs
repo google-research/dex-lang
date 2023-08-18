@@ -4,22 +4,20 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Err (Err (..), Errs (..), ErrType (..), Except (..),
+module Err (Err (..), ErrType (..), Except (..),
             ErrCtx (..), SrcTextCtx,
             Fallible (..), Catchable (..), catchErrExcept,
             FallibleM (..), HardFailM (..), CtxReader (..),
-            runFallibleM, runHardFail, throw, throwErr,
+            runFallibleM, runHardFail, throw,
             addContext, addSrcContext, addSrcTextContext,
             catchIOExcept, liftExcept, liftExceptAlt,
             assertEq, ignoreExcept,
-            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack,
-            FallibleApplicativeWrapper, traverseMergingErrs,
-            SearcherM (..), Searcher (..), runSearcherM) where
+            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack
+            ) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
@@ -39,7 +37,6 @@ import SourceInfo
 -- === core API ===
 
 data Err = Err ErrType ErrCtx String  deriving (Show, Eq)
-newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
 
 data ErrType = NoErr
              | ParseErr
@@ -63,6 +60,7 @@ data ErrType = NoErr
              | EscapedNameErr
              | ModuleImportErr
              | MonadFailErr
+             | SearchFailure -- used as the identity for `Alternative` instances
                deriving (Show, Eq)
 
 type SrcTextCtx = Maybe (Int, Text) -- Int is the offset in the source file
@@ -74,11 +72,11 @@ data ErrCtx = ErrCtx
     deriving (Show, Eq, Generic)
 
 class MonadFail m => Fallible m where
-  throwErrs :: Errs -> m a
+  throwErr :: Err -> m a
   addErrCtx :: ErrCtx -> m a -> m a
 
 class Fallible m => Catchable m where
-  catchErr :: m a -> (Errs -> m a) -> m a
+  catchErr :: m a -> (Err -> m a) -> m a
 
 catchErrExcept :: Catchable m => m a -> m (Except a)
 catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
@@ -88,19 +86,16 @@ catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
 class Fallible m => CtxReader m where
   getErrCtx :: m ErrCtx
 
--- We have this in its own class because StateT can't implement it
--- (but FallibleM, Except and IO all can)
-class Fallible m => FallibleApplicative m where
-  mergeErrs :: m a -> m b -> m (a, b)
-
 newtype FallibleM a =
   FallibleM { fromFallibleM :: ReaderT ErrCtx Except a }
   deriving (Functor, Applicative, Monad)
 
 instance Fallible FallibleM where
-  throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
-    throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
-  {-# INLINE throwErrs #-}
+  -- TODO: we end up adding the context multiple times when we do throw/catch.
+  -- We should fix it.
+  throwErr (Err errTy ctx s) = FallibleM $ ReaderT \ambientCtx ->
+    throwErr $ Err errTy (ambientCtx <> ctx) s
+  {-# INLINE throwErr #-}
   addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
   {-# INLINE addErrCtx #-}
 
@@ -110,17 +105,27 @@ instance Catchable FallibleM where
       Failure errs -> runReaderT (fromFallibleM $ handler errs) ctx
       Success ans  -> return ans
 
-instance FallibleApplicative FallibleM where
-  mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
-    FallibleM $ ReaderT \ctx -> mergeErrs (f1 ctx) (f2 ctx)
-
 instance CtxReader FallibleM where
   getErrCtx = FallibleM ask
   {-# INLINE getErrCtx #-}
 
+instance Alternative FallibleM where
+  empty = throw SearchFailure ""
+  {-# INLINE empty #-}
+  m1 <|> m2 = do
+    catchSearchFailure m1 >>= \case
+      Nothing -> m2
+      Just x -> return x
+  {-# INLINE (<|>) #-}
+
+catchSearchFailure :: Catchable m => m a -> m (Maybe a)
+catchSearchFailure m = (Just <$> m) `catchErr` \case
+  Err SearchFailure _ _ -> return Nothing
+  err -> throwErr err
+
 instance Fallible IO where
-  throwErrs errs = throwIO errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = throwIO errs
+  {-# INLINE throwErr #-}
   addErrCtx ctx m = do
     result <- catchIOExcept m
     liftExcept $ addErrCtx ctx result
@@ -132,23 +137,17 @@ instance Catchable IO where
       Success result -> return result
       Failure errs -> handler errs
 
-instance FallibleApplicative IO where
-  mergeErrs m1 m2 = do
-    result1 <- catchIOExcept m1
-    result2 <- catchIOExcept m2
-    liftExcept $ mergeErrs result1 result2
-
 runFallibleM :: FallibleM a -> Except a
 runFallibleM m = runReaderT (fromFallibleM m) mempty
 {-# INLINE runFallibleM #-}
 
 -- === Except type ===
 
--- Except is isomorphic to `Either Errs` but having a distinct type makes it
+-- Except is isomorphic to `Either Err` but having a distinct type makes it
 -- easier to debug type errors.
 
 data Except a =
-   Failure Errs
+   Failure Err
  | Success a
    deriving (Show, Eq)
 
@@ -168,23 +167,6 @@ instance Monad Except where
   Failure errs >>= _ = Failure errs
   Success x >>= f = f x
   {-# INLINE (>>=) #-}
-
--- === FallibleApplicativeWrapper ===
-
--- Wraps a Fallible monad, presenting an applicative interface that sequences
--- actions using the error-concatenating `mergeErrs` instead of the default
--- abort-on-failure sequencing.
-
-newtype FallibleApplicativeWrapper m a =
-  FallibleApplicativeWrapper { fromFallibleApplicativeWrapper :: m a }
-  deriving (Functor)
-
-instance FallibleApplicative m => Applicative (FallibleApplicativeWrapper m) where
-  pure x = FallibleApplicativeWrapper $ pure x
-  {-# INLINE pure #-}
-  liftA2 f (FallibleApplicativeWrapper m1) (FallibleApplicativeWrapper m2) =
-    FallibleApplicativeWrapper $ fmap (uncurry f) (mergeErrs m1 m2)
-  {-# INLINE liftA2 #-}
 
 -- === HardFail ===
 
@@ -222,23 +204,16 @@ instance MonadFail HardFailM where
   {-# INLINE fail #-}
 
 instance Fallible HardFailM where
-  throwErrs errs = error $ pprint errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = error $ pprint errs
+  {-# INLINE throwErr #-}
   addErrCtx _ cont = cont
   {-# INLINE addErrCtx #-}
-
-instance FallibleApplicative HardFailM where
-  mergeErrs cont1 cont2 = (,) <$> cont1 <*> cont2
 
 -- === convenience layer ===
 
 throw :: Fallible m => ErrType -> String -> m a
-throw errTy s = throwErrs $ Errs [addCompilerStackCtx $ Err errTy mempty s]
+throw errTy s = throwErr $ addCompilerStackCtx $ Err errTy mempty s
 {-# INLINE throw #-}
-
-throwErr :: Fallible m => Err -> m a
-throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
-{-# INLINE throwErr #-}
 
 addCompilerStackCtx :: Err -> Err
 addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
@@ -278,17 +253,17 @@ addSrcTextContext offset text m =
 
 catchIOExcept :: MonadIO m => IO a -> m (Except a)
 catchIOExcept m = liftIO $ (liftM Success m) `catches`
-  [ Handler \(e::Errs)           -> return $ Failure e
-  , Handler \(e::IOError)        -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
+  [ Handler \(e::Err)           -> return $ Failure e
+  , Handler \(e::IOError)        -> return $ Failure $ Err DataIOErr   mempty $ show e
   -- Propagate asynchronous exceptions like ThreadKilled; they are
   -- part of normal operation (of the live evaluation modes), not
   -- compiler bugs.
   , Handler \(e::AsyncException) -> liftIO $ throwIO e
-  , Handler \(e::SomeException)  -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
+  , Handler \(e::SomeException)  -> return $ Failure $ Err CompilerErr mempty $ show e
   ]
 
 liftExcept :: Fallible m => Except a -> m a
-liftExcept (Failure errs) = throwErrs errs
+liftExcept (Failure errs) = throwErr errs
 liftExcept (Success ans) = return ans
 {-# INLINE liftExcept #-}
 
@@ -310,83 +285,21 @@ assertEq x y s = if x == y then return ()
               ++ pprint x ++ " != " ++ pprint y ++ "\n\n"
               ++ prettyCallStack callStack ++ "\n"
 
--- === search monad ===
-
-infix 0 <!>
-class (Monad m, Alternative m) => Searcher m where
-  -- Runs the second computation when the first yields an empty set of results.
-  -- This is just `<|>` for greedy searchers like `Maybe`, but in other cases,
-  -- like the list monad, it matters that the second computation isn't run if
-  -- the first succeeds.
-  (<!>) :: m a -> m a -> m a
-
--- Adds an extra error case to `FallibleM` so we can give it an Alternative
--- instance with an identity element.
-newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT FallibleM a }
-  deriving (Functor, Applicative, Monad)
-
-runSearcherM :: SearcherM a -> Except (Maybe a)
-runSearcherM m = runFallibleM $ runMaybeT (runSearcherM' m)
-{-# INLINE runSearcherM #-}
-
-instance MonadFail SearcherM where
-  fail _ = SearcherM $ MaybeT $ return Nothing
-  {-# INLINE fail #-}
-
-instance Fallible SearcherM where
-  throwErrs e = SearcherM $ lift $ throwErrs e
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (SearcherM (MaybeT m)) = SearcherM $ MaybeT $
-    addErrCtx ctx $ m
-  {-# INLINE addErrCtx #-}
-
-instance Alternative SearcherM where
-  empty = SearcherM $ MaybeT $ return Nothing
-  SearcherM (MaybeT m1) <|> SearcherM (MaybeT m2) = SearcherM $ MaybeT do
-    m1 >>= \case
-      Just ans -> return $ Just ans
-      Nothing -> m2
-
-instance Catchable SearcherM where
-  SearcherM (MaybeT m) `catchErr` handler = SearcherM $ MaybeT $
-    m `catchErr` \errs -> runMaybeT $ runSearcherM' $ handler errs
-
-instance Searcher SearcherM where
-  (<!>) = (<|>)
-  {-# INLINE (<!>) #-}
-
-instance CtxReader SearcherM where
-  getErrCtx = SearcherM $ lift getErrCtx
-  {-# INLINE getErrCtx #-}
-
-instance Searcher [] where
-  [] <!> m = m
-  m  <!> _ = m
-  {-# INLINE (<!>) #-}
-
-instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
-  WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
-  {-# INLINE (<!>) #-}
-
 instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
   addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
   {-# INLINE addErrCtx #-}
 
-instance Searcher m => Searcher (ReaderT r m) where
-  ReaderT f1 <!> ReaderT f2 = ReaderT \r -> f1 r <!> f2 r
-  {-# INLINE (<!>) #-}
-
 instance Fallible [] where
-  throwErrs _ = []
-  {-# INLINE throwErrs #-}
+  throwErr _ = []
+  {-# INLINE throwErr #-}
   addErrCtx _ m = m
   {-# INLINE addErrCtx #-}
 
 instance Fallible Maybe where
-  throwErrs _ = Nothing
-  {-# INLINE throwErrs #-}
+  throwErr _ = Nothing
+  {-# INLINE throwErr #-}
   addErrCtx _ m = m
   {-# INLINE addErrCtx #-}
 
@@ -404,11 +317,6 @@ layout :: LayoutOptions
 layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
   where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
 
-traverseMergingErrs :: (Traversable f, FallibleApplicative m)
-                    => (a -> m b) -> f a -> m (f b)
-traverseMergingErrs f xs =
-  fromFallibleApplicativeWrapper $ traverse (\x -> FallibleApplicativeWrapper $ f x) xs
-
 -- === instances ===
 
 instance MonadFail FallibleM where
@@ -416,29 +324,19 @@ instance MonadFail FallibleM where
   {-# INLINE fail #-}
 
 instance Fallible Except where
-  throwErrs errs = Failure errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = Failure errs
+  {-# INLINE throwErr #-}
 
   addErrCtx _ (Success ans) = Success ans
-  addErrCtx ctx (Failure (Errs errs)) =
-    Failure $ Errs [Err errTy (ctx <> ctx') s | Err errTy ctx' s <- errs]
+  addErrCtx ctx (Failure (Err errTy ctx' s)) =
+    Failure $ Err errTy (ctx <> ctx') s
   {-# INLINE addErrCtx #-}
 
-instance FallibleApplicative Except where
-  mergeErrs (Success x) (Success y) = Success (x, y)
-  mergeErrs x y = Failure (getErrs x <> getErrs y)
-    where getErrs :: Except a -> Errs
-          getErrs = \case Failure e  -> e
-                          Success _ -> mempty
-
 instance MonadFail Except where
-  fail s = Failure $ Errs [Err CompilerErr mempty s]
+  fail s = Failure $ Err CompilerErr mempty s
   {-# INLINE fail #-}
 
-instance Exception Errs
-
-instance Show Errs where
-  show errs = pprint errs
+instance Exception Err
 
 instance Pretty Err where
   pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
@@ -496,10 +394,11 @@ instance Pretty ErrType where
     EscapedNameErr    -> "Leaked local variables:"
     ModuleImportErr   -> "Module import error: "
     MonadFailErr      -> "MonadFail error (internal error)"
+    SearchFailure     -> "Search error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
   addErrCtx ctx (ReaderT f) = ReaderT \r -> addErrCtx ctx $ f r
   {-# INLINE addErrCtx #-}
 
@@ -507,21 +406,13 @@ instance Catchable m => Catchable (ReaderT r m) where
   ReaderT f `catchErr` handler = ReaderT \r ->
     f r `catchErr` \e -> runReaderT (handler e) r
 
-instance FallibleApplicative m => FallibleApplicative (ReaderT r m) where
-  mergeErrs (ReaderT f1) (ReaderT f2) =
-    ReaderT \r -> mergeErrs (f1 r) (f2 r)
-
 instance CtxReader m => CtxReader (ReaderT r m) where
   getErrCtx = lift getErrCtx
   {-# INLINE getErrCtx #-}
 
-instance Pretty Errs where
-  pretty (Errs [err]) = pretty err
-  pretty (Errs errs) = prettyLines errs
-
 instance Fallible m => Fallible (StateT s m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
   addErrCtx ctx (StateT f) = StateT \s -> addErrCtx ctx $ f s
   {-# INLINE addErrCtx #-}
 

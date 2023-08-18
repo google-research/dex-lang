@@ -95,7 +95,7 @@ newtype CompileM i o a =
            , EnvReader, SubstReader OperandSubstVal )
 
 instance MonadState CompileState (CompileM i o) where
-  state f = CompileM $ SubstReaderT $ lift $ EnvReaderT $ lift $ state f
+  state f = CompileM $ liftSubstReaderT $ EnvReaderT $ lift $ state f
 
 class MonadState CompileState m => LLVMBuilder (m::MonadKind)
 

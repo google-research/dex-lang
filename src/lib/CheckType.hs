@@ -180,9 +180,6 @@ instance IRRep r => CheckableE r (Atom r) where
       con' <- typeCheckNewtypeCon con xTy
       return $ NewtypeCon con' x'
     SimpInCore x -> SimpInCore <$> checkE x
-    DictHole ctx ty access -> do
-      ty' <- ty |: TyKind
-      return $ DictHole ctx ty' access
     ProjectElt resultTy UnwrapNewtype x -> do
       resultTy' <- resultTy |: TyKind
       (x', NewtypeTyCon con) <- checkAndGetType x

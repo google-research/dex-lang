@@ -199,7 +199,6 @@ topDecl' =
   <|> interfaceDef
   <|> (CInstanceDecl <$> instanceDef True)
   <|> (CInstanceDecl <$> instanceDef False)
-  <|> effectDef
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
@@ -290,26 +289,6 @@ interfaceDef = do
       ty <- cGroup
       return (methodName, ty)
   return $ CInterface className params methodDecls
-
-effectDef :: Parser CTopDecl'
-effectDef = do
-  keyWord EffectKW
-  effName <- anyName
-  sigs <- opSigList
-  return $ CEffectDecl (fromString effName) sigs
-
-opSigList :: Parser [(SourceName, UResumePolicy, Group)]
-opSigList = onePerLine do
-  policy <- resumePolicy
-  v <- anyName
-  void $ sym ":"
-  ty <- cGroup
-  return (fromString v, policy, ty)
-
-resumePolicy :: Parser UResumePolicy
-resumePolicy =  (keyWord JmpKW $> UNoResume)
-            <|> (keyWord DefKW $> ULinearResume)
-            <|> (keyWord CtlKW $> UAnyResume)
 
 nameAndType :: Parser (SourceName, Group)
 nameAndType = do
@@ -693,11 +672,11 @@ ops =
   , [symOpL   "@"]
   , [symOpN  "::"]
   , [symOpR   "$"]
-  , [symOpL   "|"]
   , [symOpN  "+=", symOpN  ":="]
   -- Associate right so the mistaken utterance foo : i:Fin 4 => (..i)
   -- groups as a bad pi type rather than a bad binder
   , [symOpR   ":"]
+  , [symOpL   "|"]
   , [symOpR  ",>"]
   , [symOpR  "&>"]
   , [withClausePostfix]

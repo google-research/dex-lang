@@ -48,8 +48,8 @@ newtype Polynomial (n::S) =
 -- This is the main entrypoint. Doing polynomial math sometimes lets
 -- us compute sums in closed form. This tries to compute
 -- `\sum_{i=0}^(lim-1) body`. `i`, `lim`, and `body` should all have type `Nat`.
-sumUsingPolys :: (Builder SimpIR m, Fallible1 m, Emits n)
-              => Atom SimpIR n -> Abs (Binder SimpIR) (Block SimpIR) n -> m n (Atom SimpIR n)
+sumUsingPolys :: Emits n
+              => Atom SimpIR n -> Abs (Binder SimpIR) (Block SimpIR) n -> BuilderM SimpIR n (Atom SimpIR n)
 sumUsingPolys lim (Abs i body) = do
   sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
     blockAsPoly body' >>= \case
@@ -192,7 +192,7 @@ blockAsPolyRec decls result = case decls of
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-emitPolynomial :: (Emits n, Builder SimpIR m) => Polynomial n -> m n (Atom SimpIR n)
+emitPolynomial :: Emits n => Polynomial n -> BuilderM SimpIR n (Atom SimpIR n)
 emitPolynomial (Polynomial p) = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -206,7 +206,7 @@ emitPolynomial (Polynomial p) = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-emitMonomial :: (Emits n, Builder SimpIR m) => Monomial n -> m n (Atom SimpIR n)
+emitMonomial :: Emits n => Monomial n -> BuilderM SimpIR n (Atom SimpIR n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
     LeftE v' -> do
@@ -217,7 +217,7 @@ emitMonomial (Monomial m) = do
       ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 
-ipow :: (Emits n, Builder SimpIR m) => Atom SimpIR n -> Int -> m n (Atom SimpIR n)
+ipow :: Emits n => Atom SimpIR n -> Int -> BuilderM SimpIR n (Atom SimpIR n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
 
 -- === instances ===

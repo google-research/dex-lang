@@ -15,6 +15,7 @@ struct ScaledData(n|Ix, a:Type) =
   scale : Scale a
   dat   : n => a
 
+-- TODO: bundle up the type params into a triple of types
 struct Plot(n|Ix, a:Type, b:Type, c:Type) =
   xs : ScaledData n a
   ys : ScaledData n b
@@ -22,7 +23,7 @@ struct Plot(n|Ix, a:Type, b:Type, c:Type) =
 
 Color : Type = Fin 3 => Float
 
-def apply_scale(s:Scale a, x:a) -> Maybe Float given (a) = s.mapping x
+def apply_scale(s:Scale a, x:a) -> Maybe Float given (a:Type) = s.mapping x
 
 unit_type_scale : Scale(()) = Scale (\_. Just 0.0) (AsList _ [Singleton 0.0])
 
@@ -33,12 +34,12 @@ def project_unit_interval(x:Float) -> Maybe Float =
 
 unit_interval_scale : Scale Float = Scale (project_unit_interval) (AsList _ [Interval 0.0 1.0])
 
-def map_scale(s:Scale a, f: (b) -> a) -> Scale b given (a, b) = Scale (\x. s.mapping (f x)) s.range
+def map_scale(s:Scale a, f: (b) -> a) -> Scale b given (a:Type, b:Type) = Scale (\x. s.mapping (f x)) s.range
 
 def float_scale(xmin:Float, xmax:Float) -> Scale Float =
   map_scale unit_interval_scale (\x. (x - xmin) / (xmax - xmin))
 
-def get_scaled(sd:ScaledData n a, i:n) -> Maybe Float given (n|Ix, a) =
+def get_scaled(sd:ScaledData n a, i:n) -> Maybe Float given (n|Ix, a:Type) =
   apply_scale sd.scale sd.dat[i]
 
 low_color  = [1.0, 0.5, 0.0]
@@ -54,8 +55,8 @@ def make_rgb_color(c: Color) -> HtmlColor =
 def color_scale(x:Float) -> HtmlColor =
   make_rgb_color $ interpolate low_color high_color x
 
-def plot_to_diagram(plot:Plot n a b c) -> Diagram given (a, b, c, n|Ix) =
-  points = concat_diagrams for i.
+def plot_to_diagram(plot:Plot n a b c) -> Diagram given (a:Type, b:Type, c:Type, n|Ix) =
+  points = concat_diagrams for i:n.
     x = get_scaled plot.xs i
     y = get_scaled plot.ys i
     c = get_scaled plot.cs i
@@ -70,16 +71,17 @@ def plot_to_diagram(plot:Plot n a b c) -> Diagram given (a, b, c, n|Ix) =
   boundingBox = move_xy(rect 1.0 1.0, 0.5, 0.5)
   boundingBox <> points
 
-def show_plot(plot:Plot n a b c) -> String given (a, b, c, n|Ix) =
+def show_plot(plot:Plot n a b c) -> String given (a:Type, b:Type, c:Type, n|Ix) =
   render_svg (plot_to_diagram plot) (Point 0.0 0.0, Point 1.0 1.0)
 
-def blank_data() ->> ScaledData n () given (n|Ix) =
-  ScaledData unit_type_scale (for i. ())
+def blank_data(n|Ix) -> ScaledData n () =
+  ScaledData unit_type_scale (for i:n. ())
 
-def blank_plot() ->> Plot n () () () given (n|Ix) =
-  Plot blank_data blank_data blank_data
+def blank_plot(n|Ix) -> Plot n () () () =
+ -- TODO: figure out why we need the annotations here. Top-down inference should work.
+  Plot(blank_data(n), blank_data(n), blank_data(n))
 
--- -- TODO: generalize beyond Float with a type class for auto scaling
+-- TODO: generalize beyond Float with a type class for auto scaling
 def auto_scale(xs:n=>Float) -> ScaledData n Float given (n|Ix) =
   max = maximum xs
   min = minimum xs
@@ -88,29 +90,29 @@ def auto_scale(xs:n=>Float) -> ScaledData n Float given (n|Ix) =
   padding = maximum [space, max * 0.001, 0.000001]
   ScaledData (float_scale (min - padding) (max + padding)) xs
 
-def set_x_data(plot:Plot n a b c, xs:ScaledData n new) -> Plot n new b c given (n|Ix, a, b, c, new) =
+def set_x_data(plot:Plot n a b c, xs:ScaledData n new) -> Plot n new b c given (n|Ix, a:Type, b:Type, c:Type, new:Type) =
   -- We can't use `setAt` here because we're changing the type
   Plot xs plot.ys plot.cs
 
-def set_y_data(plot:Plot n a b c, ys:ScaledData n new) -> Plot n a new c given (n|Ix, a, b, c, new) =
+def set_y_data(plot:Plot n a b c, ys:ScaledData n new) -> Plot n a new c given (n|Ix, a:Type, b:Type, c:Type, new:Type) =
   Plot plot.xs ys plot.cs
 
-def set_c_data(plot:Plot n a b c, cs:ScaledData n new) -> Plot n a b new given (n|Ix, a, b, c, new) =
+def set_c_data(plot:Plot n a b c, cs:ScaledData n new) -> Plot n a b new given (n|Ix, a:Type, b:Type, c:Type, new:Type) =
   Plot plot.xs plot.ys cs
 
 def xy_plot(xs:n=>Float, ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
-  blank_plot |
+  blank_plot(n) |
     set_x_data (auto_scale xs) |
     set_y_data (auto_scale ys)
 
 def xyc_plot(xs:n=>Float, ys:n=>Float, cs:n=>Float) -> Plot n Float Float Float given (n|Ix) =
-  blank_plot |
+  blank_plot(n) |
     set_x_data (auto_scale xs) |
     set_y_data (auto_scale ys) |
     set_c_data (auto_scale cs)
 
 def y_plot(ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
-  xs = for i. n_to_f $ ordinal i
+  xs = for i:n. n_to_f $ ordinal i
   xy_plot xs ys
 
 -- xs = linspace (Fin 100) 0. 1.0
@@ -120,14 +122,10 @@ def y_plot(ys:n=>Float) -> Plot n Float Float () given (n|Ix) =
 
 -- TODO: scales
 def matshow(img:n=>m=>Float) -> Html given (n|Ix, m|Ix) =
-  low  = minimum  $ for p.
-    (i, j) = p
-    img[i,j]
-  high = maximum $ for p.
-    (i, j) = p
-    img[i,j]
+  low  = minimum $ flatten2D(img)
+  high = maximum $ flatten2D(img)
   range = high - low
-  img_to_html $ make_png for i j.
+  img_to_html $ make_png for i:n j:m.
     x = if range == 0.0
       then float_to_8bit $ 0.5
       else float_to_8bit $ (img[i,j] - low) / range

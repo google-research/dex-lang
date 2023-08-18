@@ -15,7 +15,7 @@ def Vec(n:Nat) -> Type = Fin n => Float
 def Mat(n:Nat, m:Nat) -> Type = Fin n => Fin m => Float
 
 def relu(x:Float) -> Float = max x 0.0
-def length(x: d=>Float) -> Float given (d|Ix) = sqrt $ sum for i. sq x[i]
+def length(x: d=>Float) -> Float given (d|Ix) = sqrt $ sum for i:d. sq x[i]
 -- TODO: make a newtype for normal vectors
 def normalize(x: d=>Float) -> d=>Float given (d|Ix) = x / (length x)
 def directionAndLength(x: d=>Float) -> (d=>Float, Float) given (d|Ix) =
@@ -68,7 +68,7 @@ def rotateZ(p:Vec 3, angle:Angle) -> Vec 3 =
   [c*px - s*py, s*px+c*py, pz]
 
 def sampleCosineWeightedHemisphere(normal: Vec 3, k:Key) -> Vec 3 =
-  [k1, k2] = split_key k
+  [k1, k2] = split_key(n=2, k)
   u1 = rand k1
   u2 = rand k2
   uu = normalize $ cross normal [0.0, 1.1, 1.1]
@@ -152,21 +152,21 @@ def sdObject(pos:Position, obj:Object) -> Distance =
       Wall(nor, d) -> d + dot nor pos
       Block(blockPos, halfWidths, angle) ->
         pos' = rotateY (pos - blockPos) angle
-        length $ for i. max ((abs pos'[i]) - halfWidths[i]) 0.0
+        length $ for i:(Fin 3). max ((abs pos'[i]) - halfWidths[i]) 0.0
       Sphere(spherePos, r) ->
         pos' = pos - spherePos
         max (length pos' - r) 0.0
     Light(squarePos, hw, _) ->
       pos' = pos - squarePos
       halfWidths = [hw, 0.01, hw]
-      length $ for i. max ((abs pos'[i]) - halfWidths[i]) 0.0
+      length $ for i:(Fin 3). max ((abs pos'[i]) - halfWidths[i]) 0.0
 
 def sdScene(scene:Scene n, pos:Position) -> (Object, Distance) given (n|Ix) =
-  (i, d) = minimum_by snd $ for i. (i, sdObject pos scene.objects[i])
+  (i, d) = minimum_by(for i:n. (i, sdObject pos scene.objects[i]), snd)
   (scene.objects[i], d)
 
 def calcNormal(obj:Object, pos:Position) -> Direction =
-  normalize (grad (\pos. sdObject pos obj) pos)
+  grad(\p:Position. sdObject(p, obj)) pos | normalize
 
 data RayMarchResult =
   -- incident ray, surface normal, surface properties
@@ -176,7 +176,7 @@ data RayMarchResult =
   HitNothing
 
 def raymarch(scene:Scene n, ray:Ray) -> RayMarchResult given (n|Ix) =
-  maxIters = 100
+  maxIters : Nat = 100
   tol = 0.01
   startLength = 10.0 * tol  -- trying to escape the current surface
   with_state (10.0 * tol) \rayLength.
@@ -209,7 +209,7 @@ def rayDirectRadiance(scene:Scene n, ray:Ray) -> Radiance given (n|Ix) =
     HitObj(_, _) -> zero
 
 def sampleSquare(hw:Float, k:Key) -> Position =
- [kx, kz] = split_key k
+ [kx, kz] : Fin 2 => Key = split_key k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
  [x, 0.0, z]
@@ -220,7 +220,7 @@ def sampleLightRadiance(
     inRay:Ray,
     k:Key) -> Radiance given (n|Ix) =
   yield_accum (AddMonoid Float) \radiance.
-    for i. case scene.objects[i] of
+    each scene.objects \obj. case obj of
       PassiveObject(_, _) -> ()
       Light(lightPos, hw, _) ->
         (dirToLight, distToLight) = directionAndLength $
@@ -244,7 +244,7 @@ def trace(params:Params, scene:Scene n, initRay:Ray, k:Key) -> Color given (n|Ix
             if i == 0 then radiance += intensity   -- TODO: scale etc
             Done ()
           HitObj(incidentRay, osurf) ->
-            [k1, k2] = split_key $ hash k i
+            [k1, k2] = split_key(n=2, hash k i)
             lightRadiance = sampleLightRadiance scene osurf incidentRay k1
             ray    := sampleReflection osurf incidentRay k2
             filter := surfaceFilter (get filter) osurf.surface
@@ -265,27 +265,24 @@ def cameraRays(n:Nat, camera:Camera) -> Fin n => Fin n => ((Key) -> Ray) =
   pixHalfWidth = halfWidth / n_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
-  for i j. \key.
-    [kx, ky] = split_key key
+  for i:(Fin n) j:(Fin n). \key.
+    [kx, ky] = split_key(n=2, key)
     x = xs[j] + randuniform (-pixHalfWidth) pixHalfWidth kx
     y = ys[i] + randuniform (-pixHalfWidth) pixHalfWidth ky
     Ray(camera.pos, normalize [x, y, neg camera.sensorDist])
 
 def takePicture(params:Params, scene:Scene m, camera:Camera) -> Image given (m|Ix) =
-  n = camera.numPix
-  rays = cameraRays n camera
+  rays = cameraRays camera.numPix camera
   rootKey = new_key 0
-  image = for i j.
+  image = for i:(Fin camera.numPix) j:(Fin camera.numPix).
     pixKey = if params.shareSeed
       then rootKey
       else ixkey (ixkey rootKey i) j
     def sampleRayColor(k:Key) -> Color =
-      [k1, k2] = split_key k
+      [k1, k2] = split_key(n=2, k)
       trace params scene (rays[i,j] k1) k2
     sampleAveraged sampleRayColor params.numSamples pixKey
-  MkImage _ _ $ image / mean (for ixs.
-                                (i,j,k) = ixs
-                                image[i,j,k])
+  MkImage _ _ $ image / mean(flatten3D(image))
 
 '## Define the scene and render it
 

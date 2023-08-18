@@ -112,10 +112,10 @@ topDecl = dropSrc topDecl' where
     tyConParams' <- aExplicitParams tyConParams
     givens' <- aOptGivens givens
     constructors' <- forM constructors \(v, ps) -> do
-      ps' <- toNest <$> mapM tyOptBinder ps
+      ps' <- toNest <$> mapM (tyOptBinder Explicit) ps
       return (v, ps')
     return $ UDataDefDecl
-      (UDataDef name (catUOptAnnExplBinders givens' tyConParams') $
+      (UDataDef name (givens' >>> tyConParams') $
         map (\(name', cons) -> (name', UDataDefTrail cons)) constructors')
       (fromString name)
       (toNest $ map (fromString . fst) constructors')
@@ -126,7 +126,7 @@ topDecl = dropSrc topDecl' where
     methods <- forM defs \(ann, d) -> do
       (methodName, lam) <- aDef d
       return (ann, methodName, Abs (UBindSource emptySrcPosCtx "self") lam)
-    return $ UStructDecl (fromString name) (UStructDef name (catUOptAnnExplBinders givens' params') fields' methods)
+    return $ UStructDecl (fromString name) (UStructDef name (givens' >>> params') fields' methods)
   topDecl' (CInterface name params methods) = do
     params' <- aExplicitParams params
     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
@@ -134,8 +134,6 @@ topDecl = dropSrc topDecl' where
       return (fromString methodName, ty')
     return $ UInterface params' methodTys (fromString name) (toNest methodNames)
   topDecl' (CInstanceDecl def) = aInstanceDef def
-  topDecl' (CEffectDecl _ _) = error "not implemented"
-  topDecl' (CHandlerDecl _ _ _ _ _ _) = error "not implemented"
 
 decl :: LetAnn -> CSDecl -> SyntaxM (UDecl VoidS VoidS)
 decl ann = propagateSrcB \case
@@ -162,68 +160,96 @@ aInstanceDef (CInstanceDef clName args givens methods instNameAndParams) = do
       case optParams of
         Just params -> do
           params' <- aExplicitParams params
-          return $ UInstance clName' (catUOptAnnExplBinders givens' params') args' methods' instName' ExplicitApp
+          return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
 
 aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
 aDef (CDef name params optRhs optGivens body) = do
-  explicitParams <- aExplicitParams params
+  explicitParams <- explicitBindersOptAnn params
   let rhsDefault = (ExplicitApp, Nothing, Nothing)
   (expl, effs, resultTy) <- fromMaybeM optRhs rhsDefault \(expl, optEffs, resultTy) -> do
     effs <- fromMaybeM optEffs UPure aEffects
     resultTy' <- expr resultTy
     return (expl, Just effs, Just resultTy')
   implicitParams <- aOptGivens optGivens
-  let allParams = catUOptAnnExplBinders implicitParams explicitParams
+  let allParams = implicitParams >>> explicitParams
   body' <- block body
   return (name, ULamExpr allParams expl effs resultTy body')
-
-catUOptAnnExplBinders :: UOptAnnExplBinders n l -> UOptAnnExplBinders l l' -> UOptAnnExplBinders n l'
-catUOptAnnExplBinders (expls, bs) (expls', bs') = (expls <> expls', bs >>> bs')
 
 stripParens :: Group -> Group
 stripParens (WithSrc _ (CParens [g])) = stripParens g
 stripParens g = g
 
-aExplicitParams :: ExplicitParams -> SyntaxM ([Explicitness], Nest UOptAnnBinder VoidS VoidS)
-aExplicitParams gs = generalBinders DataParam Explicit gs
+-- === combinators for different sorts of binder lists ===
 
-aOptGivens :: Maybe GivenClause -> SyntaxM (UOptAnnExplBinders VoidS VoidS)
-aOptGivens optGivens = do
-  (expls, implicitParams) <- unzip <$> fromMaybeM optGivens [] aGivens
-  return (expls, toNest implicitParams)
+aOptGivens :: Maybe GivenClause -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+aOptGivens optGivens = fromMaybeM optGivens Empty aGivens
 
-aGivens :: GivenClause -> SyntaxM [(Explicitness, UOptAnnBinder VoidS VoidS)]
+binderList
+  :: [Group] -> (Group -> SyntaxM (Nest UAnnBinder VoidS VoidS))
+  -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+binderList gs cont = concatNests <$> forM gs \case
+  WithSrc _ (CGivens gs') -> aGivens gs'
+  g -> cont g
+
+withTrailingConstraints
+  :: Group -> (Group -> SyntaxM (UAnnBinder VoidS VoidS))
+  -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+withTrailingConstraints g cont = case g of
+  Binary Pipe lhs c -> do
+    Nest (UAnnBinder expl b ann cs) bs <- withTrailingConstraints lhs cont
+    (ctx, s) <- case b of
+      UBindSource ctx s -> return (ctx, s)
+      UIgnore     -> throw SyntaxErr "Can't constrain anonymous binders"
+      UBind _ _ _ -> error "Shouldn't have internal names until renaming pass"
+    c' <- expr c
+    let v = WithSrcE ctx $ UVar (SourceName ctx s)
+    return $   UnaryNest (UAnnBinder expl b ann (cs ++ [c']))
+           >>> bs
+           >>> UnaryNest (asConstraintBinder  v c')
+  _ -> UnaryNest <$> cont g
+  where
+    asConstraintBinder :: UExpr VoidS -> UConstraint VoidS -> UAnnBinder VoidS VoidS
+    asConstraintBinder v c = do
+      let t = ns $ UApp c [v] []
+      UAnnBinder (Inferred Nothing (Synth Full)) UIgnore (UAnn t) []
+
+aGivens :: GivenClause -> SyntaxM (Nest UAnnBinder VoidS VoidS)
 aGivens (implicits, optConstraints) = do
-  implicits' <- mapM (generalBinder DataParam (Inferred Nothing Unify)) implicits
-  constraints <- fromMaybeM optConstraints [] \gs -> do
-    mapM (generalBinder TypeParam (Inferred Nothing (Synth Full))) gs
-  return $ implicits' <> constraints
+  implicits' <- concatNests <$> forM implicits \b -> withTrailingConstraints b implicitArgBinder
+  constraints <- fromMaybeM optConstraints Empty (\gs -> toNest <$> mapM synthBinder gs)
+  return $ implicits' >>> constraints
 
-generalBinders
-  :: ParamStyle -> Explicitness -> [Group]
-  -> SyntaxM ([Explicitness], Nest UOptAnnBinder VoidS VoidS)
-generalBinders paramStyle expl params = do
-  (expls, bs) <- unzip . concat <$> forM params \case
-    WithSrc _ (CGivens gs) -> aGivens gs
-    p -> (:[]) <$> generalBinder paramStyle expl p
-  return (expls, toNest bs)
+synthBinder :: Group -> SyntaxM (UAnnBinder VoidS VoidS)
+synthBinder g = tyOptBinder (Inferred Nothing (Synth Full)) g
 
-generalBinder :: ParamStyle -> Explicitness -> Group
-              -> SyntaxM (Explicitness, UOptAnnBinder VoidS VoidS)
-generalBinder paramStyle expl g = case expl of
-  Inferred _ (Synth _) -> (expl,) <$> tyOptBinder g
-  Inferred _ Unify -> do
-    b <- binderOptTy g
-    expl' <- return case b of
-      UAnnBinder (UBindSource _ s) _ _ -> Inferred (Just s) Unify
-      _ -> expl
-    return (expl', b)
-  Explicit -> (expl,) <$> case paramStyle of
-    TypeParam -> tyOptBinder g
-    DataParam -> binderOptTy g
+concatNests :: [Nest b VoidS VoidS] -> Nest b VoidS VoidS
+concatNests [] = Empty
+concatNests (b:bs) = b >>> concatNests bs
 
-  -- Binder pattern with an optional type annotation
+implicitArgBinder :: Group -> SyntaxM (UAnnBinder VoidS VoidS)
+implicitArgBinder g = do
+  UAnnBinder _ b ann cs <- binderOptTy (Inferred Nothing Unify) g
+  s <- case b of
+    UBindSource _ s -> return $ Just s
+    _               -> return Nothing
+  return $ UAnnBinder (Inferred s Unify) b ann cs
+
+aExplicitParams :: ExplicitParams -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+aExplicitParams bs = binderList bs \b -> withTrailingConstraints b \b' ->
+  binderOptTy Explicit b'
+
+aPiBinders :: ExplicitParams -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+aPiBinders bs = binderList bs \b ->
+  UnaryNest <$> tyOptBinder Explicit b
+
+explicitBindersOptAnn :: ExplicitParams -> SyntaxM (Nest UAnnBinder VoidS VoidS)
+explicitBindersOptAnn bs = binderList bs \b -> withTrailingConstraints b \b' ->
+  binderOptTy Explicit b'
+
+-- ===
+
+-- Binder pattern with an optional type annotation
 patOptAnn :: Group -> SyntaxM (UPat VoidS VoidS, Maybe (UType VoidS))
 patOptAnn (Binary Colon lhs typeAnn) = (,) <$> pat lhs <*> (Just <$> expr typeAnn)
 patOptAnn (WithSrc _ (CParens [g])) = patOptAnn g
@@ -236,14 +262,14 @@ uBinder (WithSrc src b) = addSrcContext src $ case b of
   _ -> throw SyntaxErr "Binder must be an identifier or `_`"
 
 -- Type annotation with an optional binder pattern
-tyOptPat :: Group -> SyntaxM (UOptAnnBinder VoidS VoidS)
+tyOptPat :: Group -> SyntaxM (UAnnBinder VoidS VoidS)
 tyOptPat = \case
   -- Named type
-  Binary Colon lhs typeAnn -> UAnnBinder <$> uBinder lhs <*> (UAnn <$> expr typeAnn) <*> pure []
+  Binary Colon lhs typeAnn -> UAnnBinder Explicit <$> uBinder lhs <*> (UAnn <$> expr typeAnn) <*> pure []
   -- Binder in grouping parens.
   WithSrc _ (CParens [g]) -> tyOptPat g
   -- Anonymous type
-  g -> UAnnBinder UIgnore <$> (UAnn <$> expr g) <*> pure []
+  g -> UAnnBinder Explicit UIgnore <$> (UAnn <$> expr g) <*> pure []
 
 -- Pattern of a case binder.  This treats bare names specially, in
 -- that they become (nullary) constructors to match rather than names
@@ -280,41 +306,33 @@ pat = propagateSrcB pat' where
       _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
   pat' _ = throw SyntaxErr "Illegal pattern"
 
-data ParamStyle
- = TypeParam  -- binder optional, used in pi types
- | DataParam  -- type optional  , used in lambda
-
-tyOptBinder :: Group -> SyntaxM (UAnnBinder req VoidS VoidS)
-tyOptBinder = \case
+tyOptBinder :: Explicitness -> Group -> SyntaxM (UAnnBinder VoidS VoidS)
+tyOptBinder expl = \case
   Binary Pipe  _ _     -> throw SyntaxErr "Unexpected constraint"
   Binary Colon name ty -> do
     b <- uBinder name
     ann <- UAnn <$> expr ty
-    return $ UAnnBinder b ann []
+    return $ UAnnBinder expl b ann []
   g -> do
     ty <- expr g
-    return $ UAnnBinder UIgnore (UAnn ty) []
+    return $ UAnnBinder expl UIgnore (UAnn ty) []
 
-binderOptTy :: Group -> SyntaxM (UOptAnnBinder VoidS VoidS)
-binderOptTy g = do
-  (g', constraints) <- trailingConstraints g
-  case g' of
-    Binary Colon name ty -> do
-      b <- uBinder name
-      ann <- UAnn <$> expr ty
-      return $ UAnnBinder b ann constraints
-    _ -> do
-      b <- uBinder g'
-      return $ UAnnBinder b UNoAnn constraints
+binderOptTy :: Explicitness -> Group -> SyntaxM (UAnnBinder VoidS VoidS)
+binderOptTy expl = \case
+  Binary Colon name ty -> do
+    b <- uBinder name
+    ann <- UAnn <$> expr ty
+    return $ UAnnBinder expl b ann []
+  g -> do
+    b <- uBinder g
+    return $ UAnnBinder expl b UNoAnn []
 
-trailingConstraints :: Group -> SyntaxM (Group, [UConstraint VoidS])
-trailingConstraints gTop = go [] gTop where
-  go :: [UConstraint VoidS] -> Group -> SyntaxM (Group, [UConstraint VoidS])
-  go cs = \case
-    Binary Pipe lhs c -> do
-      c' <- expr c
-      go (c':cs) lhs
-    g -> return (g, cs)
+binderReqTy :: Explicitness -> Group -> SyntaxM (UAnnBinder VoidS VoidS)
+binderReqTy expl (Binary Colon name ty) = do
+  b <- uBinder name
+  ann <- UAnn <$> expr ty
+  return $ UAnnBinder expl b ann []
+binderReqTy _ _ = throw SyntaxErr $ "Expected an annotated binder"
 
 argList :: [Group] -> SyntaxM ([UExpr VoidS], [UNamedArg VoidS])
 argList gs = partitionEithers <$> mapM singleArg gs
@@ -356,7 +374,7 @@ aMethod (WithSrc src d) = Just . WithSrcE src <$> addSrcContext src case d of
     (name, lam) <- aDef def
     return $ UMethodDef (fromString name) lam
   CLet (WithSrc _ (CIdentifier name)) rhs -> do
-    rhs' <- ULamExpr ([], Empty) ImplicitApp Nothing Nothing <$> block rhs
+    rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
     return $ UMethodDef (fromString name) rhs'
   _ -> throw SyntaxErr "Unexpected method definition. Expected `def` or `x = ...`."
 
@@ -377,10 +395,10 @@ blockDecls [WithSrc src d] = addSrcContext src case d of
   CExpr g -> (Empty,) <$> expr g
   _ -> throw SyntaxErr "Block must end in expression"
 blockDecls (WithSrc pos (CBind b rhs):ds) = do
-  (_, b') <- generalBinder DataParam Explicit b
+  b' <- binderOptTy Explicit b
   rhs' <- asExpr <$> block rhs
   body <- block $ IndentedBlock ds
-  let lam = ULam $ ULamExpr ([Explicit], UnaryNest b') ExplicitApp Nothing Nothing body
+  let lam = ULam $ ULamExpr (UnaryNest b') ExplicitApp Nothing Nothing body
   return (Empty, WithSrcE pos $ extendAppRight rhs' (ns lam))
 blockDecls (d:ds) = do
   d' <- decl PlainLet d
@@ -411,7 +429,7 @@ expr = propagateSrcE expr' where
   expr' (CArrow lhs effs rhs) = do
     case lhs of
       WithSrc _ (CParens gs) -> do
-        bs <- generalBinders TypeParam Explicit gs
+        bs <- aPiBinders gs
         effs' <- fromMaybeM effs UPure aEffects
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
@@ -451,7 +469,7 @@ expr = propagateSrcE expr' where
       Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
       ImplicitArrow -> case lhs of
         WithSrc _ (CParens gs) -> do
-          bs <- generalBinders TypeParam Explicit gs
+          bs <- aPiBinders gs
           resultTy <- expr rhs
           return $ UPi $ UPiExpr bs ImplicitApp UPure resultTy
         _ -> throw SyntaxErr "Argument types should be in parentheses"
@@ -481,7 +499,7 @@ expr = propagateSrcE expr' where
       _ -> throw SyntaxErr $ "Prefix (" ++ name ++ ") not legal as a bare expression"
     where
       range :: UExpr VoidS -> UExpr VoidS -> UExpr' VoidS
-      range rangeName lim = explicitApp rangeName [ns UHole, lim]
+      range rangeName lim = explicitApp rangeName [lim]
   expr' (CPostfix name g) =
     case name of
       ".." -> range "RangeFrom" <$> expr g
@@ -489,9 +507,9 @@ expr = propagateSrcE expr' where
       _ -> throw SyntaxErr $ "Postfix (" ++ name ++ ") not legal as a bare expression"
     where
       range :: UExpr VoidS -> UExpr VoidS -> UExpr' VoidS
-      range rangeName lim = explicitApp rangeName [ns UHole, lim]
+      range rangeName lim = explicitApp rangeName [lim]
   expr' (CLambda params body) = do
-    params' <- aExplicitParams $ map stripParens params
+    params' <- explicitBindersOptAnn $ map stripParens params
     body' <- block body
     return $ ULam $ ULamExpr params' ExplicitApp Nothing Nothing body'
   expr' (CFor kind indices body) = do
@@ -501,7 +519,7 @@ expr = propagateSrcE expr' where
           KRof  -> (Rev, False)
           KRof_ -> (Rev, True)
     -- TODO: Can we fetch the source position from the error context, to feed into `buildFor`?
-    e <- buildFor (0, 0) dir <$> mapM binderOptTy indices <*> block body
+    e <- buildFor (0, 0) dir <$> mapM (binderOptTy Explicit) indices <*> block body
     if trailingUnit
       then return $ UDo $ ns $ UBlock (UnaryNest (nsB $ UExprDecl e)) (ns unitExpr)
       else return $ dropSrcE e
@@ -520,7 +538,7 @@ expr = propagateSrcE expr' where
     ty <- expr lhs
     case rhs of
       [b] -> do
-        b' <- binderOptTy b
+        b' <- binderReqTy Explicit b
         return $ UDepPairTy $ UDepPairType ImplicitDepPair b' ty
       _ -> error "n-ary dependent pairs not implemented"
 
@@ -533,7 +551,7 @@ unitExpr = UPrim (UCon $ P.ProdCon) []
 -- === Builders ===
 
 -- TODO Does this generalize?  Swap list for Nest?
-buildFor :: SrcPos -> Direction -> [UOptAnnBinder VoidS VoidS] -> UBlock VoidS -> UExpr VoidS
+buildFor :: SrcPos -> Direction -> [UAnnBinder VoidS VoidS] -> UBlock VoidS -> UExpr VoidS
 buildFor pos dir binders body = case binders of
   [] -> error "should have nonempty list of binder"
   [b] -> WithSrcE (fromPos pos) $ UFor dir $ UForExpr b body
