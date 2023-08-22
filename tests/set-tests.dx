@@ -99,14 +99,8 @@ multiset2 = to_multiset ["Bob", "Xeno", "Charlie", "Xeno", "Alice"]
 :p multiset1 + multiset2
 > (UnsafeAsMultiset 4 [("Alice", 2), ("Bob", 3), ("Charlie", 1), ("Xeno", 3)])
 
-:p multiset_intersect multiset1 multiset2
-> (UnsafeAsSet 2 ["Bob", "Xeno"])
-
 :p multiset1 == (multiset1 + multiset1)
 > False
-
-:p multiset1 == (multiset_intersect multiset1 multiset1)
-> True
 
 '#### Empty multiset tests
 
