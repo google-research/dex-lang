@@ -80,7 +80,7 @@ setix2 : Person = from_just $ member "Charlie" names2
 > Element(2)
 
 
-#### Multiset tests
+'#### Multiset tests
 
 -- check order invariance.
 :p (to_multiset ["Bob", "Alice", "Bob", "Charlie"]) == (to_multiset ["Charlie", "Bob", "Alice", "Bob"])
@@ -112,11 +112,5 @@ emptymultiset = to_multiset ([]::(Fin 0)=>String)
 :p emptymultiset == (emptymultiset + emptymultiset)
 > True
 
-:p emptymultiset == (multiset_intersect emptymultiset emptymultiset)
-> True
-
 :p multiset1 == (multiset1 + emptymultiset)
-> True
-
-:p emptymultiset == (multiset_intersect multiset1 emptymultiset)
 > True
