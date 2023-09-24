@@ -38,7 +38,7 @@ instance Ix(FenceAndPosts n) given (n|Ix)
       False -> Posts $ unsafe_from_ordinal (intdiv2 o)
 
 instance NonEmpty(FenceAndPosts n) given (n|Ix)
-  first_ix = unsafe_from_ordinal 0
+  pass
 
 instance Eq(FenceAndPosts a) given (a|Ix|Eq)
   def (==)(x, y) = case x of
@@ -220,3 +220,11 @@ or the paper.
 sum for i:(Fin 3=>Vocab).
   ls_to_f $ ctc blank logits i
 > 0.5653746
+
+
+'One major advantage of Dex is its parallelism-preserving autodiff.
+The original CTC paper, and most CUDA implementations, used hand-written
+reverse-mode derivatives.  Dex should be able to
+prodice an efficient one automatically.  Let's check:
+
+-- grad (\logits. ls_to_f $ ctc blank logits labels) logits
