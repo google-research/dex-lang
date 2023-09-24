@@ -40,11 +40,12 @@ def run_parser_partial(s:String, parser:Parser a) -> Maybe a given (a)  =
 
 '## Primitive combinators
 
-def p_char(c:Char) -> Parser () = MkParser \h.
+def p_char(c:Char) -> Parser Char = MkParser \h.
   i = get h.offset
   c' = index_list h.input i
   assert (c == c')
   h.offset := i + 1
+  c'
 
 def p_eof() ->> Parser () = MkParser \h.
   assert $ get h.offset >= list_length h.input
@@ -99,15 +100,16 @@ def parse_digit() ->> Parser Int = try $ MkParser \h.
 def optional(p:Parser a) -> Parser (Maybe a) given (a) =
   (MkParser \h. Just (parse h p)) <|> returnP Nothing
 
-def parse_many(parser:Parser a) -> Parser (List a) given (a|Data) = MkParser \h.
-  yield_state (AsList _ []) \results.
-    iter \_.
-      maybeVal = parse h $ optional parser
-      case maybeVal of
-        Nothing -> Done ()
-        Just x ->
-          push results x
-          Continue
+def parse_many(parser:Parser a) -> Parser (List a) given (a|Data) =
+  MkParser \h.
+    yield_state (AsList _ []) \results.
+      iter \_.
+        maybeVal = parse h $ optional parser
+        case maybeVal of
+          Nothing -> Done ()
+          Just x ->
+            push results x
+            Continue
 
 def parse_some(parser:Parser a) -> Parser (List a) given (a|Data) =
   MkParser \h.
@@ -125,9 +127,9 @@ def parse_int() ->> Parser Int = MkParser \h.
   x       = parse h $ parse_unsigned_int
   case negSign of
     Nothing -> x
-    Just () -> (-1) * x
+    Just _ -> (-1) * x
 
-def bracketed(l:Parser (), r:Parser (), body:Parser a) -> Parser a given (a) =
+def bracketed(l:Parser Char, r:Parser Char, body:Parser a) -> Parser a given (a) =
   MkParser \h.
     _   = parse h l
     ans = parse h body
@@ -137,8 +139,11 @@ def bracketed(l:Parser (), r:Parser (), body:Parser a) -> Parser a given (a) =
 def parens(parser:Parser a) -> Parser a given (a) =
   bracketed (p_char '(') (p_char ')') parser
 
+
+'## String Utilities
+
 def split(space:Char, s:String) -> List String =
-  def trailing_spaces(space:Parser (), body:Parser a) -> Parser a given (a) =
+  def trailing_spaces(space:Parser Char, body:Parser a) -> Parser a given (a) =
     MkParser \h.
       ans = parse h body
       _   = parse h $ parse_many space
@@ -149,3 +154,50 @@ def split(space:Char, s:String) -> List String =
   case run_parser s split_parser of
     Just l -> l
     Nothing -> AsList _ []
+
+def join(space:a, strings:List(List a)) -> List a given (a|Data) =
+  AsList(n_string, string_table) = strings
+  yield_accum (ListMonoid a) \r.
+    for i:FenceAndInnerPosts(Fin n_string).
+      case i of
+        Fence j     -> r += string_table[j]
+        InnerPost _ -> r += AsList(1, [space])
+
+def find_first(word:m=>a, text:n=>a) -> Maybe n given (n|Ix, m|Ix, a|Eq) =
+  -- This implementation has O(nm) complexity, could be O(m + n).
+  -- Could maybe be nicer using the AllButLast index set.
+  case (size m > size n) || (size m == 0) of
+    True -> Nothing
+    False ->
+      bounded_iter (unsafe_nat_diff (size n) (size m)) Nothing \i.
+        next_substring = for j:m. text[unsafe_from_ordinal (i + ordinal j)]
+        case word == next_substring of
+          True -> Done $ Just (unsafe_from_ordinal i)
+          False -> Continue
+
+-- put in prelude?  Nothing particular to strings.
+def split_at(xs:n=>a, at:Post n) -> (List a, List a) given (n|Ix, a) =
+  size_left = ordinal at
+  size_right = unsafe_nat_diff (size n) size_left
+  left  = AsList(size_left,  for i. xs[unsafe_from_ordinal (ordinal i)])
+  right = AsList(size_right, for i. xs[unsafe_from_ordinal (ordinal i + size_left)])
+  (left, right)
+
+def unsafe_replace_at(text:n=>a, new:List a, old_len:Nat, at_ix:n) -> List a given (n|Ix, a|Data)=
+  AsList(m, new_tab) = new
+  (beginning_and_middle, end) = split_at text (unsafe_from_ordinal (ordinal at_ix + old_len))
+  AsList(_, beginning_and_middle_tab) = beginning_and_middle
+  (beginning, _) = split_at beginning_and_middle_tab (unsafe_from_ordinal (ordinal (left_post at_ix)))
+  concat [beginning, new, end]
+
+def replace_all(old:List a, to_replace:List a, new:List a) -> List a given (a|Eq|Data) =
+  AsList(_, new_table) = new
+  AsList(to_replace_length, to_replace_table) = to_replace
+  yield_state old \cur_str.
+    while \.
+      AsList(_, cur_str_table) = get cur_str
+      case find_first to_replace_table cur_str_table of
+        Nothing -> False
+        Just i ->
+          cur_str := unsafe_replace_at cur_str_table new to_replace_length i
+          True

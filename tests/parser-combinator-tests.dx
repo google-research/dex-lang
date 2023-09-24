@@ -55,3 +55,67 @@ def parserTFTriple() ->> Parser (Fin 3=>Bool) = MkParser \h.
 
 split ' ' "   This is   a sentence.   "
 > (AsList 4 ["This", "is", "a", "sentence."])
+
+text = "This is a test."
+join ' ' (split ' ' text) == text
+> True
+
+partition ' ' "    hello       world     "
+> (AsList 5 ["    ", "hello", "       ", "world", "     "])
+
+partition ' ' "     "
+> (AsList 1 ["     "])
+
+partition ' ' ""
+> (AsList 0 [])
+
+partition ' ' "hello"
+> (AsList 1 ["hello"])
+
+-- concat is the inverse of partition
+text = "    hello       world     "
+AsList(_, textparts) = (partition ' ' text)
+concat textparts == text
+
+
+'### Tests for string utilities
+
+AsList(_, stab) = "woof"
+AsList(_, ttab) = "askdwoofljmohjmwwoofofasdfas"
+find_first stab ttab
+> (Just 4)
+
+AsList(_, s2) = ""::List Char
+AsList(_, t2) = "askd"
+find_first s2 t2
+> (Just 0)
+
+AsList(_, s3) = ""::List Char
+AsList(_, t3) = ""::List Char
+find_first s3 t3
+> Nothing
+
+split_at [1, 2, 4, 5] (4@_)
+> ((AsList 4 [1, 2, 4, 5]), (AsList 0 []))
+
+unsafe_replace_at(ttab, "zazazazaz", 0, 0@_)
+> "zazazazazaskdwoofljmohjmwwoofofasdfas"
+
+replace_all("this is a list with lists of lists", "list", "pot")
+> "this is a pot with pots of pots"
+
+replace_all("this is a list with lists of lists", "", "pot")
+> "this is a list with lists of lists"
+
+replace_all("this is a list with lists of lists", "list", "")
+> "this is a  with s of s"
+
+replace_all("this is a list with lists of lists", "asdf", "pot")
+> "this is a list with lists of lists"
+
+replace_all("this is a list with lists of lists", "", "")
+> "this is a list with lists of lists"
+
+replace_all("", "list", "pot")
+> ""
+
