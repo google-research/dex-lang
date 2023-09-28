@@ -17,7 +17,6 @@ import Control.Monad.State.Strict
 import Builder
 import Core
 import Err
-import CheapReduction
 import IRVariants
 import Lower (DestBlock)
 import MTL1
@@ -225,12 +224,13 @@ vectorizeLoopsExpr expr = do
 
 simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
   => IxType SimpIR n -> m n (Maybe Word32)
-simplifyIxSize ixty = do
-  sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
-  cheapReduce sizeMethod >>= \case
-    Just (IdxRepVal n) -> return $ Just n
-    _ -> return Nothing
-{-# INLINE simplifyIxSize #-}
+simplifyIxSize ixty = undefined
+-- simplifyIxSize ixty = do
+--   sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
+--   cheapReduce sizeMethod >>= \case
+--     Just (IdxRepVal n) -> return $ Just n
+--     _ -> return Nothing
+-- {-# INLINE simplifyIxSize #-}
 
 -- Really we should check this by seeing whether there is an instance for a
 -- `Commutative` class, or something like that, but for now just pattern-match
@@ -537,15 +537,6 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
     Var v -> lookupSubstM (atomVarName v) >>= \case
       VRename v' -> VVal Uniform . Var <$> toAtomVar v'
       v' -> return v'
-    -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt _ (ProjectProduct i) x -> do
-      VVal vv x' <- vectorizeAtom x
-      ov <- case vv of
-        ProdStability sbs -> return $ sbs !! i
-        _ -> throwVectErr "Invalid projection"
-      x'' <- normalizeProj (ProjectProduct i) x'
-      return $ VVal ov x''
-    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst

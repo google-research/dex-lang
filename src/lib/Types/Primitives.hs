@@ -62,6 +62,8 @@ data LetAnn =
     PlainLet
   -- Binding explicitly tagged "do not inline"
   | NoInlineLet
+  -- Binding explicitly tagged "inline as needed for type checking"
+  | TypeInlineLet
   -- Bound expression is pure, and the binding's occurrences are summarized by
   -- the UsageInfo
   | OccInfoPure UsageInfo

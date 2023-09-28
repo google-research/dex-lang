@@ -6,7 +6,9 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module CheckType (CheckableE (..), CheckableB (..), checkBlock, checkTypes, checkTypeIs) where
+module CheckType (
+  CheckableE (..), CheckableB (..), checkBlock, checkTypes, checkTypeIs,
+  reduceType, typesEquiv, typeToAtom, atomToType, getTypeRed) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -15,7 +17,6 @@ import Control.Monad.Reader
 import Control.Monad.State.Class
 import Data.Functor
 
-import CheapReduction
 import Core
 import Err
 import IRVariants
@@ -24,6 +25,7 @@ import Name
 import Subst
 import PPrint ()
 import QueryType
+import Builder
 import Types.Core
 import Types.Primitives
 import Types.Source
@@ -88,14 +90,9 @@ parallelAffines actions = TyperM $ do
 -- === typeable things ===
 
 checkTypesEq :: IRRep r => Type r o -> Type r o -> TyperM r i o ()
-checkTypesEq reqTy ty = alphaEq reqTy ty >>= \case
-  True  -> return ()
-  False -> {-# SCC typeNormalization #-} do
-    reqTy' <- cheapNormalize reqTy
-    ty'    <- cheapNormalize ty
-    alphaEq reqTy' ty' >>= \case
-      True  -> return ()
-      False -> throw TypeErr $ pprint reqTy' ++ " != " ++ pprint ty'
+checkTypesEq reqTy ty = typesEquiv reqTy ty >>= \case
+  False -> throw TypeErr $ pprint reqTy ++ " != " ++ pprint ty
+  True -> return ()
 {-# INLINE checkTypesEq #-}
 
 class SinkableE e => CheckableE (r::IR) (e::E) | e -> r where
@@ -180,24 +177,6 @@ instance IRRep r => CheckableE r (Atom r) where
       con' <- typeCheckNewtypeCon con xTy
       return $ NewtypeCon con' x'
     SimpInCore x -> SimpInCore <$> checkE x
-    ProjectElt resultTy UnwrapNewtype x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', NewtypeTyCon con) <- checkAndGetType x
-      resultTy'' <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectElt resultTy' UnwrapNewtype x'
-    ProjectElt resultTy (ProjectProduct i) x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', xTy) <- checkAndGetType x
-      resultTy'' <- case xTy of
-        ProdTy tys -> return $ tys !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do
-          xFst <- normalizeProj (ProjectProduct 0) x'
-          checkInstantiation t [xFst]
-        _ -> throw TypeErr $ "Not a product type:" ++ pprint xTy
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectElt resultTy' (ProjectProduct i) x'
     TypeAsAtom ty -> TypeAsAtom <$> checkE ty
 
 instance IRRep r => CheckableE r (AtomVar r) where
@@ -215,32 +194,13 @@ instance IRRep r => CheckableE r (Type r) where
     NewtypeTyCon t -> NewtypeTyCon <$> checkE t
     TC t           -> TC           <$> checkE t
     DepPairTy t    -> DepPairTy    <$> checkE t
-    DictTy (DictType sn className params) -> do
-      className' <- renameM className
-      ClassDef _ _ _ _ paramBs _ _ <- lookupClassDef className'
-      params' <- mapM checkE params
-      void $ checkInstantiation (Abs paramBs UnitE) params'
-      return $ DictTy (DictType sn className' params')
-    TyVar v -> TyVar <$> checkE v
-    ProjectEltTy resultTy UnwrapNewtype x -> do
-      resultTy' <- resultTy |: TyKind
-      x' <- checkE x
-      NewtypeTyCon con <- return $ getType x'
-      ty <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' ty
-      return $ ProjectEltTy resultTy' UnwrapNewtype x'
-    ProjectEltTy resultTy (ProjectProduct i) x -> do
-      resultTy' <- resultTy |: TyKind
-      (x', ty) <- checkAndGetType x
-      resultTy'' <- case ty of
-        ProdTy tys -> return $ tys !! i
-        DepPairTy t | i == 0 -> return $ depPairLeftTy t
-        DepPairTy t | i == 1 -> do
-          xFst <- normalizeProj (ProjectProduct 0) x'
-          instantiate t [xFst]
-        _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
-      checkTypesEq resultTy' resultTy''
-      return $ ProjectEltTy resultTy' (ProjectProduct i) x'
+    DictTy (DictType sn className params) -> undefined
+    -- DictTy (DictType sn className params) -> do
+    --   className' <- renameM className
+    --   ClassDef _ _ _ _ paramBs _ _ <- lookupClassDef className'
+    --   params' <- mapM checkE params
+    --   void $ checkInstantiation (Abs paramBs UnitE) params'
+    --   return $ DictTy (DictType sn className' params')
 
 instance CheckableE CoreIR SimpInCore where
   checkE x = renameM x -- TODO: check
@@ -411,24 +371,29 @@ typeCheckNewtypeCon con xTy = case con of
     n' <- n|:NatTy
     checkAlphaEq xTy NatTy
     return $ FinCon n'
-  UserADTData sn d params -> do
-    d' <- renameM d
-    TyConParams expls params' <- checkE params
-    def <- lookupTyCon d'
-    void $ checkInstantiation def params'
-    return $ UserADTData sn d' (TyConParams expls params')
+  UserADTData sn d params -> undefined
+  -- UserADTData sn d params -> do
+  --   d' <- renameM d
+  --   TyConParams expls params' <- checkE params
+  --   def <- lookupTyCon d'
+  --   void $ checkInstantiation def params'
+  --   return $ UserADTData sn d' (TyConParams expls params')
+
+instance IRRep r => CheckableE r (PureExpr r) where
+  checkE = undefined
 
 instance CheckableE CoreIR NewtypeTyCon where
   checkE = \case
     Nat -> return Nat
     Fin n -> Fin <$> n|:NatTy
     EffectRowKind -> return EffectRowKind
-    UserADTType sn d params -> do
-      d' <- renameM d
-      TyConParams expls params' <- checkE params
-      def <- lookupTyCon d'
-      void $ checkInstantiation def params'
-      return $ UserADTType sn d' (TyConParams expls params')
+    UserADTType sn d params -> undefined
+    -- UserADTType sn d params -> do
+    --   d' <- renameM d
+    --   TyConParams expls params' <- checkE params
+    --   def <- lookupTyCon d'
+    --   void $ checkInstantiation def params'
+    --   return $ UserADTType sn d' (TyConParams expls params')
 
 instance IRRep r => CheckableWithEffects r (PrimOp r) where
   checkWithEffects effs = \case
@@ -532,13 +497,11 @@ instance IRRep r => CheckableWithEffects r (MiscOp r) where
       x' <- checkE x
       y' <- y |: getType x'
       return $ Select p' x' y'
-    CastOp t@(TyVar _) e -> CastOp <$> (t|:TyKind) <*> renameM e
     CastOp destTy e -> do
       e' <- checkE e
       destTy' <- destTy |: TyKind
       checkValidCast (getType e') destTy'
       return $ CastOp destTy' e'
-    BitcastOp t@(TyVar _) e -> BitcastOp <$> (t|:TyKind) <*> renameM e
     BitcastOp destTy e -> do
       destTy' <- destTy |: TyKind
       e' <- checkE e
@@ -671,12 +634,12 @@ checkHof (EffTy effs reqTy) = \case
     return $ RunState d' s' f'
   RunIO   body -> RunIO   <$> checkBlock (EffTy (extendEffect IOEffect   effs) reqTy) body
   RunInit body -> RunInit <$> checkBlock (EffTy (extendEffect InitEffect effs) reqTy) body
-  CatchException reqTy' body -> do
-    reqTy'' <- checkE reqTy'
-    checkTypesEq reqTy reqTy''
-    TypeCon _ _ (TyConParams _[Type ty]) <- return reqTy''  -- TODO: take more care in unpacking Maybe
-    body' <- checkBlock (EffTy (extendEffect ExceptionEffect effs) ty) body
-    return $ CatchException reqTy'' body'
+  CatchException reqTy' body -> undefined
+    -- reqTy'' <- checkE reqTy'
+    -- checkTypesEq reqTy reqTy''
+    -- TypeCon _ _ (TyConParams _[Type ty]) <- return reqTy''  -- TODO: take more care in unpacking Maybe
+    -- body' <- checkBlock (EffTy (extendEffect ExceptionEffect effs) ty) body
+    -- return $ CatchException reqTy'' body'
 
 instance IRRep r => CheckableWithEffects r (DAMOp r) where
   checkWithEffects effs = \case
@@ -749,12 +712,13 @@ checkRWSAction resultTy referentTy effs rws f = do
 checkCaseAltsBinderTys :: IRRep r => Type r n -> TyperM r i n [Type r n]
 checkCaseAltsBinderTys ty = case ty of
   SumTy types -> return types
-  NewtypeTyCon t -> case t of
-    UserADTType _ defName (TyConParams _ params) -> do
-      def <- lookupTyCon defName
-      ADTCons cons <- checkInstantiation def params
-      return [repTy | DataConDef _ _ repTy _ <- cons]
-    _ -> fail msg
+  NewtypeTyCon t -> undefined
+  -- NewtypeTyCon t -> case t of
+  --   UserADTType _ defName (TyConParams _ params) -> do
+  --     def <- lookupTyCon defName
+  --     ADTCons cons <- checkInstantiation def params
+  --     return [repTy | DataConDef _ _ repTy _ <- cons]
+  --   _ -> fail msg
   _ -> fail msg
   where msg = "Case analysis only supported on ADTs, not on " ++ pprint ty
 
@@ -914,3 +878,78 @@ checkEffTy allowedEffs effTy = do
   EffTy declaredEffs resultTy <- checkE effTy
   checkExtends allowedEffs declaredEffs
   return $ EffTy declaredEffs resultTy
+
+-- === normalization ===
+
+typeToAtom :: CType n -> CAtom n
+typeToAtom = \case
+  TyExpr (PureExpr (Abs Empty x)) -> x
+  t -> TypeAsAtom t
+
+atomToType :: CAtom n -> CType n
+atomToType = \case
+  TypeAsAtom t -> t
+  x -> TyExpr (PureExpr (Abs Empty x))
+
+getTypeRed :: (IRRep r, EnvReader m) => HasType r e => e n -> m n (Type r n)
+getTypeRed e = reduceType $ getType e
+
+typesEquiv :: (EnvReader m, IRRep r) => Type r n -> Type r n -> m n Bool
+typesEquiv t1 t2 = do
+  alphaEq t1 t2 >>= \case
+    True  -> return True
+    False -> do
+      t1' <- reduceType t1
+      t2' <- reduceType t1
+      alphaEq t1' t2'
+
+-- XXX: this should always be used when you want to
+-- pattern-match on a particular constructor.
+reduceType :: forall r m n. (IRRep r, EnvReader m) => Type r n -> m n (Type r n)
+reduceType ty = liftReducerM do
+  buildScoped (reduce ty) >>= \case
+    Abs Empty ty' -> return ty'
+    Abs decls ty' -> case eqIRRep @r @CoreIR of
+      Nothing -> error "should only produce decls for CoreIR types"
+      Just IRsEqual -> return $ TyExpr (PureExpr (Abs decls (TypeAsAtom ty')))
+
+type ReducerM r = SubstReaderT (SubstVal PureExpr) (BuilderM r)
+
+liftReducerM :: IRRep r => EnvReader m => ReducerM r o o a -> m o a
+liftReducerM cont = liftBuilder $ runSubstReaderT idSubst cont
+
+class IRRep r => Reducible (e::E) (e'::E) (r::IR) | e -> e', e -> r where
+  reduce :: Emits o => e i -> ReducerM r i o (e' o)
+
+instance IRRep r => Reducible (Type r) (Type r) r where
+  reduce = \case
+    TC           con -> undefined
+    TabPi        t -> undefined
+    -- DepPairTy    :: DepPairType r n -> Type r n
+    -- DictTy       :: DictType n      -> Type CoreIR n
+    -- Pi           :: CorePiType  n   -> Type CoreIR n
+    -- NewtypeTyCon :: NewtypeTyCon n  -> Type CoreIR n
+    -- TyExpr       :: PureExpr CoreIR n -> Type CoreIR n
+
+instance IRRep r => Reducible (Atom r) (PureExpr r) r where
+  reduce = undefined
+
+instance IRRep r => Reducible (Expr r) (PureExpr r) r where
+  reduce = undefined
+
+
+
+
+
+-- reducing decls
+--   reduce the rhs to Blob
+--   extend subst with Blob
+
+-- reducing atoms
+
+
+
+
+
+
+

@@ -169,6 +169,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
   prettyPrec (PrimOp op) = prettyPrec op
   prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec (ProjectElt _ idxs v) = atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
@@ -248,7 +249,6 @@ instance IRRep r => PrettyPrec (Atom r n) where
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
     TypeAsAtom ty -> prettyPrec ty
@@ -262,9 +262,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     TC  e -> prettyPrec e
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
-    TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -833,6 +830,10 @@ prettyPrecNewtype :: NewtypeCon n -> CAtom n -> DocPrec ann
 prettyPrecNewtype con x = case (con, x) of
   (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
   (_, x') -> prettyPrec x'
+
+instance IRRep r => Pretty (PureExpr r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (PureExpr r n) where
+  prettyPrec (PureExpr b) = prettyPrec b
 
 instance Pretty (NewtypeTyCon n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (NewtypeTyCon n) where

@@ -21,7 +21,6 @@ import Unsafe.Coerce
 import Builder
 import Core
 import Imp
-import CheapReduction
 import IRVariants
 import Name
 import Subst
@@ -143,10 +142,10 @@ lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
       let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
-        dest <- normalizeProj (ProjectProduct 0) destProd
+        dest <- getFst destProd
         idest <- emitOp =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
+      ans <- emitSeq dir ixTy' initDest body' >>= getFst
       return $ PrimOp $ DAMOp $ Freeze ans
 lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
@@ -240,9 +239,6 @@ lookupDest dests = fmap fromLiftE . flip lookupNameMapE dests
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
   Var v -> return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ FullDest dest
-  ProjectElt _ p x -> do
-    (ps, v) <- return $ asNaryProj p x
-    return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ ProjDest ps dest
   _ -> return Nothing
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
@@ -352,9 +348,10 @@ lowerExprWithDest dest expr = case expr of
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
   FullDest d   -> void $ emitOp $ DAMOp $ Place d x
-  ProjDest p d -> do
-    x' <- normalizeNaryProj (NE.toList p) x
-    void $ emitOp $ DAMOp $ Place d x'
+  ProjDest p d -> undefined
+  -- ProjDest p d -> do
+  --   x' <- normalizeNaryProj (NE.toList p) x
+  --   void $ emitOp $ DAMOp $ Place d x'
 
 -- === Extensions to the name system ===
 

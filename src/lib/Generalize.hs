@@ -38,24 +38,25 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   where
     go :: Nest (WithAttrB Explicitness CBinder) i i' -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
-    go (Nest (WithAttrB expl b) bs) (arg:args) = do
-      ty' <- substM $ binderType b
-      arg' <- case (ty', expl) of
-        (TyKind, _) -> liftSubstReaderT case arg of
-          Type t -> Type <$> generalizeType t
-          _ -> error "not a type"
-        (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
-        _ -> isData ty' >>= \case
-          True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
-          False -> do
-            -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-            -- non-type, non-dict arguments (e.g. a function). We just don't
-            -- generalize in that case.
-            return arg
-      args'' <- extendSubst (b@>SubstVal arg') $ go bs args
-      return $ arg' : args''
-    go Empty [] = return []
-    go _ _ = error "zip error"
+    go (Nest (WithAttrB expl b) bs) (arg:args) = undefined
+--     go (Nest (WithAttrB expl b) bs) (arg:args) = do
+--       ty' <- substM $ binderType b
+--       arg' <- case (ty', expl) of
+--         (TyKind, _) -> liftSubstReaderT case arg of
+--           Type t -> Type <$> generalizeType t
+--           _ -> error "not a type"
+--         (DictTy _, Inferred Nothing (Synth _)) -> generalizeDict ty' arg
+--         _ -> isData ty' >>= \case
+--           True -> liftM Var $ liftSubstReaderT $ emitGeneralizationParameter ty' arg
+--           False -> do
+--             -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+--             -- non-type, non-dict arguments (e.g. a function). We just don't
+--             -- generalize in that case.
+--             return arg
+--       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
+--       return $ arg' : args''
+--     go Empty [] = return []
+--     go _ _ = error "zip error"
 {-# INLINE generalizeArgs #-}
 
 -- === generalizer monad plumbing ===
@@ -107,12 +108,13 @@ emitGeneralizationParameter ty val = GeneralizerM do
 
 -- Given a type (an Atom of type `Type`), abstracts over all data components
 generalizeType :: Type CoreIR n -> GeneralizerM n (Type CoreIR n)
-generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
-  TypeParam -> Type <$> case param of
-    Type t -> generalizeType t
-    _ -> error "not a type"
-  DictParam -> generalizeDict paramReqTy param
-  DataParam -> Var <$> emitGeneralizationParameter paramReqTy param
+generalizeType ty = undefined
+-- generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
+--   TypeParam -> Type <$> case param of
+--     Type t -> generalizeType t
+--     _ -> error "not a type"
+--   DictParam -> generalizeDict paramReqTy param
+--   DataParam -> Var <$> emitGeneralizationParameter paramReqTy param
 
 -- === role-aware type traversal ===
 
@@ -125,43 +127,45 @@ traverseTyParams
   => CType n
   -> (forall l . DExt n l => ParamRole -> CType l -> CAtom l -> m l (CAtom l))
   -> m n (CType n)
-traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
-  DictTy (DictType sn name params) -> do
-    Abs paramRoles UnitE <- getClassRoleBinders name
-    params' <- traverseRoleBinders f paramRoles params
-    return $ DictTy $ DictType sn name params'
-  TabPi (TabPiType (IxDictAtom d) (b:>iTy) resultTy) -> do
-    iTy' <- f' TypeParam TyKind iTy
-    dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
-    d'   <- f DictParam dictTy d
-    withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
-      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
-      return $ TabTy (IxDictAtom d') (b':>iTy') resultTy'
-  -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
-  TabPi t -> return $ TabPi t
-  TC tc -> TC <$> case tc of
-    BaseType b -> return $ BaseType b
-    ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam TyKind t
-    RefType _ _ -> error "not implemented" -- how should we handle the ParamRole for the heap parameter?
-    SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
-    TypeKind     -> return TypeKind
-    HeapType     -> return HeapType
-  NewtypeTyCon con -> NewtypeTyCon <$> case con of
-    Nat -> return Nat
-    Fin n -> Fin <$> f DataParam NatTy n
-    EffectRowKind    -> return EffectRowKind
-    UserADTType sn def (TyConParams infs params) -> do
-      Abs roleBinders UnitE <- getDataDefRoleBinders def
-      params' <- traverseRoleBinders f roleBinders params
-      return $ UserADTType sn def $ TyConParams infs params'
-  _ -> error $ "Not implemented: " ++ pprint ty
-  where
-    f' :: forall l . DExt n l => ParamRole -> CType l -> CType l -> m l (CType l)
-    f' r t x = fromType <$> f r t (Type x)
+traverseTyParams ty f = undefined
+-- traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
+--   DictTy (DictType sn name params) -> do
+--     Abs paramRoles UnitE <- getClassRoleBinders name
+--     params' <- traverseRoleBinders f paramRoles params
+--     return $ DictTy $ DictType sn name params'
+--   TabPi (TabPiType (IxDictAtom d) (b:>iTy) resultTy) -> do
+--     iTy' <- f' TypeParam TyKind iTy
+--     dictTy <- liftM ignoreExcept $ runFallibleT1 $ DictTy <$> ixDictType iTy'
+--     d'   <- f DictParam dictTy d
+--     withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
+--       resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
+--       return $ TabTy (IxDictAtom d') (b':>iTy') resultTy'
+--   -- shouldn't need this once we can exclude IxDictFin and IxDictSpecialized from CoreI
+--   TabPi t -> return $ TabPi t
+--   TC tc -> TC <$> case tc of
+--     BaseType b -> return $ BaseType b
+--     ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam TyKind t
+--     RefType _ _ -> error "not implemented" -- how should we handle the ParamRole for the heap parameter?
+--     SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
+--     TypeKind     -> return TypeKind
+--     HeapType     -> return HeapType
+--   NewtypeTyCon con -> NewtypeTyCon <$> case con of
+--     Nat -> return Nat
+--     Fin n -> Fin <$> f DataParam NatTy n
+--     EffectRowKind    -> return EffectRowKind
+--     UserADTType sn def (TyConParams infs params) -> undefined
+--     -- UserADTType sn def (TyConParams infs params) -> do
+--     --   Abs roleBinders UnitE <- getDataDefRoleBinders def
+--     --   params' <- traverseRoleBinders f roleBinders params
+--     --   return $ UserADTType sn def $ TyConParams infs params'
+--   _ -> error $ "Not implemented: " ++ pprint ty
+--   where
+--     f' :: forall l . DExt n l => ParamRole -> CType l -> CType l -> m l (CType l)
+--     f' r t x = undefined -- fromType <$> f r t (Type x)
 
-    fromType :: CAtom l -> CType l
-    fromType (Type t) = t
-    fromType x = error $ "not a type: " ++ pprint x
+    -- fromType :: CAtom l -> CType l
+    -- fromType (Type t) = t
+    -- fromType x = error $ "not a type: " ++ pprint x
 {-# INLINE traverseTyParams #-}
 
 traverseRoleBinders

@@ -25,7 +25,6 @@ import Name
 import Subst
 import IRVariants
 import Core
-import CheapReduction
 import Builder
 import QueryType
 import Util (iota)
@@ -311,32 +310,33 @@ hoistLoopInvariant = liftLamExpr hoistLoopInvariantBlock
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
 licmExpr = \case
-  PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
-    ix' <- substM ix
-    dests' <- mapM visitAtom dests
-    let numCarriesOriginal = length dests'
-    Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
-      -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
-      Abs decls ans <- buildBlock $ visitBlockEmits body
-      -- Now, we process the decls and decide which ones to hoist.
-      liftEnvReaderM $ runSubstReaderT idSubst $
-          seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
-    PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
-    extraDests' <- mapM toAtomVar extraDests
-    -- Append the destinations of hoisted Allocs as loop carried values.
-    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
-    let carryTy = getType dests''
-    let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
-    extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
-    Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
-    body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
-      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
-      let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
-      let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
-      block <- applySubst s bodyAbs
-      return $ UnaryLamExpr lb' block
-    emitSeq dir ix' dests'' body'
+  PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> undefined
+  -- PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+  --   ix' <- substM ix
+  --   dests' <- mapM visitAtom dests
+  --   let numCarriesOriginal = length dests'
+  --   Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
+  --     -- First, traverse the block, to allow any Hofs inside it to hoist their own decls.
+  --     Abs decls ans <- buildBlock $ visitBlockEmits body
+  --     -- Now, we process the decls and decide which ones to hoist.
+  --     liftEnvReaderM $ runSubstReaderT idSubst $
+  --         seqLICM REmpty mempty (asNameBinder b') REmpty decls ans
+  --   PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
+  --   extraDests' <- mapM toAtomVar extraDests
+  --   -- Append the destinations of hoisted Allocs as loop carried values.
+  --   let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
+  --   let carryTy = getType dests''
+  --   let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
+  --   extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
+  --   Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
+  --   body' <- withFreshBinder noHint lbTy \lb' -> do
+  --     (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
+  --     (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+  --     let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+  --     let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
+  --     block <- applySubst s bodyAbs
+  --     return $ UnaryLamExpr lb' block
+  --   emitSeq dir ix' dests'' body'
   PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> do
     ix' <- substM ix
     Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
@@ -426,7 +426,6 @@ instance Color c => HasDCE (Name c) where
 instance HasDCE SAtom where
   dce = \case
     Var n -> modify (<> FV (freeVarsE n)) $> Var n
-    ProjectElt t i x -> ProjectElt <$> dce t <*> pure i <*> dce x
     atom -> visitAtomPartial atom
 
 instance HasDCE SType where dce = visitTypePartial

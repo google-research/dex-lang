@@ -79,7 +79,6 @@ instance IRRep r => HasType r (Atom r) where
     DictCon ty _ -> ty
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
     TypeAsAtom ty -> getType ty
 
@@ -91,8 +90,10 @@ instance IRRep r => HasType r (Type r) where
     DepPairTy _ -> TyKind
     TC _        -> TyKind
     DictTy _    -> TyKind
-    TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
+    TyExpr e    -> getType e
+
+instance IRRep r => HasType r (PureExpr r) where
+  getType (PureExpr (Abs decls e)) = ignoreHoistFailure $ hoist decls $ getType e
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -133,6 +134,7 @@ instance IRRep r => HasType r (Expr r) where
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    ProjectElt t _ _ -> t
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -250,7 +252,7 @@ finIxTy n = IxType IdxRepTy (IxDictRawFin n)
 ixTyFromDict :: IRRep r => IxDict r n -> IxType r n
 ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
   IxDictAtom dict -> case getType dict of
-    DictTy (DictType "Ix" _ [Type iTy]) -> iTy
+    DictTy (DictType "Ix" _ [iTy]) -> TyExpr iTy
     _ -> error $ "Not an Ix dict: " ++ show dict
   IxDictRawFin _ -> IdxRepTy
   IxDictSpecialized n _ _ -> n

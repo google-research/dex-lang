@@ -49,7 +49,6 @@ import CheckType (checkTypes)
 #endif
 import Core
 import ConcreteSyntax
-import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -276,10 +275,11 @@ evalSourceBlock' mname block = case sbContents block of
     --       "Can't export functions with captured pointers (not implemented)."
     --     _ -> return $ Con $ Lit val
     --   logTop $ ExportedFun name f
-    GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
-      logTop $ TextOut $ pprintCanonicalized ty
+    GetType -> undefined
+    -- GetType -> do  -- TODO: don't actually evaluate it
+    --   val <- evalUExpr expr
+    --   ty <- cheapNormalize $ getType val
+    --   logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
     ty <- evalUType =<< parseExpr cTy
@@ -328,7 +328,7 @@ evalSourceBlock' mname block = case sbContents block of
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
+      ty <- sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -623,11 +623,12 @@ execUDecl mname decl = do
         _ -> do
           v <- emitTopLet (getNameHint b) ann (Atom result)
           applyRename (b@>atomVarName v) sm >>= emitSourceMap
-    UDeclResultBindPattern hint block (Abs bs sm) -> do
-      result <- evalBlock block
-      xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
-      applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
+    UDeclResultBindPattern hint block (Abs bs sm) -> undefined
+    -- UDeclResultBindPattern hint block (Abs bs sm) -> do
+    --   result <- evalBlock block
+    --   xs <- unpackTelescope bs result
+    --   vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+    --   applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 
 compileTopLevelFun :: (Topper m, Mut n)
@@ -642,7 +643,7 @@ printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
   block <- liftBuilder $ buildBlock do
     emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
-  topBlock <- asTopBlock block
+  (topBlock, _) <- asTopBlock block
   getDexString =<< evalBlock topBlock
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction

@@ -23,7 +23,6 @@ import Subst
 import Util
 import PPrint ()
 import QueryTypePure
-import CheapReduction
 
 sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
 sourceNameType v = do
@@ -97,12 +96,12 @@ typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
     PairE (ListE params) _ <- instantiate instanceDef args
     return $ DictTy $ DictType sourceName className params
   InstantiatedGiven given args -> typeOfApp (getType given) args
-  SuperclassProj d i -> do
-    DictTy (DictType _ className params) <- return $ getType d
-    classDef <- lookupClassDef className
-    withSubstReaderT $ withInstantiated classDef params \(Abs superclasses _) -> do
-      substM $ getSuperclassType REmpty superclasses i
-  IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
+  SuperclassProj d i -> undefined
+    -- DictTy (DictType _ className params) <- return $ getType d
+    -- classDef <- lookupClassDef className
+    -- withSubstReaderT $ withInstantiated classDef params \(Abs superclasses _) -> do
+    --   substM $ getSuperclassType REmpty superclasses i
+  IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin $ AtomPureExpr n
   DataData ty -> DictTy <$> dataDictType ty
 
 typeOfTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (EffTy SimpIR n)
@@ -211,7 +210,7 @@ getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
   MethodBinding className i -> do
     ClassDef _ _ paramNames _ paramBs scBinders methodTys <- lookupClassDef className
     refreshAbs (Abs paramBs $ Abs scBinders (methodTys !! i)) \paramBs' absPiTy -> do
-      let params = Var <$> bindersVars paramBs'
+      let params = AtomPureExpr . Var <$> bindersVars paramBs'
       dictTy <- DictTy <$> dictType (sink className) params
       withFreshBinder noHint dictTy \dictB -> do
         scDicts <- getSuperclassDicts (Var $ binderVar dictB)
@@ -221,13 +220,14 @@ getMethodNameType v = liftEnvReaderM $ lookupEnv v >>= \case
         return $ Pi $ CorePiType appExpl expls (paramBs' >>> UnaryNest dictB >>> methodBs) effTy
 
 getMethodType :: EnvReader m => Dict n -> Int -> m n (CorePiType n)
-getMethodType dict i = liftEnvReaderM $ withSubstReaderT do
-  ~(DictTy (DictType _ className params)) <- return $ getType dict
-  superclassDicts <- getSuperclassDicts dict
-  classDef <- lookupClassDef className
-  withInstantiated classDef params \ab -> do
-    withInstantiated ab superclassDicts \(ListE methodTys) ->
-      substM $ methodTys !! i
+getMethodType dict i = undefined
+-- getMethodType dict i = liftEnvReaderM $ withSubstReaderT do
+--   ~(DictTy (DictType _ className params)) <- return $ getType dict
+--   superclassDicts <- getSuperclassDicts dict
+--   classDef <- lookupClassDef className
+--   withInstantiated classDef params \ab -> do
+--     withInstantiated ab superclassDicts \(ListE methodTys) ->
+--       substM $ methodTys !! i
 
 getTyConNameType :: EnvReader m => TyConName n -> m n (Type CoreIR n)
 getTyConNameType v = do
@@ -274,9 +274,9 @@ buildDataConType (TyConDef _ roleExpls bs _) cont = do
   refreshAbs (Abs bs UnitE) \bs' UnitE -> do
     let vs = nestToNames bs'
     vs' <- mapM toAtomVar vs
-    cont expls' bs' vs $ TyConParams expls (Var <$> vs')
+    cont expls' bs' vs $ TyConParams expls (AtomPureExpr . Var <$> vs')
 
-makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
+makeTyConParams :: EnvReader m => TyConName n -> [CPureExpr n] -> m n (TyConParams n)
 makeTyConParams tc params = do
   TyConDef _ expls _ _ <- lookupTyCon tc
   return $ TyConParams (map snd expls) params
@@ -290,7 +290,7 @@ getDataClassName = lookupSourceMap "Data" >>= \case
 dataDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 dataDictType ty = do
   dataClassName <- getDataClassName
-  dictType dataClassName [Type ty]
+  dictType dataClassName [AtomPureExpr $ TypeAsAtom ty]
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -298,7 +298,7 @@ getIxClassName = lookupSourceMap "Ix" >>= \case
   Just (UClassVar v) -> return v
   Just _ -> error "not a class var"
 
-dictType :: EnvReader m => ClassName n -> [CAtom n] -> m n (DictType n)
+dictType :: EnvReader m => ClassName n -> [CPureExpr n] -> m n (DictType n)
 dictType className params = do
   ClassDef sourceName _ _ _ _ _ _ <- lookupClassDef className
   return $ DictType sourceName className params
@@ -306,12 +306,12 @@ dictType className params = do
 ixDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 ixDictType ty = do
   ixClassName <- getIxClassName
-  dictType ixClassName [Type ty]
+  dictType ixClassName [AtomPureExpr $ TypeAsAtom ty]
 
 makePreludeMaybeTy :: EnvReader m => CType n -> m n (CType n)
 makePreludeMaybeTy ty = do
   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
+  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [AtomPureExpr $ TypeAsAtom ty]
 
 -- === computing effects ===
 
@@ -357,7 +357,7 @@ getSuperclassTys :: EnvReader m => DictType n -> m n [CType n]
 getSuperclassTys (DictType _ className params) = do
   ClassDef _ _ _ _ bs superclasses _ <- lookupClassDef className
   forM [0 .. nestLength superclasses - 1] \i -> do
-    instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
+    instantiateParams (Abs bs $ getSuperclassType REmpty superclasses i) params
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
@@ -394,7 +394,6 @@ isData ty = do
 
 checkDataLike :: Type CoreIR i -> SubstReaderT Name FallibleEnvReaderM i o ()
 checkDataLike ty = case ty of
-  TyVar _ -> notData
   TabPi (TabPiType _ b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
@@ -426,3 +425,97 @@ checkExtends allowed (EffectRow effs effTail) = do
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
 {-# INLINE checkExtends #-}
+
+-- === misc ===
+
+depPairLeftTy :: DepPairType r n -> Type r n
+depPairLeftTy (DepPairType _ (_:>ty) _) = ty
+{-# INLINE depPairLeftTy #-}
+
+unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
+unwrapNewtypeType = \case
+  Nat                   -> return (NatCon, IdxRepTy)
+  Fin n                 -> return (FinCon n, NatTy)
+  UserADTType sn defName params -> do
+    def <- lookupTyCon defName
+    ty' <- dataDefRep <$> instantiateTyConDef def params
+    return (UserADTData sn defName params, ty')
+  ty -> error $ "Shouldn't be projecting: " ++ pprint ty
+{-# INLINE unwrapNewtypeType #-}
+
+unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
+unwrapLeadingNewtypesType = \case
+  NewtypeTyCon tyCon -> do
+    (dataCon, ty) <- unwrapNewtypeType tyCon
+    (dataCons, ty') <- unwrapLeadingNewtypesType ty
+    return (dataCon:dataCons, ty')
+  ty -> return ([], ty)
+
+wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
+wrapNewtypesData [] x = x
+wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
+
+instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
+instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = undefined
+-- instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
+--   applySubst (bs @@> (SubstVal <$> xs)) conDefs
+-- {-# INLINE instantiateTyConDef #-}
+
+assumeConst
+  :: (IRRep r, HoistableE body, SinkableE body, ToBindersAbs e body r) => e n -> body n
+assumeConst e = case toAbs e of Abs bs body -> ignoreHoistFailure $ hoist bs body
+
+instantiate
+  :: (EnvReader m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [Atom r n] -> m n (body n)
+instantiate e xs = case toAbs e of
+  Abs bs body -> applySubst (bs @@> (SubstVal <$> xs)) body
+
+instantiateParams
+  :: (EnvReader m, IRRep r, ToBindersAbs e (Type r) r)
+  => e n -> [PureExpr r n] -> m n (Type r n)
+instantiateParams e xs = undefined
+
+-- "lazy" subst-extending version of `instantiate`
+withInstantiated
+  :: (SubstReader AtomSubstVal m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
+  => e i -> [Atom r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiated e xs cont = case toAbs e of
+  Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
+
+instantiateNames
+  :: (EnvReader m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [AtomName r n] -> m n (body n)
+instantiateNames e vs = case toAbs e of
+  Abs bs body -> applyRename (bs @@> vs) body
+
+-- "lazy" subst-extending version of `instantiateNames`
+withInstantiatedNames
+  :: (SubstReader Name m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
+  => e i -> [AtomName r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiatedNames e vs cont = case toAbs e of
+  Abs bs body -> extendRenamer (bs @@> vs) $ cont body
+
+-- Returns a representation type (type of an TypeCon-typed Newtype payload)
+-- given a list of instantiated DataConDefs.
+dataDefRep :: DataConDefs n -> CType n
+dataDefRep (ADTCons cons) = case cons of
+  [] -> error "unreachable"  -- There's no representation for a void type
+  [DataConDef _ _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ _ ty _) -> ty
+dataDefRep (StructFields fields) = case map snd fields of
+  [ty] -> ty
+  tys  -> ProdTy tys
+
+makeStructRepVal :: (Fallible1 m, EnvReader m) => TyConName n -> [CAtom n] -> m n (CAtom n)
+makeStructRepVal tyConName args = do
+  TyConDef _ _ _ (StructFields fields) <- lookupTyCon tyConName
+  case fields of
+    [_] -> case args of
+      [arg] -> return arg
+      _ -> error "wrong number of args"
+    _ -> return $ ProdVal args

@@ -170,28 +170,29 @@ parseTabTy = go []
   where
     go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
       -> ExportSigM r i o (Maybe (ExportType o))
-    go shape = \case
-      BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
-      NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy d (b:>ixty) a -> do
-        maybeN <- case IxType ixty d of
-          IxType (NewtypeTyCon (Fin n)) _ -> return $ Just n
-          IxType _ (IxDictRawFin n) -> return $ Just n
-          _ -> return Nothing
-        maybeDim <- case maybeN of
-          Just (Var v)    -> do
-            s <- getSubst
-            let (Rename v') = s ! atomVarName v
-            return $ Just (ExportDimVar v')
-          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
-          Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
-          _        -> return Nothing
-        case maybeDim of
-          Just dim -> case hoist b a of
-            HoistSuccess a' -> go (shape ++ [dim]) a'
-            HoistFailure _  -> return Nothing
-          Nothing -> return Nothing
-      _ -> return Nothing
+    go shape = undefined
+    -- go shape = \case
+    --   BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
+    --   NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+    --   TabTy d (b:>ixty) a -> do
+    --     maybeN <- case IxType ixty d of
+    --       IxType (NewtypeTyCon (Fin n)) _ -> return $ Just n
+    --       IxType _ (IxDictRawFin n) -> return $ Just n
+    --       _ -> return Nothing
+    --     maybeDim <- case maybeN of
+    --       Just (Var v)    -> do
+    --         s <- getSubst
+    --         let (Rename v') = s ! atomVarName v
+    --         return $ Just (ExportDimVar v')
+    --       Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+    --       Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
+    --       _        -> return Nothing
+    --     case maybeDim of
+    --       Just dim -> case hoist b a of
+    --         HoistSuccess a' -> go (shape ++ [dim]) a'
+    --         HoistFailure _  -> return Nothing
+    --       Nothing -> return Nothing
+    --   _ -> return Nothing
 
 data ArgVisibility = ImplicitArg | ExplicitArg
 

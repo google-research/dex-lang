@@ -15,7 +15,7 @@ module Imp
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
   , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
   , computeOffset, getIExprInterpretation
-  , isSingletonType, singletonTypeVal
+  , isSingletonType, singletonTypeVal, repValAtom
   ) where
 
 import Prelude hiding ((.), id)
@@ -31,7 +31,6 @@ import qualified Control.Monad.State.Strict as MTL
 
 import Algebra
 import Builder
-import CheapReduction
 import CheckType (CheckableE (..))
 import Core
 import Err
@@ -877,21 +876,6 @@ atomToRepVal x = RepVal (getType x) <$> go x where
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
     PtrVar ty p -> return $ Leaf $ IPtrVar p ty
-    ProjectElt _ p val -> do
-      (ps, v) <- return $ asNaryProj p val
-      lookupAtomName (atomVarName v) >>= \case
-        TopDataBound (RepVal _ tree) -> applyProjection (toList ps) tree
-        _ -> error "should only be projecting a data atom"
-      where
-        applyProjection :: [Projection] -> Tree (IExpr n) -> SubstImpM i n (Tree (IExpr n))
-        applyProjection [] t = return t
-        applyProjection (i:is) t = do
-          t' <- applyProjection is t
-          case i of
-            UnwrapNewtype -> error "impossible"
-            ProjectProduct idx    -> case t' of
-              Branch ts -> return $ ts !! idx
-              _ -> error "should only be projecting a branch"
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
 -- from the dest. This version is not that. It just lifts a dest into an atom of

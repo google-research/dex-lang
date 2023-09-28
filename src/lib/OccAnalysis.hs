@@ -12,7 +12,6 @@ import Data.Maybe (fromMaybe)
 import Control.Monad.Reader.Class
 
 import Core
-import CheapReduction
 import IRVariants
 import Name
 import MTL1
@@ -20,6 +19,7 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
+import Subst
 import QueryType
 
 -- === External API ===
@@ -253,7 +253,6 @@ instance HasOCC SAtom where
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
       return $ Var (AtomVar n ty')
-    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
     atom -> runOCCMVisitor a $ visitAtomPartial atom
 
 instance HasOCC SType where

@@ -17,7 +17,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Imp
 import IRVariants
 import MTL1
@@ -289,30 +288,31 @@ linearize f x = runPrimalMInit $ linearizeLambdaApp f x
 {-# SCC linearize #-}
 
 linearizeTopLam :: STopLam n -> [Active] -> DoubleBuilder SimpIR n (STopLam n, STopLam n)
-linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
-  (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
-    let allPrimals = bindersVars bs'
-    activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
-      True  -> return $ Just v
-      False -> return $ Nothing
-    (body', linLamAbs) <- extendActivePrimalss activeVs do
-      linearizeBlockDefuncGeneral emptyOutFrag body
-    let primalFun = LamExpr bs' body'
-    ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
-    tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
-      Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
-      withFreshBinder "t" tangentTy \bTangent -> do
-        tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderVar bTangent
-          let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
-                        <.> bsTangent @@> map (SubstVal . sink) ts
-          emitBlock =<< applySubst substFrag tangentBody
-        return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
-    return (primalFun, tangentFun)
-  (,) <$> asTopLam primalFun <*> asTopLam tangentFun
-linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
+linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = undefined
+-- linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
+--   (primalFun, tangentFun) <- runPrimalMInit $ refreshBinders bs \bs' frag -> extendSubst frag do
+--     let allPrimals = bindersVars bs'
+--     activeVs <- catMaybes <$> forM (zip actives allPrimals) \(active, v) -> case active of
+--       True  -> return $ Just v
+--       False -> return $ Nothing
+--     (body', linLamAbs) <- extendActivePrimalss activeVs do
+--       linearizeBlockDefuncGeneral emptyOutFrag body
+--     let primalFun = LamExpr bs' body'
+--     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
+--     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
+--       xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
+--       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
+--       tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+--       withFreshBinder "t" tangentTy \bTangent -> do
+--         tangentBody' <- buildBlock do
+--           ts <- getUnpacked $ Var $ sink $ binderVar bTangent
+--           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
+--                         <.> bsTangent @@> map (SubstVal . sink) ts
+--           emitBlock =<< applySubst substFrag tangentBody
+--         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
+--     return (primalFun, tangentFun)
+--   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
+-- linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing function"
 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
@@ -334,12 +334,6 @@ linearizeAtom atom = case atom of
   Con con -> linearizePrimCon con
   DepPair _ _ _     -> notImplemented
   PtrVar _ _      -> emitZeroT
-  ProjectElt _ i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 

@@ -51,7 +51,6 @@ data Atom (r::IR) (n::S) where
  Var        :: AtomVar r n                              -> Atom r n
  Con        :: Con r n                                  -> Atom r n
  PtrVar     :: PtrType -> PtrName n                     -> Atom r n
- ProjectElt :: Type r n -> Projection -> Atom r n       -> Atom r n
  DepPair    :: Atom r n -> Atom r n -> DepPairType r n  -> Atom r n
  -- === CoreIR only ===
  Lam          :: CoreLamExpr n                 -> Atom CoreIR n
@@ -67,14 +66,10 @@ data Type (r::IR) (n::S) where
  TC           :: TC  r n         -> Type r n
  TabPi        :: TabPiType r n   -> Type r n
  DepPairTy    :: DepPairType r n -> Type r n
- TyVar        :: AtomVar CoreIR n -> Type CoreIR n
  DictTy       :: DictType n      -> Type CoreIR n
  Pi           :: CorePiType  n   -> Type CoreIR n
  NewtypeTyCon :: NewtypeTyCon n  -> Type CoreIR n
- -- It was bad enough having this in `Atom`, but it's even worse now that it's
- -- replicated in `Type` too. We should be able to remove both once
- -- we represent types as normalized blocks.
- ProjectEltTy :: CType n -> Projection -> CAtom n -> Type CoreIR n
+ TyExpr       :: PureExpr CoreIR n -> Type CoreIR n
 
 data AtomVar (r::IR) (n::S) = AtomVar
   { atomVarName :: AtomName r n
@@ -86,7 +81,7 @@ data SimpInCore (n::S) =
    LiftSimp (CType n) (SAtom n)
  | LiftSimpFun (CorePiType n) (LamExpr SimpIR n)
  | TabLam (TabPiType CoreIR n) (TabLamExpr n)
- | ACase (SAtom n) [Abs SBinder CAtom n] (CType n)
+ | ACase (SAtom n) [Abs SBinder CBlock n] (CType n)
  deriving (Show, Generic)
 
 deriving instance IRRep r => Show (Atom r n)
@@ -103,6 +98,7 @@ data Expr r n where
  PrimOp :: PrimOp r n                           -> Expr r n
  App             :: EffTy CoreIR n -> CAtom n -> [CAtom n]        -> Expr CoreIR n
  ApplyMethod     :: EffTy CoreIR n -> CAtom n -> Int -> [CAtom n] -> Expr CoreIR n
+ ProjectElt :: Type r n -> Projection -> Atom r n                 -> Expr r n
 
 deriving instance IRRep r => Show (Expr r n)
 deriving via WrapE (Expr r) n instance IRRep r => Generic (Expr r n)
@@ -169,11 +165,13 @@ data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 
 -- We track the explicitness information because we need it for the equality
 -- check since we skip equality checking on dicts.
-data TyConParams n = TyConParams [Explicitness] [Atom CoreIR n]
+-- TODO: consider parameterizing this so we can have both an atom version and an expression version
+data TyConParams n = TyConParams [Explicitness] [PureExpr CoreIR n]
      deriving (Show, Generic)
 
 type WithDecls (r::IR) = Abs (Decls r) :: E -> E
 type Block (r::IR) = WithDecls r (Atom r) :: E
+data PureExpr (r::IR) (n::S) = PureExpr (Block r n)  deriving (Show, Generic)
 
 type TopBlock = TopLam -- used for nullary lambda
 type IsDestLam = Bool
@@ -255,7 +253,7 @@ instance ToBindersAbs (TabPiType r) (Type r) r where
 instance ToBindersAbs (DepPairType r) (Type r) r where
   toAbs (DepPairType _ b rhsTy) = Abs (UnaryNest b) rhsTy
 
-instance ToBindersAbs InstanceDef (ListE CAtom `PairE` InstanceBody) CoreIR where
+instance ToBindersAbs InstanceDef (ListE CPureExpr `PairE` InstanceBody) CoreIR where
   toAbs (InstanceDef _ _ bs params body) = Abs bs (ListE params `PairE` body)
 
 instance ToBindersAbs TyConDef DataConDefs CoreIR where
@@ -325,7 +323,7 @@ data TC (r::IR) (n::S) where
   BaseType :: BaseType             -> TC r n
   ProdType :: [Type r n]           -> TC r n
   SumType  :: [Type r n]           -> TC r n
-  RefType  :: Atom r n -> Type r n -> TC r n
+  RefType  :: Atom r n -> Type r n -> TC r n   -- TODO: use `PureExpr` instead of `Atom` (will need to change effects too)
   TypeKind ::                         TC r n   -- TODO: `HasCore r` constraint
   HeapType ::                         TC r n
   deriving (Show, Generic)
@@ -431,6 +429,7 @@ type CAtom  = Atom CoreIR
 type CType  = Type CoreIR
 type CBinder = Binder CoreIR
 type CExpr  = Expr CoreIR
+type CPureExpr = PureExpr CoreIR
 type CBlock = Block CoreIR
 type CDecl  = Decl  CoreIR
 type CDecls = Decls CoreIR
@@ -458,12 +457,12 @@ type STopLam    = TopLam SimpIR
 data NewtypeCon (n::S) =
    UserADTData SourceName (TyConName n) (TyConParams n) -- source name is for the type
  | NatCon
- | FinCon (Atom CoreIR n)
+ | FinCon (PureExpr CoreIR n)
    deriving (Show, Generic)
 
 data NewtypeTyCon (n::S) =
    Nat
- | Fin (Atom CoreIR n)
+ | Fin (PureExpr CoreIR n)
  | EffectRowKind
  | UserADTType SourceName (TyConName n) (TyConParams n)
    deriving (Show, Generic)
@@ -496,7 +495,7 @@ data InstanceDef (n::S) where
     :: ClassName n1
     -> [RoleExpl]           -- parameter info
     -> Nest CBinder n1 n2   -- parameters (types and dictionaries)
-    ->   [CAtom n2]          -- class parameters
+    ->   [CPureExpr n2]     -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
 
@@ -506,9 +505,10 @@ data InstanceBody (n::S) =
     [CAtom n]  -- method definitions
   deriving (Show, Generic)
 
-data DictType (n::S) = DictType SourceName (ClassName n) [CAtom n]
+data DictType (n::S) = DictType SourceName (ClassName n) [PureExpr CoreIR n]
      deriving (Show, Generic)
 
+-- TODO: we should be able to do this with ordinary PureExpr instead
 data DictExpr (n::S) =
    InstantiatedGiven (CAtom n) [CAtom n]
  | SuperclassProj (CAtom n) Int  -- (could instantiate here too, but we don't need it for now)
@@ -982,17 +982,6 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
 
 -- === Pattern synonyms ===
 
--- XXX: only use this pattern when you're actually expecting a type. If it's
--- a Var, it doesn't check whether it's a type.
-pattern Type :: CType n -> CAtom n
-pattern Type t <- ((\case Var v          -> Just (TyVar v)
-                          ProjectElt t i x -> Just $ ProjectEltTy t i x
-                          TypeAsAtom t   -> Just t
-                          _            -> Nothing) -> Just t)
-  where Type (TyVar v) = Var v
-        Type (ProjectEltTy t i x) = ProjectElt t i x
-        Type t         = TypeAsAtom t
-
 pattern IdxRepScalarBaseTy :: ScalarBaseType
 pattern IdxRepScalarBaseTy = Word32Type
 
@@ -1065,7 +1054,7 @@ pattern TabTy :: IxDict r n -> Binder r n l -> Type r l -> Type r n
 pattern TabTy d b body = TabPi (TabPiType d b body)
 
 pattern FinTy :: Atom CoreIR n -> Type CoreIR n
-pattern FinTy n = NewtypeTyCon (Fin n)
+pattern FinTy n = NewtypeTyCon (Fin (AtomPureExpr n))
 
 pattern NatTy :: Type CoreIR n
 pattern NatTy = NewtypeTyCon Nat
@@ -1079,8 +1068,11 @@ pattern TyKind = TC TypeKind
 pattern EffKind :: Kind CoreIR n
 pattern EffKind = NewtypeTyCon EffectRowKind
 
+pattern AtomPureExpr :: Atom r n -> PureExpr r n
+pattern AtomPureExpr x = PureExpr (Abs Empty x)
+
 pattern FinConst :: Word32 -> Type CoreIR n
-pattern FinConst n = NewtypeTyCon (Fin (NatVal n))
+pattern FinConst n = NewtypeTyCon (Fin (AtomPureExpr (NatVal n)))
 
 pattern NullaryLamExpr :: Block r n -> LamExpr r n
 pattern NullaryLamExpr body = LamExpr Empty body
@@ -1150,7 +1142,7 @@ instance AlphaEqE CustomRules
 instance RenameE     CustomRules
 
 instance GenericE TyConParams where
-  type RepE TyConParams = PairE (LiftE [Explicitness]) (ListE CAtom)
+  type RepE TyConParams = PairE (LiftE [Explicitness]) (ListE CPureExpr)
   fromE (TyConParams infs xs) = PairE (LiftE infs) (ListE xs)
   {-# INLINE fromE #-}
   toE (PairE (LiftE infs) (ListE xs)) = TyConParams infs xs
@@ -1165,7 +1157,7 @@ instance AlphaHashableE TyConParams where
   hashWithSaltE env salt params =
     hashWithSaltE env salt $ ListE $ ignoreSynthParams params
 
-ignoreSynthParams :: TyConParams n -> [CAtom n]
+ignoreSynthParams :: TyConParams n -> [PureExpr CoreIR n]
 ignoreSynthParams (TyConParams infs xs) = [x | (inf, x) <- zip infs xs, notSynth inf]
   where notSynth = \case
           Inferred _ (Synth _) -> False
@@ -1233,7 +1225,7 @@ instance GenericE NewtypeCon where
   type RepE NewtypeCon = EitherE3
    {- UserADTData -}  (LiftE SourceName `PairE` TyConName `PairE` TyConParams)
    {- NatCon -}       UnitE
-   {- FinCon -}       CAtom
+   {- FinCon -}       CPureExpr
   fromE = \case
     UserADTData sn d p -> Case0 $ LiftE sn `PairE` d `PairE` p
     NatCon          -> Case1 UnitE
@@ -1252,10 +1244,24 @@ instance AlphaEqE       NewtypeCon
 instance AlphaHashableE NewtypeCon
 instance RenameE        NewtypeCon
 
+instance IRRep r => GenericE (PureExpr r) where
+  type RepE (PureExpr r) = Block r
+  fromE (PureExpr b) = b
+  {-# INLINE fromE #-}
+
+  toE b = PureExpr b
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (PureExpr r)
+instance IRRep r => HoistableE     (PureExpr r)
+instance IRRep r => AlphaEqE       (PureExpr r)
+instance IRRep r => AlphaHashableE (PureExpr r)
+instance IRRep r => RenameE        (PureExpr r)
+
 instance GenericE NewtypeTyCon where
   type RepE NewtypeTyCon = EitherE4
     {- Nat -}              UnitE
-    {- Fin -}              CAtom
+    {- Fin -}              CPureExpr
     {- EffectRowKind -}    UnitE
     {- UserADTType -}      (LiftE SourceName `PairE` TyConName `PairE` TyConParams)
   fromE = \case
@@ -1422,7 +1428,7 @@ instance GenericE SimpInCore where
    {- LiftSimp -} (CType `PairE` SAtom)
    {- LiftSimpFun -} (CorePiType `PairE` LamExpr SimpIR)
    {- TabLam -}   (TabPiType CoreIR `PairE` TabLamExpr)
-   {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CAtom) `PairE` CType)
+   {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CBlock) `PairE` CType)
   fromE = \case
     LiftSimp ty x             -> Case0 $ ty `PairE` x
     LiftSimpFun ty x          -> Case1 $ ty `PairE` x
@@ -1450,9 +1456,8 @@ instance IRRep r => GenericE (Atom r) where
   -- toE/fromE entirely. If you wish to modify the order, please consult the
   -- GHC Core dump to make sure you haven't regressed this optimization.
   type RepE (Atom r) = EitherE3
-         (EitherE4
+         (EitherE3
   {- Var -}        (AtomVar r)
-  {- ProjectElt -} (Type r `PairE` LiftE Projection `PairE` Atom r)
   {- Lam -}        (WhenCore r CoreLamExpr)
   {- DepPair -}    (Atom r `PairE` Atom r `PairE` DepPairType r)
          ) (EitherE3
@@ -1469,9 +1474,8 @@ instance IRRep r => GenericE (Atom r) where
 
   fromE atom = case atom of
     Var v             -> Case0 (Case0 v)
-    ProjectElt t idxs x -> Case0 (Case1 (t `PairE` LiftE idxs `PairE` x))
-    Lam lamExpr       -> Case0 (Case2 (WhenIRE lamExpr))
-    DepPair l r ty    -> Case0 (Case3 $ l `PairE` r `PairE` ty)
+    Lam lamExpr       -> Case0 (Case1 (WhenIRE lamExpr))
+    DepPair l r ty    -> Case0 (Case2 $ l `PairE` r `PairE` ty)
     DictCon t d         -> Case1 $ Case0 $ WhenIRE $ t `PairE` d
     NewtypeCon c x      -> Case1 $ Case1 $ WhenIRE (c `PairE` x)
     Con con             -> Case1 $ Case2 con
@@ -1485,9 +1489,8 @@ instance IRRep r => GenericE (Atom r) where
   toE atom = case atom of
     Case0 val -> case val of
       Case0 v -> Var v
-      Case1 (t `PairE` LiftE idxs `PairE` x) -> ProjectElt t idxs x
-      Case2 (WhenIRE (lamExpr)) -> Lam lamExpr
-      Case3 (l `PairE` r `PairE` ty) -> DepPair l r ty
+      Case1 (WhenIRE (lamExpr)) -> Lam lamExpr
+      Case2 (l `PairE` r `PairE` ty) -> DepPair l r ty
       _ -> error "impossible"
     Case1 val -> case val of
       Case0 (WhenIRE (t `PairE` d)) -> DictCon t d
@@ -1538,36 +1541,34 @@ instance IRRep r => AlphaHashableE (AtomVar r) where
 instance IRRep r => RenameE        (AtomVar r)
 
 instance IRRep r => GenericE (Type r) where
-  type RepE (Type r) = EitherE8
-  {- TyVar -}        (WhenCore r CAtomVar)
+  type RepE (Type r) = EitherE7
+  {- TyExpr -}       (WhenCore r (PureExpr r))
   {- Pi -}           (WhenCore r CorePiType)
   {- TabPi -}        (TabPiType r)
   {- DepPairTy -}    (DepPairType r)
   {- DictTy  -}      (WhenCore r DictType)
   {- NewtypeTyCon -} (WhenCore r NewtypeTyCon)
   {- TC -}           (TC  r)
-  {- ProjectEltTy -} (WhenCore r (Type r `PairE` LiftE Projection `PairE` Atom r))
 
   fromE = \case
-    TyVar v        -> Case0 $ WhenIRE v
+    TyExpr b      -> Case0 $ WhenIRE b
     Pi t           -> Case1 $ WhenIRE t
     TabPi t        -> Case2 t
     DepPairTy t    -> Case3 t
     DictTy  d      -> Case4 $ WhenIRE d
     NewtypeTyCon t -> Case5 $ WhenIRE t
     TC  con        -> Case6 $ con
-    ProjectEltTy t idxs x -> Case7 (WhenIRE (t `PairE` LiftE idxs `PairE` x))
+    _ -> error "impossible"
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (WhenIRE v) -> TyVar v
+    Case0 (WhenIRE b) -> TyExpr b
     Case1 (WhenIRE t) -> Pi t
     Case2 t           -> TabPi  t
     Case3 t           -> DepPairTy t
     Case4 (WhenIRE d) -> DictTy d
     Case5 (WhenIRE t) -> NewtypeTyCon t
     Case6 con         -> TC con
-    Case7 (WhenIRE (t `PairE` LiftE idxs `PairE` x)) -> ProjectEltTy t idxs x
   {-# INLINE toE #-}
 
 instance IRRep r => SinkableE      (Type r)
@@ -1585,11 +1586,11 @@ instance IRRep r => GenericE (Expr r) where
  {- Atom -}   (Atom r)
  {- TopApp -} (WhenSimp r (EffTy r `PairE` TopFunName `PairE` ListE (Atom r)))
     )
-    ( EitherE3
+    ( EitherE4
  {- TabCon -}          (MaybeE (WhenCore r Dict) `PairE` Type r `PairE` ListE (Atom r))
  {- PrimOp -}          (PrimOp r)
- {- ApplyMethod -}     (WhenCore r (EffTy r `PairE` Atom r `PairE` LiftE Int `PairE` ListE (Atom r))))
-
+ {- ApplyMethod -}     (WhenCore r (EffTy r `PairE` Atom r `PairE` LiftE Int `PairE` ListE (Atom r)))
+ {- ProjectElt -}      (Type r `PairE` LiftE Projection `PairE` Atom r))
   fromE = \case
     App    et f xs        -> Case0 $ Case0 (WhenIRE (et `PairE` f `PairE` ListE xs))
     TabApp  t f xs        -> Case0 $ Case1 (t `PairE` f `PairE` ListE xs)
@@ -1599,6 +1600,7 @@ instance IRRep r => GenericE (Expr r) where
     TabCon d ty xs     -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
     PrimOp op          -> Case1 $ Case1 op
     ApplyMethod et d i xs -> Case1 $ Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs))
+    ProjectElt t idxs x   -> Case1 (Case3 (t `PairE` LiftE idxs `PairE` x))
   {-# INLINE fromE #-}
   toE = \case
     Case0 case0 -> case case0 of
@@ -1612,6 +1614,7 @@ instance IRRep r => GenericE (Expr r) where
       Case0 (d `PairE` ty `PairE` ListE xs) -> TabCon (fromMaybeE d) ty xs
       Case1 op -> PrimOp op
       Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod et d i xs
+      Case3 (t `PairE` LiftE idxs `PairE` x) -> ProjectElt t idxs x
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1865,7 +1868,7 @@ instance HasSourceName (ClassDef n) where
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
-    ClassName `PairE` LiftE [RoleExpl] `PairE` Abs (Nest CBinder) (ListE CAtom `PairE` InstanceBody)
+    ClassName `PairE` LiftE [RoleExpl] `PairE` Abs (Nest CBinder) (ListE CPureExpr `PairE` InstanceBody)
   fromE (InstanceDef name expls bs params body) =
     name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)
   toE (name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)) =
@@ -1891,7 +1894,7 @@ instance AlphaHashableE InstanceBody
 instance RenameE     InstanceBody
 
 instance GenericE DictType where
-  type RepE DictType = LiftE SourceName `PairE` ClassName `PairE` ListE CAtom
+  type RepE DictType = LiftE SourceName `PairE` ClassName `PairE` ListE CPureExpr
   fromE (DictType sourceName className params) =
     LiftE sourceName `PairE` className `PairE` ListE params
   toE (LiftE sourceName `PairE` className `PairE` ListE params) =
@@ -2781,4 +2784,5 @@ instance IRRep r => Store (DAMOp r n)
 instance IRRep r => Store (IxDict r n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
+instance IRRep r => Store (PureExpr r n)
 instance Store (DotMethods n)

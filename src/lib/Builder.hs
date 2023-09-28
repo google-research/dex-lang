@@ -22,7 +22,6 @@ import Foreign.Ptr
 
 import qualified Unsafe.Coerce as TrulyUnsafe
 
-import CheapReduction
 import Core
 import Err
 import IRVariants
@@ -34,7 +33,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (enumerate, transitiveClosureM, bindM2, toSnocList, (...))
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList, (...), Tree (..))
 
 -- === Ordinary (local) builder class ===
 
@@ -627,6 +626,18 @@ buildBlock
   -> m n (Block r n)
 buildBlock = buildScoped
 
+buildType
+  :: ScopableBuilder r m
+  => (forall l. (Emits l, DExt n l) => m l (Type r l))
+  -> m n (Type r n)
+buildType cont = undefined
+ --  Abs decls result <- buildScoped cont
+ --  return $ wrapDeclsType decls result
+ -- where
+ --  wrapDeclsType :: Nest (Decl r) n l -> Type r l -> Type r n
+ --  wrapDeclsType Empty ty = ty
+ --  wrapDeclsType (Nest d ds) ty = TyLet d $ wrapDeclsType ds ty
+
 buildCoreLam
   :: ScopableBuilder CoreIR m
   => CorePiType n
@@ -927,7 +938,7 @@ symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
 symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
     return $ TypeCon "SymbolicTangent" symTanName $
-      TyConParams [Explicit] [Type elTy]
+      TyConParams [Explicit] [AtomPureExpr $ TypeAsAtom elTy]
   Nothing -> throw UnboundVarErr $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
@@ -1010,67 +1021,101 @@ ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ BinOp (ICmp Equal) x y
 
-fromPair :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n (Atom r n, Atom r n)
-fromPair pair = do
-  getUnpacked pair >>= \case
-    [x, y] -> return (x, y)
-    _ -> error "expected a pair"
-
-getFst :: Builder r m => Atom r n -> m n (Atom r n)
-getFst p = fst <$> fromPair p
-
-getSnd :: Builder r m => Atom r n -> m n (Atom r n)
-getSnd p = snd <$> fromPair p
-
 -- the rightmost index is applied first
 getNaryProjRef :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
 getNaryProjRef [] ref = return ref
 getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
 
+getProj :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
+getProj i atom = case i of
+  ProjectProduct i' -> projectProduct i' atom
+  UnwrapNewtype -> unwrapNewtype atom
+
+projectProduct :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
+projectProduct i atom = case atom of
+  Con (ProdCon xs) -> return $ xs !! i
+  DepPair l _ _ | i == 0 -> return l
+  DepPair _ r _ | i == 1 -> return r
+  -- TODO: do we need this?
+  -- SimpInCore (LiftSimp _ x) -> do
+  --   x' <- projectProduct i x
+  --   resultTy <- getResultTy
+  --   return $ SimpInCore $ LiftSimp resultTy x'
+  RepValAtom (RepVal _ tree) -> case tree of
+    Branch trees -> do
+      resultTy <- getResultTy
+      repValAtom $ RepVal resultTy (trees!!i)
+    Leaf _ -> error "unexpected leaf"
+  _ -> do
+    resultTy <- getResultTy
+    emitExpr $ ProjectElt resultTy (ProjectProduct i) atom
+  where
+    getResultTy = projType i (getType atom) atom
+{-# INLINE projectProduct #-}
+
+projType :: (Builder r m, Emits n) => Int -> Type r n -> Atom r n -> m n (Type r n)
+projType i ty x = case ty of
+  ProdTy xs -> return $ xs !! i
+  DepPairTy t | i == 0 -> return $ depPairLeftTy t
+  DepPairTy t | i == 1 -> do
+    xFst <- projectProduct 0 x
+    instantiate t [xFst]
+  _ -> error $ "Can't project type: " ++ pprint ty
+{-# INLINE projType #-}
+
+repValAtom :: EnvReader m => SRepVal n -> m n (SAtom n)
+repValAtom (RepVal ty tree) = case ty of
+  ProdTy ts -> case tree of
+    Branch trees -> ProdVal <$> mapM repValAtom (zipWith RepVal ts trees)
+    _ -> malformed
+  BaseTy _ -> case tree of
+    Leaf x -> case x of
+      ILit l -> return $ Con $ Lit l
+      _ -> fallback
+    _ -> malformed
+  _ -> fallback
+  where fallback = return $ RepValAtom $ RepVal ty tree
+        malformed = error "malformed repval"
+{-# INLINE repValAtom #-}
+
+fromPair :: (Fallible1 m, Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
+fromPair pair = (,) <$> getFst pair <*> getSnd pair
+
+getFst :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getFst p = getProj (ProjectProduct 0) p
+
+getSnd :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getSnd p = getProj (ProjectProduct 1) p
+
+getNaryProj :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
+getNaryProj [] x = return x
+getNaryProj (i:is) x = getProj i =<< getNaryProj is x
+
 getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emitOp =<< mkProjRef r i
 
--- XXX: getUnpacked must reduce its argument to enforce the invariant that
--- ProjectElt atoms are always fully reduced (to avoid type errors between two
--- equivalent types spelled differently).
-getUnpacked :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n [Atom r n]
+getUnpacked :: (Fallible1 m, Builder r m, Emits n) => Atom r n -> m n [Atom r n]
 getUnpacked atom = do
-  atom' <- cheapNormalize atom
-  ty <- return $ getType atom'
-  positions <- case ty of
+  positions <- case getType atom  of
     ProdTy tys  -> return $ void tys
     DepPairTy _ -> return [(), ()]
-    _ -> error $ "not a product type: " ++ pprint ty
-  forM (enumerate positions) \(i, _) ->
-    normalizeProj (ProjectProduct i) atom'
+    ty -> error $ "not a product type: " ++ pprint ty
+  forM (enumerate positions) \(i, _) -> getProj (ProjectProduct i) atom
 {-# SCC getUnpacked #-}
 
-getProj :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
-getProj i atom = do
-  atom' <- cheapNormalize atom
-  normalizeProj (ProjectProduct i) atom'
-
-emitUnpacked :: (Builder r m, Emits n) => Atom r n -> m n [AtomVar r n]
-emitUnpacked tup = do
-  xs <- getUnpacked tup
-  forM xs \x -> emit $ Atom x
-
-unwrapNewtype :: EnvReader m => CAtom n -> m n (CAtom n)
+unwrapNewtype :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unwrapNewtype (NewtypeCon _ x) = return x
 unwrapNewtype x = case getType x of
   NewtypeTyCon con -> do
     (_, ty) <- unwrapNewtypeType con
-    return $ ProjectElt ty UnwrapNewtype x
+    emitExpr $ ProjectElt ty UnwrapNewtype x
   _ -> error "not a newtype"
 {-# INLINE unwrapNewtype #-}
 
-projectTuple :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Atom r n)
-projectTuple i x = normalizeProj (ProjectProduct i) x
-
-projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+projectStruct :: (CBuilder m, Emits n) => Int -> CAtom n -> m n (CAtom n)
 projectStruct i x = do
   projs <- getStructProjections i (getType x)
-  normalizeNaryProj projs x
+  getNaryProj projs x
 {-# INLINE projectStruct #-}
 
 projectStructRef :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
@@ -1402,7 +1447,7 @@ telescopicCapture bs e = do
   return (result, reconAbs)
 
 applyReconAbs
-  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
+  :: (Builder r m, Emits n, Fallible1 m, SinkableE e, SubstE AtomSubstVal e)
   => ReconAbs r e n -> Atom r n -> m n (e n)
 applyReconAbs (Abs bs result) x = do
   xs <- unpackTelescope bs x
@@ -1450,10 +1495,10 @@ telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
   PairTy lhs' rhs'
 
 unpackTelescope
-  :: (Fallible1 m, EnvReader m, IRRep r)
+  :: (Fallible1 m, Builder r m, Emits n)
   => ReconBinders r l1 l2 -> Atom r n -> m n [Atom r n]
 unpackTelescope (ReconBinders tyTop _) xTop = go tyTop xTop where
-  go :: (Fallible1 m, EnvReader m, IRRep r)
+  go :: (Fallible1 m, Builder r m, Emits n)
      => TelescopeType c e l-> Atom r n -> m n [Atom r n]
   go ty x = case ty of
     ProdTelescope _ -> getUnpacked x

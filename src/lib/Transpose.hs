@@ -15,7 +15,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Err
 import Imp
 import IRVariants
@@ -216,15 +215,6 @@ transposeExpr expr ct = case expr of
             refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      ProjectElt _ i' x' -> do
-        let (idxs, v) = asNaryProj i' x'
-        lookupSubstM (atomVarName v) >>= \case
-          RenameNonlin _ -> error "an error, probably"
-          LinRef ref -> do
-            ref' <- getNaryProjRef (toList idxs) ref
-            refProj <- naryIndexRef ref' (toList is')
-            emitCTToRef refProj ct
-          LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
   Case e alts _ -> do
@@ -315,14 +305,6 @@ transposeAtom atom ct = case atom of
   Con con         -> transposeCon con ct
   DepPair _ _ _   -> notImplemented
   PtrVar _ _      -> notTangent
-  ProjectElt _ i' x' -> do
-    let (idxs, v) = asNaryProj i' x'
-    lookupSubstM (atomVarName v) >>= \case
-      RenameNonlin _ -> error "an error, probably"
-      LinRef ref -> do
-        ref' <- getNaryProjRef (toList idxs) ref
-        emitCTToRef ref' ct
-      LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
@@ -368,7 +350,7 @@ transposeCon con ct = case con of
   ProdCon []        -> return ()
   ProdCon xs ->
     forM_ (enumerate xs) \(i, x) ->
-      projectTuple i ct >>= transposeAtom x
+      getProj (ProjectProduct i) ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

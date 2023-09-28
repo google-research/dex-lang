@@ -15,7 +15,6 @@ import Err
 import IRVariants
 import MTL1
 import Name
-import CheapReduction
 import Types.Core
 import Types.Source
 import Types.Primitives
@@ -78,7 +77,6 @@ showAnyRec atom = case getType atom of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -93,11 +91,12 @@ showAnyRec atom = case getType atom of
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
-      emitCharLit '"'
-      emitCharTab charTab
-      emitCharLit '"'
+    UserADTType "List" _ _ -> undefined
+    -- UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
+    --   charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+    --   emitCharLit '"'
+    --   emitCharTab charTab
+    --   emitCharLit '"'
     UserADTType tySourceName defName params -> do
       def <- lookupTyCon defName
       conDefs <- instantiateTyConDef def params
@@ -116,19 +115,19 @@ showAnyRec atom = case getType atom of
         showDataCon (DataConDef sn _ _ projss) arg = do
           case projss of
             [] -> emitLit sn
-            _ -> parens do
-              emitLit (sn ++ " ")
-              sepBy " " $ projss <&> \projs ->
-                -- we use `init` to strip off the `UnwrapCompoundNewtype` since
-                -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+            _ -> undefined
+            -- _ -> parens do
+            --   emitLit (sn ++ " ")
+            --   sepBy " " $ projss <&> \projs ->
+            --     -- we use `init` to strip off the `UnwrapCompoundNewtype` since
+            --     -- we're already under the case alternative
+            --     rec =<< normalizeNaryProj (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
-  TyVar v -> error $ "unexpected type variable: " ++ pprint v
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
@@ -220,7 +219,7 @@ applyPreludeFunction name args = do
   naryApp f args
 
 strType :: EnvReader m => m n (CType n)
-strType = constructPreludeType "List" $ TyConParams [Explicit] [Type CharRepTy]
+strType = constructPreludeType "List" $ TyConParams [Explicit] [AtomPureExpr $ TypeAsAtom CharRepTy]
 
 constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do
