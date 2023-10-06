@@ -130,10 +130,10 @@ pApp a = prettyPrec a AppPrec
 pArg :: PrettyPrec a => a -> Doc ann
 pArg a = prettyPrec a ArgPrec
 
-instance IRRep r => Pretty (Block r n) where
-  pretty (Abs decls expr) = prettyBlock decls expr
-instance IRRep r => PrettyPrec (Block r n) where
-  prettyPrec (Abs decls expr) = atPrec LowestPrec $ prettyBlock decls expr
+-- instance IRRep r => Pretty (Block r n) where
+--   pretty (Abs decls expr) = prettyBlock decls expr
+-- instance IRRep r => PrettyPrec (Block r n) where
+--   prettyPrec (Abs decls expr) = atPrec LowestPrec $ prettyBlock decls expr
 
 prettyBlock :: (IRRep r, PrettyPrec (e l)) => Nest (Decl r) n l -> e l -> Doc ann
 prettyBlock Empty expr = group $ line <> pLowest expr
@@ -161,16 +161,19 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
-  prettyPrec (Atom x) = prettyPrec x
-  prettyPrec (App _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TopApp _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TabApp _ f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Case e alts (EffTy effs _)) = prettyPrecCase "case" e alts effs
-  prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
-  prettyPrec (PrimOp op) = prettyPrec op
-  prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec = \case
+    Var v -> atPrec ArgPrec $ p v
+    Con con -> atPrec AppPrec $ p con
+    App _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TabApp _ f xs -> atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+    Case e alts (EffTy effs _) -> prettyPrecCase "case" e alts effs
+    TabCon _ _ es -> atPrec ArgPrec $ list $ pApp <$> es
+    PrimOp op -> prettyPrec op
+    ApplyMethod _ d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
 
-prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
+prettyPrecCase :: IRRep r => Doc ann -> Expr r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
   nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
@@ -239,19 +242,12 @@ instance Pretty (CoreLamExpr n) where
 instance IRRep r => Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
-    Var v -> atPrec ArgPrec $ p v
-    Lam lam   -> atPrec LowestPrec $ p lam
-    DepPair x y _ -> atPrec ArgPrec $ align $ group $
-        parens $ p x <+> ",>" <+> p y
-    Con e -> prettyPrec e
-    Eff e -> atPrec ArgPrec $ p e
-    PtrVar _ v -> atPrec ArgPrec $ p v
-    DictCon _ d -> atPrec LowestPrec $ p d
-    RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-    NewtypeCon con x -> prettyPrecNewtype con x
-    SimpInCore x -> prettyPrec x
-    TypeAsAtom ty -> prettyPrec ty
+    AVar v -> atPrec ArgPrec $ p v
+    ACon e -> prettyPrec e
+    -- Eff e -> atPrec ArgPrec $ p e
+    -- RepValAtom x -> atPrec LowestPrec $ pretty x
+    -- NewtypeCon con x -> prettyPrecNewtype con x
+    -- SimpInCore x -> prettyPrec x
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Type r n) where
@@ -262,9 +258,7 @@ instance IRRep r => PrettyPrec (Type r n) where
     TC  e -> prettyPrec e
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
-    TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+    TyExpr e -> atPrec ArgPrec $ p e
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -424,7 +418,7 @@ instance Pretty (Module n) where
     , ("moduleExports"        , p $ moduleExports m)
     , ("moduleSynthCandidates", p $ moduleSynthCandidates m) ]
 
-instance Pretty (TyConParams n) where
+instance Pretty (TyConParams e n) where
   pretty (TyConParams _ _) = undefined
 
 instance Pretty (TyConDef n) where
@@ -829,10 +823,11 @@ instance IRRep r => PrettyPrec (TC r n) where
     TypeKind -> atPrec ArgPrec "Type"
     HeapType -> atPrec ArgPrec "Heap"
 
-prettyPrecNewtype :: NewtypeCon n -> CAtom n -> DocPrec ann
-prettyPrecNewtype con x = case (con, x) of
-  (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
-  (_, x') -> prettyPrec x'
+prettyPrecNewtype :: NewtypeCon e n -> CAtom n -> DocPrec ann
+prettyPrecNewtype con x = undefined
+-- prettyPrecNewtype con x = case (con, x) of
+--   (NatCon, (IdxRepVal n)) -> atPrec ArgPrec $ pretty n
+--   (_, x') -> prettyPrec x'
 
 instance Pretty (NewtypeTyCon n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (NewtypeTyCon n) where
@@ -852,16 +847,22 @@ instance PrettyPrec (NewtypeTyCon n) where
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) $ ignoreSynthParams (TyConParams infs params)
 
-instance IRRep r => Pretty (Con r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (Con r n) where
+instance (Pretty (e r n), PrettyPrec (e r n), IRRep r) => Pretty (Con e r n) where pretty = prettyFromPrettyPrec
+instance (Pretty (e r n), PrettyPrec (e r n), IRRep r) => PrettyPrec (Con e r n) where
   prettyPrec = \case
     Lit l        -> prettyPrec l
+    PtrVar _ v -> atPrec ArgPrec $ p v
     ProdCon [x]  -> atPrec ArgPrec $ "(" <> pLowest x <> ",)"
     ProdCon xs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(" ")" ", " $ fmap pLowest xs
     SumCon _ tag payload -> atPrec ArgPrec $
       "(" <> p tag <> "|" <+> pApp payload <+> "|)"
     HeapVal -> atPrec ArgPrec "HeapValue"
+    TypeCon t -> prettyPrec t
+    DepPair x y _ -> atPrec ArgPrec $ align $ group $
+      parens $ p x <+> ",>" <+> p y
+    DictCon _ d -> atPrec LowestPrec $ p d
+    Lam lam   -> atPrec LowestPrec $ p lam
 
 instance IRRep r => Pretty (PrimOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (PrimOp r n) where

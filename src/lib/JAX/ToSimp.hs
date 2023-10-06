@@ -20,10 +20,10 @@ import Types.Core
 import Types.Primitives qualified as P
 
 newtype JaxSimpM (i::S) (o::S) a = JaxSimpM
-  { runJaxSimpM :: SubstReaderT AtomSubstVal (BuilderM SimpIR) i o a }
+  { runJaxSimpM :: SubstReaderT ExprSubstVal (BuilderM SimpIR) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail
            , ScopeReader, EnvReader, EnvExtender
-           , SubstReader AtomSubstVal, Fallible
+           , SubstReader ExprSubstVal, Fallible
            , Builder SimpIR, ScopableBuilder SimpIR)
 
 liftJaxSimpM :: (EnvReader m) => JaxSimpM n n (e n) -> m n (e n)
@@ -38,10 +38,10 @@ simplifyJaxpr :: Jaxpr i -> JaxSimpM i o (LamExpr SimpIR o)
 simplifyJaxpr (Jaxpr invars constvars eqns outvars) = do
   simplifyJBinders invars \invarsB -> do
     simplifyJBinders constvars \constvarsB -> do
-      body <- buildBlock do
+      body <- buildBlockExpr do
         simplifyEqns eqns do
           outs <- (map fst) <$> mapM simplifyAtom outvars
-          return $ Con $ ProdCon $ outs
+          return $ ACon $ ProdCon $ outs
       return $ LamExpr (invarsB >>> constvarsB) body
 
 simplifyJBinders
@@ -79,18 +79,18 @@ simplifyEqns eqn cont = do
 {-# INLINE simplifyEqns #-}
 
 simplifyEqnsSubst :: Emits o
-  => Subst AtomSubstVal l o -> Nest JEqn l i'
-  -> JaxSimpM i o (Subst AtomSubstVal i' o)
+  => Subst ExprSubstVal l o -> Nest JEqn l i'
+  -> JaxSimpM i o (Subst ExprSubstVal i' o)
 simplifyEqnsSubst !s Empty = return s
 simplifyEqnsSubst !s (Nest eqn rest) = do
   s' <- simplifyEqnSubst s eqn
   simplifyEqnsSubst s' rest
 
 simplifyEqnSubst :: Emits o
-  => Subst AtomSubstVal l o -> JEqn l i' -> JaxSimpM i o (Subst AtomSubstVal i' o)
+  => Subst ExprSubstVal l o -> JEqn l i' -> JaxSimpM i o (Subst ExprSubstVal i' o)
 simplifyEqnSubst !s JEqn{..} = do
   simpIn <- withSubst s $ mapM simplifyAtom invars
-  simpOut <- simplifyPrim simpIn primitive
+  simpOut <- fmap toExpr <$> simplifyPrim simpIn primitive
   return $ s <>> (outvars @@> (map SubstVal simpOut))
 
 simplifyAtom :: JAtom i -> JaxSimpM i o (SAtom o, JVarType)
@@ -101,13 +101,13 @@ simplifyAtom = \case
       env <- getSubst
       case env ! nm of
         -- TODO Assuming the subst is not type-changing
-        SubstVal x -> return (x, ty)
+        SubstVal x -> undefined -- return (x, ty)
         Rename nm' -> do
           nm'' <- toAtomVar nm'
-          return (Var nm'', ty)
+          return (AVar nm'', ty)
   -- TODO In Jax, literals can presumably include (large) arrays.  How should we
   -- represent them here?
-  JLiteral (JLit {..}) -> return (Con (Lit (P.Float32Lit 0.0)), ty)
+  JLiteral (JLit {..}) -> return (ACon (Lit (P.Float32Lit 0.0)), ty)
 
 simplifyPrim :: Emits o
   => [(SAtom o, JVarType)] -> Primitive -> JaxSimpM i o [SAtom o]
@@ -119,10 +119,11 @@ simplifyPrim args prim = case (prim, args) of
 
 unaryExpandRank :: forall i o. Emits o
   => P.UnOp -> SAtom o -> JVarType -> JaxSimpM i o (SAtom o)
-unaryExpandRank op arg JArrayName{shape} = go arg shape where
-  go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
-  go arg' = \case
-    [] -> emitExprToAtom $ PrimOp (UnOp op arg')
-    (DimSize sz:rest) -> buildFor noHint P.Fwd (litFinIxTy sz) \i -> do
-      ixed <- mkTabApp (sink arg') [Var i] >>= emitExprToAtom
-      go ixed rest
+unaryExpandRank op arg JArrayName{shape} = undefined
+-- unaryExpandRank op arg JArrayName{shape} = go arg shape where
+--   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
+--   go arg' = \case
+--     [] -> emitExpr $ PrimOp (UnOp op (toExpr arg'))
+--     (DimSize sz:rest) -> buildFor noHint P.Fwd (litFinIxTy sz) \i -> do
+--       ixed <- mkTabApp (sink arg') [AVar i] >>= emitExpr
+--       go ixed rest

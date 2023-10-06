@@ -49,7 +49,6 @@ import CheckType (checkTypes)
 #endif
 import Core
 import ConcreteSyntax
-import CheapReduction
 import Err
 import IRVariants
 import Imp
@@ -62,7 +61,7 @@ import MTL1
 import SourceInfo
 import Subst
 import Name
-import OccAnalysis
+-- import OccAnalysis
 import Optimize
 import PPrint (pprintCanonicalized)
 import Paths_dex  (getDataFileName)
@@ -77,7 +76,7 @@ import Types.Misc
 import Types.Primitives
 import Types.Source
 import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
-import Vectorize
+-- import Vectorize
 
 -- === top-level monad ===
 
@@ -278,7 +277,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
+      let ty = getType val
       logTop $ TextOut $ pprintCanonicalized ty
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
@@ -294,41 +293,41 @@ evalSourceBlock' mname block = case sbContents block of
         UBindSource _ sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname zeros g -> do
-    expr <- parseExpr g
-    lookupSourceMap fname >>= \case
-      Nothing -> throw UnboundVarErr $ pprint fname
-      Just (UAtomVar fname') -> do
-        lookupCustomRules fname' >>= \case
-          Nothing -> return ()
-          Just _  -> throw TypeErr
-            $ pprint fname ++ " already has a custom linearization"
-        lookupAtomName fname' >>= \case
-          NoinlineFun _ _ -> return ()
-          _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
-        -- We do some special casing to avoid instantiating polymorphic functions.
-        impl <- case expr of
-          WithSrcE _ (UVar _) ->
-            renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
-              _ -> error "Expected a variable"
-          _ -> evalUExpr expr
-        fType <- getType <$> toAtomVar fname'
-        (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
-        liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
-          Failure _ -> do
-            let implTy = getType impl
-            throw TypeErr $ unlines
-              [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
-              , "but it has type:" , "" , pprint implTy]
-          Success () -> return ()
-        updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
-      Just _ -> throw TypeErr
-        $ "Custom linearization can only be defined for functions"
+  -- DeclareCustomLinearization fname zeros g -> do
+  --   expr <- parseExpr g
+  --   lookupSourceMap fname >>= \case
+  --     Nothing -> throw UnboundVarErr $ pprint fname
+  --     Just (UAtomVar fname') -> do
+  --       lookupCustomRules fname' >>= \case
+  --         Nothing -> return ()
+  --         Just _  -> throw TypeErr
+  --           $ pprint fname ++ " already has a custom linearization"
+  --       lookupAtomName fname' >>= \case
+  --         NoinlineFun _ _ -> return ()
+  --         _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
+  --       -- We do some special casing to avoid instantiating polymorphic functions.
+  --       impl <- case expr of
+  --         WithSrcE _ (UVar _) ->
+  --           renameSourceNamesUExpr expr >>= \case
+  --             WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
+  --             _ -> error "Expected a variable"
+  --         _ -> evalUExpr expr
+  --       fType <- getType <$> toAtomVar fname'
+  --       (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
+  --       liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
+  --         Failure _ -> do
+  --           let implTy = getType impl
+  --           throw TypeErr $ unlines
+  --             [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
+  --             , "but it has type:" , "" , pprint implTy]
+  --         Success () -> return ()
+  --       updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
+  --     Just _ -> throw TypeErr
+  --       $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
+      ty <- sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -537,37 +536,40 @@ evalBlock typed = do
   SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
   opt <- simpOptimizations simp
   simpResult <- case opt of
-    TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result
-    _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential True opt
-      lOpt <- checkPass OptPass $ loweredOptimizations lowered
-      cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
-      llvmOpt <- packageLLVMCallable impOpt
-      resultVals <- liftIO $ callEntryFun llvmOpt []
-      TopLam _ destTy _ <- return lOpt
-      EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
-      repValAtom =<< repValFromFlatList resultTy resultVals
+    TopLam _ _ (LamExpr Empty body) | Just result <- tryAsAtom body
+      -> return result
+    -- _ -> do
+    --   lowered <- checkPass LowerPass $ lowerFullySequential True opt
+    --   lOpt <- checkPass OptPass $ loweredOptimizations lowered
+    --   cc <- getEntryFunCC
+    --   impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
+    --   llvmOpt <- packageLLVMCallable impOpt
+    --   resultVals <- liftIO $ callEntryFun llvmOpt []
+    --   TopLam _ destTy _ <- return lOpt
+    --   EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
+    --   repValAtom =<< repValFromFlatList resultTy resultVals
   applyReconTop recon simpResult
 {-# SCC evalBlock #-}
 
 simpOptimizations :: Topper m => STopLam n -> m n (STopLam n)
-simpOptimizations simp = do
-  analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
-  inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
-  analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
-  inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
-  whenOpt inlined2 $ checkPass OptPass . optimize
+simpOptimizations simp = return simp
+-- simpOptimizations simp = do
+--   analyzed <- whenOpt simp $ checkPass OccAnalysisPass . analyzeOccurrences
+--   inlined <- whenOpt analyzed $ checkPass InlinePass . inlineBindings
+--   analyzed2 <- whenOpt inlined $ checkPass OccAnalysisPass . analyzeOccurrences
+--   inlined2 <- whenOpt analyzed2 $ checkPass InlinePass . inlineBindings
+--   whenOpt inlined2 $ checkPass OptPass . optimize
 
 loweredOptimizations :: Topper m => STopLam n -> m n (STopLam n)
-loweredOptimizations lowered = do
-  lopt <- whenOpt lowered $ checkPass LowerOptPass .
-    (dceTop >=> hoistLoopInvariant)
-  whenOpt lopt \lo -> do
-    (vo, errs) <- vectorizeLoops 64 lo
-    l <- getFilteredLogger
-    logFiltered l VectPass $ return [TextOut $ pprint errs]
-    checkPass VectPass $ return vo
+loweredOptimizations lowered = return lowered
+-- loweredOptimizations lowered = do
+--   lopt <- whenOpt lowered $ checkPass LowerOptPass .
+--     (dceTop >=> hoistLoopInvariant)
+--   whenOpt lopt \lo -> do
+--     (vo, errs) <- vectorizeLoops 64 lo
+--     l <- getFilteredLogger
+--     logFiltered l VectPass $ return [TextOut $ pprint errs]
+--     checkPass VectPass $ return vo
 
 loweredOptimizationsNoDest :: Topper m => STopLam n -> m n (STopLam n)
 loweredOptimizationsNoDest lowered = do
@@ -621,12 +623,12 @@ execUDecl mname decl = do
           f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
           applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
-          v <- emitTopLet (getNameHint b) ann (Atom result)
+          v <- emitTopLet (getNameHint b) ann (toExpr result)
           applyRename (b@>atomVarName v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+      vs <- forM xs \x -> emitTopLet hint PlainLet (toExpr x)
       applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 
@@ -640,8 +642,8 @@ compileTopLevelFun cc fSimp = do
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
-  block <- liftBuilder $ buildBlock do
-    emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
+  block <- liftBuilder $ buildBlockExpr do
+    emitExpr $ PrimOp $ MiscOp $ ShowAny $ (toExpr $ sink x)
   topBlock <- asTopBlock block
   getDexString =<< evalBlock topBlock
 
@@ -792,7 +794,7 @@ getBenchRequirement block = case sbLogLevel block of
     return $ DoBench needsSync
   _ -> return NoBench
 
-getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
+getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Atom CoreIR n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
   SimpInCore (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val

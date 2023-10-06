@@ -383,6 +383,14 @@ withFreshBinder hint binding cont = do
   refreshAbs (Abs (b:>binding) v) \b' _ -> cont b'
 {-# INLINE withFreshBinder #-}
 
+withDecl
+  :: EnvExtender m
+  => NameHint -> Expr r n
+  -> (forall l. DExt n l => AtomVar r l -> m l (Expr r l))
+  -> m n (Expr r n)
+withDecl hint expr _ = undefined
+{-# INLINE withDecl #-}
+
 withFreshBinders
   :: (Color c, EnvExtender m, ToBinding binding c)
   => [binding n]
@@ -398,6 +406,31 @@ withFreshBinders (binding:rest) cont = do
       cont (Nest b bs)
            (sink (binderName b) : vs)
 
+-- === converting between Exprs and Atoms ===
+
+class ToExpr (e::E) (r::IR) | e -> r where
+  toExpr :: e n -> Expr r n
+
+instance ToExpr (Expr r) r where
+  toExpr = id
+
+instance ToExpr (Atom r) r where
+  toExpr = undefined
+
+instance ToExpr (TypedHof r) r where
+  toExpr op = PrimOp $ Hof op
+
+instance ToExpr (PrimOp r) r where
+  toExpr op = PrimOp op
+
+instance ToExpr (MiscOp r) r where
+  toExpr op = PrimOp $ MiscOp op
+
+tryAsAtom :: Expr r n -> Maybe (Atom r n)
+tryAsAtom = undefined
+
+-- ======
+
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, CorePiType, respectively) up to the given maxDepth, and return the
 -- discovered binders packed as the nary structure (NaryLamExpr or PiType),
@@ -410,23 +443,23 @@ withFreshBinders (binding:rest) cont = do
 --   structure.  Excess binders, if any, are still left in the unary structures.
 
 liftLamExpr :: (IRRep r, EnvReader m)
-  => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
+  => (forall l m2. EnvReader m2 => Expr r l -> m2 l (Expr r l))
   -> TopLam r n -> m n (TopLam r n)
 liftLamExpr f (TopLam d ty (LamExpr bs body)) = liftM (TopLam d ty) $ liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
 
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
-fromNaryForExpr maxDepth = \case
-  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
-    extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
-    where
-      extend = do
-        expr <- exprBlock body
-        guard $ maxDepth > 1
-        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
-        return (d + 1, LamExpr (Nest b bs) body2)
-  _ -> Nothing
+-- fromNaryForExpr maxDepth = \case
+--   PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
+--     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
+--     where
+--       extend = do
+--         expr <- exprBlock body
+--         guard $ maxDepth > 1
+--         (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
+--         return (d + 1, LamExpr (Nest b bs) body2)
+--   _ -> Nothing
 
 mkConsListTy :: [Type r n] -> Type r n
 mkConsListTy = foldr PairTy UnitTy
@@ -471,10 +504,11 @@ mkBundle :: [Atom r n] -> (Atom r n, BundleDesc)
 mkBundle = bundleFold UnitVal PairVal
 
 trySelectBranch :: IRRep r => Atom r n -> Maybe (Int, Atom r n)
-trySelectBranch e = case e of
-  SumVal _ i value -> Just (i, value)
-  NewtypeCon con e' | isSumCon con -> trySelectBranch e'
-  _ -> Nothing
+trySelectBranch e = undefined
+-- trySelectBranch e = case e of
+--   SumVal _ i value -> Just (i, value)
+--   NewtypeCon con e' | isSumCon con -> trySelectBranch e'
+--   _ -> Nothing
 
 freeAtomVarsList :: forall r e n. (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
 freeAtomVarsList = freeVarsList

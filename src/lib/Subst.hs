@@ -14,7 +14,10 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Data.Functor ((<&>))
 
+import QueryTypePure
+import Visit
 import Name
 import MTL1
 import IRVariants
@@ -245,14 +248,10 @@ substBindersFrag b cont = do
 
 -- === atom subst vals ===
 
-data SubstVal (atom::IR->E) (c::C) (n::S) where
-  SubstVal :: IRRep r => atom r n -> SubstVal atom (AtomNameC r) n
-  Rename   :: Name c n -> SubstVal atom c n
-type AtomSubstVal = SubstVal Atom
-
-type family IsAtomName (c::C) where
-  IsAtomName (AtomNameC r) = True
-  IsAtomName _             = False
+data SubstVal (e::IR->E) (c::C) (n::S) where
+  SubstVal :: IRRep r => e r n -> SubstVal e (AtomNameC r) n
+  Rename   :: Name c n -> SubstVal e c n
+type ExprSubstVal = SubstVal Expr
 
 instance (Color c, IsAtomName c ~ False) => SubstE (SubstVal atom) (Name c) where
   substE (_, env) v = case env ! v of Rename v' -> v'
@@ -270,17 +269,17 @@ instance ToSubstVal (Name::V) (atom::IR->E) where
 instance ToSubstVal (SubstVal atom) atom where
   toSubstVal = id
 
-type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Atom)
+type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Expr)
 
-atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE AtomSubstVal e)
+atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE ExprSubstVal e)
            => e i -> m i o (e o)
 atomSubstM e = do
   subst <- getSubst
-  let subst' = asAtomSubstValSubst subst
+  let subst' = asExprSubstValSubst subst
   substM' subst' e
 
-asAtomSubstValSubst :: ToSubstVal v Atom => Subst v i o -> Subst AtomSubstVal i o
-asAtomSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
+asExprSubstValSubst :: ToSubstVal v Expr => Subst v i o -> Subst ExprSubstVal i o
+asExprSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
 
 -- === SubstReaderT transformer ===
 
@@ -516,3 +515,146 @@ instance (SubstE v e0, SubstE v e1, SubstE v e2,
     Case6 e -> Case6 $ substE env e
     Case7 e -> Case7 $ substE env e
   {-# INLINE substE #-}
+
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
+
+bindersToVars :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [AtomVar r n]
+bindersToVars bs = do
+  withExtEvidence bs do
+    Distinct <- getDistinct
+    mapM toAtomVar $ nestToNames bs
+
+bindersToAtoms :: (EnvReader m,  IRRep r) => Nest (Binder r) n' n -> m n [Atom r n]
+bindersToAtoms bs = liftM (AVar <$>) $ bindersToVars bs
+
+newtype SubstVisitor i o a = SubstVisitor { runSubstVisitor :: Reader (Env o, Subst ExprSubstVal i o) a }
+        deriving (Functor, Applicative, Monad, MonadReader (Env o, Subst ExprSubstVal i o))
+
+substV :: (Distinct o, SubstE ExprSubstVal e) => e i -> SubstVisitor i o (e o)
+substV x = ask <&> \env -> substE env x
+
+visitAtomDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Atom r i -> m i o (Atom r o)
+visitAtomDefault atom = undefined
+-- visitAtomDefault atom = case atom of
+--   Var _          -> atomSubstM atom
+--   SimpInCore _   -> atomSubstM atom
+--   ProjectElt t i x -> ProjectElt <$> visitType t <*> pure i <*> visitGeneric x
+--   _ -> visitAtomPartial atom
+
+visitTypeDefault
+  :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
+  => Type r i -> m i o (Type r o)
+visitTypeDefault = \case
+  TyExpr e -> undefined -- expr -> atomSubstM $ TyVar v
+  x -> visitTypePartial x
+
+visitPiDefault
+  :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
+  => PiType r i -> m i o (PiType r o)
+visitPiDefault (PiType bs effty) = do
+  visitBinders bs \bs' -> do
+    effty' <- visitGeneric effty
+    return $ PiType bs' effty'
+
+visitBinders
+  :: (Visitor2 m r, IRRep r, FromName v, AtomSubstReader v m, EnvExtender2 m)
+  => Nest (Binder r) i i'
+  -> (forall o'. DExt o o' => Nest (Binder r) o o' -> m i' o' a)
+  -> m i o a
+visitBinders Empty cont = getDistinct >>= \Distinct -> cont Empty
+visitBinders (Nest (b:>ty) bs) cont = do
+  ty' <- visitType ty
+  withFreshBinder (getNameHint b) ty' \b' -> do
+    extendRenamer (b@>binderName b') do
+      visitBinders bs \bs' ->
+        cont $ Nest b' bs'
+
+
+instance Distinct o => NonAtomRenamer (SubstVisitor i o) i o where
+  renameN = substV
+
+instance (Distinct o, IRRep r) => Visitor (SubstVisitor i o) r i o where
+  visitType = substV
+  visitExpr = substV
+  visitLam  = substV
+  visitPi   = substV
+
+instance Color c => SubstE ExprSubstVal (ExprSubstVal c) where
+  substE (_, env) (Rename name) = env ! name
+  substE env (SubstVal val) = SubstVal $ substE env val
+
+-- instance SubstV (SubstVal Atom) (SubstVal Atom) where
+
+-- instance IRRep r => SubstE ExprSubstVal (Atom r) where
+--   substE es@(env, subst) = undefined
+--   -- substE es@(env, subst) = \case
+--   --   Var (AtomVar v ty) -> case subst!v of
+--   --     Rename v' -> Var $ AtomVar v' (substE es ty)
+--   --     SubstVal x -> x
+--   --   SimpInCore x   -> SimpInCore (substE es x)
+--   --   atom -> runReader (runSubstVisitor $ visitAtomPartial atom) es
+
+instance IRRep r => SubstE ExprSubstVal (Type r) where
+  substE es@(env, subst) = undefined
+    -- TyVar (AtomVar v ty) -> case subst ! v of
+    --   Rename v' -> TyVar $ AtomVar v' (substE es ty)
+    --   SubstVal (Type t) -> t
+    --   SubstVal atom -> error $ "bad substitution: " ++ pprint v ++ " -> " ++ pprint atom
+    -- ty -> runReader (runSubstVisitor $ visitTypePartial ty) es
+
+instance IRRep r => SubstE ExprSubstVal (EffectRow r) where
+  substE env (EffectRow effs tailVar) = do
+    let effs' = eSetFromList $ map (substE env) (eSetToList effs)
+    let tailEffRow = case tailVar of
+          NoTail -> EffectRow mempty NoTail
+          EffectRowTail (AtomVar v _) -> case snd env ! v of
+            Rename        v'  -> do
+              let v'' = runEnvReaderM (fst env) $ toAtomVar v'
+              EffectRow mempty (EffectRowTail v'')
+            SubstVal (Var v') -> EffectRow mempty (EffectRowTail v')
+            SubstVal (Con (Eff r))  -> r
+            _ -> error "Not a valid effect substitution"
+    extendEffRow effs' tailEffRow
+
+instance IRRep r => SubstE ExprSubstVal (Effect r)
+
+instance SubstE ExprSubstVal EffectDef
+instance SubstE ExprSubstVal EffectOpType
+instance SubstE ExprSubstVal (TyConParams Expr)
+instance SubstE ExprSubstVal DataConDef
+instance IRRep r => SubstE ExprSubstVal (BaseMonoid r)
+instance IRRep r => SubstE ExprSubstVal (DAMOp r)
+instance IRRep r => SubstE ExprSubstVal (TypedHof r)
+instance IRRep r => SubstE ExprSubstVal (Hof r)
+instance IRRep r => SubstE ExprSubstVal (TC r)
+instance IRRep r => SubstE ExprSubstVal (Con Expr r)
+instance IRRep r => SubstE ExprSubstVal (MiscOp r)
+instance IRRep r => SubstE ExprSubstVal (VectorOp r)
+instance IRRep r => SubstE ExprSubstVal (MemOp r)
+instance IRRep r => SubstE ExprSubstVal (PrimOp r)
+instance IRRep r => SubstE ExprSubstVal (RefOp r)
+instance IRRep r => SubstE ExprSubstVal (EffTy r)
+instance IRRep r => SubstE ExprSubstVal (Expr r)
+instance IRRep r => SubstE ExprSubstVal (GenericOpRep const r)
+instance SubstE ExprSubstVal InstanceBody
+instance SubstE ExprSubstVal DictType
+instance SubstE ExprSubstVal DictExpr
+instance IRRep r => SubstE ExprSubstVal (LamExpr r)
+instance SubstE ExprSubstVal CorePiType
+instance SubstE ExprSubstVal CoreLamExpr
+instance IRRep r => SubstE ExprSubstVal (TabPiType r)
+instance IRRep r => SubstE ExprSubstVal (PiType r)
+instance IRRep r => SubstE ExprSubstVal (DepPairType r)
+instance SubstE ExprSubstVal SolverBinding
+instance IRRep r => SubstE ExprSubstVal (DeclBinding r)
+instance IRRep r => SubstB ExprSubstVal (Decl r)
+instance SubstE ExprSubstVal NewtypeTyCon
+instance SubstE ExprSubstVal (NewtypeCon Expr)
+instance IRRep r => SubstE ExprSubstVal (IxDict r)
+instance IRRep r => SubstE ExprSubstVal (IxType r)
+instance SubstE ExprSubstVal DataConDefs

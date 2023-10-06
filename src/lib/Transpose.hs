@@ -15,7 +15,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Err
 import Imp
 import IRVariants

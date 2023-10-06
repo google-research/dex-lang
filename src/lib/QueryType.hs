@@ -10,6 +10,7 @@ import Control.Category ((>>>))
 import Control.Monad
 import Data.List (elemIndex)
 import Data.Functor ((<&>))
+import Data.Foldable (fold)
 
 import Types.Primitives
 import Types.Core
@@ -23,7 +24,6 @@ import Subst
 import Util
 import PPrint ()
 import QueryTypePure
-import CheapReduction
 
 sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
 sourceNameType v = do
@@ -48,7 +48,7 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
-blockEffTy :: (EnvReader m, IRRep r) => Block r n -> m n (EffTy r n)
+blockEffTy :: (EnvReader m, IRRep r) => WithDecls r (Expr r) n -> m n (EffTy r n)
 blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
   effs <- declsEffects decls mempty
   return $ ignoreHoistFailure $ hoist decls $ EffTy effs $ getType result
@@ -59,8 +59,11 @@ blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
       expr' <- sinkM expr
       declsEffects rest $ acc <> getEffects expr'
 
-blockTy :: (EnvReader m, IRRep r) => Block r n -> m n (Type r n)
+blockTy :: (EnvReader m, IRRep r) => WithDecls r (Expr r) n -> m n (Type r n)
 blockTy b = blockEffTy b <&> \(EffTy _ t) -> t
+
+blockEff :: (EnvReader m, IRRep r) => WithDecls r (Expr r) n -> m n (EffectRow r n)
+blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
 
 piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
 piTypeWithoutDest (PiType bsRefB _) =
@@ -69,22 +72,19 @@ piTypeWithoutDest (PiType bsRefB _) =
       PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
     _ -> error "expected trailing dest binder"
 
-blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
-blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
-
-typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
+typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Expr r n] -> m n (Type r n)
 typeOfApp (Pi piTy) xs = withSubstReaderT $
   withInstantiated piTy xs \(EffTy _ ty) -> substM ty
 typeOfApp _ _ = error "expected a pi type"
 
-typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
+typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> [Expr r n] -> m n (Type r n)
 typeOfTabApp t [] = return t
 typeOfTabApp (TabPi tabTy) (i:rest) = do
   resultTy <- instantiate tabTy [i]
   typeOfTabApp resultTy rest
 typeOfTabApp ty _ = error $ "expected a table type. Got: " ++ pprint ty
 
-typeOfApplyMethod :: EnvReader m => CAtom n -> Int -> [CAtom n] -> m n (EffTy CoreIR n)
+typeOfApplyMethod :: EnvReader m => CExpr n -> Int -> [CExpr n] -> m n (EffTy CoreIR n)
 typeOfApplyMethod d i args = do
   ty <- Pi <$> getMethodType d i
   appEffTy ty args
@@ -105,12 +105,12 @@ typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
   IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
   DataData ty -> DictTy <$> dataDictType ty
 
-typeOfTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (EffTy SimpIR n)
+typeOfTopApp :: EnvReader m => TopFunName n -> [SExpr n] -> m n (EffTy SimpIR n)
 typeOfTopApp f xs = do
   piTy <- getTypeTopFun f
   instantiate piTy xs
 
-typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Atom r n -> m n (Type r n)
+typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Expr r n -> m n (Type r n)
 typeOfIndexRef (TC (RefType h s)) i = do
   TabPi tabPi <- return s
   eltTy <- instantiate tabPi [i]
@@ -129,11 +129,11 @@ typeOfProjRef (TC (RefType h s)) p = do
         _ -> error "expected a newtype"
 typeOfProjRef _ _ = error "expected a reference"
 
-appEffTy  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (EffTy r n)
+appEffTy  :: (IRRep r, EnvReader m) => Type r n -> [Expr r n] -> m n (EffTy r n)
 appEffTy (Pi piTy) xs = instantiate piTy xs
 appEffTy t _ = error $ "expected a pi type, got: " ++ pprint t
 
-partialAppType  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
+partialAppType  :: (IRRep r, EnvReader m) => Type r n -> [Expr r n] -> m n (Type r n)
 partialAppType (Pi (CorePiType appExpl expls bs effTy)) xs = do
   (_, expls2) <- return $ splitAt (length xs) expls
   PairB bs1 bs2 <- return $ splitNestAt (length xs) bs
@@ -165,23 +165,23 @@ typeOfHof = \case
   RunState _ _ f -> do
     (resultTy, stateTy) <- getTypeRWSAction f
     return $ PairTy resultTy stateTy
-  RunIO f -> blockTy f
-  RunInit f -> blockTy f
+  RunIO   f -> return $ getType f
+  RunInit f -> return $ getType f
   CatchException ty _ -> return ty
 
 hofEffects :: (EnvReader m, IRRep r) => Hof r n -> m n (EffectRow r n)
 hofEffects = \case
   For _ _ f     -> functionEffs f
-  While body    -> blockEff body
+  While body    -> return $ getEffects body
   Linearize _ _ -> return Pure  -- Body has to be a pure function
   Transpose _ _ -> return Pure  -- Body has to be a pure function
   RunReader _ f -> rwsFunEffects Reader f
   RunWriter d _ f -> maybeInit d <$> rwsFunEffects Writer f
   RunState  d _ f -> maybeInit d <$> rwsFunEffects State  f
-  RunIO            f -> deleteEff IOEffect        <$> blockEff f
-  RunInit          f -> deleteEff InitEffect      <$> blockEff f
-  CatchException _ f -> deleteEff ExceptionEffect <$> blockEff f
-  where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
+  RunIO            f -> return $ deleteEff IOEffect        $ getEffects f
+  RunInit          f -> return $ deleteEff InitEffect      $ getEffects f
+  CatchException _ f -> return $ deleteEff ExceptionEffect $ getEffects f
+  where maybeInit :: IRRep r => Maybe (Expr r i) -> (EffectRow r o -> EffectRow r o)
         maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
 
 deleteEff :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
@@ -264,7 +264,7 @@ getStructDataConType tyCon = liftEnvReaderM $ withSubstReaderT do
 buildDataConType
   :: (EnvReader m, EnvExtender m)
   => TyConDef n
-  -> (forall l. DExt n l => [Explicitness] -> Nest CBinder n l -> [CAtomName l] -> TyConParams l -> m l a)
+  -> (forall l. DExt n l => [Explicitness] -> Nest CBinder n l -> [CAtomName l] -> TyConParams Expr l -> m l a)
   -> m n a
 buildDataConType (TyConDef _ roleExpls bs _) cont = do
   let expls = snd <$> roleExpls
@@ -276,7 +276,7 @@ buildDataConType (TyConDef _ roleExpls bs _) cont = do
     vs' <- mapM toAtomVar vs
     cont expls' bs' vs $ TyConParams expls (Var <$> vs')
 
-makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
+makeTyConParams :: EnvReader m => TyConName n -> [e CoreIR n] -> m n (TyConParams e n)
 makeTyConParams tc params = do
   TyConDef _ expls _ _ <- lookupTyCon tc
   return $ TyConParams (map snd expls) params
@@ -290,7 +290,7 @@ getDataClassName = lookupSourceMap "Data" >>= \case
 dataDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 dataDictType ty = do
   dataClassName <- getDataClassName
-  dictType dataClassName [Type ty]
+  dictType dataClassName [Con $ TypeCon ty]
 
 getIxClassName :: (Fallible1 m, EnvReader m) => m n (ClassName n)
 getIxClassName = lookupSourceMap "Ix" >>= \case
@@ -298,7 +298,7 @@ getIxClassName = lookupSourceMap "Ix" >>= \case
   Just (UClassVar v) -> return v
   Just _ -> error "not a class var"
 
-dictType :: EnvReader m => ClassName n -> [CAtom n] -> m n (DictType n)
+dictType :: EnvReader m => ClassName n -> [CExpr n] -> m n (DictType n)
 dictType className params = do
   ClassDef sourceName _ _ _ _ _ _ <- lookupClassDef className
   return $ DictType sourceName className params
@@ -306,12 +306,13 @@ dictType className params = do
 ixDictType :: (Fallible1 m, EnvReader m) => CType n -> m n (DictType n)
 ixDictType ty = do
   ixClassName <- getIxClassName
-  dictType ixClassName [Type ty]
+  dictType ixClassName [Con $ TypeCon ty]
 
 makePreludeMaybeTy :: EnvReader m => CType n -> m n (CType n)
-makePreludeMaybeTy ty = do
-  ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
+makePreludeMaybeTy ty = undefined
+-- makePreludeMaybeTy ty = do
+--   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
+--   return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
 
 -- === computing effects ===
 
@@ -331,8 +332,7 @@ rwsFunEffects rws f = getLamExprType f >>= \case
 getLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (PiType r n)
 getLamExprType (LamExpr bs body) = liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> do
-    effTy <- blockEffTy body'
-    return $ PiType bs' effTy
+    return $ PiType bs' $ EffTy (getEffects body') (getType body')
 
 getTypeRWSAction :: (IRRep r, EnvReader m) => LamExpr r n -> m n (Type r n, Type r n)
 getTypeRWSAction f = getLamExprType f >>= \case
@@ -345,12 +345,12 @@ getTypeRWSAction f = getLamExprType f >>= \case
       _ -> error "expected a ref"
   _ -> error "expected a pi type"
 
-getSuperclassDicts :: EnvReader m => CAtom n -> m n ([CAtom n])
+getSuperclassDicts :: EnvReader m => CExpr n -> m n ([CExpr n])
 getSuperclassDicts dict = do
   case getType dict of
     DictTy dTy -> do
       ts <- getSuperclassTys dTy
-      forM (enumerate ts) \(i, t) -> return $ DictCon t $ SuperclassProj dict i
+      forM (enumerate ts) \(i, t) -> return $ Con $ DictCon t $ SuperclassProj dict i
     _ -> error "expected a dict type"
 
 getSuperclassTys :: EnvReader m => DictType n -> m n [CType n]
@@ -358,6 +358,53 @@ getSuperclassTys (DictType _ className params) = do
   ClassDef _ _ _ _ bs superclasses _ <- lookupClassDef className
   forM [0 .. nestLength superclasses - 1] \i -> do
     instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
+
+-- === TODO: figure out where to put these ===
+
+instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams Expr n -> m n (DataConDefs n)
+instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = undefined
+  -- applySubst (bs @@> (SubstVal <$> xs)) conDefs
+{-# INLINE instantiateTyConDef #-}
+
+instantiate
+  :: (EnvReader m, IRRep r, SubstE (SubstVal Expr) body, SinkableE body, ToBindersAbs e body r)
+  => e n -> [Expr r n] -> m n (body n)
+instantiate e xs = undefined
+
+-- "lazy" subst-extending version of `instantiateNames`
+withInstantiatedNames
+  :: (SubstReader Name m, IRRep r, RenameE body, SinkableE body, ToBindersAbs e body r)
+  => e i -> [AtomName r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiatedNames e vs cont = case toAbs e of
+  Abs bs body -> extendRenamer (bs @@> vs) $ cont body
+
+-- "lazy" subst-extending version of `instantiate`
+withInstantiated
+  :: (SubstReader ExprSubstVal m, IRRep r, SinkableE body, ToBindersAbs e body r)
+  => e i -> [Expr r o]
+  -> (forall i'. body i' -> m i' o a)
+  -> m i o a
+withInstantiated e xs cont = undefined
+-- case toAbs e of
+--   Abs bs body -> extendSubst (bs @@> (SubstVal <$> xs)) $ cont body
+
+unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon Expr n, Type CoreIR n)
+unwrapNewtypeType = undefined
+-- unwrapNewtypeType = \case
+--   Nat                   -> return (NatCon, IdxRepTy)
+--   Fin n                 -> return (FinCon n, NatTy)
+--   UserADTType sn defName params -> do
+--     def <- lookupTyCon defName
+--     ty' <- dataDefRep <$> instantiateTyConDef def params
+--     return (UserADTData sn defName params, ty')
+--   ty -> error $ "Shouldn't be projecting: " ++ pprint ty
+-- {-# INLINE unwrapNewtypeType #-}
+
+
+
+-- =====================================
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case
@@ -394,16 +441,16 @@ isData ty = do
 
 checkDataLike :: Type CoreIR i -> SubstReaderT Name FallibleEnvReaderM i o ()
 checkDataLike ty = case ty of
-  TyVar _ -> notData
+  TyExpr _ -> undefined -- notData
   TabPi (TabPiType _ b eltTy) -> do
     renameBinders b \_ ->
       checkDataLike eltTy
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l
     renameBinders b \_ -> checkDataLike r
-  NewtypeTyCon nt -> do
-    (_, ty') <- unwrapNewtypeType =<< renameM nt
-    dropSubst $ recur ty'
+  NewtypeTyCon nt -> undefined
+    -- (_, ty') <- unwrapNewtypeType =<< renameM nt
+    -- dropSubst $ recur ty'
   TC con -> case con of
     BaseType _       -> return ()
     ProdType as      -> mapM_ recur as
@@ -426,3 +473,82 @@ checkExtends allowed (EffectRow effs effTail) = do
     throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
                       "\nAllowed: " ++ pprint allowed
 {-# INLINE checkExtends #-}
+
+-- === expression-building helpers with basic type inference ===
+
+mkBlockExpr :: EnvReader m => Block r n -> m n (Expr r n)
+mkBlockExpr = undefined
+
+mkApp :: EnvReader m => CExpr n -> [CExpr n] -> m n (CExpr n)
+mkApp f xs = do
+  let xs' = xs
+  et <- appEffTy (getType f) xs'
+  return $ App et f xs'
+
+mkTypedHof :: (EnvReader m, IRRep r) => Hof r n -> m n (TypedHof r n)
+mkTypedHof hof = do
+  effTy <- effTyOfHof hof
+  return $ TypedHof effTy hof
+
+mkSeq :: EnvReader m
+      => Direction -> IxType SimpIR n -> Expr SimpIR n -> LamExpr SimpIR n
+      -> m n (DAMOp SimpIR n)
+mkSeq d t x f = do
+  effTy <- functionEffs f
+  return $ Seq effTy d t x f
+
+mkTabApp :: (EnvReader m, IRRep r) => Expr r n -> [Expr r n] -> m n (Expr r n)
+mkTabApp xs ixs = do
+  ty <- typeOfTabApp (getType xs) ixs
+  return $ TabApp ty xs ixs
+
+mkTopApp :: EnvReader m => TopFunName n -> [SExpr n] -> m n (SExpr n)
+mkTopApp f xs = do
+  resultTy <- typeOfTopApp f xs
+  return $ TopApp resultTy f xs
+
+mkApplyMethod :: EnvReader m => CExpr n -> Int -> [CExpr n] -> m n (CExpr n)
+mkApplyMethod d i xs = do
+  resultTy <- typeOfApplyMethod d i xs
+  return $ ApplyMethod resultTy d i xs
+
+mkCase :: (EnvReader m, IRRep r) => Expr r n -> Type r n -> [Alt r n] -> m n (Expr r n)
+mkCase scrut resultTy alts = liftEnvReaderM do
+  eff' <- fold <$> forM alts \alt -> refreshAbs alt \b body -> do
+    return $ ignoreHoistFailure $ hoist b $ getEffects body
+  return $ Case scrut alts (EffTy eff' resultTy)
+
+mkCatchException :: EnvReader m => CExpr n -> m n (Hof CoreIR n)
+mkCatchException body = do
+  resultTy <- makePreludeMaybeTy (getType body)
+  return $ CatchException resultTy body
+
+mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Expr r n -> Expr r n -> m n (PrimOp r n)
+mkIndexRef ref i = do
+  resultTy <- typeOfIndexRef (getType ref) i
+  return $ RefOp ref $ IndexRef resultTy i
+
+mkProjRef :: (EnvReader m, IRRep r) => Expr r n -> Projection -> m n (PrimOp r n)
+mkProjRef ref i = do
+  resultTy <- typeOfProjRef (getType ref) i
+  return $ RefOp ref $ ProjRef resultTy i
+
+-- Returns a representation type (type of an TypeCon-typed Newtype payload)
+-- given a list of instantiated DataConDefs.
+dataDefRep :: DataConDefs n -> CType n
+dataDefRep (ADTCons cons) = case cons of
+  [] -> error "unreachable"  -- There's no representation for a void type
+  [DataConDef _ _ ty _] -> ty
+  tys -> SumTy $ tys <&> \(DataConDef _ _ ty _) -> ty
+dataDefRep (StructFields fields) = case map snd fields of
+  [ty] -> ty
+  tys  -> ProdTy tys
+
+makeStructRepVal :: (Fallible1 m, EnvReader m) => TyConName n -> [CExpr n] -> m n (CExpr n)
+makeStructRepVal tyConName args = do
+  TyConDef _ _ _ (StructFields fields) <- lookupTyCon tyConName
+  case fields of
+    [_] -> case args of
+      [arg] -> return arg
+      _ -> error "wrong number of args"
+    _ -> return $ Con $ ProdCon args

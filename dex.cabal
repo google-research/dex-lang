@@ -49,7 +49,6 @@ library
                      , Builder
                      , CUDA
                      , Cat
-                     , CheapReduction
                      , CheckType
                      , ConcreteSyntax
                      , Core
@@ -75,7 +74,7 @@ library
                      , MTL1
                      , Name
                      , Occurrence
-                     , OccAnalysis
+                     -- , OccAnalysis
                      , Optimize
                      , PPrint
                      , RawName
@@ -87,7 +86,7 @@ library
                      , SourceInfo
                      , SourceRename
                      , TopLevel
-                     , Transpose
+                     -- , Transpose
                      , TraverseSourceInfo
                      , Types.Core
                      , Types.Imp
@@ -98,7 +97,8 @@ library
                      , QueryType
                      , QueryTypePure
                      , Util
-                     , Vectorize
+                     -- , Vectorize
+                     , Visit
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval

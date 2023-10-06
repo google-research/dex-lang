@@ -8,6 +8,7 @@ module QueryTypePure where
 
 import Types.Primitives
 import Types.Core
+import Core
 import IRVariants
 import Name
 
@@ -69,19 +70,20 @@ instance IRRep r => HasType r (AtomVar r) where
   {-# INLINE getType #-}
 
 instance IRRep r => HasType r (Atom r) where
-  getType atom = case atom of
-    Var name -> getType name
-    Lam (CoreLamExpr piTy _) -> Pi piTy
-    DepPair _ _ ty -> DepPairTy ty
-    Con con -> getType con
-    Eff _ -> EffKind
-    PtrVar t _ -> PtrTy t
-    DictCon ty _ -> ty
-    NewtypeCon con _ -> getNewtypeType con
-    RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
-    SimpInCore x -> getType x
-    TypeAsAtom ty -> getType ty
+  getType atom = undefined
+  -- getType atom = case atom of
+  --   Var name -> getType name
+  --   Lam (CoreLamExpr piTy _) -> Pi piTy
+  --   DepPair _ _ ty -> DepPairTy ty
+  --   Con con -> getType con
+  --   Eff _ -> EffKind
+  --   PtrVar t _ -> PtrTy t
+  --   DictCon ty _ -> ty
+  --   NewtypeCon con _ -> getNewtypeType con
+  --   RepValAtom (RepVal ty _) -> ty
+  --   ProjectElt t _ _ -> t
+  --   SimpInCore x -> getType x
+  --   TypeAsAtom ty -> getType ty
 
 instance IRRep r => HasType r (Type r) where
   getType = \case
@@ -91,8 +93,7 @@ instance IRRep r => HasType r (Type r) where
     DepPairTy _ -> TyKind
     TC _        -> TyKind
     DictTy _    -> TyKind
-    TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
+    TyExpr e    -> getType e
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -104,18 +105,19 @@ instance HasType CoreIR SimpInCore where
 instance HasType CoreIR NewtypeTyCon where
   getType _ = TyKind
 
-getNewtypeType :: NewtypeCon n -> CType n
-getNewtypeType con = case con of
-  NatCon          -> NewtypeTyCon Nat
-  FinCon n        -> NewtypeTyCon $ Fin n
-  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params
+-- getNewtypeType :: NewtypeCon e n -> CType n
+-- getNewtypeType con = case con of
+--   NatCon          -> NewtypeTyCon Nat
+--   FinCon n        -> NewtypeTyCon $ Fin n
+--   UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params
 
-instance IRRep r => HasType r (Con r) where
+instance (IRRep r, HasType r (e r)) => HasType r (Con e r) where
   getType = \case
     Lit l          -> BaseTy $ litType l
     ProdCon xs     -> ProdTy $ map getType xs
     SumCon tys _ _ -> SumTy tys
     HeapVal        -> TC HeapType
+    TypeCon _ -> TyKind
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
 getSuperclassType _ Empty = error "bad index"
@@ -128,11 +130,11 @@ instance IRRep r => HasType r (Expr r) where
     App (EffTy _ ty) _ _ -> ty
     TopApp (EffTy _ ty) _ _ -> ty
     TabApp t _ _ -> t
-    Atom x   -> getType x
     TabCon _ ty _ -> ty
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    Con con -> getType con
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -206,12 +208,12 @@ instance IRRep r => HasType r (MiscOp r) where
 rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
-    let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
+    let tabTy = rawFinTabType (AVar $ AtomVar v IdxRepTy) CharRepTy
     DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
-rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
+rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin $ toExpr n) ==> eltTy
 
 tabIxType :: TabPiType r n -> IxType r n
 tabIxType (TabPiType d (_:>t) _) = IxType t d
@@ -245,21 +247,24 @@ litFinIxTy :: Int -> IxType r n
 litFinIxTy n = finIxTy $ IdxRepVal $ fromIntegral n
 
 finIxTy :: Atom r n -> IxType r n
-finIxTy n = IxType IdxRepTy (IxDictRawFin n)
+finIxTy n = IxType IdxRepTy (IxDictRawFin $ toExpr n)
 
 ixTyFromDict :: IRRep r => IxDict r n -> IxType r n
-ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
-  IxDictAtom dict -> case getType dict of
-    DictTy (DictType "Ix" _ [Type iTy]) -> iTy
-    _ -> error $ "Not an Ix dict: " ++ show dict
-  IxDictRawFin _ -> IdxRepTy
-  IxDictSpecialized n _ _ -> n
+ixTyFromDict ixDict = undefined
+-- ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
+--   IxDictAtom dict -> case getType dict of
+--     DictTy (DictType "Ix" _ [Type iTy]) -> iTy
+--     _ -> error $ "Not an Ix dict: " ++ show dict
+--   IxDictRawFin _ -> IdxRepTy
+--   IxDictSpecialized n _ _ -> n
 
 -- === querying effects implementation ===
 
+-- TODO: this is wrong now that subexpressions can have effects (assuming they
+-- can). We either need to do a recursive traversal here or find a uniform way
+-- to cache the effects of an expression.
 instance IRRep r => HasEffects (Expr r) r where
   getEffects = \case
-    Atom _ -> Pure
     App (EffTy eff _) _ _ -> eff
     TopApp (EffTy eff _) _ _ -> eff
     TabApp _ _ _ -> Pure
@@ -267,6 +272,7 @@ instance IRRep r => HasEffects (Expr r) r where
     TabCon _ _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
+    _ -> Pure -- wrong, obviously, but so is the rest
 
 instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr
