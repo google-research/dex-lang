@@ -276,10 +276,10 @@ evalSourceBlock' mname block = case sbContents block of
     --       "Can't export functions with captured pointers (not implemented)."
     --     _ -> return $ Con $ Lit val
     --   logTop $ ExportedFun name f
-    GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
-      logTop $ TextOut $ pprintCanonicalized ty
+    GetType -> do
+      TopLam _ (PiType Empty (EffTy _ ty)) _ <- inferUExpr expr
+      ty' <- cheapNormalize ty
+      logTop $ TextOut $ pprintCanonicalized ty'
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
     ty <- evalUType =<< parseExpr cTy
@@ -289,42 +289,43 @@ evalSourceBlock' mname block = case sbContents block of
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
         let hint = getNameHint b
-        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun fname impFunTy
-        vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
+        fTop  <- emitBinding hint $ FFITopFun fname impFunTy
+        vCore <- emitBinding hint $ FFIFun naryPiTy fTop
         UBindSource _ sourceName <- return b
         emitSourceMap $ SourceMap $
           M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname zeros g -> do
-    expr <- parseExpr g
-    lookupSourceMap fname >>= \case
-      Nothing -> throw UnboundVarErr $ pprint fname
-      Just (UAtomVar fname') -> do
-        lookupCustomRules fname' >>= \case
-          Nothing -> return ()
-          Just _  -> throw TypeErr
-            $ pprint fname ++ " already has a custom linearization"
-        lookupAtomName fname' >>= \case
-          NoinlineFun _ _ -> return ()
-          _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
-        -- We do some special casing to avoid instantiating polymorphic functions.
-        impl <- case expr of
-          WithSrcE _ (UVar _) ->
-            renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
-              _ -> error "Expected a variable"
-          _ -> evalUExpr expr
-        fType <- getType <$> toAtomVar fname'
-        (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
-        liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
-          Failure _ -> do
-            let implTy = getType impl
-            throw TypeErr $ unlines
-              [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
-              , "but it has type:" , "" , pprint implTy]
-          Success () -> return ()
-        updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
-      Just _ -> throw TypeErr
-        $ "Custom linearization can only be defined for functions"
+  DeclareCustomLinearization fname zeros g -> undefined
+  -- DeclareCustomLinearization fname zeros g -> do
+  --   expr <- parseExpr g
+  --   lookupSourceMap fname >>= \case
+  --     Nothing -> throw UnboundVarErr $ pprint fname
+  --     Just (UAtomVar fname') -> do
+  --       lookupCustomRules fname' >>= \case
+  --         Nothing -> return ()
+  --         Just _  -> throw TypeErr
+  --           $ pprint fname ++ " already has a custom linearization"
+  --       lookupAtomName fname' >>= \case
+  --         NoinlineFun _ _ -> return ()
+  --         _ -> throw TypeErr "Custom linearizations only apply to @noinline functions"
+  --       -- We do some special casing to avoid instantiating polymorphic functions.
+  --       impl <- case expr of
+  --         WithSrcE _ (UVar _) ->
+  --           renameSourceNamesUExpr expr >>= \case
+  --             WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
+  --             _ -> error "Expected a variable"
+  --         _ -> evalUExpr expr
+  --       fType <- getType <$> toAtomVar fname'
+  --       (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
+  --       liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
+  --         Failure _ -> do
+  --           let implTy = getType impl
+  --           throw TypeErr $ unlines
+  --             [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
+  --             , "but it has type:" , "" , pprint implTy]
+  --         Success () -> return ()
+  --       updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
+  --     Just _ -> throw TypeErr
+  --       $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
@@ -520,11 +521,15 @@ evalUType ty = do
   renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
   checkPass TypePass $ checkTopUType renamed
 
-evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
-evalUExpr expr = do
+inferUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (TopBlock CoreIR n)
+inferUExpr expr = do
   logTop $ PassInfo Parse $ pprint expr
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
-  typed <- checkPass TypePass $ inferTopUExpr renamed
+  checkPass TypePass $ inferTopUExpr renamed
+
+evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
+evalUExpr expr = do
+  typed <- inferUExpr expr
   evalBlock typed
 
 whenOpt :: Topper m => a -> (a -> m n a) -> m n a
@@ -536,20 +541,37 @@ evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
 evalBlock typed = do
   SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
   opt <- simpOptimizations simp
-  simpResult <- case opt of
-    TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result
-    _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential True opt
-      lOpt <- checkPass OptPass $ loweredOptimizations lowered
-      cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
-      llvmOpt <- packageLLVMCallable impOpt
-      resultVals <- liftIO $ callEntryFun llvmOpt []
-      TopLam _ destTy _ <- return lOpt
-      EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
-      repValAtom =<< repValFromFlatList resultTy resultVals
-  applyReconTop recon simpResult
+  simpResult <- evalSimpBlock opt
+  TopLam _ (PiType Empty (EffTy _ ty)) _ <- return typed
+  applyReconTop recon ty simpResult
 {-# SCC evalBlock #-}
+
+evalSimpBlock :: (Topper m, Mut n) => STopLam n -> m n (SAtom n)
+evalSimpBlock (TopLam _ _ (LamExpr Empty (WithoutDecls result))) = return result
+evalSimpBlock opt = do
+  lowered <- checkPass LowerPass $ lowerFullySequential True opt
+  lOpt <- checkPass OptPass $ loweredOptimizations lowered
+  cc <- getEntryFunCC
+  impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
+  llvmOpt <- packageLLVMCallable impOpt
+  resultVals <- liftIO $ callEntryFun llvmOpt []
+  TopLam _ destTy _ <- return lOpt
+  EffTy _ resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
+  repValFromFlatList resultTy resultVals >>= emitRepValTop
+
+applyReconTop :: (Topper m, Mut n) => ReconstructAtom n -> CType n -> SAtom n -> m n (CAtom n)
+applyReconTop recon ty x = case recon of
+  CoerceRecon -> do
+    v <- emitBinding noHint $ TopSimpAtom ty (SimpLift x)
+    Var <$> toAtomVar v
+  -- shortcut for the very common case
+  LamRecon (Abs (ReconBinders _ Empty) (SuspendedSubst (Abs Empty result) _)) -> return result
+
+simpAtomToCoreAtom :: (Topper m, Mut n) => SimpAtom n -> m n (CAtom n)
+simpAtomToCoreAtom = undefined
+
+emitRepValTop :: (Topper m, Mut n) => RepVal SimpIR n -> m n (SAtom n)
+emitRepValTop = undefined
 
 simpOptimizations :: Topper m => STopLam n -> m n (STopLam n)
 simpOptimizations simp = do
@@ -618,15 +640,15 @@ execUDecl mname decl = do
       case ann of
         NoInlineLet -> do
           let fTy = getType result
-          f <- emitBinding (getNameHint b) $ AtomNameBinding $ NoinlineFun fTy result
+          f <- emitBinding (getNameHint b) $ NoinlineFun fTy result
           applyRename (b@>f) sm >>= emitSourceMap
         _ -> do
-          v <- emitTopLet (getNameHint b) ann (Atom result)
+          v <- emitTopCAtom (getNameHint b) result
           applyRename (b@>atomVarName v) sm >>= emitSourceMap
     UDeclResultBindPattern hint block (Abs bs sm) -> do
       result <- evalBlock block
       xs <- unpackTelescope bs result
-      vs <- forM xs \x -> emitTopLet hint PlainLet (Atom x)
+      vs <- forM xs \x -> emitTopCAtom hint x
       applyRename (bs@@>(atomVarName <$> vs)) sm >>= emitSourceMap
     UDeclResultDone sourceMap' -> emitSourceMap sourceMap'
 
@@ -793,12 +815,13 @@ getBenchRequirement block = case sbLogLevel block of
   _ -> return NoBench
 
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
-getDexString val = do
-  -- TODO: use a `ByteString` instead of `String`
-  SimpInCore (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
-  Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
-  PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
-  liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
+getDexString val = undefined
+-- getDexString val = do
+--   -- TODO: use a `ByteString` instead of `String`
+--   SimpInCore (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
+--   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
+--   PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
+--   liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
 
 -- === saving cache to disk ===
 
@@ -900,7 +923,7 @@ instance (Monad1 m, ConfigReader (m n)) => ConfigReader (StateT1 s m n) where
 instance Topper TopperM
 
 instance TopBuilder TopperM where
-  emitBinding = emitBindingDefault
+  emitBinding hint e = emitBindingDefault hint (toBinding e)
   emitEnv (Abs frag result) = do
     result' `PairE` ListE fNames `PairE` ListE dictNames <- TopperM $ emitEnv $
       Abs frag $ result `PairE` ListE (boundNamesList frag) `PairE` ListE (boundNamesList frag)

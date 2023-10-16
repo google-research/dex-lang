@@ -59,9 +59,6 @@ data Atom (r::IR) (n::S) where
  DictCon      :: Type CoreIR n -> DictExpr n   -> Atom CoreIR n
  NewtypeCon   :: NewtypeCon n -> Atom CoreIR n -> Atom CoreIR n
  TypeAsAtom   :: Type CoreIR n                 -> Atom CoreIR n
- -- === Shims between IRs ===
- SimpInCore   :: SimpInCore n    -> Atom CoreIR n
- RepValAtom   :: RepVal SimpIR n -> Atom SimpIR n
 
 data Type (r::IR) (n::S) where
  TC           :: TC  r n         -> Type r n
@@ -80,14 +77,6 @@ data AtomVar (r::IR) (n::S) = AtomVar
   { atomVarName :: AtomName r n
   , atomVarType :: Type r n }
      deriving (Show, Generic)
-
-type TabLamExpr = PairE (IxType SimpIR) (Abs (Binder SimpIR) (Abs (Nest SDecl) CAtom))
-data SimpInCore (n::S) =
-   LiftSimp (CType n) (SAtom n)
- | LiftSimpFun (CorePiType n) (LamExpr SimpIR n)
- | TabLam (TabPiType CoreIR n) (TabLamExpr n)
- | ACase (SAtom n) [Abs SBinder CAtom n] (CType n)
- deriving (Show, Generic)
 
 deriving instance IRRep r => Show (Atom r n)
 deriving instance IRRep r => Show (Type r n)
@@ -463,13 +452,10 @@ data NewtypeCon (n::S) =
 
 data NewtypeTyCon (n::S) =
    Nat
- | Fin (Atom CoreIR n)
+ | Fin (CAtom n)
  | EffectRowKind
- | UserADTType SourceName (TyConName n) (TyConParams n)
+ | UserADTType SourceName (TyConName n) (TyConParams n) (CType n)
    deriving (Show, Generic)
-
-pattern TypeCon :: SourceName -> TyConName n -> TyConParams n -> CType n
-pattern TypeCon s d xs = NewtypeTyCon (UserADTType s d xs)
 
 isSumCon :: NewtypeCon n -> Bool
 isSumCon = \case
@@ -784,16 +770,27 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
   { topFunObjCode :: FunObjCodeName n } -- TODO: add optimized, imp etc. as needed
   deriving (Show, Generic, SinkableE, HoistableE, RenameE, AlphaEqE, AlphaHashableE, Pretty)
 
+-- TODO: consider separating local bindings and top-level bindings
 data AtomBinding (r::IR) (n::S) where
- LetBound     :: DeclBinding r  n  -> AtomBinding r n
- MiscBound    :: Type        r  n  -> AtomBinding r n
- TopDataBound :: RepVal SimpIR n   -> AtomBinding SimpIR n
- SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
- NoinlineFun  :: CType n -> CAtom n -> AtomBinding CoreIR n
- FFIFunBound  :: CorePiType n -> TopFunName n -> AtomBinding CoreIR n
+ -- local bindings
+ LetBound    :: DeclBinding r  n -> AtomBinding r n
+ MiscBound   :: Type        r  n -> AtomBinding r n
+ SolverBound :: SolverBinding n  -> AtomBinding CoreIR n
+ TopAtomBinding :: TopAtomBinding r n -> AtomBinding r n
 
 deriving instance IRRep r => Show (AtomBinding r n)
 deriving via WrapE (AtomBinding r) n instance IRRep r => Generic (AtomBinding r n)
+
+data TopAtomBinding (r::IR) (n::S) where
+ -- top-level bindings
+ TopRepVal   :: RepVal SimpIR n              -> TopAtomBinding SimpIR n
+ TopCAtom    :: CAtom n                      -> TopAtomBinding CoreIR n
+ TopSimpAtom :: CType n -> SimpAtom n        -> TopAtomBinding CoreIR n
+ NoinlineFun :: CType n -> CAtom n           -> TopAtomBinding CoreIR n
+ FFIFun      :: CorePiType n -> TopFunName n -> TopAtomBinding CoreIR n
+
+deriving instance IRRep r => Show (TopAtomBinding r n)
+deriving via WrapE (TopAtomBinding r) n instance IRRep r => Generic (TopAtomBinding r n)
 
 -- name of function, name of arg
 type InferenceArgDesc = (String, String)
@@ -932,6 +929,20 @@ data LinearizationSpec (n::S) =
   LinearizationSpec (TopFunName n) [Active]
   deriving (Show, Generic)
 
+-- === Data types used in Simplify and Imp (they need to be here because we have them at the top level) ===
+
+-- TODO: the IR parameter is needed by `SubstVal but it shouldn't be
+data SimpAtom' (r::IR) (n::S) =
+   SimpSuspend (SuspendedCAtom n)
+ | SimpLift (SAtom n)
+ | TabLam (TabLamExpr n)
+   deriving (Show, Generic)
+
+type SimpAtom = SimpAtom' CoreIR
+type SuspendedCAtom = SuspendedSubst (AtomNameC CoreIR) CAtom SimpAtom
+
+type TabLamExpr = PairE (IxType SimpIR) (Abs (Binder SimpIR) (Abs (Nest SDecl) SimpAtom))
+
 -- === Binder utils ===
 
 binderType :: Binder r n l -> Type r n
@@ -963,6 +974,12 @@ instance Color c => ToBinding (Binding c) c where
 
 instance IRRep r => ToBinding (AtomBinding r) (AtomNameC r) where
   toBinding = atomBindingToBinding
+
+instance ToBinding TopFun TopFunNameC where
+  toBinding = TopFunBinding
+
+instance IRRep r => ToBinding (TopAtomBinding r) (AtomNameC r) where
+  toBinding = toBinding . TopAtomBinding
 
 instance IRRep r => ToBinding (DeclBinding r) (AtomNameC r) where
   toBinding = toBinding . LetBound
@@ -1257,19 +1274,19 @@ instance GenericE NewtypeTyCon where
     {- Nat -}              UnitE
     {- Fin -}              CAtom
     {- EffectRowKind -}    UnitE
-    {- UserADTType -}      (LiftE SourceName `PairE` TyConName `PairE` TyConParams)
+    {- UserADTType -}      (LiftE SourceName `PairE` TyConName `PairE` TyConParams `PairE` CType)
   fromE = \case
     Nat               -> Case0 UnitE
     Fin n             -> Case1 n
     EffectRowKind     -> Case2 UnitE
-    UserADTType s d p -> Case3 (LiftE s `PairE` d `PairE` p)
+    UserADTType s d p t -> Case3 (LiftE s `PairE` d `PairE` p `PairE` t)
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 UnitE -> Nat
     Case1 n     -> Fin n
     Case2 UnitE -> EffectRowKind
-    Case3 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
+    Case3 (LiftE s `PairE` d `PairE` p `PairE` t) -> UserADTType s d p t
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1417,33 +1434,6 @@ instance IRRep r => RenameE        (RefOp r)
 instance IRRep r => AlphaEqE       (RefOp r)
 instance IRRep r => AlphaHashableE (RefOp r)
 
-instance GenericE SimpInCore where
-  type RepE SimpInCore = EitherE4
-   {- LiftSimp -} (CType `PairE` SAtom)
-   {- LiftSimpFun -} (CorePiType `PairE` LamExpr SimpIR)
-   {- TabLam -}   (TabPiType CoreIR `PairE` TabLamExpr)
-   {- ACase -}    (SAtom `PairE` ListE (Abs SBinder CAtom) `PairE` CType)
-  fromE = \case
-    LiftSimp ty x             -> Case0 $ ty `PairE` x
-    LiftSimpFun ty x          -> Case1 $ ty `PairE` x
-    TabLam ty lam             -> Case2 $ ty `PairE` lam
-    ACase scrut alts resultTy -> Case3 $ scrut `PairE` ListE alts `PairE` resultTy
-  {-# INLINE fromE #-}
-
-  toE = \case
-    Case0 (ty `PairE` x)                    -> LiftSimp ty x
-    Case1 (ty `PairE` x)                    -> LiftSimpFun ty x
-    Case2 (ty `PairE` lam)                  -> TabLam ty lam
-    Case3 (x `PairE` ListE alts `PairE` ty) -> ACase x alts ty
-    _ -> error "impossible"
-  {-# INLINE toE #-}
-
-instance SinkableE      SimpInCore
-instance HoistableE     SimpInCore
-instance RenameE        SimpInCore
-instance AlphaEqE       SimpInCore
-instance AlphaHashableE SimpInCore
-
 instance IRRep r => GenericE (Atom r) where
   -- As tempting as it might be to reorder cases here, the current permutation
   -- was chosen as to make GHC inliner confident enough to simplify through
@@ -1459,11 +1449,9 @@ instance IRRep r => GenericE (Atom r) where
   {- DictCon  -}   (WhenCore r (CType `PairE` DictExpr))
   {- NewtypeCon -}     (WhenCore r (NewtypeCon `PairE` Atom r))
   {- Con -}        (Con r)
-         ) (EitherE5
+         ) (EitherE3
   {- Eff -}        ( WhenCore r (EffectRow r))
   {- PtrVar -}     (LiftE PtrType `PairE` PtrName)
-  {- RepValAtom -} ( WhenSimp r (RepVal r))
-  {- SimpInCore -} ( WhenCore r SimpInCore)
   {- TypeAsAtom -} ( WhenCore r (Type CoreIR))
            )
 
@@ -1477,9 +1465,7 @@ instance IRRep r => GenericE (Atom r) where
     Con con             -> Case1 $ Case2 con
     Eff effs      -> Case2 $ Case0 $ WhenIRE effs
     PtrVar t v    -> Case2 $ Case1 $ LiftE t `PairE` v
-    RepValAtom rv -> Case2 $ Case2 $ WhenIRE $ rv
-    SimpInCore x  -> Case2 $ Case3 $ WhenIRE x
-    TypeAsAtom t  -> Case2 $ Case4 $ WhenIRE t
+    TypeAsAtom t  -> Case2 $ Case2 $ WhenIRE t
   {-# INLINE fromE #-}
 
   toE atom = case atom of
@@ -1497,9 +1483,7 @@ instance IRRep r => GenericE (Atom r) where
     Case2 val -> case val of
       Case0 (WhenIRE effs) -> Eff effs
       Case1 (LiftE t `PairE` v) -> PtrVar t v
-      Case2 (WhenIRE rv) -> RepValAtom rv
-      Case3 (WhenIRE x)  -> SimpInCore x
-      Case4 (WhenIRE t)  -> TypeAsAtom t
+      Case2 (WhenIRE t)  -> TypeAsAtom t
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -2126,46 +2110,74 @@ instance AlphaHashableE SynthCandidates
 instance RenameE        SynthCandidates
 
 instance IRRep r => GenericE (AtomBinding r) where
-  type RepE (AtomBinding r) =
-     EitherE2 (EitherE3
-      (DeclBinding   r)              -- LetBound
-      (Type          r)              -- MiscBound
-      (WhenCore r SolverBinding)     -- SolverBound
-     ) (EitherE3
-      (WhenCore r (PairE CType CAtom))               -- NoinlineFun
-      (WhenSimp r (RepVal SimpIR))                   -- TopDataBound
-      (WhenCore r (CorePiType `PairE` TopFunName))   -- FFIFunBound
-     )
+  type RepE (AtomBinding r) = EitherE4
+    (DeclBinding   r)              -- LetBound
+    (Type          r)              -- MiscBound
+    (WhenCore r SolverBinding)     -- SolverBound
+    (TopAtomBinding r)
 
   fromE = \case
-    LetBound    x -> Case0 $ Case0 x
-    MiscBound   x -> Case0 $ Case1 x
-    SolverBound x -> Case0 $ Case2 $ WhenIRE x
-    NoinlineFun t x -> Case1 $ Case0 $ WhenIRE $ PairE t x
-    TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
-    FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
+    LetBound    x -> Case0 x
+    MiscBound   x -> Case1 x
+    SolverBound x -> Case2 $ WhenIRE x
+    TopAtomBinding b -> Case3 b
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 x' -> case x' of
-      Case0 x         -> LetBound x
-      Case1 x           -> MiscBound x
-      Case2 (WhenIRE x) -> SolverBound x
-      _ -> error "impossible"
-    Case1 x' -> case x' of
-      Case0 (WhenIRE (PairE t x)) -> NoinlineFun t x
-      Case1 (WhenIRE repVal)                         -> TopDataBound repVal
-      Case2 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
-      _ -> error "impossible"
+    Case0 x         -> LetBound x
+    Case1 x           -> MiscBound x
+    Case2 (WhenIRE x) -> SolverBound x
+    Case3 x           -> TopAtomBinding x
     _ -> error "impossible"
   {-# INLINE toE #-}
-
 
 instance IRRep r => SinkableE   (AtomBinding r)
 instance IRRep r => HoistableE  (AtomBinding r)
 instance IRRep r => RenameE     (AtomBinding r)
 instance IRRep r => AlphaEqE       (AtomBinding r)
 instance IRRep r => AlphaHashableE (AtomBinding r)
+
+instance IRRep r => GenericE (TopAtomBinding r) where
+  type RepE (TopAtomBinding r) = EitherE5
+    (WhenCore r CAtom)                             -- TopCAtom
+    (WhenCore r (PairE CType SimpAtom))            -- TopSimpAtom
+    (WhenSimp r (RepVal SimpIR))                   -- TopRepVal
+    (WhenCore r (PairE CType CAtom))               -- NoinlineFun
+    (WhenCore r (CorePiType `PairE` TopFunName))   -- FFIFunBound
+
+  fromE = \case
+    TopCAtom x       -> Case0 $ WhenIRE x
+    TopSimpAtom t x  -> Case1 $ WhenIRE $ t `PairE` x
+    TopRepVal repVal -> Case2 $ WhenIRE repVal
+    NoinlineFun t x  -> Case3 $ WhenIRE $ PairE t x
+    FFIFun ty v      -> Case4 $ WhenIRE $ ty `PairE` v
+  {-# INLINE fromE #-}
+
+  toE = \case
+    Case0 (WhenIRE x)              -> TopCAtom x
+    Case1 (WhenIRE (t `PairE` x))  -> TopSimpAtom t x
+    Case2 (WhenIRE repVal)         -> TopRepVal repVal
+    Case3 (WhenIRE (PairE t x))    -> NoinlineFun t x
+    Case4 (WhenIRE (ty `PairE` v)) -> FFIFun ty v
+    _ -> error "impossible"
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE   (TopAtomBinding r)
+instance IRRep r => HoistableE  (TopAtomBinding r)
+instance IRRep r => RenameE     (TopAtomBinding r)
+instance IRRep r => AlphaEqE       (TopAtomBinding r)
+instance IRRep r => AlphaHashableE (TopAtomBinding r)
+
+instance GenericE (SimpAtom' r) where
+  type RepE (SimpAtom' r) = UnitE
+  fromE = undefined
+  toE = undefined
+
+instance SinkableE      (SimpAtom' r)
+instance HoistableE     (SimpAtom' r)
+instance RenameE        (SimpAtom' r)
+instance AlphaEqE       (SimpAtom' r)
+instance AlphaHashableE (SimpAtom' r)
 
 instance GenericE TopFunDef where
   type RepE TopFunDef = EitherE3 SpecializationSpec LinearizationSpec LinearizationSpec
@@ -2730,8 +2742,8 @@ instance IRRep r => Store (EffTy r n)
 instance IRRep r => Store (Atom r n)
 instance IRRep r => Store (AtomVar r n)
 instance IRRep r => Store (Expr r n)
-instance Store (SimpInCore n)
 instance Store (SolverBinding n)
+instance IRRep r => Store (TopAtomBinding r n)
 instance IRRep r => Store (AtomBinding r n)
 instance Store (SpecializationSpec n)
 instance Store (LinearizationSpec n)
@@ -2782,3 +2794,4 @@ instance IRRep r => Store (IxDict r n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
 instance Store (DotMethods n)
+instance Store (SimpAtom' r n)

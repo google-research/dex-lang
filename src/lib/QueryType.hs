@@ -37,7 +37,7 @@ caseAltsBinderTys :: (EnvReader m,  IRRep r) => Type r n -> m n [Type r n]
 caseAltsBinderTys ty = case ty of
   SumTy types -> return types
   NewtypeTyCon t -> case t of
-    UserADTType _ defName params -> do
+    UserADTType _ defName params _ -> do
       def <- lookupTyCon defName
       ~(ADTCons cons) <- instantiateTyConDef def params
       return [repTy | DataConDef _ _ repTy _ <- cons]
@@ -117,15 +117,15 @@ typeOfIndexRef (TC (RefType h s)) i = do
   return $ TC $ RefType h eltTy
 typeOfIndexRef _ _ = error "expected a ref type"
 
-typeOfProjRef :: EnvReader m => Type r n -> Projection -> m n (Type r n)
+typeOfProjRef :: Type r n -> Projection -> Type r n
 typeOfProjRef (TC (RefType h s)) p = do
-  TC . RefType h <$> case p of
-    ProjectProduct i -> do
-      ~(ProdTy tys) <- return s
-      return $ tys !! i
+  TC $ RefType h case p of
+    ProjectProduct i -> case s of
+      ProdTy tys -> tys !! i
+      _ -> error "not a product type"
     UnwrapNewtype -> do
       case s of
-        NewtypeTyCon tc -> snd <$> unwrapNewtypeType tc
+        NewtypeTyCon tc -> snd $ unwrapNewtypeType tc
         _ -> error "expected a newtype"
 typeOfProjRef _ _ = error "expected a reference"
 
@@ -246,7 +246,7 @@ getDataConNameType dataCon = liftEnvReaderM $ withSubstReaderT do
       refreshAbs ab \dataBs UnitE -> do
         let appExpl = case dataBs of Empty -> ImplicitApp
                                      _     -> ExplicitApp
-        let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) (sink params)
+        resultTy <- NewtypeTyCon <$> mkUserADTType (getSourceName tyConDef) (sink tyCon) (sink params)
         let dataExpls = nestToList (const $ Explicit) dataBs
         return $ Pi $ CorePiType appExpl (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy)
 
@@ -256,10 +256,16 @@ getStructDataConType tyCon = liftEnvReaderM $ withSubstReaderT do
   buildDataConType tyConDef \expls paramBs' paramVs params -> do
     withInstantiatedNames tyConDef paramVs \(StructFields fields) -> do
       fieldTys <- forM fields \(_, t) -> renameM t
-      let resultTy = NewtypeTyCon $ UserADTType (getSourceName tyConDef) (sink tyCon) params
+      resultTy <- NewtypeTyCon <$> mkUserADTType (getSourceName tyConDef) (sink tyCon) params
       Abs dataBs resultTy' <- return $ typesAsBinderNest fieldTys resultTy
       let dataExpls = nestToList (const Explicit) dataBs
       return $ Pi $ CorePiType ExplicitApp (expls <> dataExpls) (paramBs' >>> dataBs) (EffTy Pure resultTy')
+
+mkUserADTType :: EnvReader m => SourceName -> TyConName n -> TyConParams n -> m n (NewtypeTyCon n)
+mkUserADTType sn defName params = do
+  def <- lookupTyCon defName
+  ty' <- dataDefRep <$> instantiateTyConDef def params
+  return $ UserADTType sn defName params ty'
 
 buildDataConType
   :: (EnvReader m, EnvExtender m)
@@ -309,9 +315,10 @@ ixDictType ty = do
   dictType ixClassName [Type ty]
 
 makePreludeMaybeTy :: EnvReader m => CType n -> m n (CType n)
-makePreludeMaybeTy ty = do
-  ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
+makePreludeMaybeTy ty = undefined
+-- makePreludeMaybeTy ty = do
+--   ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
+--   return $ TypeCon "Maybe" tyConName $ TyConParams [Explicit] [Type ty]
 
 -- === computing effects ===
 
@@ -402,7 +409,7 @@ checkDataLike ty = case ty of
     recur l
     renameBinders b \_ -> checkDataLike r
   NewtypeTyCon nt -> do
-    (_, ty') <- unwrapNewtypeType =<< renameM nt
+    (_, ty') <- unwrapNewtypeType <$> renameM nt
     dropSubst $ recur ty'
   TC con -> case con of
     BaseType _       -> return ()

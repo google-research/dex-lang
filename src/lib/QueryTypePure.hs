@@ -26,14 +26,24 @@ isPure e = case getEffects e of
 
 instance IRRep r => HasType r (AtomBinding r) where
   getType = \case
-    LetBound    (DeclBinding _ e)  -> getType e
-    MiscBound   ty                 -> ty
-    SolverBound (InfVarBound ty _) -> ty
-    SolverBound (SkolemBound ty)   -> ty
-    SolverBound (DictBound   ty)   -> ty
-    NoinlineFun ty _               -> ty
-    TopDataBound (RepVal ty _)     -> ty
-    FFIFunBound piTy _ -> Pi piTy
+    LetBound (DeclBinding _ e) -> getType e
+    MiscBound   ty             -> ty
+    SolverBound e              -> getType e
+    TopAtomBinding b           -> getType b
+
+instance IRRep r => HasType r (TopAtomBinding r) where
+  getType = \case
+    TopCAtom e                 -> getType e
+    TopSimpAtom ty _           -> ty
+    TopRepVal (RepVal ty _)    -> ty
+    NoinlineFun ty _           -> ty
+    FFIFun piTy _              -> Pi piTy
+
+instance HasType CoreIR SolverBinding where
+  getType = \case
+    InfVarBound ty _ -> ty
+    SkolemBound ty   -> ty
+    DictBound   ty   -> ty
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -77,10 +87,8 @@ instance IRRep r => HasType r (Atom r) where
     Eff _ -> EffKind
     PtrVar t _ -> PtrTy t
     DictCon ty _ -> ty
-    NewtypeCon con _ -> getNewtypeType con
-    RepValAtom (RepVal ty _) -> ty
+    NewtypeCon con x -> getNewtypeType con (getType x)
     ProjectElt t _ _ -> t
-    SimpInCore x -> getType x
     TypeAsAtom ty -> getType ty
 
 instance IRRep r => HasType r (Type r) where
@@ -94,21 +102,14 @@ instance IRRep r => HasType r (Type r) where
     TyVar v     -> getType v
     ProjectEltTy t _ _ -> t
 
-instance HasType CoreIR SimpInCore where
-  getType = \case
-    LiftSimp t _       -> t
-    LiftSimpFun piTy _ -> Pi $ piTy
-    TabLam t _         -> TabPi $ t
-    ACase _ _ t        -> t
-
 instance HasType CoreIR NewtypeTyCon where
   getType _ = TyKind
 
-getNewtypeType :: NewtypeCon n -> CType n
-getNewtypeType con = case con of
+getNewtypeType :: NewtypeCon n -> CType n -> CType n
+getNewtypeType con repTy = case con of
   NatCon          -> NewtypeTyCon Nat
   FinCon n        -> NewtypeTyCon $ Fin n
-  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params
+  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params repTy
 
 instance IRRep r => HasType r (Con r) where
   getType = \case

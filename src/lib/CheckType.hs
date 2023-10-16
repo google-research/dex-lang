@@ -174,17 +174,14 @@ instance IRRep r => CheckableE r (Atom r) where
     PtrVar t v -> PtrVar t <$> renameM v
     -- TODO: check against cached type
     DictCon ty dictExpr -> DictCon <$> checkE ty <*> checkE dictExpr
-    RepValAtom repVal -> RepValAtom <$> renameM repVal -- TODO: check
     NewtypeCon con x -> do
       (x', xTy) <- checkAndGetType x
       con' <- typeCheckNewtypeCon con xTy
       return $ NewtypeCon con' x'
-    SimpInCore x -> SimpInCore <$> checkE x
     ProjectElt resultTy UnwrapNewtype x -> do
       resultTy' <- resultTy |: TyKind
       (x', NewtypeTyCon con) <- checkAndGetType x
-      resultTy'' <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' resultTy''
+      checkTypesEq resultTy' (snd $ unwrapNewtypeType con)
       return $ ProjectElt resultTy' UnwrapNewtype x'
     ProjectElt resultTy (ProjectProduct i) x -> do
       resultTy' <- resultTy |: TyKind
@@ -226,8 +223,7 @@ instance IRRep r => CheckableE r (Type r) where
       resultTy' <- resultTy |: TyKind
       x' <- checkE x
       NewtypeTyCon con <- return $ getType x'
-      ty <- snd <$> unwrapNewtypeType con
-      checkTypesEq resultTy' ty
+      checkTypesEq resultTy' (snd $ unwrapNewtypeType con)
       return $ ProjectEltTy resultTy' UnwrapNewtype x'
     ProjectEltTy resultTy (ProjectProduct i) x -> do
       resultTy' <- resultTy |: TyKind
@@ -241,9 +237,6 @@ instance IRRep r => CheckableE r (Type r) where
         _ -> throw TypeErr $ "Not a product type:" ++ pprint ty
       checkTypesEq resultTy' resultTy''
       return $ ProjectEltTy resultTy' (ProjectProduct i) x'
-
-instance CheckableE CoreIR SimpInCore where
-  checkE x = renameM x -- TODO: check
 
 instance (ToBinding ann c, Color c, CheckableE r ann) => CheckableB r (BinderP c ann) where
   checkB (b:>ann) cont = do
@@ -423,12 +416,12 @@ instance CheckableE CoreIR NewtypeTyCon where
     Nat -> return Nat
     Fin n -> Fin <$> n|:NatTy
     EffectRowKind -> return EffectRowKind
-    UserADTType sn d params -> do
+    UserADTType sn d params _ -> do
       d' <- renameM d
       TyConParams expls params' <- checkE params
       def <- lookupTyCon d'
       void $ checkInstantiation def params'
-      return $ UserADTType sn d' (TyConParams expls params')
+      mkUserADTType sn d' (TyConParams expls params')
 
 instance IRRep r => CheckableWithEffects r (PrimOp r) where
   checkWithEffects effs = \case
@@ -486,7 +479,7 @@ instance IRRep r => CheckableWithEffects r (PrimOp r) where
               return $ tys !! i
             UnwrapNewtype -> do
               NewtypeTyCon tc <- return s
-              snd <$> unwrapNewtypeType tc
+              return $ snd $ unwrapNewtypeType tc
           checkTypesEq givenTy' (TC $ RefType h resultEltTy)
           return $ ProjRef givenTy' p
       return $ RefOp ref' m'
@@ -574,7 +567,7 @@ checkSomeSumType :: IRRep r => Type r o -> TyperM r i o [Type r o]
 checkSomeSumType = \case
   SumTy cases -> return cases
   NewtypeTyCon con -> do
-    (_, SumTy cases) <- unwrapNewtypeType con
+    (_, SumTy cases) <- return $ unwrapNewtypeType con
     return cases
   t -> error $ "not some sum type: " ++ pprint t
 
@@ -674,7 +667,7 @@ checkHof (EffTy effs reqTy) = \case
   CatchException reqTy' body -> do
     reqTy'' <- checkE reqTy'
     checkTypesEq reqTy reqTy''
-    TypeCon _ _ (TyConParams _[Type ty]) <- return reqTy''  -- TODO: take more care in unpacking Maybe
+    NewtypeTyCon (UserADTType _ _ (TyConParams _[Type ty]) _) <- return reqTy''  -- TODO: take more care in unpacking Maybe
     body' <- checkBlock (EffTy (extendEffect ExceptionEffect effs) ty) body
     return $ CatchException reqTy'' body'
 
@@ -750,7 +743,7 @@ checkCaseAltsBinderTys :: IRRep r => Type r n -> TyperM r i n [Type r n]
 checkCaseAltsBinderTys ty = case ty of
   SumTy types -> return types
   NewtypeTyCon t -> case t of
-    UserADTType _ defName (TyConParams _ params) -> do
+    UserADTType _ defName (TyConParams _ params) _ -> do
       def <- lookupTyCon defName
       ADTCons cons <- checkInstantiation def params
       return [repTy | DataConDef _ _ repTy _ <- cons]

@@ -82,6 +82,11 @@ emitExpr :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
 emitExpr expr = Var <$> emit expr
 {-# INLINE emitExpr #-}
 
+emitAtom :: (Builder r m, Emits n) => Atom r n -> m n (AtomVar r n)
+emitAtom (Var v) = return v
+emitAtom x = emit (Atom x)
+{-# INLINE emitAtom #-}
+
 emitHof :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
 emitHof hof = mkTypedHof hof >>= emitOp
 
@@ -264,7 +269,7 @@ class (EnvReader m, MonadFail1 m) => TopBuilder (m::MonadKind1) where
   -- implemented more efficiently by avoiding a double substitution
   -- XXX: emitBinding/emitEnv don't extend the synthesis candidates
   -- TODO: do we actually need `emitBinding`? Top emissions probably aren't hot.
-  emitBinding :: Mut n => Color c => NameHint -> Binding c n -> m n (Name c n)
+  emitBinding :: (ToBinding e c, Mut n, Color c) => NameHint -> e n -> m n (Name c n)
   emitEnv :: (Mut n, SinkableE e, RenameE e) => Abs TopEnvFrag e n -> m n (e n)
   emitNamelessEnv :: TopEnvFrag n n -> m n ()
   localTopBuilder :: SinkableE e
@@ -284,15 +289,16 @@ updateTopEnv update = emitNamelessEnv $ TopEnvFrag emptyOutFrag mempty (toSnocLi
 emitLocalModuleEnv :: TopBuilder m => ModuleEnv n -> m n ()
 emitLocalModuleEnv env = emitNamelessEnv $ TopEnvFrag emptyOutFrag env mempty
 
-emitTopLet :: (Mut n, TopBuilder m) => NameHint -> LetAnn -> Expr CoreIR n -> m n (AtomVar CoreIR n)
-emitTopLet hint letAnn expr = do
-  ty <- return $ getType expr
-  v <- emitBinding hint $ AtomNameBinding $ LetBound (DeclBinding letAnn expr)
+emitTopCAtom :: (Mut n, TopBuilder m) => NameHint -> CAtom n -> m n (AtomVar CoreIR n)
+emitTopCAtom _ (Var v) = return v
+emitTopCAtom hint x = do
+  ty <- return $ getType x
+  v <- emitBinding hint $ TopCAtom x
   return $ AtomVar v ty
 
 emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> STopLam n -> m n (TopFunName n)
 emitTopFunBinding hint def f = do
-  emitBinding hint $ TopFunBinding $ DexTopFun def f Waiting
+  emitBinding hint $ DexTopFun def f Waiting
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
@@ -926,8 +932,8 @@ addTangent x y = do
 symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
 symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
-    return $ TypeCon "SymbolicTangent" symTanName $
-      TyConParams [Explicit] [Type elTy]
+    let params = TyConParams [Explicit] [Type elTy]
+    NewtypeTyCon <$> mkUserADTType "SymbolicTangent" symTanName params
   Nothing -> throw UnboundVarErr $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
@@ -1059,7 +1065,7 @@ unwrapNewtype :: EnvReader m => CAtom n -> m n (CAtom n)
 unwrapNewtype (NewtypeCon _ x) = return x
 unwrapNewtype x = case getType x of
   NewtypeTyCon con -> do
-    (_, ty) <- unwrapNewtypeType con
+    (_, ty) <- return $ unwrapNewtypeType con
     return $ ProjectElt ty UnwrapNewtype x
   _ -> error "not a newtype"
 {-# INLINE unwrapNewtype #-}
@@ -1081,7 +1087,7 @@ projectStructRef i x = do
 {-# INLINE projectStructRef #-}
 
 getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
-getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
+getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _ _)) = do
   TyConDef _ _ _ ~(StructFields fields) <- lookupTyCon tyConName
   return case fields of
     [_] | i == 0    -> [UnwrapNewtype]
@@ -1186,7 +1192,7 @@ mkIndexRef ref i = do
 
 mkProjRef :: (EnvReader m, IRRep r) => Atom r n -> Projection -> m n (PrimOp r n)
 mkProjRef ref i = do
-  resultTy <- typeOfProjRef (getType ref) i
+  let resultTy = typeOfProjRef (getType ref) i
   return $ RefOp ref $ ProjRef resultTy i
 
 -- === index set type class ===
@@ -1402,11 +1408,12 @@ telescopicCapture bs e = do
   return (result, reconAbs)
 
 applyReconAbs
-  :: (EnvReader m, Fallible1 m, SinkableE e, SubstE AtomSubstVal e, IRRep r)
+  :: (Builder r m, Emits n, Fallible1 m, HasNamesE e, IRRep r)
   => ReconAbs r e n -> Atom r n -> m n (e n)
-applyReconAbs (Abs bs result) x = do
-  xs <- unpackTelescope bs x
-  applySubst (bs @@> map SubstVal xs) result
+applyReconAbs (Abs bs result) atom = do
+  xs <- unpackTelescope bs atom
+  vs <- forM xs \x -> atomVarName <$> emitAtom x
+  applyRename (bs @@> vs) result
 
 buildTelescopeTy
   :: (EnvReader m, EnvExtender m, Color c, HoistableE e)

@@ -93,12 +93,12 @@ showAnyRec atom = case getType atom of
       emitExpr (PrimOp $ MiscOp $ CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
-    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
+    UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty])_  -> do
       charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
-    UserADTType tySourceName defName params -> do
+    UserADTType tySourceName defName params _ -> do
       def <- lookupTyCon defName
       conDefs <- instantiateTyConDef def params
       case conDefs of
@@ -226,7 +226,7 @@ constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of
-      UTyConVar v -> return $ TypeCon sourceName v params
+      UTyConVar v -> NewtypeTyCon <$> mkUserADTType sourceName v params
       _ -> notfound
     Nothing -> notfound
  where notfound = error $ "Type constructor not defined: " ++ sourceName

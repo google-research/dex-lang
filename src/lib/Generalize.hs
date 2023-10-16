@@ -29,7 +29,7 @@ generalizeIxDict dict = liftGeneralizerM do
   dictTyGeneralized <- generalizeType dictTy
   dictGeneralized <- liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
   return dictGeneralized
--- {-# INLINE generalizeIxDict #-}
+{-# INLINE generalizeIxDict #-}
 
 generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
 generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
@@ -150,10 +150,10 @@ traverseTyParams ty f = getDistinct >>= \Distinct -> case ty of
     Nat -> return Nat
     Fin n -> Fin <$> f DataParam NatTy n
     EffectRowKind    -> return EffectRowKind
-    UserADTType sn def (TyConParams infs params) -> do
+    UserADTType sn def (TyConParams infs params) _ -> do
       Abs roleBinders UnitE <- getDataDefRoleBinders def
       params' <- traverseRoleBinders f roleBinders params
-      return $ UserADTType sn def $ TyConParams infs params'
+      mkUserADTType sn def (TyConParams infs params')
   _ -> error $ "Not implemented: " ++ pprint ty
   where
     f' :: forall l . DExt n l => ParamRole -> CType l -> CType l -> m l (CType l)

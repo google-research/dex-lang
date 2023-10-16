@@ -242,7 +242,7 @@ instance ReconFunctor MaybeReconAbs where
     TrivialRecon linLam -> return (primalAux, linLam)
     ReconWithData reconAbs -> do
       (primal, residuals) <- fromPair primalAux
-      linLam' <- applyReconAbs reconAbs residuals
+      linLam' <- undefined -- applyReconAbs reconAbs residuals
       return (primal, linLam')
 
 instance ReconFunctor ObligateReconAbs where
@@ -255,7 +255,7 @@ instance ReconFunctor ObligateReconAbs where
   reconstruct primalAux recon = case recon of
     ObligateRecon _ reconAbs -> do
       (primal, residuals) <- fromPair primalAux
-      linLam' <- applyReconAbs reconAbs residuals
+      linLam' <- undefined -- applyReconAbs reconAbs residuals
       return (primal, linLam')
 
 linearizeBlockDefunc :: SBlock i -> PrimalM i o (SBlock o, LinLamAbs o)
@@ -340,7 +340,6 @@ linearizeAtom atom = case atom of
     return $ WithTangent xi do
       t <- tx
       normalizeProj i t
-  RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
 linearizeBlock :: Emits o => SBlock i -> LinM i o SAtom SAtom

@@ -361,6 +361,26 @@ pattern UnaryNest b = Nest b Empty
 pattern BinaryNest :: b n l1 -> b l1 l2 -> Nest b n l2
 pattern BinaryNest b1 b2 = Nest b1 (Nest b2 Empty)
 
+data SuspendedSubst (c::C) (e::E) (v::E) (n::S) =
+  SuspendedSubst (NaryAbs c e n) [v n]
+  deriving (Generic)
+
+deriving instance (Color c, ShowE v, ShowE e) => Show (SuspendedSubst c e v n)
+
+instance (Color c, Store (v n), Store (e UnsafeS), Generic (e UnsafeS))
+  => Store (SuspendedSubst c e v n)
+
+instance GenericE (SuspendedSubst c e v) where
+  type RepE (SuspendedSubst c e v) = PairE (NaryAbs c e) (ListE v)
+  fromE (SuspendedSubst ab vs) = PairE ab (ListE vs)
+  {-# INLINE fromE #-}
+  toE (PairE ab vs) = SuspendedSubst ab (fromListE vs)
+  {-# INLINE toE #-}
+
+instance (Color c, HasNamesE e, HasNamesE v) => SinkableE  (SuspendedSubst c e v)
+instance (Color c, HasNamesE e, HasNamesE v) => HoistableE (SuspendedSubst c e v)
+instance (Color c, HasNamesE e, HasNamesE v) => RenameE    (SuspendedSubst c e v)
+
 -- === Sinkings and projections ===
 
 class ProvesExt (b :: B) where

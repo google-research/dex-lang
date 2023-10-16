@@ -247,10 +247,8 @@ instance IRRep r => PrettyPrec (Atom r n) where
     Eff e -> atPrec ArgPrec $ p e
     PtrVar _ v -> atPrec ArgPrec $ p v
     DictCon _ d -> atPrec LowestPrec $ p d
-    RepValAtom x -> atPrec LowestPrec $ pretty x
     ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
-    SimpInCore x -> prettyPrec x
     TypeAsAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
@@ -265,14 +263,6 @@ instance IRRep r => PrettyPrec (Type r n) where
     TyVar v -> atPrec ArgPrec $ p v
     ProjectEltTy _ idxs v ->
       atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
-
-instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (SimpInCore n) where
-  prettyPrec = \case
-    LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
-    LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
-    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
-    TabLam _ _ -> atPrec AppPrec $ "tablam"
 
 instance IRRep r => Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
@@ -377,13 +367,17 @@ instance PrettyPrec (AtomVar r n) where
 instance Pretty (AtomVar r n) where pretty = prettyFromPrettyPrec
 
 instance IRRep r => Pretty (AtomBinding r n) where
-  pretty binding = case binding of
+  pretty = \case
     LetBound    b -> p b
     MiscBound   t -> p t
     SolverBound b -> p b
-    FFIFunBound s _ -> p s
+    TopAtomBinding b -> p b
+
+instance IRRep r => Pretty (TopAtomBinding r n) where
+  pretty = \case
+    FFIFun s _ -> p s
     NoinlineFun ty _ -> "Top function with type: " <+> p ty
-    TopDataBound (RepVal ty _) -> "Top data with type: " <+> p ty
+    TopRepVal (RepVal ty _) -> "Top data with type: " <+> p ty
 
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
@@ -840,11 +834,11 @@ instance PrettyPrec (NewtypeTyCon n) where
     Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
     EffectRowKind -> atPrec ArgPrec "EffKind"
-    UserADTType "RangeTo"      _ (TyConParams _ [i]) -> atPrec LowestPrec $ ".."  <> pApp i
-    UserADTType "RangeToExc"   _ (TyConParams _ [i]) -> atPrec LowestPrec $ "..<" <> pApp i
-    UserADTType "RangeFrom"    _ (TyConParams _ [i]) -> atPrec LowestPrec $ pApp i <>  ".."
-    UserADTType "RangeFromExc" _ (TyConParams _ [i]) -> atPrec LowestPrec $ pApp i <> "<.."
-    UserADTType name _ (TyConParams infs params) -> case (infs, params) of
+    UserADTType "RangeTo"      _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ ".."  <> pApp i
+    UserADTType "RangeToExc"   _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ "..<" <> pApp i
+    UserADTType "RangeFrom"    _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ pApp i <>  ".."
+    UserADTType "RangeFromExc" _ (TyConParams _ [i]) _ -> atPrec LowestPrec $ pApp i <> "<.."
+    UserADTType name _ (TyConParams infs params) _ -> case (infs, params) of
       ([], []) -> atPrec ArgPrec $ p name
       ([Explicit, Explicit], [l, r])
         | Just sym <- fromInfix (fromString name) ->

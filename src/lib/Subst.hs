@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Data.Maybe
 
 import Name
 import MTL1
@@ -85,6 +86,23 @@ fmapNamesM f e = do
   Distinct <- getDistinct
   return $ substE (env, newSubst f) e
 {-# INLINE fmapNamesM #-}
+
+suspendSubst
+  :: forall r e v m i o. (IRRep r, HasNamesE e, ScopeReader2 m, SubstReader (SubstVal v) m)
+  => e i -> m i o (SuspendedSubst (AtomNameC r) e (v r) o)
+suspendSubst e = do
+  s <- getSubst
+  vs <- return $ nameSetToList @(AtomNameC r) $ freeVarsE e
+  (vs', vals) <- return $ unzip $ catMaybes $ flip map vs \v ->
+    case s ! v of
+      Rename _ -> Nothing
+      SubstVal x -> Just (v, x)
+  let xAbs = abstractFreeVarsNoAnn vs' e
+  xAbs' <- fmapRenamingM (\v -> case s ! v of
+                                  Rename v' -> v'
+                                  SubstVal _ -> error "impossible") xAbs
+  return $ SuspendedSubst xAbs' vals
+{-# INLINE suspendSubst #-}
 
 -- === type classes for traversing names ===
 
@@ -242,6 +260,8 @@ substBindersFrag b cont = do
   ab <- substM $ Abs b $ idSubstFrag b
   refreshAbs ab \b' subst -> cont subst b'
 {-# INLINE substBindersFrag #-}
+
+-- === suspended substitutions ===
 
 -- === atom subst vals ===
 

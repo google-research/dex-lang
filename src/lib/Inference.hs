@@ -70,7 +70,7 @@ inferTopUDecl (UStructDecl tc def) result = do
   forM_ methods \(letAnn, methodName, methodDef) -> do
     method <- liftInfererM $ extendRenamer (tc@>tc') $
       inferDotMethod tc' (Abs paramBs methodDef)
-    method' <- emitTopLet (getNameHint methodName) letAnn (Atom $ Lam method)
+    method' <- emitTopCAtom (getNameHint methodName) (Lam method)
     updateTopEnv $ UpdateFieldDef tc' methodName (atomVarName method')
   UDeclResultDone <$> applyRename (tc @> tc') result
 inferTopUDecl (UDataDefDecl def tc dcs) result = do
@@ -104,7 +104,7 @@ inferTopUDecl (UInstance className bs params methods maybeName expl) result = do
     JustB instanceName' -> do
       instanceName <- emitInstanceDef def
       lam <- instanceFun instanceName expl
-      instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
+      instanceAtomName <- emitTopCAtom (getNameHint instanceName') lam
       applyRename (instanceName' @> atomVarName instanceAtomName) result
     _ -> error "impossible"
 inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case decl of
@@ -657,7 +657,7 @@ data FieldDef (n::S) =
 
 getFieldDefs :: CType n -> InfererM i n (M.Map FieldName' (FieldDef n))
 getFieldDefs ty = case ty of
-  NewtypeTyCon (UserADTType _ tyName params) -> do
+  NewtypeTyCon (UserADTType _ tyName params _) -> do
     TyConBinding ~(Just tyDef) (DotMethods dotMethods) <- lookupEnv tyName
     instantiateTyConDef tyDef params >>= \case
       StructFields fields -> do
@@ -768,7 +768,7 @@ applySigmaAtom (SigmaUVar _ _ f) args = case f of
   UTyConVar f' -> do
     TyConDef sn roleExpls _ _ <- lookupTyCon f'
     let expls = snd <$> roleExpls
-    return $ Type $ NewtypeTyCon $ UserADTType sn f' (TyConParams expls args)
+    Type . NewtypeTyCon <$> mkUserADTType sn f' (TyConParams expls args)
   UDataConVar v -> do
     (tyCon, i) <- lookupDataCon v
     applyDataCon tyCon i args
@@ -1091,18 +1091,11 @@ buildNthOrderedAlt :: (Emits n, Builder CoreIR m)
                    => [IndexedAlt n] -> CType n -> CType n -> Int -> CAtom n
                    -> m n (CAtom n)
 buildNthOrderedAlt alts scrutTy resultTy i v = do
-  case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
+  case lookup i [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
       emitOp $ MiscOp $ ThrowError resultTy'
     Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
-
--- converts from the ordinal index used in the core IR to the more complicated
--- `CaseAltIndex` used in the surface IR.
-nthCaseAltIdx :: CType n -> Int -> CaseAltIndex
-nthCaseAltIdx ty i = case ty of
-  TypeCon _ _ _ -> i
-  _ -> error $ "can't pattern-match on: " <> pprint ty
 
 buildMonomorphicCase
   :: (Emits n, ScopableBuilder CoreIR m)
@@ -1121,7 +1114,7 @@ buildSortedCase :: (Fallible1 m, Builder CoreIR m, Emits n)
 buildSortedCase scrut alts resultTy = do
   scrutTy <- return $ getType scrut
   case scrutTy of
-    TypeCon _ defName _ -> do
+    NewtypeTyCon (UserADTType _ defName _ _) -> do
       TyConDef _ _ _ (ADTCons cons) <- lookupTyCon defName
       case cons of
         [] -> error "case of void?"
@@ -1176,7 +1169,7 @@ inferDotMethod tc (Abs uparamBs (Abs selfB lam)) = do
   withFreshBindersInf expls (Abs paramBs UnitE) \paramBs' UnitE -> do
     let paramVs = bindersVars paramBs'
     extendRenamer (uparamBs @@> (atomVarName <$> paramVs)) do
-      let selfTy = NewtypeTyCon $ UserADTType sn (sink tc) (TyConParams expls (Var <$> paramVs))
+      selfTy <- NewtypeTyCon <$> mkUserADTType sn (sink tc) (TyConParams expls (Var <$> paramVs))
       withFreshBinderInf "self" Explicit selfTy \selfB' -> do
         lam' <- extendRenamer (selfB @> binderName selfB') $ inferULam lam
         return $ prependCoreLamExpr (expls ++ [Explicit]) (paramBs' >>> UnaryNest selfB') lam'
@@ -1503,7 +1496,7 @@ inferParams ty dataDefName = do
         Explicit -> Inferred Nothing Unify
         expl -> expl
   paramBsAbs <- buildConstraints (Abs paramBs UnitE) \params _ -> do
-    let ty' = TypeCon sourceName (sink dataDefName) $ TyConParams paramExpls params
+    ty' <- NewtypeTyCon <$> mkUserADTType sourceName (sink dataDefName) (TyConParams paramExpls params)
     return [TypeConstraint (sink ty) ty']
   args <- inferMixedArgs sourceName inferenceExpls paramBsAbs emptyMixedArgs
   return $ TyConParams paramExpls args
@@ -1720,7 +1713,7 @@ instance Unifiable NewtypeTyCon where
     (Nat, Nat) -> return ()
     (Fin n, Fin n') -> unify n n'
     (EffectRowKind, EffectRowKind) -> return ()
-    (UserADTType _ c params, UserADTType _ c' params') -> guard (c == c') >> unify params params'
+    (UserADTType _ c params _, UserADTType _ c' params' _) -> guard (c == c') >> unify params params'
     _ -> empty
 
 instance Unifiable (IxType CoreIR) where
@@ -2119,7 +2112,7 @@ synthDictForData dictTy@(DictType "Data" dName [Type ty]) = case ty of
   DepPairTy (DepPairType _ b@(_:>l) r) -> do
     recur l >> recurBinder (Abs b r) >> success
   NewtypeTyCon nt -> do
-    (_, ty') <- unwrapNewtypeType nt
+    (_, ty') <- return $ unwrapNewtypeType nt
     recur ty' >> success
   TC con -> case con of
     BaseType _       -> success

@@ -323,7 +323,6 @@ transposeAtom atom ct = case atom of
         ref' <- getNaryProjRef (toList idxs) ref
         emitCTToRef ref' ct
       LinTrivial -> return ()
-  RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()

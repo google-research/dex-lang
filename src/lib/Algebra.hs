@@ -151,7 +151,6 @@ blockAsPolyRec decls result = case decls of
     atomAsPoly :: Atom SimpIR i -> BlockTraverserM i o (Polynomial o)
     atomAsPoly = \case
       Var v       -> atomVarAsPoly v
-      RepValAtom (RepVal _ (Leaf (IVar v' _))) -> impNameAsPoly v'
       IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
       _ -> empty
 
@@ -207,15 +206,16 @@ emitPolynomial (Polynomial p) = do
     asAtom = IdxRepVal . fromInteger
 
 emitMonomial :: Emits n => Monomial n -> BuilderM SimpIR n (Atom SimpIR n)
-emitMonomial (Monomial m) = do
-  varAtoms <- forM (toList m) \(v, e) -> case v of
-    LeftE v' -> do
-      v'' <- Var <$> toAtomVar v'
-      ipow v'' e
-    RightE v' -> do
-      let atom = RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
-      ipow atom e
-  foldM imul (IdxRepVal 1) varAtoms
+emitMonomial (Monomial m) = undefined
+-- emitMonomial (Monomial m) = do
+--   varAtoms <- forM (toList m) \(v, e) -> case v of
+--     LeftE v' -> do
+--       v'' <- Var <$> toAtomVar v'
+--       ipow v'' e
+--     RightE v' -> do
+--       let atom = RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
+--       ipow atom e
+--   foldM imul (IdxRepVal 1) varAtoms
 
 ipow :: Emits n => Atom SimpIR n -> Int -> BuilderM SimpIR n (Atom SimpIR n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)

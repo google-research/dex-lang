@@ -11,9 +11,8 @@ module CheapReduction
   ( CheaplyReducibleE (..), cheapReduce, cheapReduceWithDecls, cheapNormalize
   , normalizeProj, asNaryProj, normalizeNaryProj
   , depPairLeftTy, instantiateTyConDef
-  , dataDefRep, unwrapNewtypeType, repValAtom
-  , unwrapLeadingNewtypesType, wrapNewtypesData, liftSimpAtom, liftSimpType
-  , liftSimpFun, makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
+  , dataDefRep, unwrapNewtypeType
+  , makeStructRepVal, NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
   , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst)
@@ -40,7 +39,6 @@ import QueryTypePure
 import Types.Core
 import Types.Imp
 import Types.Primitives
-import Util
 
 -- Carry out the reductions we are willing to carry out during type
 -- inference.  The goal is to support type aliases like `Int = Int32`
@@ -158,7 +156,7 @@ cheapReduceAtomBinding
   :: forall r i o. IRRep r
   => AtomName r o -> AtomBinding r o -> CheapReducerM r i o (AtomSubstVal (AtomNameC r) o)
 cheapReduceAtomBinding v = \case
-  LetBound (DeclBinding _ e) -> do
+  TopAtomBinding (TopCAtom e) -> do
     cachedVal <- lookupCache v >>= \case
       Nothing -> do
         result <- optional (dropSubst $ cheapReduceE e)
@@ -189,10 +187,6 @@ instance IRRep r => CheaplyReducibleE r (Atom r) (Atom r) where
     DictCon t d -> do
       t' <- cheapReduceE t
       cheapReduceDictExpr t' d
-    SimpInCore (LiftSimp t x) -> do
-      t' <- cheapReduceE t
-      x' <- substM x
-      liftSimpAtom t' x'
     -- These two are a special-case hack. TODO(dougalm): write a traversal over
     -- the NewtypeTyCon (or types generally)
     NewtypeCon NatCon n -> NewtypeCon NatCon <$> cheapReduceE n
@@ -332,86 +326,21 @@ normalizeNaryProj (i:is) x = normalizeProj i =<< normalizeNaryProj is x
 normalizeProj :: IRRep r => EnvReader m => Projection -> Atom r n -> m n (Atom r n)
 normalizeProj UnwrapNewtype atom = case atom of
   NewtypeCon  _ x -> return x
-  SimpInCore (LiftSimp (NewtypeTyCon t) x) -> do
-    t' <- snd <$> unwrapNewtypeType t
-    return $ SimpInCore $ LiftSimp t' x
   x -> case getType x of
     NewtypeTyCon t -> do
-      t' <- snd <$> unwrapNewtypeType t
+      let t' = snd $ unwrapNewtypeType t
       return $ ProjectElt t' UnwrapNewtype x
     _ -> error "expected a newtype"
 normalizeProj (ProjectProduct i) atom = case atom of
   Con (ProdCon xs) -> return $ xs !! i
   DepPair l _ _ | i == 0 -> return l
   DepPair _ r _ | i == 1 -> return r
-  SimpInCore (LiftSimp _ x) -> do
-    x' <- normalizeProj (ProjectProduct i) x
-    resultTy <- getResultTy
-    return $ SimpInCore $ LiftSimp resultTy x'
-  RepValAtom (RepVal _ tree) -> case tree of
-    Branch trees -> do
-      resultTy <- getResultTy
-      repValAtom $ RepVal resultTy (trees!!i)
-    Leaf _ -> error "unexpected leaf"
   _ -> do
     resultTy <- getResultTy
     return $ ProjectElt resultTy (ProjectProduct i) atom
   where
     getResultTy = projType i (getType atom) atom
 {-# INLINE normalizeProj #-}
-
--- === lifting imp to simp and simp to core ===
-
-repValAtom :: EnvReader m => SRepVal n -> m n (SAtom n)
-repValAtom (RepVal ty tree) = case ty of
-  ProdTy ts -> case tree of
-    Branch trees -> ProdVal <$> mapM repValAtom (zipWith RepVal ts trees)
-    _ -> malformed
-  BaseTy _ -> case tree of
-    Leaf x -> case x of
-      ILit l -> return $ Con $ Lit l
-      _ -> fallback
-    _ -> malformed
-  _ -> fallback
-  where fallback = return $ RepValAtom $ RepVal ty tree
-        malformed = error "malformed repval"
-{-# INLINE repValAtom #-}
-
-liftSimpType :: EnvReader m => SType n -> m n (CType n)
-liftSimpType = \case
-  BaseTy t -> return $ BaseTy t
-  ProdTy ts -> ProdTy <$> mapM rec ts
-  SumTy  ts -> SumTy  <$> mapM rec ts
-  t -> error $ "not implemented: " ++ pprint t
-  where rec = liftSimpType
-{-# INLINE liftSimpType #-}
-
-liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
-liftSimpAtom ty simpAtom = case simpAtom of
-  Var _          -> justLift
-  ProjectElt _ _ _ -> justLift
-  RepValAtom _   -> justLift -- TODO(dougalm): should we make more effort to pull out products etc?
-  _ -> do
-    (cons , ty') <- unwrapLeadingNewtypesType ty
-    atom <- case (ty', simpAtom) of
-      (BaseTy _  , Con (Lit v))      -> return $ Con $ Lit v
-      (ProdTy tys, Con (ProdCon xs))   -> Con . ProdCon <$> zipWithM rec tys xs
-      (SumTy  tys, Con (SumCon _ i x)) -> Con . SumCon tys i <$> rec (tys!!i) x
-      (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
-        x1' <- rec t1 x1
-        t2' <- applySubst (b@>SubstVal x1') t2
-        x2' <- rec t2' x2
-        return $ DepPair x1' x2' dpt
-      _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty'
-    return $ wrapNewtypesData cons atom
-  where
-    rec = liftSimpAtom
-    justLift = return $ SimpInCore $ LiftSimp ty simpAtom
-{-# INLINE liftSimpAtom #-}
-
-liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
-liftSimpFun (Pi piTy) f = return $ SimpInCore $ LiftSimpFun piTy f
-liftSimpFun _ _ = error "not a pi type"
 
 -- See Note [Confuse GHC] from Simplify.hs
 confuseGHC :: IRRep r => CheapReducerM r i n (DistinctEvidence n)
@@ -421,19 +350,15 @@ confuseGHC = getDistinct
 -- TODO: These used to live in QueryType. Think about a better way to organize
 -- them. Maybe a common set of low-level type-querying utils that both
 -- CheapReduction and QueryType import?
-
 depPairLeftTy :: DepPairType r n -> Type r n
 depPairLeftTy (DepPairType _ (_:>ty) _) = ty
 {-# INLINE depPairLeftTy #-}
 
-unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
+unwrapNewtypeType :: NewtypeTyCon n -> (NewtypeCon n, Type CoreIR n)
 unwrapNewtypeType = \case
-  Nat                   -> return (NatCon, IdxRepTy)
-  Fin n                 -> return (FinCon n, NatTy)
-  UserADTType sn defName params -> do
-    def <- lookupTyCon defName
-    ty' <- dataDefRep <$> instantiateTyConDef def params
-    return (UserADTData sn defName params, ty')
+  Nat                   -> (NatCon, IdxRepTy)
+  Fin n                 -> (FinCon n, NatTy)
+  UserADTType sn defName params repTy -> (UserADTData sn defName params, repTy)
   ty -> error $ "Shouldn't be projecting: " ++ pprint ty
 {-# INLINE unwrapNewtypeType #-}
 
@@ -445,18 +370,6 @@ projType i ty x = case ty of
     xFst <- normalizeProj (ProjectProduct 0) x
     instantiate t [xFst]
   _ -> error $ "Can't project type: " ++ pprint ty
-
-unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
-unwrapLeadingNewtypesType = \case
-  NewtypeTyCon tyCon -> do
-    (dataCon, ty) <- unwrapNewtypeType tyCon
-    (dataCons, ty') <- unwrapLeadingNewtypesType ty
-    return (dataCon:dataCons, ty')
-  ty -> return ([], ty)
-
-wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
-wrapNewtypesData [] x = x
-wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
 instantiateTyConDef (TyConDef _ _ bs conDefs) (TyConParams _ xs) = do
@@ -559,7 +472,6 @@ visitAtomDefault
   => Atom r i -> m i o (Atom r o)
 visitAtomDefault atom = case atom of
   Var _          -> atomSubstM atom
-  SimpInCore _   -> atomSubstM atom
   ProjectElt t i x -> ProjectElt <$> visitType t <*> pure i <*> visitGeneric x
   _ -> visitAtomPartial atom
 
@@ -592,14 +504,13 @@ visitBinders (Nest (b:>ty) bs) cont = do
       visitBinders bs \bs' ->
         cont $ Nest b' bs'
 
--- XXX: This doesn't handle the `Var`, `ProjectElt`, `SimpInCore` cases. These
+-- XXX: This doesn't handle the `Var` or `ProjectElt` cases. These
 -- should be handled explicitly beforehand. TODO: split out these cases under a
 -- separate constructor, perhaps even a `hole` paremeter to `Atom` or part of
 -- `IR`.
 visitAtomPartial :: (IRRep r, Visitor m r i o) => Atom r i -> m (Atom r o)
 visitAtomPartial = \case
   Var _          -> error "Not handled generically"
-  SimpInCore _   -> error "Not handled generically"
   ProjectElt _ _ _ -> error "Not handled generically"
   Con con -> Con <$> visitGeneric con
   PtrVar t v -> PtrVar t <$> renameN v
@@ -613,7 +524,6 @@ visitAtomPartial = \case
   DictCon t d -> DictCon <$> visitType t <*> visitGeneric d
   NewtypeCon con x -> NewtypeCon <$> visitGeneric con <*> visitGeneric x
   TypeAsAtom t -> TypeAsAtom <$> visitGeneric t
-  RepValAtom repVal -> RepValAtom <$> visitGeneric repVal
 
 -- XXX: This doesn't handle the `TyVar` or `ProjectEltTy` cases. These should be
 -- handled explicitly beforehand.
@@ -722,7 +632,7 @@ instance VisitGeneric NewtypeTyCon CoreIR where
     Nat -> return Nat
     Fin x -> Fin <$> visitGeneric x
     EffectRowKind -> return EffectRowKind
-    UserADTType n v params -> UserADTType n <$> renameN v <*> visitGeneric params
+    UserADTType n v params t -> UserADTType n <$> renameN v <*> visitGeneric params <*> visitType t
 
 instance VisitGeneric TyConParams CoreIR where
   visitGeneric (TyConParams expls xs) = TyConParams expls <$> mapM visitGeneric xs
@@ -837,7 +747,6 @@ instance IRRep r => SubstE AtomSubstVal (Atom r) where
     Var (AtomVar v ty) -> case subst!v of
       Rename v' -> Var $ AtomVar v' (substE es ty)
       SubstVal x -> x
-    SimpInCore x   -> SimpInCore (substE es x)
     ProjectElt _ i x -> do
      let x' = substE es x
      runEnvReaderM env $ normalizeProj i x'
@@ -855,8 +764,6 @@ instance IRRep r => SubstE AtomSubstVal (Type r) where
        Type t   -> t
        _ -> error "bad substitution"
     ty -> runReader (runSubstVisitor $ visitTypePartial ty) es
-
-instance SubstE AtomSubstVal SimpInCore
 
 instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
   substE env (EffectRow effs tailVar) = do
@@ -919,3 +826,4 @@ instance SubstE AtomSubstVal NewtypeCon
 instance IRRep r => SubstE AtomSubstVal (IxDict r)
 instance IRRep r => SubstE AtomSubstVal (IxType r)
 instance SubstE AtomSubstVal DataConDefs
+instance IRRep r => SubstE AtomSubstVal (SimpAtom' r)
