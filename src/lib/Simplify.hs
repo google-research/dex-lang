@@ -73,9 +73,15 @@ tryAsDataAtom atom = do
  where
   go :: Emits n => CAtom n -> SimplifyM i n (SAtom n)
   go = \case
-    Var v -> lookupAtomName (atomVarName v) >>= \case
-      LetBound (DeclBinding _ (Atom x)) -> go x
-      _ -> error "Shouldn't have irreducible top names left"
+    Stuck e -> case e of
+      StuckVar v -> lookupAtomName (atomVarName v) >>= \case
+        LetBound (DeclBinding _ (Atom x)) -> go x
+        _ -> error "Shouldn't have irreducible top names left"
+      StuckUnwrap _ x -> go (Stuck x)
+      -- TODO: do we need to think about a case like `fst (1, \x.x)`, where
+      -- the projection is data but the argument isn't?
+      StuckProject _ i x -> reduceProj i =<< go (Stuck x)
+      _ -> notData
     Con con -> Con <$> case con of
       Lit v -> return $ Lit v
       ProdCon xs -> ProdCon <$> mapM go xs
@@ -85,10 +91,6 @@ tryAsDataAtom atom = do
     DepPair x y ty -> do
       DepPairTy ty' <- getRepType $ DepPairTy ty
       DepPair <$> go x <*> go y <*> pure ty'
-    ProjectElt _ UnwrapNewtype x -> go x
-    -- TODO: do we need to think about a case like `fst (1, \x.x)`, where
-    -- the projection is data but the argument isn't?
-    ProjectElt _ (ProjectProduct i) x -> normalizeProj (ProjectProduct i) =<< go x
     NewtypeCon _ x  -> go x
     SimpInCore x    -> case x of
       LiftSimp _ x' -> return x'
@@ -96,7 +98,7 @@ tryAsDataAtom atom = do
       TabLam _ tabLam -> forceTabLam tabLam
       ACase scrut alts resultTy -> forceACase scrut alts resultTy
     Lam _           -> notData
-    DictCon _ _     -> notData
+    DictCon _       -> notData
     Eff _           -> notData
     TypeAsAtom _    -> notData
     where
@@ -164,8 +166,7 @@ getRepType ty = go ty where
       go ty'
     Pi _           -> error notDataType
     DictTy _       -> error notDataType
-    TyVar _ -> error "Shouldn't have type variables in CoreIR IR with SimpIR builder names"
-    ProjectEltTy _ _ _ -> error "Shouldn't have this left"
+    StuckTy _ -> error "Shouldn't have stuck expressions in CoreIR IR with SimpIR builder names"
     where notDataType = "Not a type of runtime-representable data: " ++ pprint ty
 
 toDataAtom :: Emits n => CAtom n -> SimplifyM i n (SAtom n, Type CoreIR n)
@@ -341,6 +342,18 @@ simplifyExpr hint expr = confuseGHC >>= \_ -> case expr of
     defuncCaseCore scrut' resultTy' \i x -> do
       Abs b body <- return $ alts !! i
       extendSubst (b@>SubstVal x) $ simplifyBlock body
+  Project ty i x -> do
+    ty' <- substM ty
+    x'  <- substM x
+    tryAsDataAtom x' >>= \case
+      Just (x'', _) -> liftSimpAtom ty' =<< proj i x''
+      Nothing -> requireReduced $ Project ty' i x'
+  Unwrap _ _ -> requireReduced =<< substM expr
+
+requireReduced :: CExpr o -> SimplifyM i o (CAtom o)
+requireReduced expr = reduceExpr expr >>= \case
+  Just x -> return x
+  Nothing -> error "couldn't reduce expression"
 
 simplifyRefOp :: Emits o => RefOp CoreIR i -> SAtom o -> SimplifyM i o (SAtom o)
 simplifyRefOp op ref = case op of
@@ -486,8 +499,8 @@ simplifyAtomAndInline atom = confuseGHC >>= \_ -> case atom of
   -- This is a hack because we weren't normalize the unwrapping of
   -- `unit_type_scale` in `plot.dx`. We need a better system for deciding how to
   -- normalize and inline.
-  ProjectElt _ i x -> do
-    x' <- simplifyAtom x >>= normalizeProj i
+  Stuck (StuckProject _ i x) -> do
+    x' <- simplifyStuck x >>= reduceProj i
     dropSubst $ simplifyAtomAndInline x'
   _ -> simplifyAtom atom >>= \case
     Var v -> doInline v
@@ -572,11 +585,11 @@ simplifyIxType :: IxType CoreIR o -> SimplifyM i o (IxType SimpIR o)
 simplifyIxType (IxType t ixDict) = do
   t' <- getRepType t
   IxType t' <$> case ixDict of
-    IxDictAtom (DictCon _ (IxFin n)) -> do
+    IxDictAtom (DictCon (IxFin _ n)) -> do
       n' <- toDataAtomIgnoreReconAssumeNoDecls n
       return $ IxDictRawFin n'
     IxDictAtom d -> do
-      (dictAbs, params) <- generalizeIxDict =<< cheapNormalize d
+      (dictAbs, params) <- generalizeIxDict d
       params' <- mapM toDataAtomIgnoreReconAssumeNoDecls params
       sdName <- requireIxDictCache dictAbs
       return $ IxDictSpecialized t' sdName params'
@@ -621,17 +634,22 @@ ixMethodType method absDict = do
 -- TODO: do we even need this, or is it just a glorified `SubstM`?
 simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
 simplifyAtom atom = confuseGHC >>= \_ -> case atom of
-  Var v -> simplifyVar v
+  Stuck e -> simplifyStuck e
   Lam _ -> substM atom
   DepPair x y ty -> DepPair <$> simplifyAtom x <*> simplifyAtom y <*> substM ty
   Con con -> Con <$> traverseOp con substM simplifyAtom (error "unexpected lambda")
   Eff eff -> Eff <$> substM eff
   PtrVar t v -> PtrVar t <$> substM v
-  DictCon t d -> (DictCon <$> substM t <*> substM d) >>= cheapNormalize
+  DictCon _ -> substM atom
   NewtypeCon _ _ -> substM atom
-  ProjectElt _ i x -> normalizeProj i =<< simplifyAtom x
   SimpInCore _ -> substM atom
   TypeAsAtom _ -> substM atom
+
+simplifyStuck :: CStuck i -> SimplifyM i o (CAtom o)
+simplifyStuck = \case
+  StuckVar v -> simplifyVar v
+  StuckProject _ i x -> reduceProj i =<< simplifyStuck x
+  stuck -> substM (Stuck stuck)
 
 simplifyVar :: AtomVar CoreIR i -> SimplifyM i o (CAtom o)
 simplifyVar v = do
@@ -680,12 +698,12 @@ splitDataComponents = \case
       { dataTy    = ProdTy $ map dataTy    splits
       , nonDataTy = ProdTy $ map nonDataTy splits
       , toSplit = \xProd -> do
-          xs <- getUnpacked xProd
+          xs <- getUnpackedReduced xProd
           (ys, zs) <- unzip <$> forM (zip xs splits) \(x, split) -> toSplit split x
           return (ProdVal ys, ProdVal zs)
       , fromSplit = \xsProd ysProd -> do
-          xs <- getUnpacked xsProd
-          ys <- getUnpacked ysProd
+          xs <- getUnpackedReduced xsProd
+          ys <- getUnpackedReduced ysProd
           zs <- forM (zip (zip xs ys) splits) \((x, y), split) -> fromSplit split x y
           return $ ProdVal zs }
   ty -> tryGetRepType ty >>= \case
@@ -779,23 +797,22 @@ pattern CoerceReconAbs :: Abs (Nest b) ReconstructAtom n
 pattern CoerceReconAbs <- Abs _ (CoerceRecon _)
 
 applyDictMethod :: Emits o => CType o -> CAtom o -> Int -> [CAtom o] -> SimplifyM i o (CAtom o)
-applyDictMethod resultTy d i methodArgs = do
-  cheapNormalize d >>= \case
-    DictCon _ (InstanceDict instanceName instanceArgs) -> dropSubst do
-      instanceArgs' <- mapM simplifyAtom instanceArgs
-      instanceDef <- lookupInstanceDef instanceName
-      withInstantiated instanceDef instanceArgs' \(PairE _ body) -> do
-        let InstanceBody _ methods = body
-        let method = methods !! i
-        simplifyApp noHint resultTy method methodArgs
-    DictCon _ (IxFin n) -> applyIxFinMethod (toEnum i) n methodArgs
-    d' -> error $ "Not a simplified dict: " ++ pprint d'
+applyDictMethod resultTy d i methodArgs = case d of
+  DictCon (InstanceDict _ instanceName instanceArgs) -> dropSubst do
+    instanceArgs' <- mapM simplifyAtom instanceArgs
+    instanceDef <- lookupInstanceDef instanceName
+    withInstantiated instanceDef instanceArgs' \(PairE _ body) -> do
+      let InstanceBody _ methods = body
+      let method = methods !! i
+      simplifyApp noHint resultTy method methodArgs
+  DictCon (IxFin _ n) -> applyIxFinMethod (toEnum i) n methodArgs
+  d' -> error $ "Not a simplified dict: " ++ pprint d'
   where
     applyIxFinMethod :: EnvReader m => IxMethod -> CAtom n -> [CAtom n] -> m n (CAtom n)
     applyIxFinMethod method n args = do
       case (method, args) of
         (Size, []) -> return n  -- result : Nat
-        (Ordinal, [ix]) -> unwrapNewtype ix -- result : Nat
+        (Ordinal, [ix]) -> reduceUnwrap ix -- result : Nat
         (UnsafeFromOrdinal, [ix]) -> return $ NewtypeCon (FinCon n) ix
         _ -> error "bad ix args"
 
@@ -923,6 +940,44 @@ preludeMaybeNewtypeCon ty = do
 simplifyBlock :: Emits o => Block CoreIR i -> SimplifyM i o (CAtom o)
 simplifyBlock (Abs decls result) = simplifyDecls decls $ simplifyAtom result
 
+liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
+liftSimpAtom ty simpAtom = case simpAtom of
+  Stuck _        -> justLift
+  RepValAtom _   -> justLift -- TODO(dougalm): should we make more effort to pull out products etc?
+  _ -> do
+    (cons , ty') <- unwrapLeadingNewtypesType ty
+    atom <- case (ty', simpAtom) of
+      (BaseTy _  , Con (Lit v))      -> return $ Con $ Lit v
+      (ProdTy tys, Con (ProdCon xs))   -> Con . ProdCon <$> zipWithM rec tys xs
+      (SumTy  tys, Con (SumCon _ i x)) -> Con . SumCon tys i <$> rec (tys!!i) x
+      (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
+        x1' <- rec t1 x1
+        t2' <- applySubst (b@>SubstVal x1') t2
+        x2' <- rec t2' x2
+        return $ DepPair x1' x2' dpt
+      _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty'
+    return $ wrapNewtypesData cons atom
+  where
+    rec = liftSimpAtom
+    justLift = return $ SimpInCore $ LiftSimp ty simpAtom
+{-# INLINE liftSimpAtom #-}
+
+unwrapLeadingNewtypesType :: EnvReader m => CType n -> m n ([NewtypeCon n], CType n)
+unwrapLeadingNewtypesType = \case
+  NewtypeTyCon tyCon -> do
+    (dataCon, ty) <- unwrapNewtypeType tyCon
+    (dataCons, ty') <- unwrapLeadingNewtypesType ty
+    return (dataCon:dataCons, ty')
+  ty -> return ([], ty)
+
+liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
+liftSimpFun (Pi piTy) f = return $ SimpInCore $ LiftSimpFun piTy f
+liftSimpFun _ _ = error "not a pi type"
+
+wrapNewtypesData :: [NewtypeCon n] -> CAtom n-> CAtom n
+wrapNewtypesData [] x = x
+wrapNewtypesData (c:cs) x = NewtypeCon c $ wrapNewtypesData cs x
+
 -- === simplifying custom linearizations ===
 
 linearizeTopFun :: (Mut n, Fallible1 m, TopBuilder m) => LinearizationSpec n -> m n (TopFunName n, TopFunName n)
@@ -974,7 +1029,7 @@ simplifyCustomLinearization (Abs runtimeBs staticArgs) actives rule = do
         fCustom' <- sinkM fCustom
         resultTy <- typeOfApp (getType fCustom') staticArgs'
         pairResult <- dropSubst $ simplifyApp noHint resultTy fCustom' staticArgs'
-        (primalResult, fLin) <- fromPair pairResult
+        (primalResult, fLin) <- fromPairReduced pairResult
         primalResult' <- toDataAtomIgnoreRecon primalResult
         let explicitPrimalArgs = drop nImplicit staticArgs'
         allTangentTys <- forM explicitPrimalArgs \primalArg -> do

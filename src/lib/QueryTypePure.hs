@@ -70,18 +70,23 @@ instance IRRep r => HasType r (AtomVar r) where
 
 instance IRRep r => HasType r (Atom r) where
   getType atom = case atom of
-    Var name -> getType name
+    Stuck e -> getType e
     Lam (CoreLamExpr piTy _) -> Pi piTy
     DepPair _ _ ty -> DepPairTy ty
     Con con -> getType con
     Eff _ -> EffKind
     PtrVar t _ -> PtrTy t
-    DictCon ty _ -> ty
+    DictCon d -> getType d
     NewtypeCon con _ -> getNewtypeType con
     RepValAtom (RepVal ty _) -> ty
-    ProjectElt t _ _ -> t
     SimpInCore x -> getType x
     TypeAsAtom ty -> getType ty
+
+instance HasType CoreIR DictCon where
+  getType = \case
+    InstanceDict t _ _ -> t
+    IxFin t _ -> t
+    DataData t _ -> t
 
 instance IRRep r => HasType r (Type r) where
   getType = \case
@@ -91,8 +96,15 @@ instance IRRep r => HasType r (Type r) where
     DepPairTy _ -> TyKind
     TC _        -> TyKind
     DictTy _    -> TyKind
-    TyVar v     -> getType v
-    ProjectEltTy t _ _ -> t
+    StuckTy e   -> getType e
+
+instance IRRep r => HasType r (Stuck r) where
+  getType = \case
+    StuckVar (AtomVar _ t)  -> t
+    StuckProject t _ _      -> t
+    StuckUnwrap  t _        -> t
+    InstantiatedGiven t _ _ -> t
+    SuperclassProj t _ _    -> t
 
 instance HasType CoreIR SimpInCore where
   getType = \case
@@ -133,6 +145,8 @@ instance IRRep r => HasType r (Expr r) where
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
+    Project t _ _ -> t
+    Unwrap t _ -> t
 
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
@@ -267,6 +281,8 @@ instance IRRep r => HasEffects (Expr r) r where
     TabCon _ _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
+    Project _ _ _ -> Pure
+    Unwrap _ _ -> Pure
 
 instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr

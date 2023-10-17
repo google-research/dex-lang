@@ -70,6 +70,10 @@ emit :: (Builder r m, Emits n) => Expr r n -> m n (AtomVar r n)
 emit expr = emitDecl noHint PlainLet expr
 {-# INLINE emit #-}
 
+emitInline :: (Builder r m, Emits n) => Atom r n -> m n (AtomVar r n)
+emitInline atom = emitDecl noHint InlineLet $ Atom atom
+{-# INLINE emitInline #-}
+
 emitHinted :: (Builder r m, Emits n) => NameHint -> Expr r n -> m n (AtomVar r n)
 emitHinted hint expr = emitDecl hint PlainLet expr
 {-# INLINE emitHinted #-}
@@ -502,6 +506,8 @@ instance (IRRep r, Fallible m) => Builder r (BuilderT r m) where
     ty <- return $ getType expr
     v <- BuilderT $ freshExtendSubInplaceT hint \b ->
            (BuilderDeclEmission $ Let b $ DeclBinding ann expr, binderName b)
+    -- -- Debugging snippet
+    -- traceM $ pprint v ++ " = " ++ pprint expr
     return $ AtomVar v ty
   {-# INLINE rawEmitDecl #-}
 
@@ -726,7 +732,7 @@ injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt S
 injectAltResult sumTys con (Abs b body) = liftBuilder do
   buildAlt (binderType b) \v -> do
     originalResult <- emitBlock =<< applySubst (b@>SubstVal (Var v)) body
-    (dataResult, nonDataResult) <- fromPair originalResult
+    (dataResult, nonDataResult) <- fromPairReduced originalResult
     return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
@@ -1010,22 +1016,16 @@ ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
 ieq x y = emitOp $ BinOp (ICmp Equal) x y
 
-fromPair :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n (Atom r n, Atom r n)
+fromPair :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
 fromPair pair = do
   getUnpacked pair >>= \case
     [x, y] -> return (x, y)
     _ -> error "expected a pair"
 
-getFst :: Builder r m => Atom r n -> m n (Atom r n)
-getFst p = fst <$> fromPair p
-
-getSnd :: Builder r m => Atom r n -> m n (Atom r n)
-getSnd p = snd <$> fromPair p
-
 -- the rightmost index is applied first
-getNaryProjRef :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
-getNaryProjRef [] ref = return ref
-getNaryProjRef (i:is) ref = getProjRef i =<< getNaryProjRef is ref
+applyProjectionsRef :: (Builder r m, Emits n) => [Projection] -> Atom r n -> m n (Atom r n)
+applyProjectionsRef [] ref = return ref
+applyProjectionsRef (i:is) ref = getProjRef i =<< applyProjectionsRef is ref
 
 getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emitOp =<< mkProjRef r i
@@ -1033,51 +1033,53 @@ getProjRef i r = emitOp =<< mkProjRef r i
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
-getUnpacked :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n [Atom r n]
-getUnpacked atom = do
-  atom' <- cheapNormalize atom
-  ty <- return $ getType atom'
-  positions <- case ty of
-    ProdTy tys  -> return $ void tys
-    DepPairTy _ -> return [(), ()]
-    _ -> error $ "not a product type: " ++ pprint ty
-  forM (enumerate positions) \(i, _) ->
-    normalizeProj (ProjectProduct i) atom'
+getUnpacked :: (Builder r m, Emits n) => Atom r n -> m n [Atom r n]
+getUnpacked atom = forM (productIdxs atom) \i -> proj i atom
 {-# SCC getUnpacked #-}
 
-getProj :: (Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
-getProj i atom = do
-  atom' <- cheapNormalize atom
-  normalizeProj (ProjectProduct i) atom'
+productIdxs :: IRRep r => Atom r n -> [Int]
+productIdxs atom =
+  let positions = case getType atom of
+        ProdTy tys  -> void tys
+        DepPairTy _ -> [(), ()]
+        ty -> error $ "not a product type: " ++ pprint ty
+  in fst <$> enumerate positions
 
-emitUnpacked :: (Builder r m, Emits n) => Atom r n -> m n [AtomVar r n]
-emitUnpacked tup = do
-  xs <- getUnpacked tup
-  forM xs \x -> emit $ Atom x
-
-unwrapNewtype :: EnvReader m => CAtom n -> m n (CAtom n)
+unwrapNewtype :: (Emits n, Builder CoreIR m) => CAtom n -> m n (CAtom n)
 unwrapNewtype (NewtypeCon _ x) = return x
 unwrapNewtype x = case getType x of
   NewtypeTyCon con -> do
     (_, ty) <- unwrapNewtypeType con
-    return $ ProjectElt ty UnwrapNewtype x
+    emitExpr $ Unwrap ty x
   _ -> error "not a newtype"
 {-# INLINE unwrapNewtype #-}
 
-projectTuple :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Atom r n)
-projectTuple i x = normalizeProj (ProjectProduct i) x
+proj ::(Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
+proj i = \case
+  ProdVal xs -> return $ xs !! i
+  DepPair l _ _ | i == 0 -> return l
+  DepPair _ r _ | i == 1 -> return r
+  x -> do
+    ty <- projType i x
+    emitExpr $ Project ty i x
 
-projectStruct :: EnvReader m => Int -> CAtom n -> m n (CAtom n)
+getFst :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getFst = proj 0
+
+getSnd :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
+getSnd = proj 1
+
+projectStruct :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
 projectStruct i x = do
   projs <- getStructProjections i (getType x)
-  normalizeNaryProj projs x
+  applyProjections projs x
 {-# INLINE projectStruct #-}
 
 projectStructRef :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
 projectStructRef i x = do
   RefTy _ valTy <- return $ getType x
   projs <- getStructProjections i valTy
-  getNaryProjRef projs x
+  applyProjectionsRef projs x
 {-# INLINE projectStructRef #-}
 
 getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
@@ -1088,6 +1090,24 @@ getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
         | otherwise -> error "bad index"
     _ -> [ProjectProduct i, UnwrapNewtype]
 getStructProjections _ _ = error "not a struct"
+
+-- the rightmost index is applied first
+applyProjections :: (Builder CoreIR m, Emits n) => [Projection] -> CAtom n -> m n (CAtom n)
+applyProjections [] x = return x
+applyProjections (p:ps) x = do
+  x' <- applyProjections ps x
+  case p of
+    ProjectProduct i -> proj i x'
+    UnwrapNewtype    -> unwrapNewtype x'
+
+-- the rightmost index is applied first
+applyProjectionsReduced :: EnvReader m => [Projection] -> CAtom n -> m n (CAtom n)
+applyProjectionsReduced [] x = return x
+applyProjectionsReduced (p:ps) x = do
+  x' <- applyProjectionsReduced ps x
+  case p of
+    ProjectProduct i -> reduceProj i x'
+    UnwrapNewtype    -> reduceUnwrap x'
 
 mkApp :: EnvReader m => CAtom n -> [CAtom n] -> m n (CExpr n)
 mkApp f xs = do
@@ -1109,10 +1129,23 @@ mkApplyMethod d i xs = do
   resultTy <- typeOfApplyMethod d i xs
   return $ ApplyMethod resultTy d i xs
 
-mkDictAtom :: EnvReader m => DictExpr n -> m n (CAtom n)
-mkDictAtom d = do
-  ty <- typeOfDictExpr d
-  return $ DictCon ty d
+mkIxFin :: (EnvReader m, Fallible1 m) => CAtom n -> m n (DictCon n)
+mkIxFin n = do
+  dictTy <- liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
+  return $ IxFin dictTy n
+
+mkDataData :: (EnvReader m, Fallible1 m) => CType n -> m n (DictCon n)
+mkDataData dataTy = do
+  dictTy <- DictTy <$> dataDictType dataTy
+  return $ DataData dictTy dataTy
+
+mkInstanceDict :: EnvReader m => InstanceName n -> [CAtom n] -> m n (DictCon n)
+mkInstanceDict instanceName args = do
+  instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
+  sourceName <- getSourceName <$> lookupClassDef className
+  PairE (ListE params) _ <- instantiate instanceDef args
+  let ty = DictTy $ DictType sourceName className params
+  return $ InstanceDict ty instanceName args
 
 mkCase :: (EnvReader m, IRRep r) => Atom r n -> Type r n -> [Alt r n] -> m n (Expr r n)
 mkCase scrut resultTy alts = liftEnvReaderM do
@@ -1456,13 +1489,19 @@ unpackTelescope (ReconBinders tyTop _) xTop = go tyTop xTop where
   go :: (Fallible1 m, EnvReader m, IRRep r)
      => TelescopeType c e l-> Atom r n -> m n [Atom r n]
   go ty x = case ty of
-    ProdTelescope _ -> getUnpacked x
+    ProdTelescope _ -> getUnpackedReduced x
     DepTelescope ty1 (Abs _  ty2) -> do
-      (x1, xPair) <- fromPair x
-      (xDep, x2) <- fromPair xPair
+      (x1, xPair) <- fromPairReduced x
+      (xDep, x2) <- fromPairReduced xPair
       xs1 <- go ty1 x1
       xs2 <- go ty2 x2
       return $ xs1 ++ (xDep : xs2)
+
+fromPairReduced :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n (Atom r n, Atom r n)
+fromPairReduced pair = (,) <$> reduceProj 0 pair <*> reduceProj 1 pair
+
+getUnpackedReduced :: (Fallible1 m, EnvReader m, IRRep r) => Atom r n -> m n [Atom r n]
+getUnpackedReduced xs = forM (productIdxs xs) \i -> reduceProj i xs
 
 -- sorts name-annotation pairs so that earlier names may be occur free in later
 -- annotations but not vice versa.

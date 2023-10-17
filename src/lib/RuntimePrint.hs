@@ -78,7 +78,6 @@ showAnyRec atom = case getType atom of
       parens $ sepBy ", " $ map rec xs
     -- TODO: traverse the type and print out data components
     TypeKind -> printAsConstant
-  ProjectEltTy _ _ _ -> error "not implemented"
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- ieq iOrd (NatVal 0)
@@ -94,7 +93,7 @@ showAnyRec atom = case getType atom of
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Type Word8Ty]) -> do
-      charTab <- normalizeNaryProj [ProjectProduct 1, UnwrapNewtype] atom
+      charTab <- applyProjections [ProjectProduct 1, UnwrapNewtype] atom
       emitCharLit '"'
       emitCharTab charTab
       emitCharLit '"'
@@ -121,14 +120,14 @@ showAnyRec atom = case getType atom of
               sepBy " " $ projss <&> \projs ->
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
-                rec =<< normalizeNaryProj (init projs) arg
+                rec =<< applyProjections (init projs) arg
   DepPairTy _ -> parens do
     (x, y) <- fromPair atom
     rec x >> emitLit " ,> " >> rec y
   -- Done well, this could let you inspect the results of dictionary synthesis
   -- and maybe even debug synthesis failures.
   DictTy _ -> printAsConstant
-  TyVar v -> error $ "unexpected type variable: " ++ pprint v
+  StuckTy e -> error $ "unexpected stuck type expression: " ++ pprint e
   where
     rec :: Emits n' => CAtom n' -> Print n'
     rec = showAnyRec
@@ -202,7 +201,7 @@ stringLitAsCharTab s = do
 
 finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = do
-  d <- mkDictAtom $ IxFin n
+  d <- DictCon <$> mkIxFin n
   return $ IxType (FinTy n) (IxDictAtom d) ==> eltTy
 
 getPreludeFunction :: EnvReader m => String -> m n (CAtom n)

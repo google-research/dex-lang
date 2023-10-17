@@ -21,6 +21,7 @@ import IRVariants
 import Types.Core
 import Core
 import qualified RawName as R
+import QueryTypePure
 import Err
 
 -- === SubstReader class ===
@@ -152,6 +153,12 @@ fromConstAbs (Abs b e) = hoist b e
 extendRenamer :: (SubstReader v m, FromName v) => SubstFrag Name i i' o -> m i' o r -> m i o r
 extendRenamer frag = extendSubst (fmapSubstFrag (const fromName) frag)
 
+extendBinderRename
+  :: (SubstReader v m, FromName v, BindsAtMostOneName b c, BindsOneName b' c)
+  => b i i' -> b' o o' -> m i' o' r -> m i o' r
+extendBinderRename b b' cont = extendSubst (b@>fromName (binderName b')) cont
+{-# INLINE extendBinderRename #-}
+
 applyRename
   :: (ScopeReader m, RenameE e, SinkableE e)
   => Ext h o => SubstFrag Name h i o -> e i -> m o (e o)
@@ -271,6 +278,17 @@ instance ToSubstVal (SubstVal atom) atom where
   toSubstVal = id
 
 type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Atom)
+
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
+
+lookupAtomSubst :: (IRRep r, SubstReader AtomSubstVal m, EnvReader2 m) => AtomName r i -> m i o (Atom r o)
+lookupAtomSubst v = do
+  lookupSubstM v >>= \case
+    Rename v' -> Var <$> toAtomVar v'
+    SubstVal x -> return x
 
 atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE AtomSubstVal e)
            => e i -> m i o (e o)

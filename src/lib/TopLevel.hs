@@ -278,8 +278,7 @@ evalSourceBlock' mname block = case sbContents block of
     --   logTop $ ExportedFun name f
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
-      ty <- cheapNormalize $ getType val
-      logTop $ TextOut $ pprintCanonicalized ty
+      logTop $ TextOut $ pprintCanonicalized $ getType val
   DeclareForeign fname dexName cTy -> do
     let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
     ty <- evalUType =<< parseExpr cTy
@@ -328,7 +327,7 @@ evalSourceBlock' mname block = case sbContents block of
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- cheapNormalize =<< sourceNameType v
+      ty <- sourceNameType v
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -642,7 +641,7 @@ printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
   block <- liftBuilder $ buildBlock do
     emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
-  topBlock <- asTopBlock block
+  (topBlock, _) <- asTopBlock block
   getDexString =<< evalBlock topBlock
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction

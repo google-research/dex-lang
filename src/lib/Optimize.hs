@@ -330,8 +330,8 @@ licmExpr = \case
     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
     body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPair $ Var $ binderVar lb'
-      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpacked allCarries
+      (oldIx, allCarries) <- fromPairReduced $ Var $ binderVar lb'
+      (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpackedReduced allCarries
       let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
       block <- applySubst s bodyAbs
@@ -425,8 +425,7 @@ instance Color c => HasDCE (Name c) where
 
 instance HasDCE SAtom where
   dce = \case
-    Var n -> modify (<> FV (freeVarsE n)) $> Var n
-    ProjectElt t i x -> ProjectElt <$> dce t <*> pure i <*> dce x
+    Stuck e -> modify (<> FV (freeVarsE e)) $> Stuck e
     atom -> visitAtomPartial atom
 
 instance HasDCE SType where dce = visitTypePartial

@@ -60,6 +60,8 @@ data RequiredMethodAccess = Full | Partial Int deriving (Show, Eq, Ord, Generic)
 data LetAnn =
   -- Binding with no additional information
     PlainLet
+  -- Binding explicitly tagged "inline immediately"
+  | InlineLet
   -- Binding explicitly tagged "do not inline"
   | NoInlineLet
   -- Bound expression is pure, and the binding's occurrences are summarized by

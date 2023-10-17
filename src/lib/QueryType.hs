@@ -72,11 +72,6 @@ piTypeWithoutDest (PiType bsRefB _) =
 blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
 blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
 
-typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
-typeOfApp (Pi piTy) xs = withSubstReaderT $
-  withInstantiated piTy xs \(EffTy _ ty) -> substM ty
-typeOfApp _ _ = error "expected a pi type"
-
 typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfTabApp t [] = return t
 typeOfTabApp (TabPi tabTy) (i:rest) = do
@@ -88,22 +83,6 @@ typeOfApplyMethod :: EnvReader m => CAtom n -> Int -> [CAtom n] -> m n (EffTy Co
 typeOfApplyMethod d i args = do
   ty <- Pi <$> getMethodType d i
   appEffTy ty args
-
-typeOfDictExpr :: EnvReader m => DictExpr n -> m n (CType n)
-typeOfDictExpr e = liftM ignoreExcept $ liftEnvReaderT $ case e of
-  InstanceDict instanceName args -> do
-    instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
-    sourceName <- getSourceName <$> lookupClassDef className
-    PairE (ListE params) _ <- instantiate instanceDef args
-    return $ DictTy $ DictType sourceName className params
-  InstantiatedGiven given args -> typeOfApp (getType given) args
-  SuperclassProj d i -> do
-    DictTy (DictType _ className params) <- return $ getType d
-    classDef <- lookupClassDef className
-    withSubstReaderT $ withInstantiated classDef params \(Abs superclasses _) -> do
-      substM $ getSuperclassType REmpty superclasses i
-  IxFin n -> liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
-  DataData ty -> DictTy <$> dataDictType ty
 
 typeOfTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (EffTy SimpIR n)
 typeOfTopApp f xs = do
@@ -350,7 +329,7 @@ getSuperclassDicts dict = do
   case getType dict of
     DictTy dTy -> do
       ts <- getSuperclassTys dTy
-      forM (enumerate ts) \(i, t) -> return $ DictCon t $ SuperclassProj dict i
+      forM (enumerate ts) \(i, _) -> reduceSuperclassProj i dict
     _ -> error "expected a dict type"
 
 getSuperclassTys :: EnvReader m => DictType n -> m n [CType n]

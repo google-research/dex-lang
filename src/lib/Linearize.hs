@@ -17,7 +17,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Imp
 import IRVariants
 import MTL1
@@ -326,20 +325,15 @@ linearizeLambdaApp _ _ = error "not implemented"
 
 linearizeAtom :: Emits o => Atom SimpIR i -> LinM i o SAtom SAtom
 linearizeAtom atom = case atom of
-  Var v -> do
+  Con con -> linearizePrimCon con
+  DepPair _ _ _     -> notImplemented
+  PtrVar _ _      -> emitZeroT
+  Stuck (StuckVar v) -> do
     v' <- renameM v
     activePrimalIdx v' >>= \case
       Nothing -> withZeroT $ return (Var v')
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
-  Con con -> linearizePrimCon con
-  DepPair _ _ _     -> notImplemented
-  PtrVar _ _      -> emitZeroT
-  ProjectElt _ i x -> do
-    WithTangent x' tx <- linearizeAtom x
-    xi <- normalizeProj i x'
-    return $ WithTangent xi do
-      t <- tx
-      normalizeProj i t
+  Stuck (StuckProject ty i x) -> linearizeExpr $ Project ty i (Stuck x)
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 
@@ -428,6 +422,12 @@ linearizeExpr expr = case expr of
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
       emitExpr $ TabCon Nothing (sink ty') xs'
+  Project _ i x -> do
+    WithTangent x' tx <- linearizeAtom x
+    xi <- proj i x'
+    return $ WithTangent xi do
+      t <- tx
+      proj i t
 
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of

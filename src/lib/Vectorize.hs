@@ -227,7 +227,7 @@ simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
   => IxType SimpIR n -> m n (Maybe Word32)
 simplifyIxSize ixty = do
   sizeMethod <- buildBlock $ applyIxMethod (sink $ ixTypeDict ixty) Size []
-  cheapReduce sizeMethod >>= \case
+  reduceBlock sizeMethod >>= \case
     Just (IdxRepVal n) -> return $ Just n
     _ -> return Nothing
 {-# INLINE simplifyIxSize #-}
@@ -534,18 +534,17 @@ vectorizeType t = do
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
-    Var v -> lookupSubstM (atomVarName v) >>= \case
-      VRename v' -> VVal Uniform . Var <$> toAtomVar v'
-      v' -> return v'
-    -- Vectors of base newtypes are already newtype-stripped.
-    ProjectElt _ (ProjectProduct i) x -> do
-      VVal vv x' <- vectorizeAtom x
-      ov <- case vv of
-        ProdStability sbs -> return $ sbs !! i
-        _ -> throwVectErr "Invalid projection"
-      x'' <- normalizeProj (ProjectProduct i) x'
-      return $ VVal ov x''
-    ProjectElt _ UnwrapNewtype _ -> error "Shouldn't have newtypes left" -- TODO: check statically
+    Stuck e -> case e of
+      StuckVar v -> lookupSubstM (atomVarName v) >>= \case
+        VRename v' -> VVal Uniform . Var <$> toAtomVar v'
+        v' -> return v'
+      StuckProject _ i x -> do
+        VVal vv x' <- vectorizeAtom (Stuck x)
+        ov <- case vv of
+          ProdStability sbs -> return $ sbs !! i
+          _ -> throwVectErr "Invalid projection"
+        x'' <- reduceProj i x'
+        return $ VVal ov x''
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst

@@ -6,8 +6,6 @@
 
 module Inline (inlineBindings) where
 
-import Data.List.NonEmpty qualified as NE
-
 import Builder
 import Core
 import Err
@@ -149,11 +147,13 @@ inlineDeclsSubst = \case
           inlineDeclsSubst rest
   where
     dropOccInfo PlainLet = PlainLet
+    dropOccInfo InlineLet = InlineLet
     dropOccInfo NoInlineLet = NoInlineLet
     dropOccInfo (OccInfoPure _) = PlainLet
     dropOccInfo (OccInfoImpure _) = PlainLet
     resolveWorkConservation PlainLet _ =
       NoInline  -- No occurrence info, assume the worst
+    resolveWorkConservation InlineLet _ = NoInline
     resolveWorkConservation NoInlineLet _ = NoInline
     -- Quick hack to always unconditionally inline renames, until we get
     -- a better story about measuring the sizes of atoms and expressions.
@@ -227,6 +227,7 @@ inlineDeclsSubst = \case
 preInlineUnconditionally :: LetAnn -> Bool
 preInlineUnconditionally = \case
   PlainLet -> False  -- "Missing occurrence annotation"
+  InlineLet   -> True
   NoInlineLet -> False
   OccInfoPure (UsageInfo s (0, d)) | s <= One && d <= One -> True
   OccInfoPure _ -> False
@@ -280,10 +281,9 @@ inlineExpr ctx = \case
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
-  Var name -> inlineName ctx name
-  ProjectElt _ i x -> do
-    let (idxs, v) = asNaryProj i x
-    ans <- normalizeNaryProj (NE.toList idxs) =<< inline Stop (Var v)
+  Stuck (StuckVar name) -> inlineName ctx name
+  Stuck (StuckProject _ i x) -> do
+    ans <- proj i =<< inline Stop (Stuck x)
     reconstruct ctx $ Atom ans
   atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
 

@@ -15,7 +15,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import CheapReduction
 import Err
 import Imp
 import IRVariants
@@ -209,22 +208,23 @@ transposeExpr expr ct = case expr of
   TabApp _ x is -> do
     is' <- mapM substNonlin is
     case x of
-      Var v -> do
+      Stuck (StuckVar v) -> do
         lookupSubstM (atomVarName v) >>= \case
           RenameNonlin _ -> error "shouldn't happen"
           LinRef ref -> do
             refProj <- naryIndexRef ref (toList is')
             emitCTToRef refProj ct
           LinTrivial -> return ()
-      ProjectElt _ i' x' -> do
-        let (idxs, v) = asNaryProj i' x'
-        lookupSubstM (atomVarName v) >>= \case
-          RenameNonlin _ -> error "an error, probably"
-          LinRef ref -> do
-            ref' <- getNaryProjRef (toList idxs) ref
-            refProj <- naryIndexRef ref' (toList is')
-            emitCTToRef refProj ct
-          LinTrivial -> return ()
+      Stuck (StuckProject _ _ _) -> undefined
+      -- ProjectElt _ i' x' -> do
+      --   let (idxs, v) = asNaryProj i' x'
+      --   lookupSubstM (atomVarName v) >>= \case
+      --     RenameNonlin _ -> error "an error, probably"
+      --     LinRef ref -> do
+      --       ref' <- getNaryProjRef (toList idxs) ref
+      --       refProj <- naryIndexRef ref' (toList is')
+      --       emitCTToRef refProj ct
+      --     LinTrivial -> return ()
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
   Case e alts _ -> do
@@ -245,6 +245,7 @@ transposeExpr expr ct = case expr of
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
+  Project _ _ _ -> undefined
 
 transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
@@ -305,24 +306,25 @@ transposeMiscOp op _ = case op of
 
 transposeAtom :: HasCallStack => Emits o => SAtom i -> SAtom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of
-  Var v -> do
+  Con con         -> transposeCon con ct
+  DepPair _ _ _   -> notImplemented
+  PtrVar _ _      -> notTangent
+  Stuck (StuckVar v) -> do
     lookupSubstM (atomVarName v) >>= \case
       RenameNonlin _ ->
         -- XXX: we seem to need this case, but it feels like it should be an error!
         return ()
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
-  Con con         -> transposeCon con ct
-  DepPair _ _ _   -> notImplemented
-  PtrVar _ _      -> notTangent
-  ProjectElt _ i' x' -> do
-    let (idxs, v) = asNaryProj i' x'
-    lookupSubstM (atomVarName v) >>= \case
-      RenameNonlin _ -> error "an error, probably"
-      LinRef ref -> do
-        ref' <- getNaryProjRef (toList idxs) ref
-        emitCTToRef ref' ct
-      LinTrivial -> return ()
+  Stuck (StuckProject _ _ _) -> undefined
+  -- Stuck (StuckProject _ i' x') -> do
+  --   let (idxs, v) = asNaryProj i' x'
+  --   lookupSubstM (atomVarName v) >>= \case
+  --     RenameNonlin _ -> error "an error, probably"
+  --     LinRef ref -> do
+  --       ref' <- applyProjectionsRef (toList idxs) ref
+  --       emitCTToRef ref' ct
+  --     LinTrivial -> return ()
   RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
@@ -366,9 +368,7 @@ transposeCon :: Emits o => Con SimpIR i -> SAtom o -> TransposeM i o ()
 transposeCon con ct = case con of
   Lit _             -> return ()
   ProdCon []        -> return ()
-  ProdCon xs ->
-    forM_ (enumerate xs) \(i, x) ->
-      projectTuple i ct >>= transposeAtom x
+  ProdCon xs -> forM_ (enumerate xs) \(i, x) -> proj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   HeapVal -> notTangent
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)

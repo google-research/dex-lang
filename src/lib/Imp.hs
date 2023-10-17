@@ -9,8 +9,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp
-  ( toImpFunction
-  , impFunType, getIType, abstractLinktimeObjects
+  ( toImpFunction, repValAtom, impFunType, getIType, abstractLinktimeObjects
   , repValFromFlatList, addImpTracing
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
   , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
@@ -331,6 +330,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
                    void $ translateBlock body
             return UnitVal
   TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
+  Project _ i x -> reduceProj i =<< substM x
 
 toImpRefOp :: Emits o
   => SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
@@ -873,25 +873,13 @@ atomToRepVal x = RepVal (getType x) <$> go x where
         else buildGarbageVal t <&> \(RepValAtom (RepVal _ tree)) -> tree
       return $ Branch $ tag':xs
     Con HeapVal -> return $ Branch []
-    Var v -> lookupAtomName (atomVarName v) >>= \case
+    PtrVar ty p -> return $ Leaf $ IPtrVar p ty
+    Stuck (StuckVar v) -> lookupAtomName (atomVarName v) >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
-    PtrVar ty p -> return $ Leaf $ IPtrVar p ty
-    ProjectElt _ p val -> do
-      (ps, v) <- return $ asNaryProj p val
-      lookupAtomName (atomVarName v) >>= \case
-        TopDataBound (RepVal _ tree) -> applyProjection (toList ps) tree
-        _ -> error "should only be projecting a data atom"
-      where
-        applyProjection :: [Projection] -> Tree (IExpr n) -> SubstImpM i n (Tree (IExpr n))
-        applyProjection [] t = return t
-        applyProjection (i:is) t = do
-          t' <- applyProjection is t
-          case i of
-            UnwrapNewtype -> error "impossible"
-            ProjectProduct idx    -> case t' of
-              Branch ts -> return $ ts !! idx
-              _ -> error "should only be projecting a branch"
+    Stuck (StuckProject _ i val) -> do
+      Branch ts <- go $ Stuck val
+      return $ ts !! i
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
 -- from the dest. This version is not that. It just lifts a dest into an atom of

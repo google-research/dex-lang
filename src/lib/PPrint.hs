@@ -161,14 +161,17 @@ instance PrettyE ann => Pretty (BinderP c ann n l)
 
 instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
-  prettyPrec (Atom x) = prettyPrec x
-  prettyPrec (App _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TopApp _ f xs) = atPrec AppPrec $ pApp f <+> spaced (toList xs)
-  prettyPrec (TabApp _ f xs) = atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
-  prettyPrec (Case e alts (EffTy effs _)) = prettyPrecCase "case" e alts effs
-  prettyPrec (TabCon _ _ es) = atPrec ArgPrec $ list $ pApp <$> es
-  prettyPrec (PrimOp op) = prettyPrec op
-  prettyPrec (ApplyMethod _ d i xs) = atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+  prettyPrec = \case
+    Atom x -> prettyPrec x
+    App _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
+    TabApp _ f xs -> atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+    Case e alts (EffTy effs _) -> prettyPrecCase "case" e alts effs
+    TabCon _ _ es -> atPrec ArgPrec $ list $ pApp <$> es
+    PrimOp op -> prettyPrec op
+    ApplyMethod _ d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
+    Project _ i x -> atPrec AppPrec $ "Project" <+> p i <+> p x
+    Unwrap _  x -> atPrec AppPrec $ "Unwrap" <+> p x
 
 prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
 prettyPrecCase name e alts effs = atPrec LowestPrec $
@@ -210,13 +213,11 @@ instance IRRep r => PrettyPrec (LamExpr r n) where
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
-instance Pretty (DictExpr n) where
+instance Pretty (DictCon n) where
   pretty d = case d of
-    InstanceDict name args -> "Instance" <+> p name <+> p args
-    InstantiatedGiven v args -> "Given" <+> p v <+> p (toList args)
-    SuperclassProj d' i -> "SuperclassProj" <+> p d' <+> p i
-    IxFin n -> "Ix (Fin" <+> p n <> ")"
-    DataData a -> "Data " <+> p a
+    InstanceDict _ name args -> "Instance" <+> p name <+> p args
+    IxFin _ n -> "Ix (Fin" <+> p n <> ")"
+    DataData _ a -> "Data " <+> p a
 
 instance IRRep r => Pretty (IxDict r n) where
   pretty = \case
@@ -239,16 +240,15 @@ instance Pretty (CoreLamExpr n) where
 instance IRRep r => Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
-    Var v -> atPrec ArgPrec $ p v
+    Stuck e -> prettyPrec e
     Lam lam   -> atPrec LowestPrec $ p lam
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <+> ",>" <+> p y
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
     PtrVar _ v -> atPrec ArgPrec $ p v
-    DictCon _ d -> atPrec LowestPrec $ p d
+    DictCon d -> atPrec LowestPrec $ p d
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ProjectElt _ idxs v -> atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
     NewtypeCon con x -> prettyPrecNewtype con x
     SimpInCore x -> prettyPrec x
     TypeAsAtom ty -> prettyPrec ty
@@ -262,9 +262,16 @@ instance IRRep r => PrettyPrec (Type r n) where
     TC  e -> prettyPrec e
     DictTy  t -> atPrec LowestPrec $ p t
     NewtypeTyCon con -> prettyPrec con
-    TyVar v -> atPrec ArgPrec $ p v
-    ProjectEltTy _ idxs v ->
-      atPrec LowestPrec $ "ProjectElt" <+> p idxs <+> p v
+    StuckTy e -> prettyPrec e
+
+instance IRRep r => Pretty (Stuck r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (Stuck r n) where
+  prettyPrec = \case
+    StuckVar v -> atPrec ArgPrec $ p v
+    StuckProject _ i v -> atPrec LowestPrec $ "StuckProject" <+> p i <+> p v
+    StuckUnwrap _ v    -> atPrec LowestPrec $ "StuckUnwrap" <+> p v
+    InstantiatedGiven _ v args -> atPrec LowestPrec $ "Given" <+> p v <+> p (toList args)
+    SuperclassProj _ d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i
 
 instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (SimpInCore n) where
@@ -977,6 +984,7 @@ instance Pretty CallingConvention where
 instance Pretty LetAnn where
   pretty ann = case ann of
     PlainLet        -> ""
+    InlineLet       -> "%inline"
     NoInlineLet     -> "%noinline"
     OccInfoPure   u -> p u <> line
     OccInfoImpure u -> p u <> ", impure" <> line

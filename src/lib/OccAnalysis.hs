@@ -249,12 +249,16 @@ class HasOCC (e::E) where
 
 instance HasOCC SAtom where
   occ a = \case
-    Var (AtomVar n ty) -> do
+    Stuck e -> Stuck <$> occ a e
+    atom -> runOCCMVisitor a $ visitAtomPartial atom
+
+instance HasOCC SStuck where
+  occ a = \case
+    StuckVar (AtomVar n ty) -> do
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
-      return $ Var (AtomVar n ty')
-    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
-    atom -> runOCCMVisitor a $ visitAtomPartial atom
+      return $ StuckVar (AtomVar n ty')
+    StuckProject t i x -> StuckProject <$> occ a t <*> pure i <*> occ a x
 
 instance HasOCC SType where
   occ a ty = runOCCMVisitor a $ visitTypePartial ty

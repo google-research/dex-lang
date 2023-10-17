@@ -143,10 +143,10 @@ lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
       let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ Var b'
-        dest <- normalizeProj (ProjectProduct 0) destProd
+        dest <- proj 0 destProd
         idest <- emitOp =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerBlockWithDest idest body $> UnitVal
-      ans <- emitSeq dir ixTy' initDest body' >>= getProj 0
+      ans <- emitSeq dir ixTy' initDest body' >>= proj 0
       return $ PrimOp $ DAMOp $ Freeze ans
 lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
@@ -221,7 +221,7 @@ type DestAssignment (i'::S) (o::S) = NameMap (AtomNameC SimpIR) (ProjDest o) i'
 
 data ProjDest o
   = FullDest (Dest SimpIR o)
-  | ProjDest (NE.NonEmpty Projection) (Dest SimpIR o)  -- dest corresponds to the projection applied to name
+  | ProjDest (NE.NonEmpty Int) (Dest SimpIR o)  -- dest corresponds to the projection applied to name
   deriving (Show)
 
 instance SinkableE ProjDest where
@@ -239,11 +239,19 @@ lookupDest dests = fmap fromLiftE . flip lookupNameMapE dests
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest SimpIR o -> SAtom i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Var v -> return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ FullDest dest
-  ProjectElt _ p x -> do
+  Stuck (StuckVar v) ->
+    return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ FullDest dest
+  Stuck (StuckProject _ p x) -> do
     (ps, v) <- return $ asNaryProj p x
     return $ Just $ singletonNameMapE (atomVarName v) $ LiftE $ ProjDest ps dest
   _ -> return Nothing
+  where
+    asNaryProj :: IRRep r => Int -> Stuck r n -> (NE.NonEmpty Int, AtomVar r n)
+    asNaryProj p (StuckVar v) = (p NE.:| [], v)
+    asNaryProj p1 (StuckProject _ p2 x) = do
+      let (p2' NE.:| ps, v) = asNaryProj p2 x
+      (p1 NE.:| (p2':ps), v)
+    asNaryProj _ _ = error $ "Can't normalize projection"
 
 lowerBlockWithDest :: Emits o => Dest SimpIR o -> SBlock i -> LowerM i o (SAtom o)
 lowerBlockWithDest dest (Abs decls ans) = do
@@ -345,16 +353,20 @@ lowerExprWithDest dest expr = case expr of
           bd <- getProjRef (ProjectProduct 0) fd
           rd <- getProjRef (ProjectProduct 1) fd
           return $ Just (Just bd, Just rd)
-        ProjDest (ProjectProduct 0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
-        ProjDest (ProjectProduct 1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
+        ProjDest (0 NE.:| []) pd -> return $ Just (Just pd, Nothing)
+        ProjDest (1 NE.:| []) pd -> return $ Just (Nothing, Just pd)
         ProjDest _ _ -> return Nothing
 
 place :: Emits o => ProjDest o -> SAtom o -> LowerM i o ()
 place pd x = case pd of
   FullDest d   -> void $ emitOp $ DAMOp $ Place d x
   ProjDest p d -> do
-    x' <- normalizeNaryProj (NE.toList p) x
+    x' <- applyProjs (NE.toList p) x
     void $ emitOp $ DAMOp $ Place d x'
+  where
+    applyProjs :: Emits n => [Int] -> SAtom n -> LowerM i n (SAtom n)
+    applyProjs [] atom = return atom
+    applyProjs (p:ps) atom = proj p =<< applyProjs ps atom
 
 -- === Extensions to the name system ===
 
