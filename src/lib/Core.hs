@@ -410,9 +410,10 @@ withFreshBinders (binding:rest) cont = do
 --   structure.  Excess binders, if any, are still left in the unary structures.
 
 liftLamExpr :: (IRRep r, EnvReader m)
-  => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
-  -> TopLam r n -> m n (TopLam r n)
-liftLamExpr f (TopLam d ty (LamExpr bs body)) = liftM (TopLam d ty) $ liftEnvReaderM $
+  => TopLam r n
+  -> (forall l m2. EnvReader m2 => Expr r l -> m2 l (Expr r l))
+  -> m n (TopLam r n)
+liftLamExpr (TopLam d ty (LamExpr bs body)) f = liftM (TopLam d ty) $ liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
 
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
@@ -422,9 +423,8 @@ fromNaryForExpr maxDepth = \case
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do
-        expr <- exprBlock body
         guard $ maxDepth > 1
-        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
+        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) body
         return (d + 1, LamExpr (Nest b bs) body2)
   _ -> Nothing
 

@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module CheapReduction
-  ( reduceWithDecls, reduceExpr, reduceBlock
+  ( reduceWithDecls, reduceExpr
   , instantiateTyConDef, dataDefRep, unwrapNewtypeType
   , NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
   , visitAtomPartial, visitTypePartial, visitAtomDefault, visitTypeDefault, Visitor2
@@ -56,10 +56,6 @@ reduceExpr :: (IRRep r, EnvReader m) => Expr r n -> m n (Maybe (Atom r n))
 reduceExpr e = liftReducerM $ reduceExprM e
 {-# INLINE reduceExpr #-}
 
-reduceBlock :: (IRRep r, EnvReader m) => Block r n -> m n (Maybe (Atom r n))
-reduceBlock e = liftReducerM $ reduceBlockM e
-{-# INLINE reduceBlock #-}
-
 reduceProj :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Atom r n)
 reduceProj i x = liftM fromJust $ liftReducerM $ reduceProjM i x
 {-# INLINE reduceProj #-}
@@ -91,12 +87,10 @@ reduceWithDeclsM (Nest (Let b (DeclBinding _ expr)) rest) cont = do
   x <- reduceExprM expr
   extendSubst (b@>SubstVal x) $ reduceWithDeclsM rest cont
 
-reduceBlockM :: IRRep r => Block r i -> ReducerM i o (Atom r o)
-reduceBlockM (Abs decls x) = reduceWithDeclsM decls $ substM x
-
 reduceExprM :: IRRep r => Expr r i -> ReducerM i o (Atom r o)
 reduceExprM = \case
  Atom x -> substM x
+ Block _ (Abs decls result) -> reduceWithDeclsM decls $ reduceExprM result
  App _ f xs -> mapM substM xs >>= reduceApp f
  Unwrap _ x -> substM x >>= reduceUnwrapM
  Project _ i x -> substM x >>= reduceProjM i
@@ -125,7 +119,7 @@ reduceApp :: CAtom i -> [CAtom o] -> ReducerM i o (CAtom o)
 reduceApp f xs = do
   f' <- substM f  -- TODO: avoid double-subst
   case f' of
-    Lam lam -> dropSubst $ withInstantiated lam xs \body -> reduceBlockM body
+    Lam lam -> dropSubst $ withInstantiated lam xs \body -> reduceExprM body
     -- TODO: check ultrapure
     Var v -> lookupAtomName (atomVarName v) >>= \case
       LetBound (DeclBinding _ (Atom f'')) -> dropSubst $ reduceApp f'' xs
@@ -166,7 +160,7 @@ reduceSuperclassProjM superclassIx dict = case dict of
 
 reduceInstantiateGivenM :: CAtom o -> [CAtom o] -> ReducerM i o (CAtom o)
 reduceInstantiateGivenM f xs = case f of
-  Lam lam -> dropSubst $ withInstantiated lam xs \body -> reduceBlockM body
+  Lam lam -> dropSubst $ withInstantiated lam xs \body -> reduceExprM body
   Stuck f' -> do
     resultTy <- typeOfApp (getType f) xs
     return $ Stuck $ InstantiatedGiven resultTy f' xs
@@ -308,7 +302,7 @@ instance VisitGeneric (Type    r) r where visitGeneric = visitType
 instance VisitGeneric (LamExpr r) r where visitGeneric = visitLam
 instance VisitGeneric (PiType  r) r where visitGeneric = visitPi
 
-visitBlock :: Visitor m r i o => Block r i -> m (Block r o)
+visitBlock :: Visitor m r i o => Expr r i -> m (Expr r o)
 visitBlock b = visitGeneric (LamExpr Empty b) >>= \case
   LamExpr Empty b' -> return b'
   _ -> error "not a block"
@@ -395,6 +389,7 @@ visitTypePartial = \case
 
 instance IRRep r => VisitGeneric (Expr r) r where
   visitGeneric = \case
+    Block _ _ -> error "not handled generically"
     TopApp et v xs -> TopApp <$> visitGeneric et <*> renameN v <*> mapM visitGeneric xs
     TabApp t tab xs -> TabApp <$> visitType t <*> visitGeneric tab <*> mapM visitGeneric xs
     -- TODO: should we reuse the original effects? Whether it's valid depends on

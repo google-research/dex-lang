@@ -27,13 +27,13 @@ newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR
                  , Fallible, ScopeReader, MonadFail, EnvExtender, CBuilder, ScopableBuilder CoreIR)
 type Print n = Printer n ()
 
-showAny :: EnvReader m => Atom CoreIR n -> m n (Block CoreIR n)
+showAny :: EnvReader m => Atom CoreIR n -> m n (CExpr n)
 showAny x = liftPrinter $ showAnyRec (sink x)
 
 liftPrinter
   :: EnvReader m
   => (forall l. (DExt n l, Emits l) => Print l)
-  -> m n (CBlock n)
+  -> m n (CExpr n)
 liftPrinter cont = liftBuilder $ buildBlock $ withBuffer \buf ->
   runReaderT1 buf (runPrinter' cont)
 

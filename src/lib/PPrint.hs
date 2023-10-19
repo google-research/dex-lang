@@ -130,11 +130,6 @@ pApp a = prettyPrec a AppPrec
 pArg :: PrettyPrec a => a -> Doc ann
 pArg a = prettyPrec a ArgPrec
 
-instance IRRep r => Pretty (Block r n) where
-  pretty (Abs decls expr) = prettyBlock decls expr
-instance IRRep r => PrettyPrec (Block r n) where
-  prettyPrec (Abs decls expr) = atPrec LowestPrec $ prettyBlock decls expr
-
 prettyBlock :: (IRRep r, PrettyPrec (e l)) => Nest (Decl r) n l -> e l -> Doc ann
 prettyBlock Empty expr = group $ line <> pLowest expr
 prettyBlock decls expr = prettyLines decls' <> hardline <> pLowest expr
@@ -163,6 +158,7 @@ instance IRRep r => Pretty (Expr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Expr r n) where
   prettyPrec = \case
     Atom x -> prettyPrec x
+    Block _ (Abs decls body) -> atPrec AppPrec $ prettyBlock decls body
     App _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TabApp _ f xs -> atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)

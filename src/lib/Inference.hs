@@ -52,7 +52,7 @@ checkTopUType ty = liftInfererM $ checkUType ty
 {-# SCC checkTopUType #-}
 
 inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
-inferTopUExpr e = fst <$> (asTopBlock =<< liftInfererM (buildScoped $ bottomUp e))
+inferTopUExpr e = fst <$> (asTopBlock =<< liftInfererM (buildBlock $ bottomUp e))
 {-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
@@ -112,7 +112,7 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
   UExprDecl _ -> error "Shouldn't have this at the top level (should have become a command instead)"
   ULet letAnn p tyAnn rhs -> case p of
     WithSrcB _ (UPatBinder b) -> do
-      block <- liftInfererM $ buildScoped do
+      block <- liftInfererM $ buildBlock do
         checkMaybeAnnExpr tyAnn rhs
       (topBlock, resultTy) <- asTopBlock block
       let letAnn' = considerInlineAnn letAnn resultTy
@@ -127,10 +127,11 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
       return $ UDeclResultBindPattern (getNameHint p) topBlock recon
 {-# SCC inferTopUDecl #-}
 
-asTopBlock :: EnvReader m => CBlock n -> m n (TopBlock CoreIR n, CType n)
+asTopBlock :: EnvReader m => CExpr n -> m n (TopBlock CoreIR n, CType n)
 asTopBlock block = do
-  effTy@(EffTy _ ty) <- blockEffTy block
-  return (TopLam False (PiType Empty effTy) (LamExpr Empty block), ty)
+  let effs = getEffects block
+  let ty = getType block
+  return (TopLam False (PiType Empty (EffTy effs ty)) (LamExpr Empty block), ty)
 
 getInstanceType :: EnvReader m => InstanceDef n -> m n (CorePiType n)
 getInstanceType (InstanceDef className roleExpls bs params _) = liftEnvReaderM do
@@ -388,9 +389,8 @@ etaExpandPartialPi (PartialPiType appExpl expls bs effs reqTy) cont = do
       (Explicit, arg) -> Just arg
       _ -> Nothing
     withAllowedEffects effs' do
-      body <- buildScoped $ cont (sink reqTy') (sink <$> explicits)
-      resultTy <- blockTy body
-      let piTy = CorePiType appExpl expls bs' (EffTy effs' resultTy)
+      body <- buildBlock $ cont (sink reqTy') (sink <$> explicits)
+      let piTy = CorePiType appExpl expls bs' (EffTy effs' $ getType body)
       return $ CoreLamExpr piTy $ LamExpr bs' body
 
 -- Doesn't introduce implicit pi binders or dependent pairs
@@ -513,8 +513,7 @@ bottomUpExplicit (WithSrcE pos expr) = addSrcContext pos case expr of
     let scrutTy = getType scrut'
     alt'@(IndexedAlt _ altAbs) <- checkCaseAlt Infer scrutTy alt
     Abs b ty <- liftEnvReaderM $ refreshAbs altAbs \b body -> do
-      ty <- blockTy body
-      return $ Abs b ty
+      return $ Abs b (getType body)
     resultTy <- liftHoistExcept $ hoist b ty
     alts' <- mapM (checkCaseAlt (Check resultTy) scrutTy) alts
     SigmaAtom Nothing <$> buildSortedCase scrut' (alt':alts') resultTy
@@ -992,13 +991,12 @@ checkNamedArgValidity expls offeredNames = do
 
 inferPrimArg :: Emits o => UExpr i -> InfererM i o (CAtom o)
 inferPrimArg x = do
-  xBlock <- buildScoped $ bottomUp x
-  EffTy _ ty <- blockEffTy xBlock
-  case ty of
-    TyKind -> reduceBlock xBlock >>= \case
+  xBlock <- buildBlock $ bottomUp x
+  case getType xBlock of
+    TyKind -> reduceExpr xBlock >>= \case
       Just reduced -> return reduced
       _ -> throw CompilerErr "Type args to primops must be reducible"
-    _ -> emitBlock xBlock
+    _ -> emitExpr xBlock
 
 matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
 matchPrimApp = \case
@@ -1009,13 +1007,13 @@ matchPrimApp = \case
  UNatCon             -> \case ~[x] -> return $ NewtypeCon NatCon x
  UPrimTC op -> \x -> Type . TC  <$> matchGenericOp (Right op) x
  UCon    op -> \x -> Con <$> matchGenericOp (Right op) x
- UMiscOp op -> \x -> emitOp =<< MiscOp <$> matchGenericOp op x
- UMemOp  op -> \x -> emitOp =<< MemOp  <$> matchGenericOp op x
- UBinOp op -> \case ~[x, y] -> emitOp $ BinOp op x y
- UUnOp  op -> \case ~[x]    -> emitOp $ UnOp  op x
- UMAsk      -> \case ~[r]    -> emitOp $ RefOp r MAsk
- UMGet      -> \case ~[r]    -> emitOp $ RefOp r MGet
- UMPut      -> \case ~[r, x] -> emitOp $ RefOp r $ MPut x
+ UMiscOp op -> \x -> emitExpr =<< MiscOp <$> matchGenericOp op x
+ UMemOp  op -> \x -> emitExpr =<< MemOp  <$> matchGenericOp op x
+ UBinOp op -> \case ~[x, y] -> emitExpr $ BinOp op x y
+ UUnOp  op -> \case ~[x]    -> emitExpr $ UnOp  op x
+ UMAsk      -> \case ~[r]    -> emitExpr $ RefOp r MAsk
+ UMGet      -> \case ~[r]    -> emitExpr $ RefOp r MGet
+ UMPut      -> \case ~[r, x] -> emitExpr $ RefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> indexRef r i
  UApplyMethod i -> \case ~(d:args) -> emitExpr =<< mkApplyMethod d i args
  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
@@ -1025,7 +1023,7 @@ matchPrimApp = \case
  UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ While f'
  URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ RunIO f'
  UCatchException-> \case ~[f] -> do f' <- lam0 f; emitHof =<< mkCatchException f'
- UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitOp $ RefOp r $ MExtend (BaseMonoid z f') x
+ UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitExpr $ RefOp r $ MExtend (BaseMonoid z f') x
  URunWriter -> \args -> do
    [idVal, combiner, f] <- return args
    combiner' <- lam2 combiner
@@ -1043,7 +1041,7 @@ matchPrimApp = \case
      ExplicitCoreLam (UnaryNest b) body <- return x
      return $ UnaryLamExpr b body
 
-   lam0 :: Fallible m => CAtom n -> m (CBlock n)
+   lam0 :: Fallible m => CAtom n -> m (CExpr n)
    lam0 x = do
      ExplicitCoreLam Empty body <- return x
      return body
@@ -1058,7 +1056,7 @@ matchPrimApp = \case
          _ -> return $ Right x
      return $ fromJust $ toOp $ GenericOpRep op tyArgs dataArgs []
 
-pattern ExplicitCoreLam :: Nest CBinder n l -> CBlock l -> CAtom n
+pattern ExplicitCoreLam :: Nest CBinder n l -> CExpr l -> CAtom n
 pattern ExplicitCoreLam bs body <- Lam (CoreLamExpr _ (LamExpr bs body))
 
 -- === n-ary applications ===
@@ -1116,8 +1114,8 @@ buildNthOrderedAlt alts scrutTy resultTy i v = do
   case lookup (nthCaseAltIdx scrutTy i) [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
-      emitOp $ MiscOp $ ThrowError resultTy'
-    Just alt -> applyAbs alt (SubstVal v) >>= emitBlock
+      emitExpr $ ThrowError resultTy'
+    Just alt -> applyAbs alt (SubstVal v) >>= emitExpr
 
 -- converts from the ordinal index used in the core IR to the more complicated
 -- `CaseAltIndex` used in the surface IR.
@@ -1151,7 +1149,7 @@ buildSortedCase scrut alts resultTy = do
         [_] -> do
           let [IndexedAlt _ alt] = alts
           scrut' <- unwrapNewtype scrut
-          emitBlock =<< applyAbs alt (SubstVal scrut')
+          emitExpr =<< applyAbs alt (SubstVal scrut')
         _ -> liftEmitBuilder $ buildMonomorphicCase alts scrut resultTy
     _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy
 
@@ -1163,9 +1161,8 @@ instanceFun instanceName appExpl = do
     args <- mapM toAtomVar $ nestToNames bs'
     result <- DictCon <$> mkInstanceDict (sink instanceName) (Var <$> args)
     let effTy = EffTy Pure (getType result)
-    let body = WithoutDecls result
     let piTy = CorePiType appExpl (snd<$>expls) bs' effTy
-    return $ Lam $ CoreLamExpr piTy (LamExpr bs' body)
+    return $ Lam $ CoreLamExpr piTy (LamExpr bs' $ Atom result)
 
 checkMaybeAnnExpr :: Emits o => Maybe (UType i) -> UExpr i -> InfererM i o (CAtom o)
 checkMaybeAnnExpr ty expr = confuseGHC >>= \_ -> case ty of
@@ -1341,9 +1338,9 @@ checkULamPartial partialPiTy lamExpr = do
       lamEffs'' <- checkUEffRow lamEffs'
       expectEq (Eff piEffs') (Eff lamEffs'')
     body' <- withAllowedEffects piEffs' do
-      buildScoped $ withBlockDecls body \result -> checkOrInfer (sink resultTy) result
+      buildBlock $ withBlockDecls body \result -> checkOrInfer (sink resultTy) result
     resultTy' <- case resultTy of
-      Infer -> blockTy body'
+      Infer -> return $ getType body'
       Check t -> return t
     let piTy = CorePiType piAppExpl expls lamBs' (EffTy piEffs' resultTy')
     return $ CoreLamExpr piTy (LamExpr lamBs' body')
@@ -1373,7 +1370,7 @@ checkULamPartial partialPiTy lamExpr = do
 inferUForExpr :: Emits o => UForExpr i -> InfererM i o (LamExpr CoreIR o)
 inferUForExpr (UForExpr b body) = do
   withUBinder b \(WithAttrB _ b') -> do
-    body' <- buildScoped $ withBlockDecls body \result -> bottomUp result
+    body' <- buildBlock $ withBlockDecls body \result -> bottomUp result
     return $ LamExpr (UnaryNest b') body'
 
 checkUForExpr :: Emits o => UForExpr i -> TabPiType CoreIR o -> InfererM i o (LamExpr CoreIR o)
@@ -1390,13 +1387,12 @@ inferULam (ULamExpr bs appExpl effs resultTy body) = do
   Abs (ZipB expls bs') (PairE effTy body') <- inferUBinders bs \_ -> do
     effs' <- fromMaybe Pure <$> mapM checkUEffRow effs
     resultTy' <- mapM checkUType resultTy
-    body' <- buildScoped $ withAllowedEffects (sink effs') do
+    body' <- buildBlock $ withAllowedEffects (sink effs') do
       withBlockDecls body \result ->
         case resultTy' of
           Nothing -> bottomUp result
           Just resultTy'' -> topDown (sink resultTy'') result
-    resultTy'' <- blockTy body'
-    let effTy = EffTy effs' resultTy''
+    let effTy = EffTy effs' (getType body')
     return $ PairE effTy body'
   return $ CoreLamExpr (CorePiType appExpl expls bs' effTy) (LamExpr bs' body')
 
@@ -1510,7 +1506,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
       "Unexpected number of pattern binders. Expected " ++ show (length idxs)
                                              ++ " got " ++ show (nestLength ps)
     withFreshBinderInf noHint Explicit repTy \b -> Abs b <$> do
-      buildScoped do
+      buildBlock do
         args <- forM idxs \projs -> do
           ans <- applyProjectionsReduced (init projs) (sink $ Var $ binderVar b)
           emit $ Atom ans
@@ -2065,7 +2061,7 @@ synthTerm targetTy reqMethodAccess = confuseGHC >>= \_ -> case targetTy of
       Abs bs' <$> synthTerm (SynthDictType targetTy') reqMethodAccess
     Abs bs' synthExpr <- return ab'
     let piTy = CorePiType ImplicitApp expls bs' (EffTy Pure (getType synthExpr))
-    let lamExpr = LamExpr bs' (WithoutDecls synthExpr)
+    let lamExpr = LamExpr bs' (Atom synthExpr)
     return $ Lam $ CoreLamExpr piTy lamExpr
   SynthDictType dictTy -> case dictTy of
     DictType "Ix" _ [Type (NewtypeTyCon (Fin n))] -> return $ DictCon $ IxFin (DictTy dictTy) n
@@ -2183,12 +2179,14 @@ type WithRoleExpl = WithAttrB RoleExpl
 buildBlockInfWithRecon
   :: HasNamesE e
   => (forall l. (Emits l, DExt n l) => InfererM i l (e l))
-  -> InfererM i n (PairE CBlock (ReconAbs CoreIR e) n)
+  -> InfererM i n (PairE CExpr (ReconAbs CoreIR e) n)
 buildBlockInfWithRecon cont = do
   ab <- buildScoped cont
-  liftEnvReaderM $ liftM toPairE $ refreshAbs ab \decls result -> do
+  (block, recon) <- liftEnvReaderM $ refreshAbs ab \decls result -> do
     (newResult, recon) <- telescopicCapture decls result
     return (Abs decls newResult, recon)
+  block' <- mkBlock block
+  return $ PairE block' recon
 {-# INLINE buildBlockInfWithRecon #-}
 
 -- === IFunType ===

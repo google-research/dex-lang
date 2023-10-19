@@ -536,7 +536,7 @@ evalBlock typed = do
   SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
   opt <- simpOptimizations simp
   simpResult <- case opt of
-    TopLam _ _ (LamExpr Empty (WithoutDecls result)) -> return result
+    TopLam _ _ (LamExpr Empty (Atom result)) -> return result
     _ -> do
       lowered <- checkPass LowerPass $ lowerFullySequential True opt
       lOpt <- checkPass OptPass $ loweredOptimizations lowered

@@ -48,29 +48,12 @@ caseAltsBinderTys ty = case ty of
 extendEffect :: IRRep r => Effect r n -> EffectRow r n -> EffectRow r n
 extendEffect eff (EffectRow effs t) = EffectRow (effs <> eSetSingleton eff) t
 
-blockEffTy :: (EnvReader m, IRRep r) => Block r n -> m n (EffTy r n)
-blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
-  effs <- declsEffects decls mempty
-  return $ ignoreHoistFailure $ hoist decls $ EffTy effs $ getType result
-  where
-    declsEffects :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
-    declsEffects Empty !acc = return acc
-    declsEffects n@(Nest (Let _ (DeclBinding _ expr)) rest) !acc = withExtEvidence n do
-      expr' <- sinkM expr
-      declsEffects rest $ acc <> getEffects expr'
-
-blockTy :: (EnvReader m, IRRep r) => Block r n -> m n (Type r n)
-blockTy b = blockEffTy b <&> \(EffTy _ t) -> t
-
 piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
 piTypeWithoutDest (PiType bsRefB _) =
   case popNest bsRefB of
     Just (PairB bs (_:>RawRefTy ansTy)) -> do
       PiType bs $ EffTy Pure ansTy  -- XXX: we ignore the effects here
     _ -> error "expected trailing dest binder"
-
-blockEff :: (EnvReader m, IRRep r) => Block r n -> m n (EffectRow r n)
-blockEff b = blockEffTy b <&> \(EffTy eff _) -> eff
 
 typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfTabApp t [] = return t
@@ -144,22 +127,22 @@ typeOfHof = \case
   RunState _ _ f -> do
     (resultTy, stateTy) <- getTypeRWSAction f
     return $ PairTy resultTy stateTy
-  RunIO f -> blockTy f
-  RunInit f -> blockTy f
+  RunIO f -> return $ getType f
+  RunInit f -> return $ getType f
   CatchException ty _ -> return ty
 
 hofEffects :: (EnvReader m, IRRep r) => Hof r n -> m n (EffectRow r n)
 hofEffects = \case
   For _ _ f     -> functionEffs f
-  While body    -> blockEff body
+  While body    -> return $ getEffects body
   Linearize _ _ -> return Pure  -- Body has to be a pure function
   Transpose _ _ -> return Pure  -- Body has to be a pure function
   RunReader _ f -> rwsFunEffects Reader f
   RunWriter d _ f -> maybeInit d <$> rwsFunEffects Writer f
   RunState  d _ f -> maybeInit d <$> rwsFunEffects State  f
-  RunIO            f -> deleteEff IOEffect        <$> blockEff f
-  RunInit          f -> deleteEff InitEffect      <$> blockEff f
-  CatchException _ f -> deleteEff ExceptionEffect <$> blockEff f
+  RunIO            f -> return $ deleteEff IOEffect        $ getEffects f
+  RunInit          f -> return $ deleteEff InitEffect      $ getEffects f
+  CatchException _ f -> return $ deleteEff ExceptionEffect $ getEffects f
   where maybeInit :: IRRep r => Maybe (Atom r i) -> (EffectRow r o -> EffectRow r o)
         maybeInit d = case d of Just _ -> (<>OneEffect InitEffect); Nothing -> id
 
@@ -308,10 +291,8 @@ rwsFunEffects rws f = getLamExprType f >>= \case
    _ -> error "Expected a binary function type"
 
 getLamExprType :: (IRRep r, EnvReader m) => LamExpr r n -> m n (PiType r n)
-getLamExprType (LamExpr bs body) = liftEnvReaderM $
-  refreshAbs (Abs bs body) \bs' body' -> do
-    effTy <- blockEffTy body'
-    return $ PiType bs' effTy
+getLamExprType (LamExpr bs body) =
+   return $ PiType bs $ EffTy (getEffects body) (getType body)
 
 getTypeRWSAction :: (IRRep r, EnvReader m) => LamExpr r n -> m n (Type r n, Type r n)
 getTypeRWSAction f = getLamExprType f >>= \case

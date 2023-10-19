@@ -106,7 +106,8 @@ deriving via WrapE (Type r) n instance IRRep r => Generic (Type r n)
 deriving via WrapE (Stuck r) n instance IRRep r => Generic (Stuck r n)
 
 data Expr r n where
- TopApp :: EffTy SimpIR n -> TopFunName n -> [SAtom n]         -> Expr SimpIR n
+ Block  :: EffTy r n -> Block r n -> Expr r n
+ TopApp :: EffTy SimpIR n -> TopFunName n -> [SAtom n] -> Expr SimpIR n
  TabApp :: Type r n -> Atom r n -> [Atom r n] -> Expr r n
  Case   :: Atom r n -> [Alt r n] -> EffTy r n -> Expr r n
  Atom   :: Atom r n                          -> Expr r n
@@ -152,7 +153,7 @@ type FunObjCodeName = Name FunObjCodeNameC
 
 type AtomBinderP (r::IR) = BinderP (AtomNameC r)
 type Binder r = AtomBinderP r (Type r) :: B
-type Alt r = Abs (Binder r) (Block r) :: E
+type Alt r = Abs (Binder r) (Expr r) :: E
 
 newtype DotMethods n = DotMethods (M.Map SourceName (CAtomName n))
         deriving (Show, Generic, Monoid, Semigroup)
@@ -186,7 +187,7 @@ data TyConParams n = TyConParams [Explicitness] [Atom CoreIR n]
      deriving (Show, Generic)
 
 type WithDecls (r::IR) = Abs (Decls r) :: E -> E
-type Block (r::IR) = WithDecls r (Atom r) :: E
+type Block (r::IR) = WithDecls r (Expr r) :: E
 
 type TopBlock = TopLam -- used for nullary lambda
 type IsDestLam = Bool
@@ -194,7 +195,7 @@ data TopLam (r::IR) (n::S) = TopLam IsDestLam (PiType r n) (LamExpr r n)
      deriving (Show, Generic)
 
 data LamExpr (r::IR) (n::S) where
-  LamExpr :: Nest (Binder r) n l -> Block r l -> LamExpr r n
+  LamExpr :: Nest (Binder r) n l -> Expr r l -> LamExpr r n
 
 data CoreLamExpr (n::S) = CoreLamExpr (CorePiType n) (LamExpr CoreIR n)
 
@@ -250,7 +251,7 @@ class ToBindersAbs (e::E) (body::E) (r::IR) | e -> body, e -> r where
 instance ToBindersAbs CorePiType (EffTy CoreIR) CoreIR where
   toAbs (CorePiType _ _ bs effTy) = Abs bs effTy
 
-instance ToBindersAbs CoreLamExpr (Block CoreIR) CoreIR where
+instance ToBindersAbs CoreLamExpr (Expr CoreIR) CoreIR where
   toAbs (CoreLamExpr _ lam) = toAbs lam
 
 instance ToBindersAbs (Abs (Nest (Binder r)) body) body r where
@@ -259,7 +260,7 @@ instance ToBindersAbs (Abs (Nest (Binder r)) body) body r where
 instance ToBindersAbs (PiType r) (EffTy r) r where
   toAbs (PiType bs effTy) = Abs bs effTy
 
-instance ToBindersAbs (LamExpr r) (Block r) r where
+instance ToBindersAbs (LamExpr r) (Expr r) r where
   toAbs (LamExpr bs body) = Abs bs body
 
 instance ToBindersAbs (TabPiType r) (Type r) r where
@@ -277,16 +278,10 @@ instance ToBindersAbs TyConDef DataConDefs CoreIR where
 instance ToBindersAbs ClassDef (Abs (Nest CBinder) (ListE CorePiType)) CoreIR where
   toAbs (ClassDef _ _ _ _ bs scBs tys) = Abs bs (Abs scBs (ListE tys))
 
-instance ToBindersAbs (TopLam r) (Block r) r where
+instance ToBindersAbs (TopLam r) (Expr r) r where
   toAbs (TopLam _ _ lam) = toAbs lam
 
 -- === GenericOp class ===
-
-class IsPrimOp (e::IR->E) where
-  toPrimOp :: e r n -> PrimOp r n
-
-instance IsPrimOp PrimOp where
-  toPrimOp x = x
 
 class GenericOp (e::IR->E) where
   type OpConst e (r::IR) :: *
@@ -407,13 +402,13 @@ data TypedHof r n = TypedHof (EffTy r n) (Hof r n)
 
 data Hof r n where
  For       :: ForAnn -> IxType r n -> LamExpr r n -> Hof r n
- While     :: Block r n -> Hof r n
+ While     :: Expr r n -> Hof r n
  RunReader :: Atom r n -> LamExpr r n -> Hof r n
  RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
  RunState  :: Maybe (Atom r n) -> Atom r n -> LamExpr r n -> Hof r n  -- dest, initial value, body lambda
- RunIO     :: Block r n -> Hof r n
- RunInit   :: Block r n -> Hof r n
- CatchException :: CType n -> Block   CoreIR n -> Hof CoreIR n
+ RunIO     :: Expr r n -> Hof r n
+ RunInit   :: Expr r n -> Hof r n
+ CatchException :: CType n -> Expr   CoreIR n -> Hof CoreIR n
  Linearize      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
  Transpose      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
 
@@ -992,6 +987,55 @@ instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
 
+-- === ToAtom ===
+
+class ToAtom (e::E) (r::IR) | e -> r where
+  toAtom :: e n -> Atom r n
+
+instance ToAtom (Atom r) r where
+  toAtom = id
+
+instance ToAtom (AtomVar r) r where
+  toAtom = Var
+
+instance ToAtom (Con r) r where
+  toAtom = Con
+
+instance ToAtom (Type CoreIR) CoreIR where
+  toAtom = TypeAsAtom
+
+-- === ToExpr ===
+
+class ToExpr (e::E) (r::IR) | e -> r where
+  toExpr :: e n -> Expr r n
+
+instance ToExpr (Expr r) r where
+  toExpr = id
+
+instance ToExpr (Atom r) r where
+  toExpr = Atom
+
+instance ToExpr (AtomVar r) r where
+  toExpr = toExpr . toAtom
+
+instance ToExpr (PrimOp r) r where
+  toExpr = PrimOp
+
+instance ToExpr (MiscOp r) r where
+  toExpr = PrimOp . MiscOp
+
+instance ToExpr (MemOp r) r where
+  toExpr = PrimOp . MemOp
+
+instance ToExpr (VectorOp r) r where
+  toExpr = PrimOp . VectorOp
+
+instance ToExpr (TypedHof r) r where
+  toExpr = PrimOp . Hof
+
+instance ToExpr (DAMOp SimpIR) SimpIR where
+  toExpr = PrimOp . DAMOp
+
 -- === Pattern synonyms ===
 
 -- XXX: only use this pattern when you're actually expecting a type. If it's
@@ -1092,23 +1136,14 @@ pattern EffKind = NewtypeTyCon EffectRowKind
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = NewtypeTyCon (Fin (NatVal n))
 
-pattern NullaryLamExpr :: Block r n -> LamExpr r n
+pattern NullaryLamExpr :: Expr r n -> LamExpr r n
 pattern NullaryLamExpr body = LamExpr Empty body
 
-pattern UnaryLamExpr :: Binder r n l -> Block r l -> LamExpr r n
+pattern UnaryLamExpr :: Binder r n l -> Expr r l -> LamExpr r n
 pattern UnaryLamExpr b body = LamExpr (UnaryNest b) body
 
-pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Block r l2 -> LamExpr r n
+pattern BinaryLamExpr :: Binder r n l1 -> Binder r l1 l2 -> Expr r l2 -> LamExpr r n
 pattern BinaryLamExpr b1 b2 body = LamExpr (BinaryNest b1 b2) body
-
-pattern WithoutDecls :: e n -> WithDecls r e n
-pattern WithoutDecls x = Abs Empty x
-
-exprBlock :: IRRep r => Block r n -> Maybe (Expr r n)
-exprBlock (Abs (Nest (Let b (DeclBinding _ expr)) Empty) (Var (AtomVar n _)))
-  | n == binderName b = Just expr
-exprBlock _ = Nothing
-{-# INLINE exprBlock #-}
 
 pattern MaybeTy :: Type r n -> Type r n
 pattern MaybeTy a = SumTy [UnitTy, a]
@@ -1331,7 +1366,6 @@ instance IRRep r => RenameE        (DAMOp r)
 instance IRRep r => AlphaEqE       (DAMOp r)
 instance IRRep r => AlphaHashableE (DAMOp r)
 
-instance IsPrimOp TypedHof where toPrimOp = Hof
 instance IRRep r => GenericE (TypedHof r) where
   type RepE (TypedHof r) = EffTy r `PairE` Hof r
   fromE (TypedHof effTy hof) = effTy `PairE` hof
@@ -1349,14 +1383,14 @@ instance IRRep r => GenericE (Hof r) where
   type RepE (Hof r) = EitherE2
     (EitherE6
   {- For -}       (LiftE ForAnn `PairE` IxType r `PairE` LamExpr r)
-  {- While -}     (Block r)
+  {- While -}     (Expr r)
   {- RunReader -} (Atom r `PairE` LamExpr r)
   {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
   {- RunState -}  (MaybeE (Atom r) `PairE` Atom r `PairE` LamExpr r)
-  {- RunIO -}     (Block r)
+  {- RunIO -}     (Expr r)
     ) (EitherE4
-  {- RunInit -}        (Block r)
-  {- CatchException -} (WhenCore r (Type r `PairE` Block r))
+  {- RunInit -}        (Expr r)
+  {- CatchException -} (WhenCore r (Type r `PairE` Expr r))
   {- Linearize -}      (WhenCore r (LamExpr r `PairE` Atom r))
   {- Transpose -}      (WhenCore r (LamExpr r `PairE` Atom r)))
 
@@ -1613,12 +1647,13 @@ instance IRRep r => RenameE        (Type r)
 
 instance IRRep r => GenericE (Expr r) where
   type RepE (Expr r) = EitherE2
-    ( EitherE5
+    ( EitherE6
  {- App -}    (WhenCore r (EffTy r `PairE` Atom r `PairE` ListE (Atom r)))
  {- TabApp -} (Type r `PairE` Atom r `PairE` ListE (Atom r))
  {- Case -}   (Atom r `PairE` ListE (Alt r) `PairE` EffTy r)
  {- Atom -}   (Atom r)
  {- TopApp -} (WhenSimp r (EffTy r `PairE` TopFunName `PairE` ListE (Atom r)))
+ {- Block -}  (EffTy r `PairE` Block r)
     )
     ( EitherE5
  {- TabCon -}          (MaybeE (WhenCore r Dict) `PairE` Type r `PairE` ListE (Atom r))
@@ -1632,6 +1667,7 @@ instance IRRep r => GenericE (Expr r) where
     Case e alts effTy  -> Case0 $ Case2 (e `PairE` ListE alts `PairE` effTy)
     Atom x             -> Case0 $ Case3 (x)
     TopApp et f xs     -> Case0 $ Case4 (WhenIRE (et `PairE` f `PairE` ListE xs))
+    Block et block     -> Case0 $ Case5 (et `PairE` block)
     TabCon d ty xs        -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
     PrimOp op             -> Case1 $ Case1 op
     ApplyMethod et d i xs -> Case1 $ Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs))
@@ -1642,9 +1678,10 @@ instance IRRep r => GenericE (Expr r) where
     Case0 case0 -> case case0 of
       Case0 (WhenIRE (et `PairE` f `PairE` ListE xs))     -> App    et f xs
       Case1 (t `PairE` f `PairE` ListE xs)                -> TabApp t f xs
-      Case2 (e `PairE` ListE alts `PairE` effTy) -> Case e alts effTy
+      Case2 (e `PairE` ListE alts `PairE` effTy)          -> Case e alts effTy
       Case3 (x)                                           -> Atom x
       Case4 (WhenIRE (et `PairE` f `PairE` ListE xs))     -> TopApp et f xs
+      Case5 (et `PairE` block)                            -> Block et block
       _ -> error "impossible"
     Case1 case1 -> case case1 of
       Case0 (d `PairE` ty `PairE` ListE xs) -> TabCon (fromMaybeE d) ty xs
@@ -1725,7 +1762,6 @@ instance GenericOp VectorOp where
     _ -> Nothing
   {-# INLINE toOp #-}
 
-instance IsPrimOp VectorOp where toPrimOp = VectorOp
 instance IRRep r => GenericE (VectorOp r) where
   type RepE (VectorOp r) = GenericOpRep (OpConst VectorOp r) r
   fromE = fromEGenericOpRep
@@ -1754,7 +1790,6 @@ instance GenericOp MemOp where
     _ -> Nothing
   {-# INLINE toOp #-}
 
-instance IsPrimOp MemOp where toPrimOp = MemOp
 instance IRRep r => GenericE (MemOp r) where
   type RepE (MemOp r) = GenericOpRep (OpConst MemOp r) r
   fromE = fromEGenericOpRep
@@ -1797,7 +1832,6 @@ instance GenericOp MiscOp where
     _ -> Nothing
   {-# INLINE toOp #-}
 
-instance IsPrimOp MiscOp where toPrimOp = MiscOp
 instance IRRep r => GenericE (MiscOp r) where
   type RepE (MiscOp r) = GenericOpRep (OpConst MiscOp r) r
   fromE = fromEGenericOpRep
@@ -2004,7 +2038,7 @@ instance Semigroup (Cache n) where
     Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5) (x6<>y6)
 
 instance GenericE (LamExpr r) where
-  type RepE (LamExpr r) = Abs (Nest (Binder r)) (Block r)
+  type RepE (LamExpr r) = Abs (Nest (Binder r)) (Expr r)
   fromE (LamExpr b block) = Abs b block
   {-# INLINE fromE #-}
   toE   (Abs b block) = LamExpr b block

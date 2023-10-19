@@ -6,7 +6,7 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module CheckType (CheckableE (..), CheckableB (..), checkBlock, checkTypes, checkTypeIs) where
+module CheckType (CheckableE (..), CheckableB (..), checkTypes, checkTypeIs) where
 
 import Prelude hiding (id)
 import Control.Category ((>>>))
@@ -127,6 +127,12 @@ checkAndGetType x = do
   x' <- checkE x
   return (x', getType x')
 
+checkWithEffTy :: (CheckableWithEffects r e, HasType r e, IRRep r) => EffTy r o -> e i -> TyperM r i o (e o)
+checkWithEffTy (EffTy effs ty) e = do
+  e' <- checkWithEffects effs e
+  checkTypesEq ty (getType e')
+  return e'
+
 instance CheckableE CoreIR SourceMap where
   checkE sm = renameM sm -- TODO?
 
@@ -244,6 +250,12 @@ instance IRRep r => CheckableWithEffects r (Expr r) where
       return $ TopApp effTy' f' xs'
     Atom x -> Atom <$> checkE x
     PrimOp op -> PrimOp <$> checkWithEffects allowedEffs op
+    Block effTy (Abs decls body) -> do
+      effTy'@(EffTy effs ty) <- checkEffTy allowedEffs effTy
+      checkDecls effs decls \decls' -> do
+        body' <- checkWithEffects (sink effs) body
+        checkTypesEq (sink ty) (getType body')
+        return $ Block effTy' $ Abs decls' body'
     Case scrut alts effTy -> do
       effTy' <- checkEffTy allowedEffs effTy
       scrut' <- checkE scrut
@@ -252,7 +264,7 @@ instance IRRep r => CheckableWithEffects r (Expr r) where
       alts' <- parallelAffines $ (zip alts altsBinderTys) <&> \(Abs b body, reqBinderTy) -> do
         checkB b \b' -> do
           checkTypesEq (sink reqBinderTy) (sink $ binderType b')
-          Abs b' <$> checkBlock (sink effTy') body
+          Abs b' <$> checkWithEffTy (sink effTy') body
       return $ Case scrut' alts' effTy'
     ApplyMethod effTy dict i args -> do
       effTy' <- checkEffTy allowedEffs effTy
@@ -602,12 +614,6 @@ instance IRRep r => CheckableE r (VectorOp r) where
       unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
       return $ VectorSubref ref' i' ty'
 
-checkBlock :: IRRep r => EffTy r o -> Block r i -> TyperM r i o (Block r o)
-checkBlock (EffTy effs ty) (Abs decls result) =
-  checkDecls effs decls \decls' -> do
-    result' <- result |: sink ty
-    return $ Abs decls' result'
-
 checkHof :: IRRep r => EffTy r o -> Hof r i -> TyperM r i o (Hof r o)
 checkHof (EffTy effs reqTy) = \case
   For dir ixTy f -> do
@@ -616,25 +622,25 @@ checkHof (EffTy effs reqTy) = \case
     TabPi tabTy <- return reqTy
     checkBinderType t b \b' -> do
       resultTy <- checkInstantiation (sink tabTy) [Var $ binderVar b']
-      body' <- checkBlock (EffTy (sink effs) resultTy) body
+      body' <- checkWithEffTy (EffTy (sink effs) resultTy) body
       return $ For dir (IxType t d) (LamExpr (UnaryNest b') body')
   While body -> do
     let effTy = EffTy effs (BaseTy $ Scalar Word8Type)
     checkTypesEq reqTy UnitTy
-    While <$> checkBlock effTy body
+    While <$> checkWithEffTy effTy body
   Linearize f x -> do
     (x', xTy) <- checkAndGetType x
     LamExpr (UnaryNest b) body <- return f
     checkBinderType xTy b \b' -> do
       PairTy resultTy fLinTy <- sinkM reqTy
-      body' <- checkBlock (EffTy Pure resultTy) body
+      body' <- checkWithEffTy (EffTy Pure resultTy) body
       checkTypesEq fLinTy (Pi $ nonDepPiType [sink xTy] Pure resultTy)
       return $ Linearize (LamExpr (UnaryNest b') body') x'
   Transpose f x -> do
     (x', xTy) <- checkAndGetType x
     LamExpr (UnaryNest b) body <- return f
     checkB b \b' -> do
-      body' <- checkBlock (EffTy Pure (sink xTy)) body
+      body' <- checkWithEffTy (EffTy Pure (sink xTy)) body
       checkTypesEq (sink $ binderType b') (sink reqTy)
       return $ Transpose (LamExpr (UnaryNest b') body') x'
   RunReader r f -> do
@@ -669,13 +675,13 @@ checkHof (EffTy effs reqTy) = \case
         declareEff effs InitEffect
         Just <$> dest |: RawRefTy sTy
     return $ RunState d' s' f'
-  RunIO   body -> RunIO   <$> checkBlock (EffTy (extendEffect IOEffect   effs) reqTy) body
-  RunInit body -> RunInit <$> checkBlock (EffTy (extendEffect InitEffect effs) reqTy) body
+  RunIO   body -> RunIO   <$> checkWithEffTy (EffTy (extendEffect IOEffect   effs) reqTy) body
+  RunInit body -> RunInit <$> checkWithEffTy (EffTy (extendEffect InitEffect effs) reqTy) body
   CatchException reqTy' body -> do
     reqTy'' <- checkE reqTy'
     checkTypesEq reqTy reqTy''
     TypeCon _ _ (TyConParams _[Type ty]) <- return reqTy''  -- TODO: take more care in unpacking Maybe
-    body' <- checkBlock (EffTy (extendEffect ExceptionEffect effs) ty) body
+    body' <- checkWithEffTy (EffTy (extendEffect ExceptionEffect effs) ty) body
     return $ CatchException reqTy'' body'
 
 instance IRRep r => CheckableWithEffects r (DAMOp r) where
@@ -692,7 +698,7 @@ instance IRRep r => CheckableWithEffects r (DAMOp r) where
         _ -> badCarry
       let binderReqTy = PairTy (ixTypeType ixTy') carryTy'
       checkBinderType binderReqTy b \b' -> do
-        body' <- checkBlock (EffTy (sink effAnn') UnitTy) body
+        body' <- checkWithEffTy (EffTy (sink effAnn') UnitTy) body
         return $ Seq effAnn' dir ixTy' carry' $ LamExpr (UnaryNest b') body'
     RememberDest effAnn d lam -> do
       LamExpr (UnaryNest b) body <- return lam
@@ -700,7 +706,7 @@ instance IRRep r => CheckableWithEffects r (DAMOp r) where
       checkExtends effs effAnn'
       (d', dTy@(RawRefTy _)) <- checkAndGetType d
       checkBinderType dTy b \b' -> do
-        body' <- checkBlock (EffTy (sink effAnn') UnitTy) body
+        body' <- checkWithEffTy (EffTy (sink effAnn') UnitTy) body
         return $ RememberDest effAnn' d' $ LamExpr (UnaryNest b') body'
     AllocDest ty -> AllocDest <$> ty|:TyKind
     Place ref val -> do
@@ -717,7 +723,7 @@ checkLamExpr :: IRRep r => PiType r o -> LamExpr r i -> TyperM r i o (LamExpr r 
 checkLamExpr piTy (LamExpr bs body) =
   checkB bs \bs' -> do
     effTy <- checkInstantiation (sink piTy) (Var <$> bindersVars bs')
-    body' <- checkBlock effTy body
+    body' <- checkWithEffTy effTy body
     return $ LamExpr bs' body'
 
 checkDecls
@@ -743,7 +749,7 @@ checkRWSAction resultTy referentTy effs rws f = do
     let refTy = RefTy h (sink referentTy)
     checkBinderType refTy bR \bR' -> do
       let effs' = extendEffect (RWSEffect rws $ sink h) (sink effs)
-      body' <- checkBlock (EffTy effs' (sink resultTy)) body
+      body' <- checkWithEffTy (EffTy effs' (sink resultTy)) body
       return $ BinaryLamExpr bH' bR' body'
 
 checkCaseAltsBinderTys :: IRRep r => Type r n -> TyperM r i n [Type r n]

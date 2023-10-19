@@ -141,6 +141,7 @@ instance IRRep r => HasType r (Expr r) where
     TopApp (EffTy _ ty) _ _ -> ty
     TabApp t _ _ -> t
     Atom x   -> getType x
+    Block (EffTy _ ty) _ -> ty
     TabCon _ ty _ -> ty
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
@@ -274,6 +275,7 @@ ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
 instance IRRep r => HasEffects (Expr r) r where
   getEffects = \case
     Atom _ -> Pure
+    Block (EffTy eff _) _ -> eff
     App (EffTy eff _) _ _ -> eff
     TopApp (EffTy eff _) _ _ -> eff
     TabApp _ _ _ -> Pure

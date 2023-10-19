@@ -33,7 +33,7 @@ transpose lam ct = liftEmitBuilder $ runTransposeM do
   UnaryLamExpr b body <- sinkM lam
   withAccumulator (binderType b) \refSubstVal ->
     extendSubst (b @> refSubstVal) $
-      transposeBlock body (sink ct)
+      transposeExpr body (sink ct)
 {-# SCC transpose #-}
 
 runTransposeM :: TransposeM n n a -> BuilderM SimpIR n a
@@ -52,16 +52,15 @@ transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
         inTy <- substNonlin $ binderType bLin
         withAccumulator inTy \refSubstVal ->
           extendSubst (bLin @> refSubstVal) $
-            transposeBlock body (sink ct)
-      EffTy _ bodyTy <- blockEffTy body'
-      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (EffTy Pure bodyTy)
+            transposeExpr body (sink ct)
+      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (EffTy Pure (getType body'))
       let lamT = LamExpr (bsNonlin' >>> UnaryNest bCT) body'
       return $ TopLam False piTy lamT
 transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
 
 unpackLinearLamExpr
   :: (MonadFail1 m, EnvReader m) => LamExpr SimpIR n
-  -> m n ( Abs (Nest SBinder) (Abs SBinder SBlock) n
+  -> m n ( Abs (Nest SBinder) (Abs SBinder SExpr) n
          , Abs (Nest SBinder) SType n)
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
@@ -146,7 +145,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- tangentBaseMonoidFor (getType ct)
-  void $ emitOp $ RefOp ref $ MExtend baseMonoid ct
+  void $ emitExpr $ RefOp ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomVar o]
 getLinRegions = asks fromListE
@@ -156,11 +155,8 @@ extendLinRegions v cont = local (\(ListE vs) -> ListE (v:vs)) cont
 
 -- === actual pass ===
 
-transposeBlock :: Emits o => SBlock i -> SAtom o -> TransposeM i o ()
-transposeBlock (Abs decls result) ct = transposeWithDecls decls result ct
-
-transposeWithDecls :: Emits o => Nest SDecl i i' -> SAtom i' -> SAtom o -> TransposeM i o ()
-transposeWithDecls Empty atom ct = transposeAtom atom ct
+transposeWithDecls :: Emits o => Nest SDecl i i' -> SExpr i' -> SAtom o -> TransposeM i o ()
+transposeWithDecls Empty atom ct = transposeExpr atom ct
 transposeWithDecls (Nest (Let b (DeclBinding _ expr)) rest) result ct =
   substExprIfNonlin expr >>= \case
     Nothing  -> do
@@ -196,6 +192,7 @@ getTransposedTopFun f = do
 
 transposeExpr :: Emits o => SExpr i -> SAtom o -> TransposeM i o ()
 transposeExpr expr ct = case expr of
+  Block _ (Abs decls result) -> transposeWithDecls decls result ct
   Atom atom -> transposeAtom atom ct
   TopApp _ f xs -> do
     Just fT <- getTransposedTopFun =<< substNonlin f
@@ -237,7 +234,7 @@ transposeExpr expr ct = case expr of
           v' <- emit (Atom v)
           Abs b body <- return $ alts !! i
           extendSubst (b @> RenameNonlin (atomVarName v')) do
-            transposeBlock body (sink ct)
+            transposeExpr body (sink ct)
           return UnitVal
   TabCon _ ty es -> do
     TabTy d b _ <- return ty
@@ -252,7 +249,7 @@ transposeOp op ct = case op of
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
   RefOp refArg m   -> do
     refArg' <- substNonlin refArg
-    let emitEff = emitOp . RefOp refArg'
+    let emitEff = emitExpr . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- tangentBaseMonoidFor (getType ct)
@@ -335,14 +332,14 @@ transposeHof hof ct = case hof of
     ixTy <- substNonlin ixTy'
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (Var i)
-      extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeBlock body ctElt
+      extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeExpr body ctElt
       return UnitVal
   RunState Nothing s (BinaryLamExpr hB refB body) -> do
     (ctBody, ctState) <- fromPair ct
     (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
       extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
         extendLinRegions h $
-          transposeBlock body (sink ctBody)
+          transposeExpr body (sink ctBody)
       return UnitVal
     transposeAtom s cts
   RunReader r (BinaryLamExpr hB refB body) -> do
@@ -351,7 +348,7 @@ transposeHof hof ct = case hof of
     (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
       extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
         extendLinRegions h $
-          transposeBlock body (sink ct)
+          transposeExpr body (sink ct)
       return UnitVal
     transposeAtom r ct'
   RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
@@ -360,7 +357,7 @@ transposeHof hof ct = case hof of
     void $ emitRunReader noHint ctEff \h ref -> do
       extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
         extendLinRegions h $
-          transposeBlock body (sink ctBody)
+          transposeExpr body (sink ctBody)
       return UnitVal
   _ -> notImplemented
 

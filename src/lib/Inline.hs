@@ -21,8 +21,7 @@ import Types.Primitives
 -- === External API ===
 
 inlineBindings :: (EnvReader m) => STopLam n -> m n (STopLam n)
-inlineBindings = liftLamExpr \(Abs decls ans) -> liftInlineM $
-  buildScoped $ inlineDecls decls $ inline Stop ans
+inlineBindings lam = liftLamExpr lam \body -> liftInlineM $ buildBlock $ inlineExpr Stop body
 {-# INLINE inlineBindings #-}
 {-# SCC inlineBindings #-}
 
@@ -73,12 +72,6 @@ data SizePreservationInfo =
   | UsedMulti
   deriving (Eq, Show)
 
-inlineDecls :: Emits o => Nest SDecl i i' -> InlineM i' o a -> InlineM i o a
-inlineDecls decls cont = do
-  s <- inlineDeclsSubst decls
-  withSubst s cont
-{-# INLINE inlineDecls #-}
-
 inlineDeclsSubst :: Emits o => Nest SDecl i i' -> InlineM i o (Subst InlineSubstVal i' o)
 inlineDeclsSubst = \case
   Empty -> getSubst
@@ -91,23 +84,7 @@ inlineDeclsSubst = \case
       -- If the inliner starts moving effectful expressions, it may become
       -- necessary to query the effects of the new expression here.
       let presInfo = resolveWorkConservation ann expr'
-      -- A subtlety from the Secrets paper.  In Haskell, it is feasible to have
-      -- a binding whose occurrence information indicates multiple uses, but
-      -- which does a small, bounded amount of runtime work.  GHC will inline
-      -- such a binding, but not into contexts where GHC knows that no further
-      -- optimizations are possible.  The example given in the paper is
-      --   f = \x -> E
-      --   g = \ys -> map f ys
-      -- Inlining f here is useless because it's not applied, and mildly costly
-      -- because it causes the closure to be allocated at every call to g rather
-      -- than just once.
-      -- TODO If we want to track this subtlety, we should make room for it in
-      -- the SizePreservationInfo ADT (maybe rename it), maybe with a
-      -- OnceButDuplicatesBoundedWork constructor.  Then only the true UsedOnce
-      -- would be inlined unconditionally here, and the
-      -- OnceButDuplicatesBoundedWork constructor could be inlined or not
-      -- depending on its usage context.  (This would correspond to the case
-      -- OnceUnsafe with whnfOrBot == True in the Secrets paper.)
+      -- See NoteSecretsSubtlety
       if presInfo == UsedOnce then do
         let substVal = case expr' of
              Atom (Var name') -> Rename $ atomVarName name'
@@ -117,33 +94,7 @@ inlineDeclsSubst = \case
         -- expr' can't be Atom (Var x) here
         name' <- emitDecl (getNameHint b) (dropOccInfo ann) expr'
         extendSubst (b @> Rename (atomVarName name')) do
-          -- TODO For now, this inliner does not do any conditional inlining.
-          -- In order to do it, we would need to augment the environment at this
-          -- point, associating name' to (expr', presInfo) so name' could be
-          -- inlined at use sites.
-          --
-          -- Conditional inlining is different in Dex vs Haskell because Dex is
-          -- strict.  To wit, once we have emitted the bidning for `expr'`, we
-          -- are committed to doing the work it represents unless it's inlined
-          -- _everywhere_.  For example,
-          --   xs = <something>
-          --   case <foo> of
-          --     Nothing -> xs  -- ok to inline here
-          --     Just _ -> xs ... xs  -- not ok here
-          -- If this were Haskell, it would be work-preserving for GHC to inline
-          -- `xs` into the `Nothing` arm, but in Dex it's not, unless we first
-          -- explicitly push the binding into the case like
-          --   case <foo> of
-          --     Nothing -> xs = <something>; xs
-          --     Just _ -> xs = <something>; xs ... xs
-          --
-          -- That said, the Secrets paper says that GHC only conditionally
-          -- inlines zero-work bindings anyway (or, more precisely, "bounded
-          -- finite work" bindings).  All the heuristics about whether to inline
-          -- at a particular site are about code size and not increasing it
-          -- overmuch.  But, of course, inlining even zero-work bindings can
-          -- help runtime performance because it can unblock other optimizations
-          -- that otherwise could not occur across the binding.
+          -- See NoteConditionalInlining
           inlineDeclsSubst rest
   where
     dropOccInfo PlainLet = PlainLet
@@ -214,12 +165,8 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body))))) = 1 + ixDepthBlock body
+    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body))))) = 1 + ixDepthExpr body
     ixDepthExpr _ = 0
-    ixDepthBlock :: Block SimpIR n -> Int
-    ixDepthBlock (exprBlock -> (Just expr)) = ixDepthExpr expr
-    ixDepthBlock (Abs Empty result) = ixDepthExpr $ Atom result
-    ixDepthBlock _ = 0
 
 -- Should we decide to inline this binding wherever it appears, before we even
 -- know the expression?  "Yes" only if we know it only occurs once, and in a
@@ -277,6 +224,9 @@ inlineExpr ctx = \case
   Case scrut alts (EffTy effs resultTy) -> do
     s <- getSubst
     inlineAtom (CaseCtx alts resultTy effs s ctx) scrut
+  Block _ (Abs decls ans) -> do
+    s <- inlineDeclsSubst decls
+    withSubst s $ inlineExpr ctx ans
   expr -> visitGeneric expr >>= reconstruct ctx
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
@@ -314,10 +264,10 @@ instance Inlinable SType where
   inline ctx ty = visitTypePartial ty >>= reconstruct ctx
 
 instance Inlinable SLam where
-  inline ctx (LamExpr bs (Abs decls ans)) = do
+  inline ctx (LamExpr bs body) = do
     reconstruct ctx =<< withBinders bs \bs' -> do
-      (LamExpr bs' <$>) $ buildScoped $
-        inlineDecls decls $ inline Stop ans
+      body' <- buildBlock $ inlineExpr Stop body
+      return $ LamExpr bs' body'
 
 withBinders
   :: Nest SBinder i i'
@@ -335,10 +285,6 @@ instance Inlinable (PiType SimpIR) where
     reconstruct ctx =<< withBinders bs \bs' -> do
       effTy' <- buildScopedAssumeNoDecls $ inline Stop effTy
       return $ PiType bs' effTy'
-
-inlineBlockEmits :: Emits o => Context SExpr e2 o -> SBlock i -> InlineM i o (e2 o)
-inlineBlockEmits ctx (Abs decls ans) = do
-  inlineDecls decls $ inlineAtom ctx ans
 
 -- Still using InlineM because we may call back into inlining, and we wish to
 -- retain our output binding environment.
@@ -358,50 +304,15 @@ reconstructTabApp ctx expr [] = do
   reconstruct ctx expr
 reconstructTabApp ctx expr ixs =
   case fromNaryForExpr (length ixs) expr of
-    Just (bsCount, LamExpr bs (Abs decls result)) -> do
+    Just (bsCount, LamExpr bs body) -> do
+      -- See NoteReconstructTabAppDecisions
       let (ixsPref, ixsRest) = splitAt bsCount ixs
-      -- Note: There's a decision here.  Is it ok to inline the atoms in
-      -- `ixsPref` into the body `decls`?  If so, should we pre-process them and
-      -- carry them in `DoneEx`, or suspend them in `SuspEx`?  (If not, we can
-      -- emit fresh bindings and use `Rename`.)  We can't make this decision
-      -- properly without annotating the `for` binders with occurrence
-      -- information; even though `ixsPref` itself are atoms, we may be carrying
-      -- suspended inlining decisions that would want to make one an expression,
-      -- and thus force-inlining it may duplicate work.
-      --
-      -- There remains a decision between just emitting bindings, or running
-      -- `mapM (inline $ EmitToAtomCtx Stop)` and inlining the resulting atoms.
-      -- In the work-heavy case where an element of `ixsPref` becomes an
-      -- expression after inlining, the result will be the same; but in the
-      -- work-light case where the element remains an atom, more inlining can
-      -- proceed.  This decision only affects the runtime of the inliner and the
-      -- code size of the IR the inliner produces.
-      --
-      -- Current status: Emitting bindings in the interest if "launch and
-      -- iterate"; have not tried `EmitToAtomCtx`.
       ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
       let ixsPref'' = [v | AtomVar v _ <- ixsPref']
       s <- getSubst
       let moreSubst = bs @@> map Rename ixsPref''
       dropSubst $ extendSubst moreSubst do
-        -- Decision here.  These decls have already been processed by the
-        -- inliner once, so their occurrence information is stale (and should
-        -- have been erased).  Do we rerun occurrence analysis, or just complete
-        -- the pass without inlining any of them?
-        -- - Con rerunning: Slower
-        -- - Con completing: No detection of erroneous lack of occurrence info
-        -- For now went with "completing"; to detect erroneous lack of
-        -- occurrence info, change the relevant PlainLet cases above.
-        --
-        -- There's also a missed opportunity here to do more inlining in one
-        -- pass: we lost the occurrence information of the bindings, so we lost
-        -- the ability to inline them into the result, so in the common case
-        -- that the result is a variable reference, we will find ourselves
-        -- emitting a rename, _which will inhibit downstream inlining_ because a
-        -- rename is not indexable.
-        inlineDecls decls do
-          let ctx' = TabAppCtx ixsRest s ctx
-          inlineAtom ctx' result
+        inlineExpr (TabAppCtx ixsRest s ctx) body
     Nothing -> do
       array' <- emitExprToAtom expr
       ixs' <- mapM (inline Stop) ixs
@@ -418,11 +329,11 @@ reconstructCase ctx scrutExpr alts resultTy effs =
       -- of the arms of the outer case
       resultTy' <- inline Stop resultTy
       reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
-        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitBlock
+        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitExpr
         buildCase ans (sink resultTy') \j jval -> do
           Abs b body <- return $ alts !! j
           extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
-            inlineBlockEmits Stop body >>= emitExprToAtom)
+            inlineExpr Stop body >>= emitExprToAtom)
     _ -> do
       -- Attempt case-of-known-constructor optimization
       -- I can't use `buildCase` here because I want to propagate the incoming
@@ -433,7 +344,7 @@ reconstructCase ctx scrutExpr alts resultTy effs =
         Just (i, val) -> do
           Abs b body <- return $ alts !! i
           extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
-            inlineBlockEmits ctx body
+            inlineExpr ctx body
         Nothing -> do
           alts' <- mapM visitAlt alts
           resultTy' <- inline Stop resultTy
@@ -442,3 +353,84 @@ reconstructCase ctx scrutExpr alts resultTy effs =
 
 instance Inlinable (EffectRow SimpIR)
 instance Inlinable (EffTy     SimpIR)
+
+-- === NoteReconstructTabAppDecisions ===
+
+-- There's a decision here. Is it ok to inline the atoms in `ixsPref` into the
+-- body `decls`? If so, should we pre-process them and carry them in `DoneEx`,
+-- or suspend them in `SuspEx`? (If not, we can emit fresh bindings and use
+-- `Rename`.) We can't make this decision properly without annotating the `for`
+-- binders with occurrence information; even though `ixsPref` itself are atoms,
+-- we may be carrying suspended inlining decisions that would want to make one
+-- an expression, and thus force-inlining it may duplicate work.
+--
+-- There remains a decision between just emitting bindings, or running `mapM
+-- (inline $ EmitToAtomCtx Stop)` and inlining the resulting atoms. In the
+-- work-heavy case where an element of `ixsPref` becomes an expression after
+-- inlining, the result will be the same; but in the work-light case where the
+-- element remains an atom, more inlining can proceed. This decision only
+-- affects the runtime of the inliner and the code size of the IR the inliner
+-- produces.
+--
+-- Current status: Emitting bindings in the interest if "launch and iterate";
+-- have not tried `EmitToAtomCtx`. Decision here. These decls have already been
+-- processed by the inliner once, so their occurrence information is stale (and
+-- should have been erased). Do we rerun occurrence analysis, or just complete
+-- the pass without inlining any of them?
+-- - Con rerunning: Slower
+-- - Con completing: No detection of erroneous lack of occurrence info
+-- For now went with "completing"; to detect erroneous lack of
+-- occurrence info, change the relevant PlainLet cases above.
+--
+-- There's also a missed opportunity here to do more inlining in one pass: we
+-- lost the occurrence information of the bindings, so we lost the ability to
+-- inline them into the result, so in the common case that the result is a
+-- variable reference, we will find ourselves emitting a rename, _which will
+-- inhibit downstream inlining_ because a rename is not indexable.
+
+-- === NoteConditionalInlining ===
+
+-- TODO For now, this inliner does not do any conditional inlining. In order to
+-- do it, we would need to augment the environment at this point, associating
+-- name' to (expr', presInfo) so name' could be inlined at use sites.
+--
+-- Conditional inlining is different in Dex vs Haskell because Dex is strict. To
+-- wit, once we have emitted the bidning for `expr'`, we are committed to doing
+-- the work it represents unless it's inlined _everywhere_. For example,
+--   xs = <something>
+--   case <foo> of
+--     Nothing -> xs  -- ok to inline here
+--     Just _ -> xs ... xs  -- not ok here
+-- If this were Haskell, it would be work-preserving for GHC to inline
+-- `xs` into the `Nothing` arm, but in Dex it's not, unless we first
+-- explicitly push the binding into the case like
+--   case <foo> of
+--     Nothing -> xs = <something>; xs
+--     Just _ -> xs = <something>; xs ... xs
+--
+-- That said, the Secrets paper says that GHC only conditionally inlines
+-- zero-work bindings anyway (or, more precisely, "bounded finite work"
+-- bindings). All the heuristics about whether to inline at a particular site
+-- are about code size and not increasing it overmuch. But, of course, inlining
+-- even zero-work bindings can help runtime performance because it can unblock
+-- other optimizations that otherwise could not occur across the binding.
+
+-- === NoteSecretsSubtlety ===
+
+-- A subtlety from the Secrets paper. In Haskell, it is feasible to have a
+-- binding whose occurrence information indicates multiple uses, but which does
+-- a small, bounded amount of runtime work. GHC will inline such a binding, but
+-- not into contexts where GHC knows that no further optimizations are possible.
+-- The example given in the paper is
+--   f = \x -> E
+--   g = \ys -> map f ys
+-- Inlining f here is useless because it's not applied, and mildly costly
+-- because it causes the closure to be allocated at every call to g rather than
+-- just once.
+-- TODO If we want to track this subtlety, we should make room for it in
+-- the SizePreservationInfo ADT (maybe rename it), maybe with a
+-- OnceButDuplicatesBoundedWork constructor.  Then only the true UsedOnce
+-- would be inlined unconditionally here, and the
+-- OnceButDuplicatesBoundedWork constructor could be inlined or not
+-- depending on its usage context.  (This would correspond to the case
+-- OnceUnsafe with whnfOrBot == True in the Secrets paper.)
