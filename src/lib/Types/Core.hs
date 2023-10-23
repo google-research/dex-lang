@@ -74,6 +74,7 @@ data Type (r::IR) (n::S) where
 data Stuck (r::IR) (n::S) where
   StuckVar     :: AtomVar r n                  -> Stuck r n
   StuckProject :: Type r n -> Int -> Stuck r n -> Stuck r n
+  StuckTabApp  :: Type r n -> Stuck r n -> [Atom r n] -> Stuck r n
   StuckUnwrap  :: CType n         -> CStuck n  -> Stuck CoreIR n
   InstantiatedGiven :: CType n -> CStuck n -> [CAtom n] -> Stuck CoreIR n
   SuperclassProj    :: CType n -> Int -> CStuck n       -> Stuck CoreIR n
@@ -1552,26 +1553,29 @@ instance IRRep r => AlphaHashableE (Atom r)
 instance IRRep r => RenameE        (Atom r)
 
 instance IRRep r => GenericE (Stuck r) where
-  type RepE (Stuck r) = EitherE5
+  type RepE (Stuck r) = EitherE6
  {-  StuckVar     -}      (AtomVar r)
  {-  StuckProject -}      (Type r `PairE` LiftE Int `PairE` Stuck r)
+ {-  StuckTabApp  -}      (Type r `PairE` Stuck r `PairE` ListE (Atom r))
  {-  StuckUnwrap  -}      (WhenCore r (CType `PairE` CStuck))
  {-  InstantiatedGiven -} (WhenCore r (CType `PairE` CStuck `PairE` ListE CAtom))
  {-  SuperclassProj    -} (WhenCore r (CType `PairE` LiftE Int `PairE` CStuck))
   fromE = \case
     StuckVar v               -> Case0 v
     StuckProject t i e       -> Case1 $ t `PairE` LiftE i `PairE` e
-    StuckUnwrap t e          -> Case2 $ WhenIRE $ t `PairE` e
-    InstantiatedGiven t e xs -> Case3 $ WhenIRE $ t `PairE` e `PairE` ListE xs
-    SuperclassProj t i e     -> Case4 $ WhenIRE $ t `PairE` LiftE i `PairE` e
+    StuckTabApp t f x        -> Case2 $ t `PairE` f `PairE` ListE x
+    StuckUnwrap t e          -> Case3 $ WhenIRE $ t `PairE` e
+    InstantiatedGiven t e xs -> Case4 $ WhenIRE $ t `PairE` e `PairE` ListE xs
+    SuperclassProj t i e     -> Case5 $ WhenIRE $ t `PairE` LiftE i `PairE` e
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 v ->    StuckVar v
     Case1 (t `PairE` LiftE i `PairE` e)            -> StuckProject t i e
-    Case2 (WhenIRE (t `PairE` e))                  -> StuckUnwrap t e
-    Case3 (WhenIRE (t `PairE` e `PairE` ListE xs)) -> InstantiatedGiven t e xs
-    Case4 (WhenIRE (t `PairE` LiftE i `PairE` e))  -> SuperclassProj t i e
+    Case2 (t `PairE` f `PairE` ListE x)            -> StuckTabApp t f x
+    Case3 (WhenIRE (t `PairE` e))                  -> StuckUnwrap t e
+    Case4 (WhenIRE (t `PairE` e `PairE` ListE xs)) -> InstantiatedGiven t e xs
+    Case5 (WhenIRE (t `PairE` LiftE i `PairE` e))  -> SuperclassProj t i e
     _ -> error "impossible"
   {-# INLINE toE #-}
 

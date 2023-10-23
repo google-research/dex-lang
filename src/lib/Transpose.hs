@@ -313,8 +313,8 @@ transposeAtom atom ct = case atom of
         return ()
       LinRef ref -> emitCTToRef ref ct
       LinTrivial -> return ()
-  Stuck (StuckProject _ _ _) -> undefined
-  -- Stuck (StuckProject _ i' x') -> do
+  Stuck (StuckProject _ _ _) -> error "not implemented"
+  Stuck (StuckTabApp  _ _ _) -> error "not implemented"
   --   let (idxs, v) = asNaryProj i' x'
   --   lookupSubstM (atomVarName v) >>= \case
   --     RenameNonlin _ -> error "an error, probably"

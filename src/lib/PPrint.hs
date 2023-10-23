@@ -265,6 +265,7 @@ instance IRRep r => PrettyPrec (Stuck r n) where
   prettyPrec = \case
     StuckVar v -> atPrec ArgPrec $ p v
     StuckProject _ i v -> atPrec LowestPrec $ "StuckProject" <+> p i <+> p v
+    StuckTabApp _ f xs -> atPrec AppPrec $ pArg f <> "." <> pArg xs
     StuckUnwrap _ v    -> atPrec LowestPrec $ "StuckUnwrap" <+> p v
     InstantiatedGiven _ v args -> atPrec LowestPrec $ "Given" <+> p v <+> p (toList args)
     SuperclassProj _ d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i

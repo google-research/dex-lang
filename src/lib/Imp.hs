@@ -865,9 +865,15 @@ atomToRepVal x = RepVal (getType x) <$> go x where
     Stuck (StuckVar v) -> lookupAtomName (atomVarName v) >>= \case
       TopDataBound (RepVal _ tree) -> return tree
       _ -> error "should only have pointer and data atom names left"
+    -- TODO: I think we want to be able to rule this one out by insisting that
+    -- RepValAtom is itself part of Stuck and it can't represent a product.
     Stuck (StuckProject _ i val) -> do
       Branch ts <- go $ Stuck val
       return $ ts !! i
+    Stuck (StuckTabApp _ f xs) -> do
+      f' <- atomToRepVal $ Stuck f
+      RepVal _ t <- naryIndexRepVal f' (toList xs)
+      return t
 
 -- XXX: We used to have a function called `destToAtom` which loaded the value
 -- from the dest. This version is not that. It just lifts a dest into an atom of

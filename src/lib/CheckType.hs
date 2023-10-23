@@ -320,6 +320,13 @@ instance IRRep r => CheckableE r (Stuck r) where
     StuckProject resultTy i x -> do
       Project resultTy' i' (Stuck x') <- checkWithEffects Pure $ Project resultTy i (Stuck x)
       return $ StuckProject resultTy' i' x'
+    StuckTabApp reqTy f xs -> do
+      reqTy' <- reqTy |: TyKind
+      (f', tabTy) <- checkAndGetType f
+      xs' <- mapM checkE xs
+      ty' <- checkTabApp tabTy xs'
+      checkTypesEq reqTy' ty'
+      return $ StuckTabApp reqTy' f' xs'
     InstantiatedGiven resultTy given args -> do
       resultTy' <- resultTy |: TyKind
       (given', Pi piTy) <- checkAndGetType given

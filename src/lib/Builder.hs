@@ -129,6 +129,18 @@ buildScopedAssumeNoDecls cont = do
     _ -> error "Expected no decl emissions"
 {-# INLINE buildScopedAssumeNoDecls #-}
 
+withReducibleEmissions
+  :: (ScopableBuilder r m, Builder r m, HasNamesE e, SubstE AtomSubstVal e)
+  => String
+  -> (forall o' . (Emits o', DExt o o') => m o' (e o'))
+  -> m o (e o)
+withReducibleEmissions msg cont = do
+  withDecls <- buildScoped cont
+  reduceWithDecls withDecls >>= \case
+    Just t -> return t
+    _ -> throw TypeErr msg
+{-# INLINE withReducibleEmissions #-}
+
 -- === "Hoisting" top-level builder class ===
 
 -- `emitHoistedEnv` lets you emit top env fragments, like cache entries or

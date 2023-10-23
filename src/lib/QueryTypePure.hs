@@ -102,6 +102,7 @@ instance IRRep r => HasType r (Stuck r) where
   getType = \case
     StuckVar (AtomVar _ t)  -> t
     StuckProject t _ _      -> t
+    StuckTabApp t _ _       -> t
     StuckUnwrap  t _        -> t
     InstantiatedGiven t _ _ -> t
     SuperclassProj t _ _    -> t

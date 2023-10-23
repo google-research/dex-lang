@@ -1089,17 +1089,6 @@ checkSigmaDependent e@(WithSrcE ctx _) ty = addSrcContext ctx $
       "Dependent functions can only be applied to fully evaluated expressions. " ++
       "Bind the argument to a name before you apply the function."
 
-withReducibleEmissions
-  :: Zonkable e
-  => String
-  -> (forall o' . (Emits o', DExt o o') => InfererM i o' (e o'))
-  -> InfererM i o (e o)
-withReducibleEmissions msg cont = do
-  withDecls <- buildScoped cont
-  reduceWithDecls withDecls >>= \case
-    Just t -> return t
-    _ -> throw TypeErr msg
-
 -- === sorting case alternatives ===
 
 data IndexedAlt n = IndexedAlt CaseAltIndex (Alt CoreIR n)

@@ -536,6 +536,8 @@ vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
           _ -> throwVectErr "Invalid projection"
         x'' <- reduceProj i x'
         return $ VVal ov x''
+      -- TODO: think about this case
+      StuckTabApp _ _ _ -> throwVectErr $ "Cannot vectorize atom: " ++ pprint atom
     Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
     _ -> do
       subst <- getSubst

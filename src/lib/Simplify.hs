@@ -165,6 +165,14 @@ forceStuck stuck cont = withDistinct case stuck of
         DepPair l r _ -> forceConstructor ([l, r]!!i) cont
         _ -> error "Can't project stuck term"
       _ -> error "Can't project stuck term"
+  StuckTabApp _ f xs -> do
+    ty <- substM $ getType stuck
+    xs' <- forM xs \x -> toDataAtomIgnoreRecon =<< substM x
+    forceStuck f \case
+      CCSimpInCore (LiftSimp _ f') -> do
+        result <- naryTabApp f' (sink<$>xs')
+        cont $ CCSimpInCore $ LiftSimp (sink ty) result
+      _ -> error "not a table"  -- what about table lambda?
   StuckUnwrap  _ x -> forceStuck x \case
     CCCon (WithSubst s con) -> withSubst s case con of
       NewtypeCon _ x' -> forceConstructor x' cont

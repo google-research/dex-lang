@@ -334,7 +334,9 @@ linearizeAtom atom = case atom of
     activePrimalIdx v' >>= \case
       Nothing -> withZeroT $ return (Var v')
       Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
+  -- TODO: buildScoped and reduce the results so we keep expression in non-ANF for type checking purposes
   Stuck (StuckProject ty i x) -> linearizeExpr $ Project ty i (Stuck x)
+  Stuck (StuckTabApp t f xs)  -> linearizeExpr $ TabApp t (Stuck f) xs
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
 

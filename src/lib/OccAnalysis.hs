@@ -255,6 +255,11 @@ instance HasOCC SStuck where
       ty' <- occTy ty
       return $ StuckVar (AtomVar n ty')
     StuckProject t i x -> StuckProject <$> occ a t <*> pure i <*> occ a x
+    StuckTabApp t array ixs -> do
+      t' <- occTy t
+      (a', ixs') <- occIdxs a ixs
+      array' <- occ a' array
+      return $ StuckTabApp t' array' ixs'
 
 instance HasOCC SType where
   occ a ty = runOCCMVisitor a $ visitTypePartial ty
@@ -360,7 +365,7 @@ instance HasOCC SExpr where
       return $ Block effTy' (Abs decls' ans')
     TabApp t array ixs -> do
       t' <- occTy t
-      (a', ixs') <- go a ixs
+      (a', ixs') <- occIdxs a ixs
       array' <- occ a' array
       return $ TabApp t' array' ixs'
     Case scrut alts (EffTy effs ty) -> do
@@ -376,10 +381,11 @@ instance HasOCC SExpr where
       ref' <- occ a ref
       PrimOp . RefOp ref' <$> occ a op
     expr -> occGeneric a expr
-    where
-      go acc [] = return (acc, [])
-      go acc (ix:ixs) = do
-        (acc', ixs') <- go acc ixs
+
+occIdxs :: Access n -> [SAtom n] -> OCCM n (Access n, [SAtom n])
+occIdxs acc [] = return (acc, [])
+occIdxs acc (ix:ixs) = do
+        (acc', ixs') <- occIdxs acc ixs
         (summ, ix') <- occurrenceAndSummary ix
         return (location summ acc', ix':ixs')
 

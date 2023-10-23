@@ -109,8 +109,14 @@ reduceExprM = \case
    case (ty, val) of
      (BaseTy (Scalar Word32Type), Con (Lit (Word64Lit v))) -> return $ Con $ Lit $ Word32Lit $ fromIntegral v
      _ -> empty
+ TabApp ty tab xs -> do
+   ty' <- substM ty
+   xs' <- mapM substM xs
+   tab' <- substM tab
+   case tab' of
+     Stuck tab'' -> return $ Stuck $ StuckTabApp ty' tab'' xs'
+     _ -> error "not a table"  -- what about RepVal?
  TopApp _ _ _ -> empty
- TabApp _ _ _ -> empty
  Case _ _ _   -> empty
  TabCon _ _ _ -> empty
  PrimOp _     -> empty
@@ -188,6 +194,11 @@ typeOfApp (Pi piTy) xs = withSubstReaderT $
   withInstantiated piTy xs \(EffTy _ ty) -> substM ty
 typeOfApp _ _ = error "expected a pi type"
 
+typeOfTabApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
+typeOfTabApp (TabPi piTy) xs = withSubstReaderT $
+  withInstantiated piTy xs \ty -> substM ty
+typeOfTabApp _ _ = error "expected a TabPi type"
+
 repValAtom :: EnvReader m => SRepVal n -> m n (SAtom n)
 repValAtom (RepVal ty tree) = case ty of
   ProdTy ts -> case tree of
@@ -219,6 +230,13 @@ reduceUnwrapM = \case
       return $ Stuck $ StuckUnwrap t' e
     _ -> error "expected a newtype"
   _ -> empty
+
+reduceTabAppM :: IRRep r => Atom r o -> [Atom r o] -> ReducerM i o (Atom r o)
+reduceTabAppM tab xs = case tab of
+  Stuck tab' -> do
+    ty <- typeOfTabApp (getType tab') xs
+    return $ Stuck $ StuckTabApp ty tab' xs
+  _ -> error $ "not a table" ++ pprint tab
 
 unwrapNewtypeType :: EnvReader m => NewtypeTyCon n -> m n (NewtypeCon n, Type CoreIR n)
 unwrapNewtypeType = \case
@@ -616,6 +634,10 @@ reduceStuck = \case
   StuckUnwrap _ x -> do
     x' <- reduceStuck x
     dropSubst $ reduceUnwrapM x'
+  StuckTabApp _ f xs -> do
+    f' <- reduceStuck f
+    xs' <- mapM substM xs
+    dropSubst $ reduceTabAppM f' xs'
   InstantiatedGiven _ f xs -> do
     xs' <- mapM substM xs
     f' <- reduceStuck f
