@@ -161,7 +161,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
     Block _ (Abs decls body) -> atPrec AppPrec $ prettyBlock decls body
     App _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
-    TabApp _ f xs -> atPrec AppPrec $ pApp f <> "." <> dotted (toList xs)
+    TabApp _ f x -> atPrec AppPrec $ pApp f <> brackets (p x)
     Case e alts (EffTy effs _) -> prettyPrecCase "case" e alts effs
     TabCon _ _ es -> atPrec ArgPrec $ list $ pApp <$> es
     PrimOp op -> prettyPrec op
@@ -209,21 +209,24 @@ instance IRRep r => PrettyPrec (LamExpr r n) where
 instance IRRep r => Pretty (IxType r n) where
   pretty (IxType ty dict) = parens $ "IxType" <+> pretty ty <> prettyIxDict dict
 
-instance Pretty (DictCon n) where
-  pretty d = case d of
-    InstanceDict _ name args -> "Instance" <+> p name <+> p args
-    IxFin _ n -> "Ix (Fin" <+> p n <> ")"
-    DataData _ a -> "Data " <+> p a
-
-instance IRRep r => Pretty (IxDict r n) where
+instance IRRep r => Pretty (Dict r n) where
   pretty = \case
-    IxDictAtom x -> p x
-    IxDictRawFin n  -> "Ix (RawFin " <> p n <> ")"
-    IxDictSpecialized _ d xs -> p d <+> p xs
+    DictCon con -> pretty con
+    StuckDict _ stuck -> pretty stuck
+
+instance IRRep r => Pretty (DictCon r n) where
+  pretty = \case
+    InstanceDict _ name args -> "Instance" <+> p name <+> p args
+    IxFin n -> "Ix (Fin" <+> p n <> ")"
+    DataData a -> "Data " <+> p a
+    IxRawFin n -> "Ix (RawFin " <> p n <> ")"
+    IxSpecialized d xs -> p d <+> p xs
 
 instance Pretty (DictType n) where
-  pretty (DictType classSourceName _ params) =
-    p classSourceName <+> spaced params
+  pretty = \case
+    DictType classSourceName _ params -> p classSourceName <+> spaced params
+    IxDictType ty -> "Ix" <+> p ty
+    DataDictType ty -> "Data" <+> p ty
 
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where
@@ -236,49 +239,32 @@ instance Pretty (CoreLamExpr n) where
 instance IRRep r => Pretty (Atom r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Atom r n) where
   prettyPrec atom = case atom of
-    Stuck e -> prettyPrec e
-    Lam lam   -> atPrec LowestPrec $ p lam
-    DepPair x y _ -> atPrec ArgPrec $ align $ group $
-        parens $ p x <+> ",>" <+> p y
     Con e -> prettyPrec e
-    Eff e -> atPrec ArgPrec $ p e
-    PtrVar _ v -> atPrec ArgPrec $ p v
-    DictCon d -> atPrec LowestPrec $ p d
-    RepValAtom x -> atPrec LowestPrec $ pretty x
-    NewtypeCon con x -> prettyPrecNewtype con x
-    SimpInCore x -> prettyPrec x
-    TypeAsAtom ty -> prettyPrec ty
+    Stuck _ e -> prettyPrec e
 
 instance IRRep r => Pretty (Type r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Type r n) where
   prettyPrec = \case
-    Pi piType -> atPrec LowestPrec $ align $ p piType
-    TabPi piType -> atPrec LowestPrec $ align $ p piType
-    DepPairTy ty -> prettyPrec ty
-    TC  e -> prettyPrec e
-    DictTy  t -> atPrec LowestPrec $ p t
-    NewtypeTyCon con -> prettyPrec con
-    StuckTy e -> prettyPrec e
+    TyCon  e -> prettyPrec e
+    StuckTy _ e -> prettyPrec e
 
 instance IRRep r => Pretty (Stuck r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (Stuck r n) where
   prettyPrec = \case
-    StuckVar v -> atPrec ArgPrec $ p v
-    StuckProject _ i v -> atPrec LowestPrec $ "StuckProject" <+> p i <+> p v
-    StuckTabApp _ f xs -> atPrec AppPrec $ pArg f <> "." <> pArg xs
-    StuckUnwrap _ v    -> atPrec LowestPrec $ "StuckUnwrap" <+> p v
-    InstantiatedGiven _ v args -> atPrec LowestPrec $ "Given" <+> p v <+> p (toList args)
-    SuperclassProj _ d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i
-
-instance Pretty (SimpInCore n) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (SimpInCore n) where
-  prettyPrec = \case
+    Var v -> atPrec ArgPrec $ p v
+    StuckProject i v -> atPrec LowestPrec $ "StuckProject" <+> p i <+> p v
+    StuckTabApp f xs -> atPrec AppPrec $ pArg f <> "." <> pArg xs
+    StuckUnwrap v    -> atPrec LowestPrec $ "StuckUnwrap" <+> p v
+    InstantiatedGiven v args -> atPrec LowestPrec $ "Given" <+> p v <+> p (toList args)
+    SuperclassProj d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i
+    PtrVar _ v -> atPrec ArgPrec $ p v
+    RepValAtom x -> atPrec LowestPrec $ pretty x
+    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
     LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
-    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
-    TabLam _ _ -> atPrec AppPrec $ "tablam"
+    TabLam lam -> atPrec AppPrec $ "tablam" <+> p lam
 
-instance IRRep r => Pretty (RepVal r n) where
+instance Pretty (RepVal n) where
   pretty (RepVal ty tree) = "<RepVal " <+> p tree <+> ":" <+> p ty <> ">"
 
 instance Pretty a => Pretty (Tree a) where
@@ -326,14 +312,9 @@ withExplParens (Inferred _ (Synth _)) x = brackets x
 instance IRRep r => Pretty (TabPiType r n) where
   pretty (TabPiType dict (b:>ty) body) = let
     prettyBody = case body of
-      Pi subpi -> pretty subpi
+      TyCon (Pi subpi) -> pretty subpi
       _ -> pLowest body
-    prettyBinder = case dict of
-      IxDictRawFin n -> if binderName b `isFreeIn` body
-        then parens $ p b <> ":" <> prettyTy
-        else prettyTy
-        where prettyTy = "RawFin" <+> p n
-      _ -> prettyBinderHelper (b:>ty) body
+    prettyBinder = prettyBinderHelper (b:>ty) body
     in prettyBinder <> prettyIxDict dict <> (group $ line <> "=>" <+> prettyBody)
 
 -- A helper to let us turn dict printing on and off.  We mostly want it off to
@@ -442,7 +423,7 @@ instance Pretty (DataConDef n) where
     p name <+> ":" <+> p repTy
 
 instance Pretty (ClassDef n) where
-  pretty (ClassDef classSourceName methodNames _ _ params superclasses methodTys) =
+  pretty (ClassDef classSourceName _ methodNames _ _ params superclasses methodTys) =
     "Class:" <+> pretty classSourceName <+> pretty methodNames
     <> indented (
          line <> "parameter binders:" <+> pretty params <>
@@ -682,9 +663,6 @@ instance PrettyPrec (UPat' n l) where
 spaced :: (Foldable f, Pretty a) => f a -> Doc ann
 spaced xs = hsep $ map p $ toList xs
 
-dotted :: (Foldable f, Pretty a) => f a -> Doc ann
-dotted xs = fold $ punctuate "." $ map p $ toList xs
-
 commaSep :: (Foldable f, Pretty a) => f a -> Doc ann
 commaSep xs = fold $ punctuate "," $ map p $ toList xs
 
@@ -820,8 +798,8 @@ instance PrettyPrec ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance IRRep r => Pretty (TC r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (TC r n) where
+instance IRRep r => Pretty (TyCon r n) where pretty = prettyFromPrettyPrec
+instance IRRep r => PrettyPrec (TyCon r n) where
   prettyPrec con = case con of
     BaseType b   -> prettyPrec b
     ProdType []  -> atPrec ArgPrec $ "()"
@@ -832,6 +810,11 @@ instance IRRep r => PrettyPrec (TC r n) where
     RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h] <+> p a
     TypeKind -> atPrec ArgPrec "Type"
     HeapType -> atPrec ArgPrec "Heap"
+    Pi piType -> atPrec LowestPrec $ align $ p piType
+    TabPi piType -> atPrec LowestPrec $ align $ p piType
+    DepPairTy ty -> prettyPrec ty
+    DictTy  t -> atPrec LowestPrec $ p t
+    NewtypeTyCon con' -> prettyPrec con'
 
 prettyPrecNewtype :: NewtypeCon n -> CAtom n -> DocPrec ann
 prettyPrecNewtype con x = case (con, x) of
@@ -866,6 +849,13 @@ instance IRRep r => PrettyPrec (Con r n) where
     SumCon _ tag payload -> atPrec ArgPrec $
       "(" <> p tag <> "|" <+> pApp payload <+> "|)"
     HeapVal -> atPrec ArgPrec "HeapValue"
+    Lam lam   -> atPrec LowestPrec $ p lam
+    DepPair x y _ -> atPrec ArgPrec $ align $ group $
+        parens $ p x <+> ",>" <+> p y
+    Eff e -> atPrec ArgPrec $ p e
+    DictConAtom d -> atPrec LowestPrec $ p d
+    NewtypeCon con x -> prettyPrecNewtype con x
+    TyConAtom ty -> prettyPrec ty
 
 instance IRRep r => Pretty (PrimOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (PrimOp r n) where
@@ -932,12 +922,9 @@ instance IRRep r => PrettyPrec (Hof r n) where
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
   prettyPrec op = atPrec LowestPrec case op of
-    Seq _ ann d c lamExpr -> case lamExpr of
+    Seq _ ann _ c lamExpr -> case lamExpr of
       UnaryLamExpr b body -> do
-        let rawFinPretty = case d of
-              IxType _ (IxDictRawFin n) -> parens $ "RawFin" <+> p n
-              _ -> mempty
-        "seq" <+> rawFinPretty <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
+        "seq" <+> pApp ann <+> pApp c <+> prettyLam (p b <> ".") body
       _ -> p (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
     RememberDest _ x y    -> "rememberDest" <+> pArg x <+> pArg y
     Place r v -> pApp r <+> "r:=" <+> pApp v

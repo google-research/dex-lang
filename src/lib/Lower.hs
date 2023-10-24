@@ -69,7 +69,7 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
         EffTy _ resultTy <- instantiate (sink piTy) xs
         let resultDestTy = RawRefTy resultTy
         withFreshBinder "ans" resultDestTy \destBinder -> do
-          let dest = Var $ binderVar destBinder
+          let dest = toAtom $ binderVar destBinder
           LamExpr (bs' >>> UnaryNest destBinder) <$> buildBlock do
             lowerExpr (Just (sink dest)) body' $> UnitVal
       False -> LamExpr bs' <$> buildBlock (lowerExpr Nothing body')
@@ -104,17 +104,17 @@ lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
   case isSingletonType ansTy of
     True -> do
       body' <- buildUnaryLamExpr noHint (PairTy ty' UnitTy) \b' -> do
-        (i, _) <- fromPair $ Var b'
+        (i, _) <- fromPair $ toAtom b'
         extendSubst (ib @> SubstVal i) $ lowerExpr Nothing body $> UnitVal
       void $ emitSeq dir ixTy' UnitVal body'
       fromJust <$> singletonTypeVal ansTy
     False -> do
-      initDest <- ProdVal . (:[]) <$> case maybeDest of
+      initDest <- Con . ProdCon . (:[]) <$> case maybeDest of
         Just  d -> return d
         Nothing -> emitExpr $ AllocDest ansTy
       let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
-        (i, destProd) <- fromPair $ Var b'
+        (i, destProd) <- fromPair $ toAtom b'
         dest <- proj 0 destProd
         idest <- emitExpr =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerExpr (Just idest) body $> UnitVal
@@ -124,12 +124,12 @@ lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: Emits o => OptDest o -> SType i -> [SAtom i] -> LowerM i o (SAtom o)
 lowerTabCon maybeDest tabTy elems = do
-  TabPi tabTy' <- substM tabTy
+  TyCon (TabPi tabTy') <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitExpr $ AllocDest $ TabPi tabTy'
+    Nothing -> emitExpr $ AllocDest $ TyCon $ TabPi tabTy'
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
-    buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ Var $ sink ord
+    buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ toAtom $ sink ord
   -- This is emitting a chain of RememberDest ops to force `dest` to be used
   -- linearly, and to force reads of the `Freeze dest'` result not to be
   -- reordered in front of the writes.
@@ -141,7 +141,7 @@ lowerTabCon maybeDest tabTy elems = do
         i <- dropSubst $ extendSubst (bord@>SubstVal (IdxRepVal (fromIntegral ord))) $
           lowerExpr Nothing ufoBlock
         carried_dest <- buildRememberDest "dest" incoming_dest \local_dest -> do
-          idest <- indexRef (Var local_dest) (sink i)
+          idest <- indexRef (toAtom local_dest) (sink i)
           place idest =<< visitAtom e
           return UnitVal
         go carried_dest rest
@@ -163,7 +163,7 @@ lowerCase maybeDest scrut alts resultTy = do
       buildAbs (getNameHint b) ty' \b' ->
         extendSubst (b @> Rename (atomVarName b')) $
           buildBlock do
-            lowerExpr (Just (Var $ sink $ local_dest)) body $> UnitVal
+            lowerExpr (Just (toAtom $ sink $ local_dest)) body $> UnitVal
     void $ mkCase (sink scrut') UnitTy alts' >>= emitExpr
     return UnitVal
   emitExpr $ Freeze dest'
@@ -202,7 +202,7 @@ lookupDest dests = fmap fromLiftE . flip lookupNameMapE dests
 -- XXX: When adding more cases, be careful about potentially repeated vars in the output!
 decomposeDest :: Emits o => Dest o -> SExpr i' -> LowerM i o (Maybe (DestAssignment i' o))
 decomposeDest dest = \case
-  Atom (Stuck (StuckVar v)) ->
+  Atom (Stuck _ (Var v)) ->
     return $ Just $ singletonNameMapE (atomVarName v) $ LiftE dest
   _ -> return Nothing
 
@@ -243,7 +243,7 @@ lowerExpr dest expr = case expr of
               -- But we have to emit explicit writes, for all the vars that are not defined in decls!
               forM_ (toListNameMapE $ hoistNameMap decls destMap) \(n, (LiftE d)) -> do
                 x <- case s ! n of
-                  Rename v -> Var <$> toAtomVar v
+                  Rename v -> toAtom <$> toAtomVar v
                   SubstVal a -> return a
                 place d x
               withSubst s' (substM result) >>= emitExpr

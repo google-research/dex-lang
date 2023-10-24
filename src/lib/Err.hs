@@ -59,8 +59,7 @@ data ErrType = NoErr
              | ZipErr
              | EscapedNameErr
              | ModuleImportErr
-             | MonadFailErr
-             | SearchFailure -- used as the identity for `Alternative` instances
+             | SearchFailure -- used as the identity for `Alternative` instances and for MonadFail
                deriving (Show, Eq)
 
 type SrcTextCtx = Maybe (Int, Text) -- Int is the offset in the source file
@@ -320,7 +319,7 @@ layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
 -- === instances ===
 
 instance MonadFail FallibleM where
-  fail s = throw MonadFailErr s
+  fail s = throw SearchFailure s
   {-# INLINE fail #-}
 
 instance Fallible Except where
@@ -333,7 +332,7 @@ instance Fallible Except where
   {-# INLINE addErrCtx #-}
 
 instance MonadFail Except where
-  fail s = Failure $ Err CompilerErr mempty s
+  fail s = Failure $ Err SearchFailure mempty s
   {-# INLINE fail #-}
 
 instance Exception Err
@@ -393,7 +392,6 @@ instance Pretty ErrType where
     ZipErr            -> "Zipping error"
     EscapedNameErr    -> "Leaked local variables:"
     ModuleImportErr   -> "Module import error: "
-    MonadFailErr      -> "MonadFail error (internal error)"
     SearchFailure     -> "Search error (internal error)"
 
 instance Fallible m => Fallible (ReaderT r m) where

@@ -287,7 +287,7 @@ toAtomVar v = do
 lookupAtomSubst :: (IRRep r, SubstReader AtomSubstVal m, EnvReader2 m) => AtomName r i -> m i o (Atom r o)
 lookupAtomSubst v = do
   lookupSubstM v >>= \case
-    Rename v' -> Var <$> toAtomVar v'
+    Rename v' -> toAtom <$> toAtomVar v'
     SubstVal x -> return x
 
 atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE AtomSubstVal e)

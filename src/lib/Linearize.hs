@@ -8,7 +8,6 @@ module Linearize (linearize, linearizeTopLam) where
 
 import Control.Category ((>>>))
 import Control.Monad.Reader
-import Data.Foldable (toList)
 import Data.Functor
 import Data.List (elemIndex)
 import Data.Maybe (catMaybes, isJust)
@@ -83,7 +82,7 @@ extendActivePrimalss vs =
   local \primals -> primals { activeVars = activeVars primals ++ vs }
 
 getTangentArg :: Int -> TangentM o (Atom SimpIR o)
-getTangentArg idx = asks \(TangentArgs vs) -> Var $ vs !! idx
+getTangentArg idx = asks \(TangentArgs vs) -> toAtom $ vs !! idx
 
 extendTangentArgs :: SAtomVar n -> TangentM n a -> TangentM n a
 extendTangentArgs v m = local (\(TangentArgs vs) -> TangentArgs $ vs ++ [v]) m
@@ -190,17 +189,17 @@ getTangentArgTys topVs = go mempty topVs where
     -- like this, but there's nothing to prevent users writing programs that
     -- sling around heap variables by themselves. We should try to do something
     -- better...
-    TC HeapType -> do
-      withFreshBinder (getNameHint v) (TC HeapType) \hb -> do
+    TyCon HeapType -> do
+      withFreshBinder (getNameHint v) (TyCon HeapType) \hb -> do
         let newHeapMap = sink heapMap <> eMapSingleton (sink (atomVarName v)) (binderVar hb)
         Abs bs UnitE <- go newHeapMap $ sinkList vs
         return $ EmptyAbs $ Nest hb bs
-    RefTy (Var h) referentTy -> do
+    RefTy (Stuck _ (Var h)) referentTy -> do
       case lookupEMap heapMap (atomVarName h) of
         Nothing -> error "shouldn't happen?"
         Just h' -> do
           tt <- tangentType referentTy
-          let refTy = RefTy (Var h') tt
+          let refTy = RefTy (toAtom h') tt
           withFreshBinder (getNameHint v) refTy \refb -> do
             Abs bs UnitE <- go (sink heapMap) $ sinkList vs
             return $ EmptyAbs $ Nest refb bs
@@ -300,12 +299,12 @@ linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
     let primalFun = LamExpr bs' body'
     ObligateRecon ty (Abs bsRecon (LamExpr bsTangent tangentBody)) <- return linLamAbs
     tangentFun <- withFreshBinder "residuals" ty \bResidual -> do
-      xs <- unpackTelescope bsRecon $ Var $ binderVar bResidual
+      xs <- unpackTelescope bsRecon $ toAtom $ binderVar bResidual
       Abs bsTangent' UnitE <- applySubst (bsRecon @@> map SubstVal xs) (Abs bsTangent UnitE)
-      tangentTy <- ProdTy <$> typesFromNonDepBinderNest bsTangent'
+      tangentTy <- TyCon <$> ProdType <$> typesFromNonDepBinderNest bsTangent'
       withFreshBinder "t" tangentTy \bTangent -> do
         tangentBody' <- buildBlock do
-          ts <- getUnpacked $ Var $ sink $ binderVar bTangent
+          ts <- getUnpacked $ toAtom $ sink $ binderVar bTangent
           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
                         <.> bsTangent @@> map (SubstVal . sink) ts
           emitExpr =<< applySubst substFrag tangentBody
@@ -325,20 +324,20 @@ linearizeLambdaApp (UnaryLamExpr b body) x = do
 linearizeLambdaApp _ _ = error "not implemented"
 
 linearizeAtom :: Emits o => Atom SimpIR i -> LinM i o SAtom SAtom
-linearizeAtom atom = case atom of
-  Con con -> linearizePrimCon con
-  DepPair _ _ _     -> notImplemented
-  PtrVar _ _      -> emitZeroT
-  Stuck (StuckVar v) -> do
+linearizeAtom (Con con) = linearizePrimCon con
+linearizeAtom atom@(Stuck _ stuck) = case stuck of
+  PtrVar _ _ -> emitZeroT
+  Var v -> do
     v' <- renameM v
     activePrimalIdx v' >>= \case
-      Nothing -> withZeroT $ return (Var v')
-      Just idx -> return $ WithTangent (Var v') $ getTangentArg idx
+      Nothing -> withZeroT $ return (toAtom v')
+      Just idx -> return $ WithTangent (toAtom v') $ getTangentArg idx
   -- TODO: buildScoped and reduce the results so we keep expression in non-ANF for type checking purposes
-  Stuck (StuckProject ty i x) -> linearizeExpr $ Project ty i (Stuck x)
-  Stuck (StuckTabApp t f xs)  -> linearizeExpr $ TabApp t (Stuck f) xs
+  StuckProject _ _ -> undefined
+  StuckTabApp _ _  -> undefined
   RepValAtom _ -> emitZeroT
   where emitZeroT = withZeroT $ renameM atom
+
 
 linearizeDecls :: Emits o => Nest SDecl i i' -> LinM i' o e1 e2 -> LinM i  o e1 e2
 linearizeDecls Empty cont = cont
@@ -385,14 +384,12 @@ linearizeExpr expr = case expr of
     (ans, residuals) <- fromPair =<< naryTopApp fPrimal xs'
     return $ WithTangent ans do
       ts' <- forM (catMaybes ts) \(WithTangent UnitE t) -> t
-      naryTopApp (sink fTan) (sinkList xs' ++ [sink residuals, ProdVal ts'])
+      naryTopApp (sink fTan) (sinkList xs' ++ [sink residuals, Con $ ProdCon ts'])
     where
       unitLike :: e n -> UnitE n
       unitLike _ = UnitE
-  TabApp _ x idxs -> do
-    zipLin (linearizeAtom x) (pureLin $ ListE $ toList idxs) `bindLin`
-      \(PairE x' (ListE idxs')) -> naryTabApp x' idxs'
-  PrimOp op      -> linearizeOp op
+  TabApp _ x i -> zipLin (linearizeAtom x) (pureLin i) `bindLin` \(PairE x' i') -> tabApp x' i'
+  PrimOp op    -> linearizeOp op
   Case e alts (EffTy effs resultTy) -> do
     e' <- renameM e
     effs' <- renameM effs
@@ -408,7 +405,7 @@ linearizeExpr expr = case expr of
         let tys = recons <&> \(ObligateRecon t _) -> t
         alts'' <- forM (enumerate alts') \(i, alt) -> do
           injectAltResult tys i alt
-        let fullResultTy = PairTy resultTy' $ SumTy tys
+        let fullResultTy = PairTy resultTy' $ TyCon $ SumType tys
         result <- emitExpr $ Case e' alts'' (EffTy effs' fullResultTy)
         (primal, residualss) <- fromPair result
         resultTangentType <- tangentType resultTy'
@@ -434,15 +431,15 @@ linearizeOp op = case op of
   Hof (TypedHof _ e) -> linearizeHof e
   DAMOp _        -> error "shouldn't occur here"
   RefOp ref m -> case m of
-    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimOp $ RefOp ref' MAsk
+    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM toAtom $ emit $ PrimOp $ RefOp ref' MAsk
     MExtend monoid x -> do
       -- TODO: check that we're dealing with a +/0 monoid
       monoid' <- renameM monoid
       zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-        liftM Var $ emit $ PrimOp $ RefOp ref' $ MExtend (sink monoid') x'
-    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM Var $ emit $ PrimOp $ RefOp ref' MGet
+        liftM toAtom $ emit $ PrimOp $ RefOp ref' $ MExtend (sink monoid') x'
+    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM toAtom $ emit $ PrimOp $ RefOp ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-                liftM Var $ emit $ PrimOp $ RefOp ref' $ MPut x'
+                liftM toAtom $ emit $ PrimOp $ RefOp ref' $ MPut x'
     IndexRef _ i -> do
       zipLin (la ref) (pureLin i) `bindLin` \(PairE ref' i') ->
         emitExpr =<< mkIndexRef ref' i'
@@ -454,7 +451,7 @@ linearizeOp op = case op of
   MiscOp miscOp -> linearizeMiscOp miscOp
   VectorOp _ -> error "not implemented"
   where
-    emitZeroT = withZeroT $ liftM Var $ emit =<< renameM (PrimOp op)
+    emitZeroT = withZeroT $ liftM toAtom $ emit =<< renameM (PrimOp op)
     la = linearizeAtom
 
 linearizeMiscOp :: Emits o => MiscOp SimpIR i -> LinM i o SAtom SAtom
@@ -489,7 +486,7 @@ linearizeMiscOp op = case op of
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar _ -> error "Shouldn't have ShowScalar in simplified IR"
   where
-    emitZeroT = withZeroT $ liftM Var $ emit =<< renameM (PrimOp $ MiscOp op)
+    emitZeroT = withZeroT $ liftM toAtom $ emit =<< renameM (PrimOp $ MiscOp op)
     la = linearizeAtom
 
 linearizeUnOp :: Emits o => UnOp -> Atom SimpIR i -> LinM i o SAtom SAtom
@@ -566,22 +563,23 @@ linearizeBinOp op x' y' = do
 referToPrimal :: (Builder SimpIR m, Emits l, DExt n l) => SAtom n -> m l (SAtom l)
 referToPrimal x = do
   case x of
-    Var v -> lookupEnv (atomVarName $ sink v) >>= \case
+    Stuck _ (Var v) -> lookupEnv (atomVarName $ sink v) >>= \case
       AtomNameBinding (LetBound (DeclBinding PlainLet (Atom atom))) ->
         referToPrimal atom
-      AtomNameBinding (LetBound (DeclBinding PlainLet (TabApp _ tab is))) -> do
+      AtomNameBinding (LetBound (DeclBinding PlainLet (TabApp _ tab i))) -> do
         tab' <- referToPrimal tab
-        is' <- mapM referToPrimal is
-        emitExpr =<< mkTabApp tab' is'
+        i' <- referToPrimal i
+        emitExpr =<< mkTabApp tab' i'
       _ -> sinkM x
     _ -> sinkM x
 
 linearizePrimCon :: Emits o => Con SimpIR i -> LinM i o SAtom SAtom
 linearizePrimCon con = case con of
   Lit _ -> emitZeroT
-  ProdCon xs -> fmapLin (ProdVal . fromComposeE) $ seqLin (fmap linearizeAtom xs)
+  ProdCon xs -> fmapLin (Con . ProdCon . fromComposeE) $ seqLin (fmap linearizeAtom xs)
   SumCon  _ _ _ -> notImplemented
   HeapVal -> emitZeroT
+  DepPair _ _ _     -> notImplemented
   where emitZeroT = withZeroT $ renameM $ Con con
 
 linearizeHof :: Emits o => Hof SimpIR i -> LinM i o SAtom SAtom
@@ -605,7 +603,7 @@ linearizeHof hof = case hof of
           Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
           withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
             extendSubst (ib''@> Rename (atomVarName i')) do
-              residuals' <- tabApp (sink primalsAux) (Var i') >>= getSnd >>= unpackTelescope bs
+              residuals' <- tabApp (sink primalsAux) (toAtom i') >>= getSnd >>= unpackTelescope bs
               extendSubst (bs @@> (SubstVal <$> residuals')) $
                 applyLinLam linLam'
   RunReader r lam -> do
@@ -658,14 +656,14 @@ linearizeHof hof = case hof of
 
 linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
 linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  withFreshBinder noHint (TC HeapType) \h -> do
+  withFreshBinder noHint (TyCon HeapType) \h -> do
     bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
     withFreshBinder noHint bTy \b -> do
       let ref = binderVar b
       hVar <- sinkM $ binderVar h
       (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
         -- TODO: maybe we should check whether we need to extend the active effects
-        extendActiveEffs (RWSEffect rws (Var hVar)) do
+        extendActiveEffs (RWSEffect rws (toAtom hVar)) do
           linearizeExprDefunc body
       -- TODO: this assumes that references aren't returned. Our type system
       -- ensures that such references can never be *used* once the effect runner

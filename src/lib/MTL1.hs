@@ -317,7 +317,7 @@ runFallibleT1 m =
 {-# INLINE runFallibleT1 #-}
 
 instance Monad1 m => MonadFail (FallibleT1 m n) where
-  fail s = throw MonadFailErr s
+  fail s = throw SearchFailure s
   {-# INLINE fail #-}
 
 instance Monad1 m => Fallible (FallibleT1 m n) where

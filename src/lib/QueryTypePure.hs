@@ -17,6 +17,9 @@ class HasType (r::IR) (e::E) | e -> r where
 class HasEffects (e::E) (r::IR) | e -> r where
   getEffects :: e n -> EffectRow r n
 
+getTyCon :: HasType SimpIR e => e n -> TyCon SimpIR n
+getTyCon e = con where TyCon con = getType e
+
 isPure :: (IRRep r, HasEffects e r) => e n -> Bool
 isPure e = case getEffects e of
   Pure -> True
@@ -32,8 +35,8 @@ instance IRRep r => HasType r (AtomBinding r) where
     SolverBound (SkolemBound ty)   -> ty
     SolverBound (DictBound   ty)   -> ty
     NoinlineFun ty _               -> ty
-    TopDataBound (RepVal ty _)     -> ty
-    FFIFunBound piTy _ -> Pi piTy
+    TopDataBound e                 -> getType e
+    FFIFunBound piTy _ -> TyCon $ Pi piTy
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -69,66 +72,48 @@ instance IRRep r => HasType r (AtomVar r) where
   {-# INLINE getType #-}
 
 instance IRRep r => HasType r (Atom r) where
-  getType atom = case atom of
-    Stuck e -> getType e
-    Lam (CoreLamExpr piTy _) -> Pi piTy
-    DepPair _ _ ty -> DepPairTy ty
-    Con con -> getType con
-    Eff _ -> EffKind
-    PtrVar t _ -> PtrTy t
-    DictCon d -> getType d
-    NewtypeCon con _ -> getNewtypeType con
-    RepValAtom (RepVal ty _) -> ty
-    SimpInCore x -> getType x
-    TypeAsAtom ty -> getType ty
+  getType = \case
+    Stuck t _ -> t
+    Con e -> getType e
 
-instance HasType CoreIR DictCon where
+instance HasType CoreIR (Dict CoreIR) where
+  getType = \case
+    StuckDict t _ -> t
+    DictCon e -> getType e
+
+instance HasType CoreIR (DictCon CoreIR) where
   getType = \case
     InstanceDict t _ _ -> t
-    IxFin t _ -> t
-    DataData t _ -> t
+    DataData t -> toType $ DataDictType t
+    IxFin n -> toType $ IxDictType (FinTy n)
+    IxRawFin _ -> toType $ IxDictType IdxRepTy
 
-instance IRRep r => HasType r (Type r) where
+instance HasType CoreIR CType where
   getType = \case
-    NewtypeTyCon con -> getType con
-    Pi _        -> TyKind
-    TabPi _     -> TyKind
-    DepPairTy _ -> TyKind
-    TC _        -> TyKind
-    DictTy _    -> TyKind
-    StuckTy e   -> getType e
-
-instance IRRep r => HasType r (Stuck r) where
-  getType = \case
-    StuckVar (AtomVar _ t)  -> t
-    StuckProject t _ _      -> t
-    StuckTabApp t _ _       -> t
-    StuckUnwrap  t _        -> t
-    InstantiatedGiven t _ _ -> t
-    SuperclassProj t _ _    -> t
-
-instance HasType CoreIR SimpInCore where
-  getType = \case
-    LiftSimp t _       -> t
-    LiftSimpFun piTy _ -> Pi $ piTy
-    TabLam t _         -> TabPi $ t
-    ACase _ _ t        -> t
+    TyCon _ -> TyKind
+    StuckTy t _ -> t
 
 instance HasType CoreIR NewtypeTyCon where
   getType _ = TyKind
 
 getNewtypeType :: NewtypeCon n -> CType n
 getNewtypeType con = case con of
-  NatCon          -> NewtypeTyCon Nat
-  FinCon n        -> NewtypeTyCon $ Fin n
-  UserADTData sn d params -> NewtypeTyCon $ UserADTType sn d params
+  NatCon              -> TyCon $ NewtypeTyCon Nat
+  FinCon n            -> TyCon $ NewtypeTyCon $ Fin n
+  UserADTData sn d xs -> TyCon $ NewtypeTyCon $ UserADTType sn d xs
 
 instance IRRep r => HasType r (Con r) where
   getType = \case
-    Lit l          -> BaseTy $ litType l
-    ProdCon xs     -> ProdTy $ map getType xs
-    SumCon tys _ _ -> SumTy tys
-    HeapVal        -> TC HeapType
+    Lit l          -> toType $ BaseType $ litType l
+    ProdCon xs     -> toType $ ProdType $ map getType xs
+    SumCon tys _ _ -> toType $ SumType tys
+    HeapVal        -> toType HeapType
+    Lam (CoreLamExpr piTy _) -> toType $ Pi piTy
+    DepPair _ _ ty -> toType $ DepPairTy ty
+    Eff _ -> EffKind
+    DictConAtom d -> getType d
+    NewtypeCon con _ -> getNewtypeType con
+    TyConAtom _ -> TyKind
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
 getSuperclassType _ Empty = error "bad index"
@@ -150,6 +135,9 @@ instance IRRep r => HasType r (Expr r) where
     Project t _ _ -> t
     Unwrap t _ -> t
 
+instance HasType SimpIR RepVal where
+  getType (RepVal ty _) = ty
+
 instance IRRep r => HasType r (DAMOp r) where
   getType = \case
     AllocDest ty -> RawRefTy ty
@@ -162,15 +150,15 @@ instance IRRep r => HasType r (DAMOp r) where
 
 instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
-    BinOp op x _ -> TC $ BaseType $ typeBinOp op $ getTypeBaseType x
-    UnOp  op x   -> TC $ BaseType $ typeUnOp  op $ getTypeBaseType x
+    BinOp op x _ -> TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
+    UnOp  op x   -> TyCon $ BaseType $ typeUnOp  op $ getTypeBaseType x
     Hof  (TypedHof (EffTy _ ty) _) -> ty
     MemOp op -> getType op
     MiscOp op -> getType op
     VectorOp op -> getType op
     DAMOp           op -> getType op
     RefOp ref m -> case getType ref of
-      TC (RefType _ s) -> case m of
+      TyCon (RefType _ s) -> case m of
         MGet        -> s
         MPut _      -> UnitTy
         MAsk        -> s
@@ -181,7 +169,7 @@ instance IRRep r => HasType r (PrimOp r) where
 
 getTypeBaseType :: (IRRep r, HasType r e) => e n -> BaseType
 getTypeBaseType e = case getType e of
-  TC (BaseType b) -> b
+  TyCon (BaseType b) -> b
   ty -> error $ "Expected a base type. Got: " ++ show ty
 
 instance IRRep r => HasType r (MemOp r) where
@@ -191,7 +179,7 @@ instance IRRep r => HasType r (MemOp r) where
     PtrOffset arr _ -> getType arr
     PtrLoad ptr -> do
       let PtrTy (_, t) = getType ptr
-      BaseTy t
+      toType $ BaseType t
     PtrStore _ _ -> UnitTy
 
 instance IRRep r => HasType r (VectorOp r) where
@@ -200,7 +188,7 @@ instance IRRep r => HasType r (VectorOp r) where
     VectorIota vty -> vty
     VectorIdx _ _ vty -> vty
     VectorSubref ref _ vty -> case getType ref of
-      TC (RefType h _) -> TC $ RefType h vty
+      TyCon (RefType h _) -> TyCon $ RefType h vty
       ty -> error $ "Not a reference type: " ++ show ty
 
 instance IRRep r => HasType r (MiscOp r) where
@@ -214,20 +202,20 @@ instance IRRep r => HasType r (MiscOp r) where
     GarbageVal t -> t
     SumTag _     -> TagRepTy
     ToEnum t _   -> t
-    OutputStream -> BaseTy $ hostPtrTy $ Scalar Word8Type
+    OutputStream -> toType $ BaseType $ hostPtrTy $ Scalar Word8Type
       where hostPtrTy ty = PtrType (CPU, ty)
     ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
-    ShowScalar _ -> PairTy IdxRepTy $ rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy
+    ShowScalar _ -> toType $ ProdType [IdxRepTy, rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy]
 
 rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
   Abs b v -> do
-    let tabTy = rawFinTabType (Var $ AtomVar v IdxRepTy) CharRepTy
-    DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
+    let tabTy = rawFinTabType (toAtom $ AtomVar v IdxRepTy) CharRepTy
+    TyCon $ DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
 rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
-rawFinTabType n eltTy = IxType IdxRepTy (IxDictRawFin n) ==> eltTy
+rawFinTabType n eltTy = IxType IdxRepTy (DictCon (IxRawFin n)) ==> eltTy
 
 tabIxType :: TabPiType r n -> IxType r n
 tabIxType (TabPiType d (_:>t) _) = IxType t d
@@ -255,21 +243,13 @@ coreLamToTopLam :: CoreLamExpr n -> TopLam CoreIR n
 coreLamToTopLam (CoreLamExpr ty f) = TopLam False (corePiTypeToPiType ty) f
 
 (==>) :: IRRep r => IxType r n -> Type r n -> Type r n
-a ==> b = TabPi $ nonDepTabPiType a b
+a ==> b = TyCon $ TabPi $ nonDepTabPiType a b
 
-litFinIxTy :: Int -> IxType r n
+litFinIxTy :: Int -> IxType SimpIR n
 litFinIxTy n = finIxTy $ IdxRepVal $ fromIntegral n
 
-finIxTy :: Atom r n -> IxType r n
-finIxTy n = IxType IdxRepTy (IxDictRawFin n)
-
-ixTyFromDict :: IRRep r => IxDict r n -> IxType r n
-ixTyFromDict ixDict = flip IxType ixDict $ case ixDict of
-  IxDictAtom dict -> case getType dict of
-    DictTy (DictType "Ix" _ [Type iTy]) -> iTy
-    _ -> error $ "Not an Ix dict: " ++ show dict
-  IxDictRawFin _ -> IdxRepTy
-  IxDictSpecialized n _ _ -> n
+finIxTy :: Atom SimpIR n -> IxType SimpIR n
+finIxTy n = IxType IdxRepTy (DictCon (IxRawFin n))
 
 -- === querying effects implementation ===
 
@@ -316,7 +296,7 @@ instance IRRep r => HasEffects (PrimOp r) r where
       ShowAny _        -> Pure
       ShowScalar _     -> Pure
     RefOp ref m -> case getType ref of
-      TC (RefType h _) -> case m of
+      TyCon (RefType h _) -> case m of
         MGet      -> OneEffect (RWSEffect State  h)
         MPut    _ -> OneEffect (RWSEffect State  h)
         MAsk      -> OneEffect (RWSEffect Reader h)

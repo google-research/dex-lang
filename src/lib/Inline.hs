@@ -87,7 +87,7 @@ inlineDeclsSubst = \case
       -- See NoteSecretsSubtlety
       if presInfo == UsedOnce then do
         let substVal = case expr' of
-             Atom (Var name') -> Rename $ atomVarName name'
+             Atom (Stuck _ (Var name')) -> Rename $ atomVarName name'
              _ -> SubstVal (DoneEx expr')
         extendSubst (b @> substVal) $ inlineDeclsSubst rest
       else do
@@ -108,7 +108,7 @@ inlineDeclsSubst = \case
     resolveWorkConservation NoInlineLet _ = NoInline
     -- Quick hack to always unconditionally inline renames, until we get
     -- a better story about measuring the sizes of atoms and expressions.
-    resolveWorkConservation (OccInfoPure _) (Atom (Var _)) = UsedOnce
+    resolveWorkConservation (OccInfoPure _) (Atom (Stuck _ (Var _))) = UsedOnce
     resolveWorkConservation (OccInfoPure (UsageInfo s (ixDepth, d))) expr
       | d <= One = case ixDepthExpr expr >= ixDepth of
         True -> if s <= One then UsedOnce else UsedMulti
@@ -193,7 +193,7 @@ preInlineUnconditionally = \case
 -- instead of emitting the binding.
 data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
-  TabAppCtx :: [SAtom i] -> Subst InlineSubstVal i o
+  TabAppCtx :: SAtom i -> Subst InlineSubstVal i o
             -> Context SExpr e o -> Context SExpr e o
   CaseCtx :: [SAlt i] -> SType i -> EffectRow SimpIR i
           -> Subst InlineSubstVal i o
@@ -218,9 +218,9 @@ instance Emits o => Visitor (InlineM i o) SimpIR i o where
 inlineExpr :: Emits o => Context SExpr e o -> SExpr i -> InlineM i o (e o)
 inlineExpr ctx = \case
   Atom atom -> inlineAtom ctx atom
-  TabApp _ tbl ixs -> do
+  TabApp _ tbl ix -> do
     s <- getSubst
-    inlineAtom (TabAppCtx ixs s ctx) tbl
+    inlineAtom (TabAppCtx ix s ctx) tbl
   Case scrut alts (EffTy effs resultTy) -> do
     s <- getSubst
     inlineAtom (CaseCtx alts resultTy effs s ctx) scrut
@@ -231,11 +231,22 @@ inlineExpr ctx = \case
 
 inlineAtom :: Emits o => Context SExpr e o -> SAtom i -> InlineM i o (e o)
 inlineAtom ctx = \case
-  Stuck (StuckVar name) -> inlineName ctx name
-  Stuck (StuckProject _ i x) -> do
-    ans <- proj i =<< inline Stop (Stuck x)
+  Stuck _ stuck -> inlineStuck ctx stuck
+  Con con -> (toExpr <$> visitGeneric con) >>= reconstruct ctx
+
+inlineStuck :: Emits o => Context SExpr e o -> SStuck i -> InlineM i o (e o)
+inlineStuck ctx = \case
+  Var name -> inlineName ctx name
+  StuckProject i x -> do
+    ans <- proj i =<< emitExprToAtom =<< inlineStuck Stop x
     reconstruct ctx $ Atom ans
-  atom -> (Atom <$> visitAtomPartial atom) >>= reconstruct ctx
+  StuckTabApp _ _ -> error "not implemented"
+  PtrVar t p -> do
+    s <- mkStuck =<< (PtrVar t <$> substM p)
+    reconstruct ctx (toExpr s)
+  RepValAtom repVal -> do
+    s <- mkStuck =<< (RepValAtom <$> visitGeneric repVal)
+    reconstruct ctx (toExpr s)
 
 inlineName :: Emits o => Context SExpr e o -> SAtomVar i -> InlineM i o (e o)
 inlineName ctx name =
@@ -250,7 +261,7 @@ inlineName ctx name =
       --   (expr', presInfo) | inline presInfo expr' ctx -> inline
       --   no info -> do not inline (as now)
       v <- toAtomVar name'
-      reconstruct ctx (Atom $ Var v)
+      reconstruct ctx (toExpr v)
     SubstVal (DoneEx expr) -> dropSubst $ inlineExpr ctx expr
     SubstVal (SuspEx expr s') -> withSubst s' $ inlineExpr ctx expr
 
@@ -261,7 +272,7 @@ instance Inlinable SAtom where
   inline ctx a = inlineAtom (EmitToAtomCtx ctx) a
 
 instance Inlinable SType where
-  inline ctx ty = visitTypePartial ty >>= reconstruct ctx
+  inline ctx (TyCon ty) = (TyCon <$> visitGeneric ty) >>= reconstruct ctx
 
 instance Inlinable SLam where
   inline ctx (LamExpr bs body) = do
@@ -291,7 +302,7 @@ instance Inlinable (PiType SimpIR) where
 reconstruct :: Emits o => Context e1 e2 o -> e1 o -> InlineM i o (e2 o)
 reconstruct ctx e = case ctx of
   Stop -> return e
-  TabAppCtx ixs s ctx' -> withSubst s $ reconstructTabApp ctx' e ixs
+  TabAppCtx ix s ctx' -> withSubst s $ reconstructTabApp ctx' e ix
   CaseCtx alts resultTy effs s ctx' ->
     withSubst s $ reconstructCase ctx' e alts resultTy effs
   EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
@@ -299,24 +310,17 @@ reconstruct ctx e = case ctx of
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
-  => Context SExpr e o -> SExpr o -> [SAtom i] -> InlineM i o (e o)
-reconstructTabApp ctx expr [] = do
-  reconstruct ctx expr
-reconstructTabApp ctx expr ixs =
-  case fromNaryForExpr (length ixs) expr of
-    Just (bsCount, LamExpr bs body) -> do
-      -- See NoteReconstructTabAppDecisions
-      let (ixsPref, ixsRest) = splitAt bsCount ixs
-      ixsPref' <- mapM (inline $ EmitToNameCtx Stop) ixsPref
-      let ixsPref'' = [v | AtomVar v _ <- ixsPref']
-      s <- getSubst
-      let moreSubst = bs @@> map Rename ixsPref''
-      dropSubst $ extendSubst moreSubst do
-        inlineExpr (TabAppCtx ixsRest s ctx) body
-    Nothing -> do
-      array' <- emitExprToAtom expr
-      ixs' <- mapM (inline Stop) ixs
-      reconstruct ctx =<< mkTabApp array' ixs'
+  => Context SExpr e o -> SExpr o -> SAtom i -> InlineM i o (e o)
+reconstructTabApp ctx expr i = case expr of
+  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) -> do
+    -- See NoteReconstructTabAppDecisions
+    AtomVar i' _ <- inline (EmitToNameCtx Stop) i
+    dropSubst $ extendSubst (b@>Rename i') do
+      inlineExpr ctx body
+  _ -> do
+    array' <- emitExprToAtom expr
+    i' <- inline Stop i
+    reconstruct ctx =<< mkTabApp array' i'
 
 reconstructCase :: Emits o
   => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
@@ -340,12 +344,13 @@ reconstructCase ctx scrutExpr alts resultTy effs =
       -- context `ctx` into the selected alternative if the optimization fires,
       -- but leave it around the whole reconstructed `Case` if it doesn't.
       scrut <- emitExprToAtom scrutExpr
-      case trySelectBranch scrut of
-        Just (i, val) -> do
+      case scrut of
+        Con con -> do
+          SumCon _ i val <- return con
           Abs b body <- return $ alts !! i
           extendSubst (b @> (SubstVal $ DoneEx $ Atom val)) do
             inlineExpr ctx body
-        Nothing -> do
+        Stuck _ _ -> do
           alts' <- mapM visitAlt alts
           resultTy' <- inline Stop resultTy
           effs' <- inline Stop effs

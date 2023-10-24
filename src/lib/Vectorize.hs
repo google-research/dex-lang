@@ -178,7 +178,7 @@ vectorizeLoopsExpr expr = do
                 let vn = n `div` loopWidth
                 body' <- vectorizeSeq loopWidth ixty body
                 dest' <- renameM dest
-                emitExpr =<< mkSeq dir (IxType IdxRepTy (IxDictRawFin (IdxRepVal vn))) dest' body')
+                emitExpr =<< mkSeq dir (IxType IdxRepTy (DictCon (IxRawFin (IdxRepVal vn)))) dest' body')
               else renameM expr >>= emitExpr)
           `catchErr` \err -> do
               let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
@@ -256,7 +256,7 @@ isAdditionMonoid monoid = do
   BaseMonoid { baseEmpty = (Con (Lit l))
              , baseCombine = BinaryLamExpr (b1:>_) (b2:>_) body } <- Just monoid
   unless (_isZeroLit l) Nothing
-  PrimOp (BinOp op (Var b1') (Var b2')) <- return body
+  PrimOp (BinOp op (Stuck _ (Var b1')) (Stuck _ (Var b2'))) <- return body
   unless (op `elem` [P.IAdd, P.FAdd]) Nothing
   case (binderName b1, atomVarName b1', binderName b2, atomVarName b2') of
     -- Checking the raw names here because (i) I don't know how to convince the
@@ -300,7 +300,7 @@ vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
   safe :: Effect SimpIR i -> TopVectorizeM i o Bool
   safe InitEffect = return True
   safe (RWSEffect Reader _) = return True
-  safe (RWSEffect Writer (Var h)) = do
+  safe (RWSEffect Writer (Stuck _ (Var h))) = do
     h' <- renameM $ atomVarName h
     commuteMap <- ask
     case lookupNameMapE h' commuteMap of
@@ -313,15 +313,15 @@ vectorizeSeq :: Word32 -> IxType SimpIR i -> LamExpr SimpIR i
   -> TopVectorizeM i o (LamExpr SimpIR o)
 vectorizeSeq loopWidth ixty (UnaryLamExpr (b:>ty) body) = do
   newLoopTy <- case ty of
-    ProdTy [_ixType, ref] -> do
+    TyCon (ProdType [_ixType, ref]) -> do
       ref' <- renameM ref
-      return $ ProdTy [IdxRepTy, ref']
+      return $ TyCon $ ProdType [IdxRepTy, ref']
     _ -> error "Unexpected seq binder type"
   ixty' <- renameM ixty
   liftVectorizeM loopWidth $
     buildUnaryLamExpr (getNameHint b) newLoopTy \ci -> do
       -- The per-tile loop iterates on `Fin`
-      (viOrd, dest) <- fromPair $ Var ci
+      (viOrd, dest) <- fromPair $ toAtom ci
       iOrd <- imul viOrd $ IdxRepVal loopWidth
       -- TODO: It would be nice to cancel this UnsafeFromOrdinal with the
       -- Ordinal that will be taken later when indexing, but that should
@@ -362,13 +362,13 @@ vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
     LamExpr Empty <$> buildBlock (do
       vectorizeExpr body >>= \case
         (VVal _ ans) -> return ans
-        (VRename v) -> Var <$> toAtomVar v)
+        (VRename v) -> toAtom <$> toAtomVar v)
   (Nest (b:>ty) rest, (stab:stabs)) -> do
     ty' <- vectorizeType ty
     ty'' <- promoteTypeByStability ty' stab
     withFreshBinder (getNameHint b) ty'' \b' -> do
       var <- toAtomVar $ binderName b'
-      extendSubst (b @> VVal stab (Var var)) do
+      extendSubst (b @> VVal stab (toAtom var)) do
         LamExpr rest' body' <- vectorizeLamExpr (LamExpr rest body) stabs
         return $ LamExpr (Nest b' rest') body'
   _ -> error "Zip error"
@@ -377,7 +377,7 @@ vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
 vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
   case expr of
     Block _ block -> vectorizeBlock block
-    TabApp _ tbl [ix] -> do
+    TabApp _ tbl ix -> do
       VVal Uniform tbl' <- vectorizeAtom tbl
       VVal Contiguous ix' <- vectorizeAtom ix
       case getType tbl' of
@@ -442,7 +442,7 @@ vectorizeRefOp ref' op =
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
       case getType ref of
-        TC (RefType _ (TabTy _ tb a)) -> do
+        TyCon (RefType _ (TabTy _ tb a)) -> do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
@@ -525,23 +525,29 @@ vectorizeType t = do
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
 vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
   case atom of
-    Stuck e -> case e of
-      StuckVar v -> lookupSubstM (atomVarName v) >>= \case
-        VRename v' -> VVal Uniform . Var <$> toAtomVar v'
-        v' -> return v'
-      StuckProject _ i x -> do
-        VVal vv x' <- vectorizeAtom (Stuck x)
-        ov <- case vv of
-          ProdStability sbs -> return $ sbs !! i
-          _ -> throwVectErr "Invalid projection"
-        x'' <- reduceProj i x'
-        return $ VVal ov x''
-      -- TODO: think about this case
-      StuckTabApp _ _ _ -> throwVectErr $ "Cannot vectorize atom: " ++ pprint atom
-    Con (Lit l) -> return $ VVal Uniform $ Con $ Lit l
-    _ -> do
-      subst <- getSubst
-      VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
+    Stuck _ e -> vectorizeStuck e
+    Con con -> case con of
+      Lit l -> return $ VVal Uniform $ Con $ Lit l
+      _ -> do
+        subst <- getSubst
+        VVal Uniform <$> fmapNamesM (uniformSubst subst) atom
+
+vectorizeStuck :: SStuck i -> VectorizeM i o (VAtom o)
+vectorizeStuck = \case
+  Var v -> lookupSubstM (atomVarName v) >>= \case
+    VRename v' -> VVal Uniform . toAtom <$> toAtomVar v'
+    v' -> return v'
+  StuckProject i x -> do
+    VVal vv x' <- vectorizeStuck x
+    ov <- case vv of
+      ProdStability sbs -> return $ sbs !! i
+      _ -> throwVectErr "Invalid projection"
+    x'' <- reduceProj i x'
+    return $ VVal ov x''
+  -- TODO: think about this case
+  StuckTabApp _ _ -> throwVectErr $ "Cannot vectorize atom"
+  PtrVar _ _      -> throwVectErr $ "Cannot vectorize atom"
+  RepValAtom _    -> throwVectErr $ "Cannot vectorize atom"
 
 uniformSubst :: Color c => Subst VSubstValC i o -> Name c i -> AtomSubstVal c o
 uniformSubst subst n = case subst ! n of
@@ -577,7 +583,7 @@ ensureVarying (VVal s val) = case s of
       _ -> throwVectErr "Not implemented"
   ProdStability _ -> throwVectErr "Not implemented"
 ensureVarying (VRename v) = do
-  x <- Var <$> toAtomVar v
+  x <- toAtom <$> toAtomVar v
   ensureVarying (VVal Uniform x)
 
 promoteTypeByStability :: SType o -> Stability -> VectorizeM i o (SType o)
@@ -586,7 +592,7 @@ promoteTypeByStability ty = \case
   Contiguous -> return ty
   Varying -> getVectorType ty
   ProdStability stabs -> case ty of
-    ProdTy elts -> ProdTy <$> zipWithZ promoteTypeByStability elts stabs
+    TyCon (ProdType elts) -> TyCon <$> ProdType <$> zipWithZ promoteTypeByStability elts stabs
     _ -> throw ZipErr "Type and stability"
 
 -- === computing byte widths ===
@@ -618,7 +624,7 @@ instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
 
 typeByteWidth :: SType n -> Word32
 typeByteWidth ty = case ty of
- TC (BaseType bt) -> case bt of
+ BaseTy bt -> case bt of
   -- Currently only support vectorization of scalar types (cf. `getVectorType` above):
   Scalar _ -> fromInteger . toInteger $ sizeOf bt
   _ -> maxWord32

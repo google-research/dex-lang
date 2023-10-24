@@ -194,17 +194,18 @@ summaryExpr = \case
 
 summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
-  Var v -> ixExpr $ atomVarName v
-  Con c -> constructor c
-  _ -> unknown atom
+  Stuck _ stuck -> case stuck of
+    Var v -> ixExpr $ atomVarName v
+    _ -> unknown atom
+  Con c -> case c of
+    -- TODO Represent the actual literal value?
+    Lit _ -> return $ Deterministic []
+    ProdCon elts -> Product <$> mapM summary elts
+    SumCon _ tag payload -> Inject tag <$> summary payload
+    HeapVal -> invalid "HeapVal"
+    DepPair _ _ _ -> error "not implemented"
   where
     invalid tag = error $ "Unexpected indexing by " ++ tag
-    constructor = \case
-      -- TODO Represent the actual literal value?
-      Lit _ -> return $ Deterministic []
-      ProdCon elts -> Product <$> mapM summary elts
-      SumCon _ tag payload -> Inject tag <$> summary payload
-      HeapVal -> invalid "HeapVal"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll
@@ -245,24 +246,25 @@ class HasOCC (e::E) where
 
 instance HasOCC SAtom where
   occ a = \case
-    Stuck e -> Stuck <$> occ a e
-    atom -> runOCCMVisitor a $ visitAtomPartial atom
+    Stuck t e -> Stuck <$> occ a t <*> occ a e
+    Con con -> liftM Con $ runOCCMVisitor a $ visitGeneric con
 
 instance HasOCC SStuck where
   occ a = \case
-    StuckVar (AtomVar n ty) -> do
+    Var (AtomVar n ty) -> do
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
-      return $ StuckVar (AtomVar n ty')
-    StuckProject t i x -> StuckProject <$> occ a t <*> pure i <*> occ a x
-    StuckTabApp t array ixs -> do
-      t' <- occTy t
-      (a', ixs') <- occIdxs a ixs
+      return $ Var (AtomVar n ty')
+    StuckProject i x -> StuckProject <$> pure i <*> occ a x
+    StuckTabApp array ixs -> do
+      (a', ixs') <- occIdx a ixs
       array' <- occ a' array
-      return $ StuckTabApp t' array' ixs'
+      return $ StuckTabApp array' ixs'
+    PtrVar t p -> return $ PtrVar t p
+    RepValAtom x -> return $ RepValAtom x
 
 instance HasOCC SType where
-  occ a ty = runOCCMVisitor a $ visitTypePartial ty
+  occ a (TyCon con) = liftM TyCon $ runOCCMVisitor a $ visitGeneric con
 
 -- TODO What, actually, is the right thing to do for type annotations?  Do we
 -- want a rule like "we never inline into type annotations", or such?  For
@@ -363,11 +365,11 @@ instance HasOCC SExpr where
       effTy' <- occ a effTy
       Abs decls' ans' <- occNest a (Abs decls ans)
       return $ Block effTy' (Abs decls' ans')
-    TabApp t array ixs -> do
+    TabApp t array ix -> do
       t' <- occTy t
-      (a', ixs') <- occIdxs a ixs
+      (a', ix') <- occIdx a ix
       array' <- occ a' array
-      return $ TabApp t' array' ixs'
+      return $ TabApp t' array' ix'
     Case scrut alts (EffTy effs ty) -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
@@ -382,12 +384,10 @@ instance HasOCC SExpr where
       PrimOp . RefOp ref' <$> occ a op
     expr -> occGeneric a expr
 
-occIdxs :: Access n -> [SAtom n] -> OCCM n (Access n, [SAtom n])
-occIdxs acc [] = return (acc, [])
-occIdxs acc (ix:ixs) = do
-        (acc', ixs') <- occIdxs acc ixs
-        (summ, ix') <- occurrenceAndSummary ix
-        return (location summ acc', ix':ixs')
+occIdx :: Access n -> SAtom n -> OCCM n (Access n, SAtom n)
+occIdx acc ix = do
+  (summ, ix') <- occurrenceAndSummary ix
+  return (location summ acc, ix')
 
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.

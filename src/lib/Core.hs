@@ -428,33 +428,6 @@ fromNaryForExpr maxDepth = \case
         return (d + 1, LamExpr (Nest b bs) body2)
   _ -> Nothing
 
-mkConsListTy :: [Type r n] -> Type r n
-mkConsListTy = foldr PairTy UnitTy
-
-mkConsList :: [Atom r n] -> Atom r n
-mkConsList = foldr PairVal UnitVal
-
-fromConsListTy :: (IRRep r, Fallible m) => Type r n -> m [Type r n]
-fromConsListTy ty = case ty of
-  UnitTy         -> return []
-  PairTy t rest -> (t:) <$> fromConsListTy rest
-  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
-
--- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
-fromLeftLeaningConsListTy :: (IRRep r, Fallible m) => Int -> Type r n -> m (Type r n, [Type r n])
-fromLeftLeaningConsListTy depth initTy = go depth initTy []
-  where
-    go 0        ty xs = return (ty, reverse xs)
-    go remDepth ty xs = case ty of
-      PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
-      _ -> throw CompilerErr $ "Not a pair: " ++ show xs
-
-fromConsList :: (IRRep r, Fallible m) => Atom r n -> m [Atom r n]
-fromConsList xs = case xs of
-  UnitVal        -> return []
-  PairVal x rest -> (x:) <$> fromConsList rest
-  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
-
 type BundleDesc = Int  -- length
 
 bundleFold :: a -> (a -> a -> a) -> [a] -> (a, BundleDesc)
@@ -465,16 +438,10 @@ bundleFold emptyVal pair els = case els of
     where (tb, td) = bundleFold emptyVal pair t
 
 mkBundleTy :: [Type r n] -> (Type r n, BundleDesc)
-mkBundleTy = bundleFold UnitTy PairTy
+mkBundleTy = bundleFold UnitTy (\x y -> TyCon (ProdType [x, y]))
 
 mkBundle :: [Atom r n] -> (Atom r n, BundleDesc)
-mkBundle = bundleFold UnitVal PairVal
-
-trySelectBranch :: IRRep r => Atom r n -> Maybe (Int, Atom r n)
-trySelectBranch e = case e of
-  SumVal _ i value -> Just (i, value)
-  NewtypeCon con e' | isSumCon con -> trySelectBranch e'
-  _ -> Nothing
+mkBundle = bundleFold UnitVal (\x y -> Con (ProdCon [x, y]))
 
 freeAtomVarsList :: forall r e n. (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
 freeAtomVarsList = freeVarsList

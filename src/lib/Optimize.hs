@@ -41,7 +41,7 @@ optimize = dceTop     -- Clean up user code
 
 peepholeOp :: PrimOp SimpIR o -> EnvReaderM o (SExpr o)
 peepholeOp op = case op of
-  MiscOp (CastOp (BaseTy (Scalar sTy)) (Con (Lit l))) -> return $ case foldCast sTy l of
+  MiscOp (CastOp (TyCon (BaseType (Scalar sTy))) (Con (Lit l))) -> return $ case foldCast sTy l of
     Just l' -> lit l'
     Nothing -> noop
   -- TODO: Support more unary and binary ops.
@@ -69,9 +69,9 @@ peepholeOp op = case op of
   BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
     return $ lit $ Word8Lit $ lv .&. rv
   MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> case ty of
-    SumTy cases -> return $ Atom $ SumVal cases (fromIntegral tag) UnitVal
+    TyCon (SumType cases) -> return $ toExpr $ SumCon cases (fromIntegral tag) UnitVal
     _ -> error "Ill typed ToEnum?"
-  MiscOp (SumTag (SumVal _ tag _)) -> return $ lit $ Word8Lit $ fromIntegral tag
+  MiscOp (SumTag (Con (SumCon _ tag _))) -> return $ lit $ Word8Lit $ fromIntegral tag
   _ -> return noop
   where
     noop = PrimOp op
@@ -187,7 +187,7 @@ foldCast sTy l = case sTy of
 peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
 peepholeExpr expr = case expr of
   PrimOp op -> peepholeOp op
-  TabApp _ (Var (AtomVar t _)) [IdxRepVal ord] ->
+  TabApp _ (Stuck _ (Var (AtomVar t _))) (IdxRepVal ord) ->
     lookupAtomName t <&> \case
       LetBound (DeclBinding ann (TabCon Nothing tabTy elems))
         | ann /= NoInlineLet && isFinTabTy tabTy->
@@ -202,7 +202,7 @@ peepholeExpr expr = case expr of
   -- Think, partial evaluation of threefry.
   _ -> return expr
   where isFinTabTy = \case
-          TabPi (TabPiType (IxDictRawFin _) _ _) -> True
+          TyCon (TabPi (TabPiType (DictCon (IxRawFin _)) _ _)) -> True
           _ -> False
 
 -- === Loop unrolling ===
@@ -242,7 +242,7 @@ ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
 ulExpr expr = case expr of
   PrimOp (Hof (TypedHof _ (For Fwd ixTy body))) ->
     case ixTypeDict ixTy of
-      IxDictRawFin (IdxRepVal n) -> do
+      DictCon (IxRawFin (IdxRepVal n)) -> do
         (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
         -- We add n (in the form of (... + 1) * n) for the cost of the TabCon reconstructing the result.
         case (bodyCost + 1) * (fromIntegral n) <= unrollBlowupThreshold of
@@ -253,7 +253,7 @@ ulExpr expr = case expr of
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               getLamExprType body' >>= \case
                 PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
-                  let tabTy = TabPi $ TabPiType (IxDictRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
+                  let tabTy = toType $ TabPiType (DictCon $ IxRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
                   emitExpr $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
@@ -306,7 +306,7 @@ hoistLoopInvariant lam = liftLamExpr lam hoistLoopInvariantExpr
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
 licmExpr = \case
-  PrimOp (DAMOp (Seq _ dir ix (ProdVal dests) (LamExpr (UnaryNest b) body))) -> do
+  PrimOp (DAMOp (Seq _ dir ix (Con (ProdCon dests)) (LamExpr (UnaryNest b) body))) -> do
     ix' <- substM ix
     dests' <- mapM visitAtom dests
     let numCarriesOriginal = length dests'
@@ -319,15 +319,15 @@ licmExpr = \case
     PairE (ListE extraDests) ab <- emitDecls $ Abs hdecls destsAndBody
     extraDests' <- mapM toAtomVar extraDests
     -- Append the destinations of hoisted Allocs as loop carried values.
-    let dests'' = ProdVal $ dests' ++ (Var <$> extraDests')
+    let dests'' = Con $ ProdCon $ dests' ++ (toAtom <$> extraDests')
     let carryTy = getType dests''
     let lbTy = case ix' of IxType ixTy _ -> PairTy ixTy carryTy
     extraDestsTyped <- forM extraDests' \(AtomVar d t) -> return (d, t)
     Abs extraDestBs (Abs lb bodyAbs) <- return $ abstractFreeVars extraDestsTyped ab
     body' <- withFreshBinder noHint lbTy \lb' -> do
-      (oldIx, allCarries) <- fromPairReduced $ Var $ binderVar lb'
+      (oldIx, allCarries) <- fromPairReduced $ toAtom $ binderVar lb'
       (oldCarries, newCarries) <- splitAt numCarriesOriginal <$> getUnpackedReduced allCarries
-      let oldLoopBinderVal = PairVal oldIx (ProdVal oldCarries)
+      let oldLoopBinderVal = Con $ ProdCon [oldIx, Con $ ProdCon oldCarries]
       let s = extraDestBs @@> map SubstVal newCarries <.> lb @> SubstVal oldLoopBinderVal
       block <- mkBlock =<< applySubst s bodyAbs
       return $ UnaryLamExpr lb' block
@@ -419,11 +419,13 @@ instance Color c => HasDCE (Name c) where
   dce n = modify (<> FV (freeVarsE n)) $> n
 
 instance HasDCE SAtom where
-  dce = \case
-    Stuck e -> modify (<> FV (freeVarsE e)) $> Stuck e
-    atom -> visitAtomPartial atom
+  dce atom = case atom of
+    Stuck _ _ -> modify (<> FV (freeVarsE atom)) $> atom
+    Con con   -> Con <$> visitGeneric con
 
-instance HasDCE SType where dce = visitTypePartial
+instance HasDCE SType where
+  dce (TyCon e) = TyCon <$> visitGeneric e
+
 instance HasDCE (PiType SimpIR) where
   dce (PiType bs effTy) = do
     dceBinders bs effTy \bs' effTy' -> PiType bs' <$> dce effTy'

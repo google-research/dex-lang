@@ -62,7 +62,7 @@ type Builder2         (r::IR) (m :: MonadKind2) = forall i. Builder         r (m
 type ScopableBuilder2 (r::IR) (m :: MonadKind2) = forall i. ScopableBuilder r (m i)
 
 emitDecl :: (Builder r m, Emits n) => NameHint -> LetAnn -> Expr r n -> m n (AtomVar r n)
-emitDecl _ _ (Atom (Var n)) = return n
+emitDecl _ _ (Atom (Stuck _ (Var n))) = return n
 emitDecl hint ann expr = rawEmitDecl hint ann expr
 {-# INLINE emitDecl #-}
 
@@ -82,12 +82,12 @@ emitExpr :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)
 emitExpr e = case toExpr e of
   Atom x -> return x
   Block _ block -> emitDecls block >>= emitExpr
-  expr -> Var <$> emit expr
+  expr -> toAtom <$> emit expr
 {-# INLINE emitExpr #-}
 
 emitToVar :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (AtomVar r n)
 emitToVar e = case toExpr e of
-  Atom (Var v) -> return v
+  Atom (Stuck _ (Var v)) -> return v
   expr -> emit expr
 {-# INLINE emitToVar #-}
 
@@ -117,7 +117,7 @@ emitDecls' (Nest (Let b (DeclBinding ann expr)) rest) e = do
 
 emitExprToAtom :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
 emitExprToAtom (Atom atom) = return atom
-emitExprToAtom expr = Var <$> emit expr
+emitExprToAtom expr = toAtom <$> emit expr
 {-# INLINE emitExprToAtom #-}
 
 buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
@@ -314,13 +314,6 @@ emitTopFunBinding hint def f = do
 
 emitSourceMap :: TopBuilder m => SourceMap n -> m n ()
 emitSourceMap sm = emitLocalModuleEnv $ mempty {envSourceMap = sm}
-
-emitSynthCandidates :: TopBuilder m => SynthCandidates n -> m n ()
-emitSynthCandidates sc = emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
-
-addInstanceSynthCandidate :: TopBuilder m => ClassName n -> InstanceName n -> m n ()
-addInstanceSynthCandidate className instanceName =
-  emitSynthCandidates $ SynthCandidates (M.singleton className [instanceName])
 
 updateTransposeRelation :: (Mut n, TopBuilder m) => TopFunName n -> TopFunName n -> m n ()
 updateTransposeRelation f1 f2 =
@@ -709,7 +702,7 @@ buildLamExpr (Abs bs UnitE) cont = case bs of
   Empty -> LamExpr Empty <$> buildBlock (cont [])
   Nest b rest -> do
     Abs b' (LamExpr bs' body') <- buildAbs (getNameHint b) (binderType b) \v -> do
-      rest' <- applySubst (b@>SubstVal (Var v)) $ EmptyAbs rest
+      rest' <- applySubst (b@>SubstVal (toAtom v)) $ EmptyAbs rest
       buildLamExpr rest' \vs -> cont $ sink v : vs
     return $ LamExpr (Nest b' bs') body'
 
@@ -746,9 +739,9 @@ buildCaseAlts scrut indexedAltBody = do
 injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
 injectAltResult sumTys con (Abs b body) = liftBuilder do
   buildAlt (binderType b) \v -> do
-    originalResult <- emitExpr =<< applySubst (b@>SubstVal (Var v)) body
+    originalResult <- emitExpr =<< applySubst (b@>SubstVal (toAtom v)) body
     (dataResult, nonDataResult) <- fromPairReduced originalResult
-    return $ PairVal dataResult $ Con $ SumCon (sinkList sumTys) con nonDataResult
+    return $ toAtom $ ProdCon [dataResult, Con $ SumCon (sinkList sumTys) con nonDataResult]
 
 -- TODO: consider a version with nonempty list of alternatives where we figure
 -- out the result type from one of the alts rather than providing it explicitly
@@ -756,20 +749,20 @@ buildCase' :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n
   -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
   -> m n (Expr r n)
-buildCase' scrut resultTy indexedAltBody = do
-  case trySelectBranch scrut of
-    Just (i, arg) -> do
-      Distinct <- getDistinct
-      Atom <$> indexedAltBody i (sink arg)
-    Nothing -> do
-      scrutTy <- return $ getType scrut
-      altBinderTys <- caseAltsBinderTys scrutTy
-      (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
-        (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
-          blk <- buildBlock $ indexedAltBody i $ Var $ sink x
-          return $ blk `PairE` getEffects blk
-        return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
-      return $ Case scrut alts $ EffTy (mconcat effs) resultTy
+buildCase' scrut resultTy indexedAltBody = case scrut of
+  Con con -> do
+    SumCon _ i arg <- return con
+    Distinct <- getDistinct
+    Atom <$> indexedAltBody i (sink arg)
+  Stuck _ _ -> do
+    scrutTy <- return $ getType scrut
+    altBinderTys <- caseAltsBinderTys scrutTy
+    (alts, effs) <- unzip <$> forM (enumerate altBinderTys) \(i, bTy) -> do
+      (Abs b' (body `PairE` eff')) <- buildAbs noHint bTy \x -> do
+        blk <- buildBlock $ indexedAltBody i $ toAtom $ sink x
+        return $ blk `PairE` getEffects blk
+      return (Abs b' body, ignoreHoistFailure $ hoist b' eff')
+    return $ Case scrut alts $ EffTy (mconcat effs) resultTy
 
 buildCase :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n
@@ -783,8 +776,8 @@ buildEffLam
   -> (forall l. (Emits l, DExt n l) => AtomVar r l -> AtomVar r l -> m l (Atom r l))
   -> m n (LamExpr r n)
 buildEffLam hint ty body = do
-  withFreshBinder noHint (TC HeapType) \h -> do
-    let ty' = RefTy (Var $ binderVar h) (sink ty)
+  withFreshBinder noHint (TyCon HeapType) \h -> do
+    let ty' = RefTy (toAtom $ binderVar h) (sink ty)
     withFreshBinder hint ty' \b -> do
       let ref = binderVar b
       hVar <- sinkM $ binderVar h
@@ -809,20 +802,14 @@ buildFor :: (Emits n, ScopableBuilder r m)
          -> m n (Atom r n)
 buildFor hint dir ty body = buildForAnn hint dir ty body
 
-buildMap :: (Emits n, ScopableBuilder r m)
-         => Atom r n
-         -> (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
-         -> m n (Atom r n)
+buildMap :: (Emits n, ScopableBuilder SimpIR m)
+         => SAtom n
+         -> (forall l. (Emits l, DExt n l) => SAtom l -> m l (SAtom l))
+         -> m n (SAtom n)
 buildMap xs f = do
-  TabPi t <- return $ getType xs
+  TabPi t <- return $ getTyCon xs
   buildFor noHint Fwd (tabIxType t) \i ->
-    tabApp (sink xs) (Var i) >>= f
-
-unzipTab :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n, Atom r n)
-unzipTab tab = do
-  fsts <- liftEmitBuilder $ buildMap tab getFst
-  snds <- liftEmitBuilder $ buildMap tab getSnd
-  return (fsts, snds)
+    tabApp (sink xs) (toAtom i) >>= f
 
 emitRunWriter
   :: (Emits n, ScopableBuilder r m)
@@ -882,12 +869,12 @@ buildRememberDest hint dest cont = do
 zeroAt :: (Emits n, SBuilder m) => SType n -> m n (SAtom n)
 zeroAt ty = liftEmitBuilder $ go ty where
   go :: Emits n => SType n -> BuilderM SimpIR n (SAtom n)
-  go = \case
-   BaseTy bt  -> return $ Con $ Lit $ zeroLit bt
-   ProdTy tys -> ProdVal <$> mapM go tys
-   TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
-     go =<< instantiate (sink tabPi) [Var i]
-   _ -> unreachable
+  go (TyCon con) = case con of
+    BaseType bt  -> return $ Con $ Lit $ zeroLit bt
+    ProdType tys -> toAtom . ProdCon <$> mapM go tys
+    TabPi tabPi -> buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i ->
+      go =<< instantiate (sink tabPi) [toAtom i]
+    _ -> unreachable
   zeroLit bt = case bt of
     Scalar Float64Type -> Float64Lit 0.0
     Scalar Float32Type -> Float32Lit 0.0
@@ -908,15 +895,15 @@ maybeTangentType ty = liftEnvReaderT $ maybeTangentType' ty
 
 maybeTangentType' :: IRRep r => Type r n -> EnvReaderT Maybe n (Type r n)
 maybeTangentType' ty = case ty of
-  TabTy d b bodyTy -> do
-    refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
-      bodyTanTy <- rec bodyTy'
-      return $ TabTy d b' bodyTanTy
-  TC con    -> case con of
-    BaseType (Scalar Float64Type) -> return $ TC con
-    BaseType (Scalar Float32Type) -> return $ TC con
+  TyCon con    -> case con of
+    TabPi (TabPiType d b bodyTy) -> do
+      refreshAbs (Abs b bodyTy) \b' bodyTy' -> do
+        bodyTanTy <- rec bodyTy'
+        return $ TabTy d b' bodyTanTy
+    BaseType (Scalar Float64Type) -> return $ toType con
+    BaseType (Scalar Float32Type) -> return $ toType con
     BaseType   _                  -> return $ UnitTy
-    ProdType   tys                -> ProdTy <$> traverse rec tys
+    ProdType   tys                -> toType . ProdType <$> traverse rec tys
     _ -> empty
   _ -> empty
   where rec = maybeTangentType'
@@ -924,52 +911,49 @@ maybeTangentType' ty = case ty of
 tangentBaseMonoidFor :: (Emits n, SBuilder m) => SType n -> m n (BaseMonoid SimpIR n)
 tangentBaseMonoidFor ty = do
   zero <- zeroAt ty
-  adder <- liftBuilder $ buildBinaryLamExpr (noHint, ty) (noHint, ty) \x y -> addTangent (Var x) (Var y)
+  adder <- liftBuilder $ buildBinaryLamExpr (noHint, ty) (noHint, ty) \x y ->
+    addTangent (toAtom x) (toAtom y)
   return $ BaseMonoid zero adder
 
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
-  case getType x of
+  case getTyCon x of
+    BaseType (Scalar _) -> emitExpr $ BinOp FAdd x y
+    ProdType _          -> do
+      xs <- getUnpacked x
+      ys <- getUnpacked y
+      toAtom . ProdCon <$> zipWithM addTangent xs ys
     TabPi t ->
       liftEmitBuilder $ buildFor (getNameHint t) Fwd (tabIxType t) \i -> do
-        bindM2 addTangent (tabApp (sink x) (Var i)) (tabApp (sink y) (Var i))
-    TC con -> case con of
-      BaseType (Scalar _) -> emitExpr $ BinOp FAdd x y
-      ProdType _          -> do
-        xs <- getUnpacked x
-        ys <- getUnpacked y
-        ProdVal <$> zipWithM addTangent xs ys
-      ty -> notTangent ty
+        bindM2 addTangent (tabApp (sink x) (toAtom i)) (tabApp (sink y) (toAtom i))
     ty -> notTangent ty
     where notTangent ty = error $ "Not a tangent type: " ++ pprint ty
 
 symbolicTangentTy :: (EnvReader m, Fallible1 m) => CType n -> m n (CType n)
 symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
-    return $ TypeCon "SymbolicTangent" symTanName $
-      TyConParams [Explicit] [Type elTy]
+    return $ toType $ UserADTType "SymbolicTangent" symTanName $
+      TyConParams [Explicit] [toAtom elTy]
   Nothing -> throw UnboundVarErr $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
   Just _ -> throw TypeErr "SymbolicTangent should name a `data` type"
 
 symbolicTangentZero :: EnvReader m => SType n -> m n (SAtom n)
-symbolicTangentZero argTy = return $ SumVal [UnitTy, argTy] 0 UnitVal
+symbolicTangentZero argTy = return $ toAtom $ SumCon [UnitTy, argTy] 0 UnitVal
 
 symbolicTangentNonZero :: EnvReader m => SAtom n -> m n (SAtom n)
 symbolicTangentNonZero val = do
   ty <- return $ getType val
-  return $ SumVal [UnitTy, ty] 1 val
+  return $ toAtom $ SumCon [UnitTy, ty] 1 val
 
 -- === builder versions of common local ops ===
 
-fLitLike :: (Builder r m, Emits n) => Double -> Atom r n -> m n (Atom r n)
-fLitLike x t = do
-  ty <- return $ getType t
-  case ty of
-    BaseTy (Scalar Float64Type) -> return $ Con $ Lit $ Float64Lit x
-    BaseTy (Scalar Float32Type) -> return $ Con $ Lit $ Float32Lit $ realToFrac x
-    _ -> error "Expected a floating point scalar"
+fLitLike :: (SBuilder m, Emits n) => Double -> SAtom n -> m n (SAtom n)
+fLitLike x t = case getTyCon t of
+  BaseType (Scalar Float64Type) -> return $ toAtom $ Lit $ Float64Lit x
+  BaseType (Scalar Float32Type) -> return $ toAtom $ Lit $ Float32Lit $ realToFrac x
+  _ -> error "Expected a floating point scalar"
 
 neg :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 neg x = emitExpr $ UnOp FNeg x
@@ -1054,15 +1038,15 @@ getUnpacked atom = forM (productIdxs atom) \i -> proj i atom
 productIdxs :: IRRep r => Atom r n -> [Int]
 productIdxs atom =
   let positions = case getType atom of
-        ProdTy tys  -> void tys
-        DepPairTy _ -> [(), ()]
+        TyCon (ProdType tys)  -> void tys
+        TyCon (DepPairTy _) -> [(), ()]
         ty -> error $ "not a product type: " ++ pprint ty
   in fst <$> enumerate positions
 
 unwrapNewtype :: (Emits n, Builder CoreIR m) => CAtom n -> m n (CAtom n)
-unwrapNewtype (NewtypeCon _ x) = return x
+unwrapNewtype (Con (NewtypeCon _ x)) = return x
 unwrapNewtype x = case getType x of
-  NewtypeTyCon con -> do
+  TyCon (NewtypeTyCon con) -> do
     (_, ty) <- unwrapNewtypeType con
     emitExpr $ Unwrap ty x
   _ -> error "not a newtype"
@@ -1070,9 +1054,11 @@ unwrapNewtype x = case getType x of
 
 proj ::(Builder r m, Emits n) => Int -> Atom r n -> m n (Atom r n)
 proj i = \case
-  ProdVal xs -> return $ xs !! i
-  DepPair l _ _ | i == 0 -> return l
-  DepPair _ r _ | i == 1 -> return r
+  Con con -> case con of
+    ProdCon xs -> return $ xs !! i
+    DepPair l _ _ | i == 0 -> return l
+    DepPair _ r _ | i == 1 -> return r
+    _ -> error "not a product"
   x -> do
     ty <- projType i x
     emitExpr $ Project ty i x
@@ -1097,7 +1083,7 @@ projectStructRef i x = do
 {-# INLINE projectStructRef #-}
 
 getStructProjections :: EnvReader m => Int -> CType n -> m n [Projection]
-getStructProjections i (NewtypeTyCon (UserADTType _ tyConName _)) = do
+getStructProjections i (TyCon (NewtypeTyCon (UserADTType _ tyConName _))) = do
   TyConDef _ _ _ ~(StructFields fields) <- lookupTyCon tyConName
   return case fields of
     [_] | i == 0    -> [UnwrapNewtype]
@@ -1145,7 +1131,7 @@ mkApp f xs = do
   et <- appEffTy (getType f) xs
   return $ App et f xs
 
-mkTabApp :: (EnvReader m, IRRep r) => Atom r n -> [Atom r n] -> m n (Expr r n)
+mkTabApp :: (EnvReader m, IRRep r) => Atom r n -> Atom r n -> m n (Expr r n)
 mkTabApp xs ixs = do
   ty <- typeOfTabApp (getType xs) ixs
   return $ TabApp ty xs ixs
@@ -1155,28 +1141,18 @@ mkTopApp f xs = do
   resultTy <- typeOfTopApp f xs
   return $ TopApp resultTy f xs
 
-mkApplyMethod :: EnvReader m => CAtom n -> Int -> [CAtom n] -> m n (CExpr n)
+mkApplyMethod :: EnvReader m => CDict n -> Int -> [CAtom n] -> m n (CExpr n)
 mkApplyMethod d i xs = do
   resultTy <- typeOfApplyMethod d i xs
-  return $ ApplyMethod resultTy d i xs
+  return $ ApplyMethod resultTy (toAtom d) i xs
 
-mkIxFin :: (EnvReader m, Fallible1 m) => CAtom n -> m n (DictCon n)
-mkIxFin n = do
-  dictTy <- liftM DictTy $ ixDictType $ NewtypeTyCon $ Fin n
-  return $ IxFin dictTy n
-
-mkDataData :: (EnvReader m, Fallible1 m) => CType n -> m n (DictCon n)
-mkDataData dataTy = do
-  dictTy <- DictTy <$> dataDictType dataTy
-  return $ DataData dictTy dataTy
-
-mkInstanceDict :: EnvReader m => InstanceName n -> [CAtom n] -> m n (DictCon n)
+mkInstanceDict :: EnvReader m => InstanceName n -> [CAtom n] -> m n (CDict n)
 mkInstanceDict instanceName args = do
   instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
   sourceName <- getSourceName <$> lookupClassDef className
   PairE (ListE params) _ <- instantiate instanceDef args
-  let ty = DictTy $ DictType sourceName className params
-  return $ InstanceDict ty instanceName args
+  let ty = toType $ DictType sourceName className params
+  return $ toDict $ InstanceDict ty instanceName args
 
 mkCase :: (EnvReader m, IRRep r) => Atom r n -> Type r n -> [Alt r n] -> m n (Expr r n)
 mkCase scrut resultTy alts = liftEnvReaderM do
@@ -1210,20 +1186,17 @@ naryTopAppInlined f xs = do
 
 naryAppHinted :: (CBuilder m, Emits n)
   => NameHint -> CAtom n -> [CAtom n] -> m n (CAtom n)
-naryAppHinted hint f xs = Var <$> (mkApp f xs >>= emitHinted hint)
+naryAppHinted hint f xs = toAtom <$> (mkApp f xs >>= emitHinted hint)
 
 tabApp :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-tabApp x i = mkTabApp x [i] >>= emitExpr
+tabApp x i = mkTabApp x i >>= emitExpr
 
 naryTabApp :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
-naryTabApp = naryTabAppHinted noHint
+naryTabApp f [] = return f
+naryTabApp f (x:xs) = do
+  ans <- mkTabApp f x >>= emitExpr
+  naryTabApp ans xs
 {-# INLINE naryTabApp #-}
-
-naryTabAppHinted :: (Builder r m, Emits n)
-  => NameHint -> Atom r n -> [Atom r n] -> m n (Atom r n)
-naryTabAppHinted hint f xs = do
-  expr <- mkTabApp f xs
-  Var <$> emitHinted hint expr
 
 indexRef :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 indexRef ref i = emitExpr =<< mkIndexRef ref i
@@ -1254,13 +1227,13 @@ mkProjRef ref i = do
 -- === index set type class ===
 
 applyIxMethod :: (SBuilder m, Emits n) => IxDict SimpIR n -> IxMethod -> [SAtom n] -> m n (SAtom n)
-applyIxMethod dict method args = case dict of
+applyIxMethod (DictCon dict) method args = case dict of
   -- These cases are used in SimpIR and they work with IdxRepVal
-  IxDictRawFin n -> case method of
+  IxRawFin n -> case method of
     Size              -> do []  <- return args; return n
     Ordinal           -> do [i] <- return args; return i
     UnsafeFromOrdinal -> do [i] <- return args; return i
-  IxDictSpecialized _ d params -> do
+  IxSpecialized d params -> do
     SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
     instantiate (fs !! fromEnum method) (params ++ args) >>= emitExpr
@@ -1277,9 +1250,8 @@ indexSetSize (IxType _ dict) = applyIxMethod dict Size []
 -- === core versions of index set type class ===
 
 applyIxMethodCore :: (CBuilder m, Emits n) => IxMethod -> IxType CoreIR n -> [CAtom n] -> m n (CAtom n)
-applyIxMethodCore method (IxType _ (IxDictAtom dict)) args = do
+applyIxMethodCore method (IxType _ dict) args = 
   emitExpr =<< mkApplyMethod dict (fromEnum method) args
-applyIxMethodCore _ _ _ = error "not an ix type"
 
 -- === pseudo-prelude ===
 
@@ -1295,7 +1267,7 @@ emitIf :: (Emits n, ScopableBuilder r m)
        -> (forall l. (Emits l, DExt n l) => m l (Atom r l))
        -> m n (Atom r n)
 emitIf predicate resultTy trueCase falseCase = do
-  predicate' <- emitExpr $ MiscOp $ ToEnum (SumTy [UnitTy, UnitTy]) predicate
+  predicate' <- emitExpr $ ToEnum (TyCon (SumType [UnitTy, UnitTy])) predicate
   buildCase predicate' resultTy \i _ ->
     case i of
       0 -> falseCase
@@ -1328,31 +1300,31 @@ isJustE x = liftEmitBuilder $
   emitMaybeCase x BoolTy (return FalseAtom) (\_ -> return TrueAtom)
 
 -- Monoid a -> (n=>a) -> a
-reduceE :: (Emits n, Builder r m) => BaseMonoid r n -> Atom r n -> m n (Atom r n)
+reduceE :: (Emits n, SBuilder m) => BaseMonoid SimpIR n -> SAtom n -> m n (SAtom n)
 reduceE monoid xs = liftEmitBuilder do
-  TabPi tabPi <- return $ getType xs
+  TabPi tabPi <- return $ getTyCon xs
   let a = assumeConst tabPi
   getSnd =<< emitRunWriter noHint a monoid \_ ref ->
     buildFor noHint Fwd (sink $ tabIxType tabPi) \i -> do
-      x <- tabApp (sink xs) (Var i)
-      emitExpr $ PrimOp $ RefOp (sink $ Var ref) $ MExtend (sink monoid) x
+      x <- tabApp (sink xs) (toAtom i)
+      emitExpr $ PrimOp $ RefOp (sink $ toAtom ref) $ MExtend (sink monoid) x
 
 andMonoid :: (EnvReader m, IRRep r) => m n (BaseMonoid r n)
 andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
   buildBinaryLamExpr (noHint, BoolTy) (noHint, BoolTy) \x y ->
-    emitExpr $ BinOp BAnd (sink $ Var x) (Var y)
+    emitExpr $ BinOp BAnd (sink $ toAtom x) (toAtom y)
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
-mapE :: (Emits n, ScopableBuilder r m)
-     => (forall l. (Emits l, DExt n l) => Atom r l -> m l (Atom r l))
-     -> Atom r n -> m n (Atom r n)
+mapE :: (Emits n, ScopableBuilder SimpIR m)
+     => (forall l. (Emits l, DExt n l) => SAtom l -> m l (SAtom l))
+     -> SAtom n -> m n (SAtom n)
 mapE cont xs = do
-  TabPi tabPi <- return $ getType xs
+  TabPi tabPi <- return $ getTyCon xs
   buildFor (getNameHint tabPi) Fwd (tabIxType tabPi) \i -> do
-    tabApp (sink xs) (Var i) >>= cont
+    tabApp (sink xs) (toAtom i) >>= cont
 
 -- (n:Type) ?-> (a:Type) ?-> (xs : n=>Maybe a) : Maybe (n => a) =
-catMaybesE :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)
+catMaybesE :: (Emits n, SBuilder m) => SAtom n -> m n (SAtom n)
 catMaybesE maybes = do
   TabTy d n (MaybeTy a) <- return $ getType maybes
   justs <- liftEmitBuilder $ mapE isJustE maybes
@@ -1391,7 +1363,7 @@ runMaybeWhile body = do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
-        (emit (PrimOp $ RefOp (sink $ Var ref) $ MPut TrueAtom) >> return FalseAtom)
+        (emit (toExpr $ RefOp (sink $ toAtom ref) $ MPut TrueAtom) >> return FalseAtom)
         (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)
@@ -1456,7 +1428,7 @@ telescopicCapture bs e = do
   let vsTysSorted = toposortAnnVars $ zip vs vTys
   let vsSorted = map fst vsTysSorted
   ty <- liftEnvReaderM $ buildTelescopeTy vsTysSorted
-  valsSorted <- forM vsSorted \v -> Var <$> toAtomVar v
+  valsSorted <- forM vsSorted \v -> toAtom <$> toAtomVar v
   result <- buildTelescopeVal valsSorted ty
   reconAbs <- return $ ignoreHoistFailure $ hoist bs do
     case abstractFreeVarsNoAnn vsSorted e of
@@ -1496,19 +1468,19 @@ buildTelescopeVal xsTop tyTop = fst <$> go tyTop xsTop where
   go ty rest = case ty of
     ProdTelescope tys -> do
       (xs, rest') <- return $ splitAt (length tys) rest
-      return (ProdVal xs, rest')
+      return (toAtom $ ProdCon xs, rest')
     DepTelescope ty1 (Abs b ty2) -> do
       (x1, ~(xDep : rest')) <- go ty1 rest
       ty2' <- applySubst (b@>SubstVal xDep) ty2
       (x2, rest'') <- go ty2' rest'
       let depPairTy = DepPairType ExplicitDepPair b (telescopeTypeType ty2)
-      return (PairVal x1 (DepPair xDep x2 depPairTy), rest'')
+      return (toAtom $ ProdCon [x1, toAtom $ DepPair xDep x2 depPairTy], rest'')
 
 telescopeTypeType :: TelescopeType (AtomNameC r) (Type r) n -> Type r n
-telescopeTypeType (ProdTelescope tys) = ProdTy tys
+telescopeTypeType (ProdTelescope tys) = toType $ ProdType tys
 telescopeTypeType (DepTelescope lhs (Abs b rhs)) = do
   let lhs' = telescopeTypeType lhs
-  let rhs' = DepPairTy (DepPairType ExplicitDepPair b (telescopeTypeType rhs))
+  let rhs' = toType $ DepPairTy (DepPairType ExplicitDepPair b (telescopeTypeType rhs))
   PairTy lhs' rhs'
 
 unpackTelescope

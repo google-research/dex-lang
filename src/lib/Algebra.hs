@@ -20,6 +20,7 @@ import Data.Tuple (swap)
 
 import Builder hiding (sub, add, mul)
 import Core
+import CheapReduction
 import Err
 import IRVariants
 import MTL1
@@ -139,8 +140,8 @@ exprAsPoly expr = liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ exprAsPol
 
 atomAsPoly :: Atom SimpIR i -> BlockTraverserM i o (Polynomial o)
 atomAsPoly = \case
-  Var v       -> atomVarAsPoly v
-  RepValAtom (RepVal _ (Leaf (IVar v' _))) -> impNameAsPoly v'
+  Stuck _ (Var v)       -> atomVarAsPoly v
+  Stuck _ (RepValAtom (RepVal _ (Leaf (IVar v' _)))) -> impNameAsPoly v'
   IdxRepVal i -> return $ poly [((fromIntegral i) % 1, mono [])]
   _ -> empty
 
@@ -207,10 +208,10 @@ emitMonomial :: Emits n => Monomial n -> BuilderM SimpIR n (Atom SimpIR n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
     LeftE v' -> do
-      v'' <- Var <$> toAtomVar v'
+      v'' <- toAtom <$> toAtomVar v'
       ipow v'' e
     RightE v' -> do
-      let atom = RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
+      atom <- mkStuck $ RepValAtom $ RepVal IdxRepTy (Leaf (IVar v' IIdxRepTy))
       ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 

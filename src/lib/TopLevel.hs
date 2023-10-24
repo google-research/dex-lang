@@ -309,7 +309,7 @@ evalSourceBlock' mname block = case sbContents block of
         impl <- case expr of
           WithSrcE _ (UVar _) ->
             renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> Var <$> toAtomVar v
+              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> toAtom <$> toAtomVar v
               _ -> error "Expected a variable"
           _ -> evalUExpr expr
         fType <- getType <$> toAtomVar fname'
@@ -794,7 +794,7 @@ getBenchRequirement block = case sbLogLevel block of
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
-  SimpInCore (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
+  Stuck _ (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
   PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
   liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)
@@ -923,7 +923,7 @@ instance Generic TopStateEx where
 
 getLinearizationType :: SymbolicZeros -> CType n -> EnvReaderT Except n (Int, Int, CType n)
 getLinearizationType zeros = \case
-  Pi (CorePiType ExplicitApp expls bs (EffTy Pure resultTy)) -> do
+  TyCon (Pi (CorePiType ExplicitApp expls bs (EffTy Pure resultTy))) -> do
     (numIs, numEs) <- getNumImplicits expls
     refreshAbs (Abs bs resultTy) \bs' resultTy' -> do
       PairB _ bsE <- return $ splitNestAt numIs bs'
@@ -936,9 +936,9 @@ getLinearizationType zeros = \case
       resultTanTy <- maybeTangentType resultTy' >>= \case
         Just rtt -> return rtt
         Nothing  -> throw TypeErr $ "No tangent type for: " ++ pprint resultTy'
-      let tanFunTy = Pi $ nonDepPiType argTanTys Pure resultTanTy
+      let tanFunTy = toType $ Pi $ nonDepPiType argTanTys Pure resultTanTy
       let fullTy = CorePiType ExplicitApp expls bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
-      return (numIs, numEs, Pi fullTy)
+      return (numIs, numEs, toType $ Pi fullTy)
   _ -> throw TypeErr $ "Can't define a custom linearization for implicit or impure functions"
   where
     getNumImplicits :: Fallible m => [Explicitness] -> m (Int, Int)

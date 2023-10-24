@@ -47,7 +47,7 @@ transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do
     outTy' <- applyRename (bsNonlin''@@> nestToNames bsNonlin') outTy
     withFreshBinder "ct" outTy' \bCT -> do
-      let ct = Var $ binderVar bCT
+      let ct = toAtom $ binderVar bCT
       body' <- buildBlock do
         inTy <- substNonlin $ binderType bLin
         withAccumulator inTy \refSubstVal ->
@@ -133,7 +133,7 @@ withAccumulator ty cont = do
     Nothing -> do
       baseMonoid <- tangentBaseMonoidFor ty
       getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
-                   cont (LinRef $ Var ref) >> return UnitVal
+                   cont (LinRef $ toAtom ref) >> return UnitVal
     Just val -> do
       -- If the accumulator's type is inhabited by just one value, we
       -- don't need any actual accumulation, and can just return that
@@ -202,26 +202,21 @@ transposeExpr expr ct = case expr of
     transposeAtom xLin ct'
   -- TODO: Instead, should we handle table application like nonlinear
   -- expressions, where we just project the reference?
-  TabApp _ x is -> do
-    is' <- mapM substNonlin is
+  TabApp _ x i -> do
+    i' <- substNonlin i
     case x of
-      Stuck (StuckVar v) -> do
-        lookupSubstM (atomVarName v) >>= \case
-          RenameNonlin _ -> error "shouldn't happen"
-          LinRef ref -> do
-            refProj <- naryIndexRef ref (toList is')
-            emitCTToRef refProj ct
-          LinTrivial -> return ()
-      Stuck (StuckProject _ _ _) -> undefined
-      -- ProjectElt _ i' x' -> do
-      --   let (idxs, v) = asNaryProj i' x'
-      --   lookupSubstM (atomVarName v) >>= \case
-      --     RenameNonlin _ -> error "an error, probably"
-      --     LinRef ref -> do
-      --       ref' <- getNaryProjRef (toList idxs) ref
-      --       refProj <- naryIndexRef ref' (toList is')
-      --       emitCTToRef refProj ct
-      --     LinTrivial -> return ()
+      Stuck _ stuck -> case stuck of
+        Var v -> do
+          lookupSubstM (atomVarName v) >>= \case
+            RenameNonlin _ -> error "shouldn't happen"
+            LinRef ref -> do
+              refProj <- indexRef ref i'
+              emitCTToRef refProj ct
+            LinTrivial -> return ()
+        StuckProject _ _ -> undefined
+        StuckTabApp _ _ -> undefined
+        PtrVar _ _ -> error "not tangent"
+        RepValAtom _ -> error "not tangent"
       _ -> error $ "shouldn't occur: " ++ pprint x
   PrimOp op -> transposeOp op ct
   Case e alts _ -> do
@@ -303,26 +298,26 @@ transposeMiscOp op _ = case op of
 
 transposeAtom :: HasCallStack => Emits o => SAtom i -> SAtom o -> TransposeM i o ()
 transposeAtom atom ct = case atom of
-  Con con         -> transposeCon con ct
-  DepPair _ _ _   -> notImplemented
-  PtrVar _ _      -> notTangent
-  Stuck (StuckVar v) -> do
-    lookupSubstM (atomVarName v) >>= \case
-      RenameNonlin _ ->
-        -- XXX: we seem to need this case, but it feels like it should be an error!
-        return ()
-      LinRef ref -> emitCTToRef ref ct
-      LinTrivial -> return ()
-  Stuck (StuckProject _ _ _) -> error "not implemented"
-  Stuck (StuckTabApp  _ _ _) -> error "not implemented"
-  --   let (idxs, v) = asNaryProj i' x'
-  --   lookupSubstM (atomVarName v) >>= \case
-  --     RenameNonlin _ -> error "an error, probably"
-  --     LinRef ref -> do
-  --       ref' <- applyProjectionsRef (toList idxs) ref
-  --       emitCTToRef ref' ct
-  --     LinTrivial -> return ()
-  RepValAtom _ -> error "not implemented"
+  Con con -> transposeCon con ct
+  Stuck _ stuck -> case stuck of
+    PtrVar _ _      -> notTangent
+    Var v -> do
+      lookupSubstM (atomVarName v) >>= \case
+        RenameNonlin _ ->
+          -- XXX: we seem to need this case, but it feels like it should be an error!
+          return ()
+        LinRef ref -> emitCTToRef ref ct
+        LinTrivial -> return ()
+    StuckProject _ _ -> error "not implemented"
+    StuckTabApp  _ _ -> error "not implemented"
+    --   let (idxs, v) = asNaryProj i' x'
+    --   lookupSubstM (atomVarName v) >>= \case
+    --     RenameNonlin _ -> error "an error, probably"
+    --     LinRef ref -> do
+    --       ref' <- applyProjectionsRef (toList idxs) ref
+    --       emitCTToRef ref' ct
+    --     LinTrivial -> return ()
+    RepValAtom _ -> error "not implemented"
   where notTangent = error $ "Not a tangent atom: " ++ pprint atom
 
 transposeHof :: Emits o => Hof SimpIR i -> SAtom o -> TransposeM i o ()
@@ -331,7 +326,7 @@ transposeHof hof ct = case hof of
     UnaryLamExpr b  body <- return lam
     ixTy <- substNonlin ixTy'
     void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
-      ctElt <- tabApp (sink ct) (Var i)
+      ctElt <- tabApp (sink ct) (toAtom i)
       extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeExpr body ctElt
       return UnitVal
   RunState Nothing s (BinaryLamExpr hB refB body) -> do
@@ -368,6 +363,7 @@ transposeCon con ct = case con of
   ProdCon xs -> forM_ (enumerate xs) \(i, x) -> proj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
   HeapVal -> notTangent
+  DepPair _ _ _   -> notImplemented
   where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a
