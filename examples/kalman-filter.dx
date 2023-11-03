@@ -3,50 +3,45 @@
 ' Based on [TFP's Kalman filter](https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/distributions/linear_gaussian_ssm.py), written by Dave Moore and others.
 
 import linalg
+import plot
 
-def LogProb : Type = Float
-def Vec (n:Type) [Ix n]    : Type = n=>Float
-def Mat (n:Type) (m:Type) [Ix n] [Ix m] : Type = n=>m=>Float
-def SqMat (n:Type) [Ix n]  : Type = n=>n=>Float
+LogProb : Type = Float
+def Vec(n|Ix) -> Type = n=>Float
+def Mat(n|Ix, m|Ix) -> Type = n=>m=>Float
+def SqMat(n|Ix) -> Type = n=>n=>Float
 
 ' ## Multivariate Gaussian distribtions
 
 ' The first object of interest is the multivariate Gaussian distribution.
 We index the dimensions of the Gaussian by the type parameter `n`.
 
-def Gaussian (n:Type) [Ix n] : Type =
-  { mean       : Vec n
-  & covariance : SqMat n
-  & precision  : SqMat n
-  & logDetCov  : Float }
+struct Gaussian(n|Ix) =
+  mean       : Vec n
+  covariance : SqMat n
+  precision  : SqMat n
+  logDetCov  : Float
 
-def makeGaussianFromPrecision {n} (mean:Vec n) (precision: SqMat n) : Gaussian n =
+def makeGaussianFromPrecision(mean:Vec n, precision: SqMat n) -> Gaussian n given (n|Ix) =
   covariance = invert precision
-  {   mean = mean
-    , covariance = covariance
-    , precision  = precision
-    , logDetCov = snd $ sign_and_log_determinant covariance }
+  Gaussian(mean, covariance, precision, snd $ sign_and_log_determinant covariance)
 
-def makeGaussianFromCovariance {n} (mean:Vec n) (covariance: SqMat n) : Gaussian n =
+def makeGaussianFromCovariance(mean:Vec n, covariance: SqMat n) -> Gaussian n given (n|Ix) =
   precision = invert covariance
-  {   mean = mean
-    , covariance = covariance
-    , precision  = precision
-    , logDetCov = snd $ sign_and_log_determinant covariance }
+  Gaussian(mean, covariance, precision, snd $ sign_and_log_determinant covariance)
 
-def logDensity {n} (g:Gaussian n) (x:Vec n) : LogProb =
-   d = x - get_at #mean g
-   normalizer = - (n_to_f (size n) / 2.0) * log (2.0 * pi) - 0.5 * get_at #logDetCov g
-   -0.5 * (d `vdot` (get_at #precision g **. d)) + normalizer
+def logDensity(g:Gaussian n, x:Vec n) -> LogProb given (n|Ix) =
+   d = x - g.mean
+   normalizer = - (n_to_f (size n) / 2.0) * log (2.0 * pi) - 0.5 * g.logDetCov
+   -0.5 * (d `vdot` (g.precision **. d)) + normalizer
 
-def scaleGaussian {i o} (scaleMat:Mat o i) (g:Gaussian i) : Gaussian o =
-  newMean = scaleMat **. get_at#mean g
-  newCov = (scaleMat ** get_at#covariance g) ** transpose scaleMat
+def scaleGaussian(g:Gaussian i, scaleMat:Mat o i) -> Gaussian o given (i|Ix, o|Ix) =
+  newMean = scaleMat **. g.mean
+  newCov = (scaleMat ** g.covariance) ** transpose scaleMat
   makeGaussianFromCovariance newMean newCov
 
-def convolveGaussians {n} (g1:Gaussian n) (g2:Gaussian n) : Gaussian n =
-  newMean = get_at#mean g1 + get_at#mean g2
-  newCov  = get_at#covariance g1 + get_at#covariance g2
+def convolveGaussians(g1:Gaussian n, g2:Gaussian n) -> Gaussian n given (n|Ix) =
+  newMean = g1.mean + g2.mean
+  newCov  = g1.covariance + g2.covariance
   makeGaussianFromCovariance newMean newCov
 
 myGaussian = makeGaussianFromPrecision [2.0, 2.0] [[1.0, 0.0],
@@ -61,7 +56,7 @@ logDensity myGaussian2 [1.0, 2.0]
 > -2.001405
 
 %time
-scaleGaussian (2.0 .* eye) myGaussian
+scaleGaussian myGaussian (2.0 .* eye)
 
 ' ## Gaussian transitions
 
@@ -73,41 +68,39 @@ distributions.  These transitions can serve as either a
 linear-Gaussian transition or a linear-Gaussian observation in a state
 space model.
 
-def GaussianTransition (i:Type) (o:Type) [Ix i] [Ix o] : Type =
- { transitionMat : Mat o i
- & transitionNoise : Gaussian o }
+struct GaussianTransition(i|Ix, o|Ix) =
+ transitionMat : Mat o i
+ transitionNoise : Gaussian o
 
 ' `applyTransition` computes the marginal Gaussian on the output space `o`.
 
-def applyTransition {i o} (t:GaussianTransition i o) (g:Gaussian i) : Gaussian o =
-  g |>
-    scaleGaussian (get_at #transitionMat t) |>
-    convolveGaussians (get_at #transitionNoise t)
+def applyTransition(t:GaussianTransition i o, g:Gaussian i) -> Gaussian o given (i|Ix, o|Ix) =
+  g | scaleGaussian(t.transitionMat) | convolveGaussians(t.transitionNoise)
 
 ' `kalmanGain` computes the so-called "optimal Kalman gain" corresponding to
 the given input Gaussian and transition, which is used when conditioning, below.
 
 -- TODO: avoid redundant computation (or rely on compiler CSE?)
-def kalmanGain {i o} (g:Gaussian i) (t:GaussianTransition i o) : Mat i o =
-  priorCov = get_at #covariance g
-  h = get_at #transitionMat t
+def kalmanGain(g:Gaussian i, t:GaussianTransition i o) -> Mat i o given (i|Ix, o|Ix) =
+  priorCov = g.covariance
+  h = t.transitionMat
   g' = applyTransition t g
-  expectedPrecision = get_at #precision g'
+  expectedPrecision = g'.precision
   priorCov ** transpose h ** expectedPrecision
 
 ' `condition` computes the conditional distribution on the input space
 `i`, from the given prior and the given linear-Gaussian observation
 model and observations.
 
-def condition {i o} (g:Gaussian i) (t:GaussianTransition i o) (obs:Vec o) : Gaussian i =
-  priorMean = get_at #mean g
-  priorCov  = get_at #covariance g
-  h = get_at #transitionMat t
+def condition(g:Gaussian i, t:GaussianTransition i o, obs:Vec o) -> Gaussian i given (i|Ix, o|Ix) =
+  priorMean = g.mean
+  priorCov  = g.covariance
+  h = t.transitionMat
   g' = applyTransition t g
   k = kalmanGain g t
-  expectedMean = get_at #mean g'
+  expectedMean = g'.mean
   posteriorMean = priorMean + k **. (obs - expectedMean)
-  r = get_at #covariance $ get_at #transitionNoise t
+  r = t.transitionNoise.covariance
   tmp = eye - k ** h
   posteriorCov = tmp ** priorCov ** transpose tmp +
                  k ** r ** transpose k
@@ -117,7 +110,7 @@ def condition {i o} (g:Gaussian i) (t:GaussianTransition i o) (obs:Vec o) : Gaus
 :p
   prior = makeGaussianFromPrecision [10.0] [[2.0]]
   noise = makeGaussianFromPrecision [ 0.0] [[2.0]]
-  trans = { transitionMat = eye, transitionNoise = noise }
+  trans = GaussianTransition(eye, noise)
   condition prior trans [100.0]
 
 ' ## Kalman filtering
@@ -129,11 +122,11 @@ obsIx`.  The generative model is
 - x.(i+1) ~ transition(x.0)
 - y.i ~ obsModel(x.i)
 
-def Model (latentsIx:Type) (obsIx:Type) [Ix latentsIx] [Ix obsIx] : Type =
- { transition : GaussianTransition latentsIx latentsIx
- & obsModel   : GaussianTransition latentsIx obsIx
+struct Model(latentsIx|Ix, obsIx|Ix) =
+ transition : GaussianTransition latentsIx latentsIx
+ obsModel   : GaussianTransition latentsIx obsIx
  -- distribution prior to first step (before conditioning on any observation)
- & latentsPrior     : Gaussian latentsIx }
+ latentsPrior         : Gaussian latentsIx
 
 ' The `kalmanFilter` function below runs a Kalman filter on a given
 (dense) set of observations with respect to a given `Model`, and
@@ -156,67 +149,47 @@ occurred) of `LoopState`s.
   the current time-step.  The `marginalEvidence` is the probability of
   the current observation under the `filteredObs` distribution.
 
-def LoopState (latentsIx:Type) (obsIx:Type) [Ix latentsIx] [Ix obsIx] : Type =
-  { marginalEvidence : Float
-  & filteredLatents  : Gaussian latentsIx
-  & predictedLatents : Gaussian latentsIx
-  & filteredObs : Gaussian obsIx
-  }
+struct LoopState(latentsIx|Ix, obsIx|Ix) =
+  marginalEvidence : Float
+  filteredLatents  : Gaussian latentsIx
+  predictedLatents : Gaussian latentsIx
+  filteredObs : Gaussian obsIx
 
-def kalmanFilterStep {latentsIx obsIx}
-      (model:Model latentsIx obsIx)
-      (obs:Vec obsIx)
-      (predictedLatents:Gaussian latentsIx)
-      : LoopState latentsIx obsIx =
+def kalmanFilterStep(
+    model:Model latentsIx obsIx,
+    obs:Vec obsIx,
+    predictedLatents:Gaussian latentsIx)
+    -> LoopState latentsIx obsIx given (latentsIx|Ix, obsIx|Ix) =
   -- TODO: obsProb is redundant because it's computed internally within condition
   obsProb : Gaussian obsIx =
-    applyTransition (get_at #obsModel model) predictedLatents
+    applyTransition model.obsModel predictedLatents
   filteredLatents : Gaussian latentsIx =
-    condition predictedLatents (get_at #obsModel model) obs
-  { marginalEvidence = logDensity obsProb obs
-  , filteredLatents  = filteredLatents
-  , predictedLatents = applyTransition (get_at #transition model) filteredLatents
-  , filteredObs      = obsProb }
+    condition predictedLatents model.obsModel obs
+  LoopState( logDensity obsProb obs
+           , filteredLatents
+           , applyTransition model.transition filteredLatents
+           , obsProb)
 
--- Workaround for Dex bug #821 with references to records
-def gaussianToTup {n} (g:Gaussian n) : (Vec n & SqMat n & SqMat n & Float) =
-  ( get_at #mean g
-  , get_at #covariance g
-  , get_at #precision  g
-  , get_at #logDetCov  g )
-
-def tupToGaussian {n}
-      ((mean, covariance, precision, logDetCov):(Vec n & SqMat n & SqMat n & Float))
-      : Gaussian n =
-  { mean       = mean
-  , covariance = covariance
-  , precision  = precision
-  , logDetCov  = logDetCov }
-
-def kalmanFilter {timeIx latentsIx obsIx}
-      (obs : timeIx => Vec obsIx)
-      (model : Model latentsIx obsIx)
-      : timeIx => LoopState latentsIx obsIx =
-  with_state (gaussianToTup (get_at #latentsPrior model)) \latentsRef.
+def kalmanFilter(
+    obs : timeIx => Vec obsIx,
+    model : Model latentsIx obsIx)
+    -> timeIx => LoopState latentsIx obsIx given (timeIx|Ix, latentsIx|Ix, obsIx|Ix) =
+  with_state (model.latentsPrior) \latentsRef.
     for i.
-      stepResult = kalmanFilterStep model obs.i  $
-                      tupToGaussian (get latentsRef)
-      latentsRef := gaussianToTup $ get_at #predictedLatents stepResult
+      stepResult = kalmanFilterStep model obs[i] $ get latentsRef
+      latentsRef := stepResult.predictedLatents
       stepResult
 
 ' ## A test model
 
-def isotropic {n} [Ix n] (scale:Float) : Gaussian n =
+def isotropic(scale:Float) -> Gaussian n given (n|Ix) =
   makeGaussianFromCovariance zero (sq scale .* eye)
 
-def isotropicDrift {n} [Ix n] (scale:Float) : GaussianTransition n n =
-  { transitionMat = eye
-  , transitionNoise = isotropic scale }
+def isotropicDrift(scale:Float) -> GaussianTransition n n given (n|Ix) =
+  GaussianTransition(eye, isotropic scale)
 
 random_walk : Model (Fin 1) (Fin 1) =
-  { transition   = isotropicDrift 1.0
-  , obsModel     = isotropicDrift 1.0
-  , latentsPrior = isotropic      1.0 }
+  Model(isotropicDrift 1.0, isotropicDrift 1.0, isotropic 1.0)
 
 myObs = for i:(Fin 100).
   (for j:(Fin 1). n_to_f $ ordinal i)
@@ -225,8 +198,7 @@ myObs = for i:(Fin 100).
 results = kalmanFilter myObs random_walk
 
 -- :p
---   for i.
---     (getAt #mean $ getAt #filteredLatents results.i)
+--   for i. results[i].filteredLatents.mean
 
 ' ## Some real data
 
@@ -271,30 +243,28 @@ series : Vec (Fin 359) = [
 ' If we plot it, we can clearly see the 2008 financial crash and
 recession, and the 2020-2021 pandemic weirdness.
 
-import plot
-
 %time
 :html show_plot $ y_plot series
 
 ' Now let's try forecasting it as a random walk and see what happens.
 
 %time
-random_walk_fit = kalmanFilter (for i. (for j. series.i)) random_walk
+random_walk_fit = kalmanFilter (for i. (for j. series[i])) random_walk
 
-random_walk_fit.(from_ordinal (Fin 359) 358)
+random_walk_fit[from_ordinal 358]
 
-def forecastMarginals {timeIx latentsIx obsIx} [Ix timeIx]
-      (model: Model latentsIx obsIx)
-      (init: Gaussian latentsIx)
-      : timeIx => Gaussian obsIx =
-  with_state (gaussianToTup init) \latentsRef.
+def forecastMarginals(
+    model: Model latentsIx obsIx,
+    init: Gaussian latentsIx)
+    -> timeIx => Gaussian obsIx given (timeIx|Ix, latentsIx|Ix, obsIx|Ix) =
+  with_state init \latentsRef.
     for i.
-      latents = tupToGaussian (get latentsRef)
-      prediction = applyTransition (get_at #obsModel model) latents
-      latentsRef := gaussianToTup $ applyTransition (get_at #transition model) latents
+      latents = get latentsRef
+      prediction = applyTransition model.obsModel latents
+      latentsRef := applyTransition model.transition latents
       prediction
 
-last_fit = get_at #predictedLatents (random_walk_fit.(from_ordinal (Fin 359) 358))
+last_fit = random_walk_fit[from_ordinal 358].predictedLatents
 
 :t last_fit
 
@@ -309,21 +279,19 @@ forecast : (Fin 50) => Gaussian (Fin 1) = (forecastMarginals random_walk last_fi
 
 :t forecast
 
-forecast_means = for i. (get_at #mean forecast.i).(from_ordinal (Fin 1) 0)
+forecast_means = for i. forecast[i].mean[from_ordinal 0]
 forecast_means
 
 %time
 :html show_plot $ y_plot forecast_means
 
-for i: (Fin 5 | Fin 3).i
-
-def array_concat {n1 n2 a} (xs1: n1=>a) (xs2: n2=>a) : ((n1 | n2 ) => a) =
+def array_concat(xs1: n1=>a, xs2: n2=>a) -> (Either(n1, n2) => a) given (n1|Ix, n2|Ix, a) =
   for i. case i of
-    (Left  i1) -> xs1.i1
-    (Right i2) -> xs2.i2
+    (Left  i1) -> xs1[i1]
+    (Right i2) -> xs2[i2]
 
-def yPlot2Concatenate {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
-      : Plot (n1 | n2) Float Float Unit =
+def yPlot2Concatenate(ys1:n1=>Float, ys2:n2=>Float)
+    -> Plot Either(n1, n2) Float Float () given (n1|Ix, n2|Ix) =
   xs = for i. n_to_f $ ordinal i
   xy_plot xs (array_concat ys1 ys2)
 
@@ -331,16 +299,16 @@ def yPlot2Concatenate {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
 :html show_plot $ yPlot2Concatenate series forecast_means
 
 -- The upper 95%-ile.
-def upper_p95 (marginal: Gaussian (Fin 1)) : Float =
-  mean = (get_at #mean marginal).(from_ordinal _ 0)
-  variance = (get_at #covariance marginal).(from_ordinal _ 0).(from_ordinal _ 0)
+def upper_p95(marginal: Gaussian (Fin 1)) -> Float =
+  mean = marginal.mean[from_ordinal 0]
+  variance = marginal.covariance[from_ordinal 0][from_ordinal 0]
   scale = 1.64  -- Approximate probit(0.95)
   mean + sqrt variance * scale
 
-forecast_p95s = for i. upper_p95 forecast.i
+forecast_p95s = for i. upper_p95 forecast[i]
 
-def yPlot2Overlay {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
-      : Plot (n1 | n2) Float Float Unit =
+def yPlot2Overlay(ys1:n1=>Float, ys2:n2=>Float)
+    -> Plot Either(n1, n2) Float Float () given (n1|Ix, n2|Ix) =
   xs1 = for i:n1. n_to_f $ ordinal i
   xs2 = for i:n2. n_to_f $ ordinal i
   xy_plot (array_concat xs1 xs2) (array_concat ys1 ys2)
@@ -348,12 +316,12 @@ def yPlot2Overlay {n1 n2} (ys1:n1=>Float) (ys2:n2=>Float)
 %time
 :html show_plot $ yPlot2Overlay forecast_means forecast_p95s
 
-def plotSeriesAndForecast {n1 n2}
-      (series: n1=>Float)
-      (forecast: n2=>Gaussian (Fin 1))
-      : Plot (n1 | (n2 | n2)) Float Float Float =
-  forecast_means = for i. (get_at #mean forecast.i).(from_ordinal _ 0)
-  forecast_p95s = for i. upper_p95 forecast.i
+def plotSeriesAndForecast(
+    series: n1=>Float,
+    forecast: n2=>Gaussian (Fin 1))
+    -> Plot Either(n1, Either(n2, n2)) Float Float Float given (n1|Ix, n2|Ix) =
+  forecast_means = for i. (forecast[i].mean)[from_ordinal 0]
+  forecast_p95s = for i. upper_p95 forecast[i]
   xs1 = for i:n1. n_to_f $ ordinal i
   xs2 = for i:n2. n_to_f $ size n1 + ordinal i
   (xyc_plot (array_concat xs1 $ array_concat xs2 xs2)
@@ -398,16 +366,16 @@ obs.t = Normal(level.t, noise_level)
 where `noise_level` is the model's fifth scalar parameter.
 
 -- Unit vector
-def unit {i} [Eq i] [Ix i] (ix: i) : Vec i =
+def unit(ix: i) -> Vec i given (i|Eq|Ix) =
   for dim. if dim == ix then 1.0 else 0.0
 
 -- If you hand me a function that is actually linear, I can construct
 -- a matrix out of it.
-def linear_to_matrix {i o} [Eq i] [Ix i] [Ix o] (f: Vec i -> Vec o) : Mat o i =
+def linear_to_matrix(f: (Vec i) -> Vec o) -> Mat o i given (i|Eq|Ix, o|Ix) =
   transpose $ for row. f (unit row)
 
-def first (v: (Vec (Fin 2))) : _ =
-  [v.(from_ordinal _ 0)]
+def first(v: (Vec (Fin 2))) -> _ =
+  [v[from_ordinal 0]]
 
 -- But if I declare the type of `first` as
 -- `first (v: (Vec (Fin 2))) : (Vec (Fin 1))`, I get the FromInteger Int32 error.
@@ -416,8 +384,8 @@ linear_to_matrix first
 -- If you give me a function that is actually affine, I can construct
 -- a matrix out of the linear part, and an offset vector out of the
 -- affine part.
-def affine_to_offset_and_matrix {i o} [Eq i] [Ix i] [Ix o]
-      (f: Vec i -> Vec o) : (Vec o & Mat o i) =
+def affine_to_offset_and_matrix(f: (Vec i) -> Vec o)
+    -> (Vec o, Mat o i) given (i|Eq|Ix, o|Ix) =
   offset = f $ for i. 0
   (offset, linear_to_matrix (\vec. f vec - offset))
 
@@ -430,30 +398,28 @@ affine_to_offset_and_matrix first
 -- `{:level, :slope}`.  Is there a way to write it?  Syntax to index
 -- by symbols such as `latent.level` would be very suggestive and, I
 -- think, conformant with Dex's overall philosophy.
-def semilocal_linear_trend
-      (level_scale: Float)
-      (autoregressive_coef: Float)
-      (slope_mean: Float)
-      (slope_scale: Float)
-      (noise_level: Float)
-      (latents_prior: Gaussian (Fin 2))
-      : Model (Fin 2) (Fin 1) =
-  level = \latent. latent.(from_ordinal _ 0)
-  slope = \latent. latent.(from_ordinal _ 1)
-  obsModel = { transitionMat = linear_to_matrix first
-             , transitionNoise = makeGaussianFromCovariance [0] [[noise_level]]
-             }
+def semilocal_linear_trend(
+    level_scale: Float,
+    autoregressive_coef: Float,
+    slope_mean: Float,
+    slope_scale: Float,
+    noise_level: Float,
+    latents_prior: Gaussian (Fin 2))
+    -> Model (Fin 2) (Fin 1) =
+  level = \latent. latent[from_ordinal 0]
+  slope = \latent. latent[from_ordinal 1]
+  obsModel = GaussianTransition(
+      linear_to_matrix first
+    , makeGaussianFromCovariance [0] [[noise_level]])
+             
   dynamics = \latent. [ level latent + slope latent
                       , slope_mean + autoregressive_coef * (slope latent - slope_mean)
                       ]
   (offset, matrix) = affine_to_offset_and_matrix dynamics
-  dynamicsModel = { transitionMat = matrix
-                  , transitionNoise = makeGaussianFromCovariance offset [[level_scale, 0], [0, slope_scale]]
-                  }
-  { transition = dynamicsModel
-  , obsModel = obsModel
-  , latentsPrior = latents_prior
-  }
+  dynamicsModel = GaussianTransition(
+      matrix
+    , makeGaussianFromCovariance offset [[level_scale, 0], [0, slope_scale]])
+  Model(dynamicsModel, obsModel, latents_prior)
 
 ' And now we make up some vaguely plausible parameters for it and try a fit.
 
@@ -461,9 +427,9 @@ init_latent_prior = makeGaussianFromCovariance [150000, 1000] [[10000 * 10000, 0
 semilocal_candidate = semilocal_linear_trend 1000 0.98 500 100 1000 init_latent_prior
 
 %time
-semilocal_candidate_fit = kalmanFilter (for i j. series.i) semilocal_candidate
+semilocal_candidate_fit = kalmanFilter (for i j. series[i]) semilocal_candidate
 
-last_semilocal_candidate_fit = get_at #predictedLatents (semilocal_candidate_fit.(from_ordinal (Fin 359) 358))
+last_semilocal_candidate_fit = semilocal_candidate_fit[from_ordinal 358].predictedLatents
 
 %time
 semilocal_forecast : (Fin 50) => _ = (forecastMarginals semilocal_candidate last_semilocal_candidate_fit)
@@ -483,47 +449,47 @@ order of business is to try the maximum likelihood method, by gradient
 ascent.  The will maximize the probability of the observed data under
 this model, given the parameters.
 
-Params : Type =
-  { level_scale: Float
-  & autoregressive_coef: Float
-  & slope_mean: Float
-  & slope_scale: Float
-  & noise_level: Float
-  & init_level_mean: Float
-  & init_level_scale: Float
-  & init_slope_mean: Float
-  & init_slope_scale: Float
-  }
+struct Params =
+  level_scale: Float
+  autoregressive_coef: Float
+  slope_mean: Float
+  slope_scale: Float
+  noise_level: Float
+  init_level_mean: Float
+  init_level_scale: Float
+  init_slope_mean: Float
+  init_slope_scale: Float
 
-def log_prob (params: Params) : LogProb =
-  init_level_scale = get_at #init_level_scale params
-  init_slope_scale = get_at #init_slope_scale params
+def log_prob(params: Params) -> LogProb =
+  init_level_scale = params.init_level_scale
+  init_slope_scale = params.init_slope_scale
   init_latent_prior = (makeGaussianFromCovariance
-    [get_at #init_level_mean params, get_at #init_slope_mean params]
+    [params.init_level_mean, params.init_slope_mean]
     [[init_level_scale * init_level_scale, 0],
      [0, init_slope_scale * init_slope_scale]])
   model = (semilocal_linear_trend
-    (get_at #level_scale params)
-    (get_at #autoregressive_coef params)
-    (get_at #slope_mean params)
-    (get_at #slope_scale params)
-    (get_at #noise_level params)
+    params.level_scale
+    params.autoregressive_coef
+    params.slope_mean
+    params.slope_scale
+    params.noise_level
     init_latent_prior)
-  fit = kalmanFilter (for i j. series.i) model
-  marginals = for i. get_at #marginalEvidence fit.i
+  fit = kalmanFilter (for i j. series[i]) model
+  marginals = for i. fit[i].marginalEvidence
   sum marginals
 
 start : Params =
-  { level_scale = 1000
-  , autoregressive_coef = 0.98
-  , slope_mean = 500
-  , slope_scale = 100
-  , noise_level = 1000
-  , init_level_mean = 150000
-  , init_level_scale = 10000
-  , init_slope_mean = 1000
-  , init_slope_scale = 1000
-  }
+  Params(
+    1000, -- level_scale
+    0.98, -- autoregressive_coef
+    500, -- slope_mean
+    100, -- slope_scale
+    1000, -- noise_level
+    150000, -- init_level_mean
+    10000, -- init_level_scale
+    1000, -- init_slope_mean
+    1000  -- init_slope_scale
+  )
 
 %time
 log_prob start
