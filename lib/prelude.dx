@@ -32,6 +32,7 @@ interface Data(a:Type)
 
 '### Casting
 
+@inline
 def internal_cast(x:from) -> to given (from:Type, to:Type) =
   %cast(to, x)
 
@@ -59,6 +60,7 @@ Nat = %Nat()
 NatRep = Word32
 
 def nat_to_rep(x : Nat)    -> NatRep = %projNewtype(x)
+@inline
 def rep_to_nat(x : NatRep) -> Nat    = %NatCon(x)
 
 def n_to_w8(x: Nat) -> Word8   = nat_to_rep x | internal_cast
@@ -72,6 +74,7 @@ def n_to_f(x: Nat) -> Float   = nat_to_rep x | internal_cast
 
 def w8_to_n(x : Word8)   -> Nat = internal_cast x | rep_to_nat
 def w32_to_n(x : Word32)  -> Nat = internal_cast x | rep_to_nat
+@inline
 def w64_to_n(x : Word64)  -> Nat = internal_cast x | rep_to_nat
 def i32_to_n(x : Int32)   -> Nat = internal_cast x | rep_to_nat
 def i64_to_n(x : Int64)   -> Nat = internal_cast x | rep_to_nat

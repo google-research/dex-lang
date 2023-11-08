@@ -171,14 +171,16 @@ queryStuckType = \case
   Var v -> return $ getType v
   StuckProject i s -> projType i =<< mkStuck s
   StuckTabApp f x -> do
-    f' <- mkStuck f
-    typeOfTabApp (getType f') x
+    fTy <- queryStuckType f
+    typeOfTabApp fTy x
   PtrVar t _ -> return $ PtrTy t
   RepValAtom repVal -> return $ getType repVal
   StuckUnwrap s -> queryStuckType s >>= \case
     TyCon (NewtypeTyCon con) -> snd <$> unwrapNewtypeType con
     _ -> error "not a newtype"
-  InstantiatedGiven _ _ -> undefined
+  InstantiatedGiven f xs -> do
+    fTy <- queryStuckType f
+    typeOfApp fTy xs
   SuperclassProj i s -> superclassProjType i =<< queryStuckType s
   LiftSimp t _ -> return t
   LiftSimpFun t _ -> return $ TyCon $ Pi t

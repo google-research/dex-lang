@@ -628,6 +628,7 @@ withUDecl (WithSrcB src d) cont = addSrcContext src case d of
 
 considerInlineAnn :: LetAnn -> CType n -> LetAnn
 considerInlineAnn PlainLet TyKind = InlineLet
+considerInlineAnn PlainLet (TyCon (Pi (CorePiType _ _ _ (EffTy Pure TyKind)))) = InlineLet
 considerInlineAnn ann _ = ann
 
 applyFromLiteralMethod
@@ -1970,8 +1971,8 @@ isSkolemName v = lookupEnv v >>= \case
   _ -> return False
 {-# INLINE isSkolemName #-}
 
-renameForPrinting :: (EnvReader m, HasNamesE e)
-                   => e n -> m n (Abs (Nest (AtomNameBinder CoreIR)) e n)
+renameForPrinting :: EnvReader m
+                   => (PairE CAtom CAtom n) -> m n (Abs (Nest (AtomNameBinder CoreIR)) (PairE CAtom CAtom) n)
 renameForPrinting e = do
   infVars <- filterM isSolverName $ freeAtomVarsList e
   let ab = abstractFreeVarsNoAnn infVars e
@@ -2202,7 +2203,7 @@ synthDictFromGiven targetTy = do
       SynthDictType givenDictTy -> do
         guard =<< alphaEq targetTy givenDictTy
         return given
-      SynthPiType givenPiTy -> do
+      SynthPiType givenPiTy -> typeErrAsSearchFailure do
         args <- instantiateSynthArgs targetTy givenPiTy
         reduceInstantiateGiven given args
 

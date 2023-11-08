@@ -262,7 +262,7 @@ structDef = do
 
 funDefLetWithAnn :: Parser (LetAnn, CDef)
 funDefLetWithAnn = do
-  ann <- noInline <|> return PlainLet
+  ann <- topLetAnn <|> return PlainLet
   def <- funDefLet
   return (ann, def)
 
@@ -306,12 +306,17 @@ topLetOrExpr = withSrc topLet >>= \case
 
 topLet :: Parser CTopDecl'
 topLet = do
-  lAnn <- noInline <|> return PlainLet
+  lAnn <- topLetAnn <|> return PlainLet
   decl <- cDecl
   return $ CSDecl lAnn decl
 
-noInline :: Parser LetAnn
-noInline = (char '@' >> string "noinline"   $> NoInlineLet) <* nextLine
+topLetAnn :: Parser LetAnn
+topLetAnn = do
+  void $ char '@'
+  ann <-  (string "inline"   $> InlineLet)
+      <|> (string "noinline" $> NoInlineLet)
+  nextLine
+  return ann
 
 onePerLine :: Parser a -> Parser [a]
 onePerLine p =   liftM (:[]) p
