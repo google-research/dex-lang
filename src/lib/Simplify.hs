@@ -485,7 +485,7 @@ defuncCase scrut resultTy cont = do
           (dataVal, sumVal) <- fromPair caseResult
           reconAlts <- forM (zip closureTys recons) \(ty, recon) ->
             buildAbs noHint ty \v -> applyRecon (sink recon) (toAtom v)
-          nonDataVal <- mkACase sumVal reconAlts newNonDataTy
+          nonDataVal <- reduceACase sumVal reconAlts newNonDataTy
           Distinct <- getDistinct
           fromSplit split dataVal nonDataVal
 
@@ -798,7 +798,8 @@ simplifyHof resultTy = \case
         ab <- buildAbs noHint ixTy' \i -> do
           xs <- unpackTelescope bsClosure =<< reduceTabApp (sink ans) (toAtom i)
           applySubst (bIx@>Rename (atomVarName i) <.> bsClosure @@> map SubstVal xs) reconResult
-        mkStuck $ TabLam $ IxType ixTy' ixDict' `PairE` ab
+        TyCon (TabPi resultTy') <- return resultTy
+        mkStuck $ TabLam $ resultTy' `PairE` ab
   While body -> do
     SimplifiedBlock body' (CoerceRecon _) <- buildSimplifiedBlock $ simplifyExpr body
     result <- emitHof $ While body'
@@ -880,15 +881,7 @@ fmapMaybe scrut f = do
     return (Abs b result', resultTy)
   nothingAlt <- buildAbs noHint UnitTy \_ -> preludeNothingVal $ sink resultJustTy
   resultMaybeTy <- makePreludeMaybeTy resultJustTy
-  mkACase scrut [nothingAlt, justAlt] resultMaybeTy
-
-mkACase :: SAtom n -> [Abs SBinder CAtom n] -> CType n -> SimplifyM i n (CAtom n)
-mkACase scrut alts resultTy = case scrut of
-  Con (SumCon _ i arg) -> do
-    Abs b body <- return $ alts !! i
-    applySubst (b@>SubstVal arg) body
-  Con _ -> error "not a sum type"
-  Stuck _ scrut' -> mkStuck $ ACase scrut' alts resultTy
+  reduceACase scrut [nothingAlt, justAlt] resultMaybeTy
 
 -- This is wrong! The correct implementation is below. And yet there's some
 -- compensatory bug somewhere that means that the wrong answer works and the
@@ -910,28 +903,6 @@ preludeMaybeNewtypeCon ty = do
   TyConDef sn _ _ _ <- lookupTyCon tyConName
   let params = TyConParams [Explicit] [toAtom ty]
   return $ UserADTData sn tyConName params
-
-liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
-liftSimpAtom (StuckTy _ _) _ = error "Can't lift stuck type"
-liftSimpAtom ty@(TyCon tyCon) simpAtom = case simpAtom of
-  Stuck _ stuck -> return $ Stuck ty $ LiftSimp ty stuck
-  Con con -> Con <$> case (tyCon, con) of
-    (NewtypeTyCon newtypeCon, _) -> do
-      (dataCon, repTy) <- unwrapNewtypeType newtypeCon
-      cAtom <- rec repTy (Con con)
-      return $ NewtypeCon dataCon cAtom
-    (BaseType _  , Lit v)      -> return $ Lit v
-    (ProdType tys, ProdCon xs)   -> ProdCon <$> zipWithM rec tys xs
-    (SumType  tys, SumCon _ i x) -> SumCon tys i <$> rec (tys!!i) x
-    (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
-      x1' <- rec t1 x1
-      t2' <- applySubst (b@>SubstVal x1') t2
-      x2' <- rec t2' x2
-      return $ DepPair x1' x2' dpt
-    _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty
-  where
-    rec = liftSimpAtom
-{-# INLINE liftSimpAtom #-}
 
 liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
 liftSimpFun (TyCon (Pi piTy)) f = mkStuck $ LiftSimpFun piTy f

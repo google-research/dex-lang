@@ -15,7 +15,8 @@ module CheapReduction
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
   , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst
   , repValAtom, reduceUnwrap, reduceProj, reduceSuperclassProj, typeOfApp
-  , reduceInstantiateGiven, queryStuckType, substMStuck, reduceTabApp, substStuck)
+  , reduceInstantiateGiven, queryStuckType, substMStuck, reduceTabApp, substStuck
+  , liftSimpAtom, reduceACase)
   where
 
 import Control.Applicative
@@ -60,6 +61,10 @@ reduceExpr e = liftReducerM $ reduceExprM e
 reduceProj :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Atom r n)
 reduceProj i x = liftM fromJust $ liftReducerM $ reduceProjM i x
 {-# INLINE reduceProj #-}
+
+reduceACase :: EnvReader m => SAtom n -> [Abs SBinder CAtom n] -> CType n -> m n (CAtom n)
+reduceACase scrut alts resultTy = liftM fromJust $ liftReducerM $ reduceACaseM scrut alts resultTy
+{-# INLINE reduceACase #-}
 
 reduceUnwrap :: EnvReader m => CAtom n -> m n (CAtom n)
 reduceUnwrap x = liftM fromJust $ liftReducerM $ reduceUnwrapM x
@@ -131,6 +136,14 @@ reduceApp f xs = do
     Con (Lam lam) -> dropSubst $ withInstantiated lam xs \body -> reduceExprM body
     _ -> empty
 
+reduceACaseM :: SAtom n -> [Abs SBinder CAtom n] -> CType n -> ReducerM i n (CAtom n)
+reduceACaseM scrut alts resultTy = case scrut of
+  Con (SumCon _ i arg) -> do
+    Abs b body <- return $ alts !! i
+    applySubst (b@>SubstVal arg) body
+  Con _ -> error "not a sum type"
+  Stuck _ scrut' -> mkStuck $ ACase scrut' alts resultTy
+
 reduceProjM :: IRRep r => Int -> Atom r o -> ReducerM i o (Atom r o)
 reduceProjM i x = case x of
   Con con -> case con of
@@ -183,10 +196,10 @@ queryStuckType = \case
     typeOfApp fTy xs
   SuperclassProj i s -> superclassProjType i =<< queryStuckType s
   LiftSimp t _ -> return t
-  LiftSimpFun t _ -> return $ TyCon $ Pi t
+  LiftSimpFun t _ -> return $ toType t
   -- TabLam and ACase are just defunctionalization tools. The result type
   -- in both cases should *not* be `Data`.
-  TabLam _ -> undefined
+  TabLam (PairE t _) -> return $ toType t
   ACase _ _ resultTy -> return resultTy
 
 projType :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Type r n)
@@ -657,10 +670,39 @@ reduceStuck = \case
     reduceSuperclassProjM superclassIx child'
   PtrVar ptrTy ptr -> mkStuck =<< PtrVar ptrTy <$> substM ptr
   RepValAtom repVal -> mkStuck =<< RepValAtom <$> substM repVal
-  LiftSimp _ _ -> undefined
-  LiftSimpFun _ _ -> undefined
-  TabLam _ -> undefined
-  ACase _ _ _ -> undefined
+  LiftSimp t s -> do
+    t' <- substM t
+    s' <- reduceStuck s
+    liftSimpAtom t' s'
+  LiftSimpFun t f -> mkStuck =<< (LiftSimpFun <$> substM t <*> substM f)
+  TabLam lam -> mkStuck =<< (TabLam <$> substM lam)
+  ACase scrut alts resultTy -> do
+    scrut' <- reduceStuck scrut
+    resultTy' <- substM resultTy
+    alts' <- mapM substM alts
+    reduceACaseM scrut' alts' resultTy'
+
+liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
+liftSimpAtom (StuckTy _ _) _ = error "Can't lift stuck type"
+liftSimpAtom ty@(TyCon tyCon) simpAtom = case simpAtom of
+  Stuck _ stuck -> return $ Stuck ty $ LiftSimp ty stuck
+  Con con -> Con <$> case (tyCon, con) of
+    (NewtypeTyCon newtypeCon, _) -> do
+      (dataCon, repTy) <- unwrapNewtypeType newtypeCon
+      cAtom <- rec repTy (Con con)
+      return $ NewtypeCon dataCon cAtom
+    (BaseType _  , Lit v)      -> return $ Lit v
+    (ProdType tys, ProdCon xs)   -> ProdCon <$> zipWithM rec tys xs
+    (SumType  tys, SumCon _ i x) -> SumCon tys i <$> rec (tys!!i) x
+    (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
+      x1' <- rec t1 x1
+      t2' <- applySubst (b@>SubstVal x1') t2
+      x2' <- rec t2' x2
+      return $ DepPair x1' x2' dpt
+    _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty
+  where
+    rec = liftSimpAtom
+{-# INLINE liftSimpAtom #-}
 
 instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
   substE env (EffectRow effs tailVar) = do

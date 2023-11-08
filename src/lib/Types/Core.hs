@@ -215,7 +215,7 @@ data LamExpr (r::IR) (n::S) where
 
 data CoreLamExpr (n::S) = CoreLamExpr (CorePiType n) (LamExpr CoreIR n)              deriving (Show, Generic)
 
-type TabLamExpr = PairE (IxType SimpIR) (Abs SBinder CAtom)
+type TabLamExpr = PairE (TabPiType CoreIR) (Abs SBinder CAtom)
 type IxDict = Dict
 
 data IxMethod = Size | Ordinal | UnsafeFromOrdinal
