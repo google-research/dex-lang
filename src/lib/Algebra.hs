@@ -18,7 +18,7 @@ import Data.Text.Prettyprint.Doc
 import Data.List (intersperse)
 import Data.Tuple (swap)
 
-import Builder hiding (sub, add, mul)
+import Builder
 import Core
 import CheapReduction
 import Err

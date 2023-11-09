@@ -98,12 +98,14 @@ inlineDeclsSubst = \case
           inlineDeclsSubst rest
   where
     dropOccInfo PlainLet = PlainLet
+    dropOccInfo LinearLet = LinearLet
     dropOccInfo InlineLet = InlineLet
     dropOccInfo NoInlineLet = NoInlineLet
     dropOccInfo (OccInfoPure _) = PlainLet
     dropOccInfo (OccInfoImpure _) = PlainLet
     resolveWorkConservation PlainLet _ =
       NoInline  -- No occurrence info, assume the worst
+    resolveWorkConservation LinearLet _ = NoInline
     resolveWorkConservation InlineLet _ = NoInline
     resolveWorkConservation NoInlineLet _ = NoInline
     -- Quick hack to always unconditionally inline renames, until we get
@@ -176,6 +178,7 @@ preInlineUnconditionally = \case
   PlainLet -> False  -- "Missing occurrence annotation"
   InlineLet   -> True
   NoInlineLet -> False
+  LinearLet   -> False
   OccInfoPure (UsageInfo s (0, d)) | s <= One && d <= One -> True
   OccInfoPure _ -> False
   OccInfoImpure _ -> False

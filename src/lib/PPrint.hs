@@ -970,6 +970,7 @@ instance Pretty LetAnn where
     PlainLet        -> ""
     InlineLet       -> "%inline"
     NoInlineLet     -> "%noinline"
+    LinearLet       -> "%linear"
     OccInfoPure   u -> p u <> line
     OccInfoImpure u -> p u <> ", impure" <> line
 

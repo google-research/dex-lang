@@ -64,6 +64,7 @@ data LetAnn =
   | InlineLet
   -- Binding explicitly tagged "do not inline"
   | NoInlineLet
+  | LinearLet
   -- Bound expression is pure, and the binding's occurrences are summarized by
   -- the UsageInfo
   | OccInfoPure UsageInfo

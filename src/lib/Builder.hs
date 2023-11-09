@@ -847,6 +847,12 @@ buildRememberDest hint dest cont = do
 
 -- === vector space (ish) type class ===
 
+emitLin :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)
+emitLin e = case toExpr e of
+  Atom x -> return x
+  expr -> liftM toAtom $ emitDecl noHint LinearLet $ peepholeExpr expr
+{-# INLINE emitLin #-}
+
 zeroAt :: (Emits n, SBuilder m) => SType n -> m n (SAtom n)
 zeroAt ty = liftEmitBuilder $ go ty where
   go :: Emits n => SType n -> BuilderM SimpIR n (SAtom n)
@@ -930,14 +936,17 @@ symbolicTangentNonZero val = do
 
 -- === builder versions of common local ops ===
 
-neg :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-neg x = emit $ UnOp FNeg x
+fadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+fadd x y = emit $ BinOp FAdd x y
 
-add :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-add x y = emit $ BinOp FAdd x y
+fsub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+fsub x y = emit $ BinOp FSub x y
 
-mul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-mul x y = emit $ BinOp FMul x y
+fmul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+fmul x y = emit $ BinOp FMul x y
+
+fdiv :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+fdiv x y = emit $ BinOp FDiv x y
 
 iadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 iadd x y = emit $ BinOp IAdd x y
@@ -945,22 +954,10 @@ iadd x y = emit $ BinOp IAdd x y
 imul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 imul x y = emit $ BinOp IMul x y
 
-div' :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-div' x y = emit $ BinOp FDiv x y
-
-fpow :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fpow x y = emit $ BinOp FPow x y
-
-sub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-sub x y = emit $ BinOp FSub x y
-
-flog :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-flog x = emit $ UnOp Log x
-
-fLitLike :: (SBuilder m, Emits n) => Double -> SAtom n -> m n (SAtom n)
+fLitLike :: Double -> SAtom n -> SAtom n
 fLitLike x t = case getTyCon t of
-  BaseType (Scalar Float64Type) -> return $ toAtom $ Lit $ Float64Lit x
-  BaseType (Scalar Float32Type) -> return $ toAtom $ Lit $ Float32Lit $ realToFrac x
+  BaseType (Scalar Float64Type) -> toAtom $ Lit $ Float64Lit x
+  BaseType (Scalar Float32Type) -> toAtom $ Lit $ Float32Lit $ realToFrac x
   _ -> error "Expected a floating point scalar"
 
 fromPair :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
@@ -1084,6 +1081,11 @@ mkTabApp :: (EnvReader m, IRRep r) => Atom r n -> Atom r n -> m n (Expr r n)
 mkTabApp xs ixs = do
   ty <- typeOfTabApp (getType xs) ixs
   return $ TabApp ty xs ixs
+
+mkProject :: (EnvReader m, IRRep r) => Int -> Atom r n -> m n (Expr r n)
+mkProject i x = do
+  ty <- projType i x
+  return $ Project ty i x
 
 mkTopApp :: EnvReader m => TopFunName n -> [SAtom n] -> m n (SExpr n)
 mkTopApp f xs = do
