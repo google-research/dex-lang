@@ -7,16 +7,11 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Optimize
-  ( optimize, peepholeOp, peepholeExpr, hoistLoopInvariant, dceTop, foldCast ) where
+  ( optimize, hoistLoopInvariant, dceTop) where
 
 import Data.Functor
-import Data.Word
-import Data.Bits
-import Data.Bits.Floating
-import Data.List
 import Control.Monad
 import Control.Monad.State.Strict
-import GHC.Float
 
 import Types.Core
 import Types.Primitives
@@ -36,174 +31,6 @@ optimize = dceTop     -- Clean up user code
        >=> unrollLoops
        >=> dceTop     -- Clean up peephole-optimized code after unrolling
        >=> hoistLoopInvariant
-
--- === Peephole optimizations ===
-
-peepholeOp :: PrimOp SimpIR o -> EnvReaderM o (SExpr o)
-peepholeOp op = case op of
-  MiscOp (CastOp (TyCon (BaseType (Scalar sTy))) (Con (Lit l))) -> return $ case foldCast sTy l of
-    Just l' -> lit l'
-    Nothing -> noop
-  -- TODO: Support more unary and binary ops.
-  BinOp IAdd l r -> return $ case (l, r) of
-    -- TODO: Shortcut when either side is zero.
-    (Con (Lit ll), Con (Lit rl)) -> case (ll, rl) of
-      (Word32Lit lv, Word32Lit lr) -> lit $ Word32Lit $ lv + lr
-      _ -> noop
-    _ -> noop
-  BinOp (ICmp cop) (Con (Lit ll)) (Con (Lit rl)) ->
-    return $ lit $ Word8Lit $ fromIntegral $ fromEnum $ case (ll, rl) of
-      (Int32Lit  lv, Int32Lit  rv) -> cmp cop lv rv
-      (Int64Lit  lv, Int64Lit  rv) -> cmp cop lv rv
-      (Word8Lit  lv, Word8Lit  rv) -> cmp cop lv rv
-      (Word32Lit lv, Word32Lit rv) -> cmp cop lv rv
-      (Word64Lit lv, Word64Lit rv) -> cmp cop lv rv
-      _ -> error "Ill typed ICmp?"
-  BinOp (FCmp cop) (Con (Lit ll)) (Con (Lit rl)) ->
-    return $ lit $ Word8Lit $ fromIntegral $ fromEnum $ case (ll, rl) of
-      (Float32Lit lv, Float32Lit rv) -> cmp cop lv rv
-      (Float64Lit lv, Float64Lit rv) -> cmp cop lv rv
-      _ -> error "Ill typed FCmp?"
-  BinOp BOr (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
-    return $ lit $ Word8Lit $ lv .|. rv
-  BinOp BAnd (Con (Lit (Word8Lit lv))) (Con (Lit (Word8Lit rv))) ->
-    return $ lit $ Word8Lit $ lv .&. rv
-  MiscOp (ToEnum ty (Con (Lit (Word8Lit tag)))) -> case ty of
-    TyCon (SumType cases) -> return $ toExpr $ SumCon cases (fromIntegral tag) UnitVal
-    _ -> error "Ill typed ToEnum?"
-  MiscOp (SumTag (Con (SumCon _ tag _))) -> return $ lit $ Word8Lit $ fromIntegral tag
-  _ -> return noop
-  where
-    noop = PrimOp op
-    lit = Atom . Con . Lit
-
-    cmp :: Ord a => CmpOp -> a -> a -> Bool
-    cmp = \case
-      Less         -> (<)
-      Greater      -> (>)
-      Equal        -> (==)
-      LessEqual    -> (<=)
-      GreaterEqual -> (>=)
-
-foldCast :: ScalarBaseType -> LitVal -> Maybe LitVal
-foldCast sTy l = case sTy of
-  -- TODO: Check that the casts relating to floating-point agree with the
-  -- runtime behavior.  The runtime is given by the `ICastOp` case in
-  -- ImpToLLVM.hs.  We should make sure that the Haskell functions here
-  -- produce bitwise identical results to those instructions, by adjusting
-  -- either this or that as called for.
-  -- TODO: Also implement casts that may have unrepresentable results, i.e.,
-  -- casting floating-point numbers to smaller floating-point numbers or to
-  -- fixed-point.  Both of these necessarily have a much smaller dynamic range.
-  Int32Type -> case l of
-    Int32Lit  _  -> Just l
-    Int64Lit  i  -> Just $ Int32Lit  $ fromIntegral i
-    Word8Lit  i  -> Just $ Int32Lit  $ fromIntegral i
-    Word32Lit i  -> Just $ Int32Lit  $ fromIntegral i
-    Word64Lit i  -> Just $ Int32Lit  $ fromIntegral i
-    Float32Lit _ -> Nothing
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Int64Type -> case l of
-    Int32Lit  i  -> Just $ Int64Lit  $ fromIntegral i
-    Int64Lit  _  -> Just l
-    Word8Lit  i  -> Just $ Int64Lit  $ fromIntegral i
-    Word32Lit i  -> Just $ Int64Lit  $ fromIntegral i
-    Word64Lit i  -> Just $ Int64Lit  $ fromIntegral i
-    Float32Lit _ -> Nothing
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Word8Type -> case l of
-    Int32Lit  i  -> Just $ Word8Lit  $ fromIntegral i
-    Int64Lit  i  -> Just $ Word8Lit  $ fromIntegral i
-    Word8Lit  _  -> Just l
-    Word32Lit i  -> Just $ Word8Lit  $ fromIntegral i
-    Word64Lit i  -> Just $ Word8Lit  $ fromIntegral i
-    Float32Lit _ -> Nothing
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Word32Type -> case l of
-    Int32Lit  i  -> Just $ Word32Lit $ fromIntegral i
-    Int64Lit  i  -> Just $ Word32Lit $ fromIntegral i
-    Word8Lit  i  -> Just $ Word32Lit $ fromIntegral i
-    Word32Lit _  -> Just l
-    Word64Lit i  -> Just $ Word32Lit $ fromIntegral i
-    Float32Lit _ -> Nothing
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Word64Type -> case l of
-    Int32Lit  i  -> Just $ Word64Lit $ fromIntegral (fromIntegral i :: Word32)
-    Int64Lit  i  -> Just $ Word64Lit $ fromIntegral i
-    Word8Lit  i  -> Just $ Word64Lit $ fromIntegral i
-    Word32Lit i  -> Just $ Word64Lit $ fromIntegral i
-    Word64Lit _  -> Just l
-    Float32Lit _ -> Nothing
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Float32Type -> case l of
-    Int32Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Int64Lit  i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Word8Lit  i  -> Just $ Float32Lit $ fromIntegral i
-    Word32Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Word64Lit i  -> Just $ Float32Lit $ fixUlp i $ fromIntegral i
-    Float32Lit _ -> Just l
-    Float64Lit _ -> Nothing
-    PtrLit   _ _ -> Nothing
-  Float64Type -> case l of
-    Int32Lit  i  -> Just $ Float64Lit $ fromIntegral i
-    Int64Lit  i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
-    Word8Lit  i  -> Just $ Float64Lit $ fromIntegral i
-    Word32Lit i  -> Just $ Float64Lit $ fromIntegral i
-    Word64Lit i  -> Just $ Float64Lit $ fixUlp i $ fromIntegral i
-    Float32Lit f -> Just $ Float64Lit $ float2Double f
-    Float64Lit _ -> Just l
-    PtrLit   _ _ -> Nothing
-  where
-    -- When casting an integer type to a floating-point type of lower precision
-    -- (e.g., int32 to float32), GHC between 7.8.3 and 9.2.2 (exclusive) rounds
-    -- toward zero, instead of rounding to nearest even like everybody else.
-    -- See https://gitlab.haskell.org/ghc/ghc/-/issues/17231.
-    --
-    -- We patch this by manually checking the two adjacent floats to the
-    -- candidate answer, and using one of those if the reverse cast is closer
-    -- to the original input.
-    --
-    -- This rounds to nearest.  We round to nearest *even* by considering the
-    -- candidates in decreasing order of the number of trailing zeros they
-    -- exhibit when cast back to the original integer type.
-    fixUlp :: forall a b w. (Num a, Integral a, FiniteBits a, RealFrac b, FloatingBits b w)
-      => a -> b -> b
-    fixUlp orig candidate = res where
-      res = closest $ sortBy moreLowBits [candidate, candidatem1, candidatep1]
-      candidatem1 = nextDown candidate
-      candidatep1 = nextUp candidate
-      closest = minimumBy (\ca cb -> err ca `compare` err cb)
-      err cand = absdiff orig (round cand)
-      absdiff a b = if a >= b then a - b else b - a
-      moreLowBits a b =
-        compare (0 - countTrailingZeros (round @b @a a))
-                (0 - countTrailingZeros (round @b @a b))
-
-peepholeExpr :: SExpr o -> EnvReaderM o (SExpr o)
-peepholeExpr expr = case expr of
-  PrimOp op -> peepholeOp op
-  TabApp _ (Stuck _ (Var (AtomVar t _))) (IdxRepVal ord) ->
-    lookupAtomName t <&> \case
-      LetBound (DeclBinding ann (TabCon Nothing tabTy elems))
-        | ann /= NoInlineLet && isFinTabTy tabTy->
-        -- It is not safe to assume that this index can always be simplified!
-        -- For example, it might be coming from an unsafe_from_ordinal that is
-        -- under a case branch that would be dead for all invalid indices.
-        if 0 <= ord && fromIntegral ord < length elems
-          then Atom $ elems !! fromIntegral ord
-          else expr
-      _ -> expr
-  -- TODO: Apply a function to literals when it has a cheap body?
-  -- Think, partial evaluation of threefry.
-  _ -> return expr
-  where isFinTabTy = \case
-          TyCon (TabPi (TabPiType (DictCon (IxRawFin _)) _ _)) -> True
-          _ -> False
 
 -- === Loop unrolling ===
 
@@ -268,7 +95,7 @@ ulExpr expr = case expr of
   _ -> nothingSpecial
   where
     inc i = modify \(ULS n) -> ULS (n + i)
-    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr) >>= emit
+    nothingSpecial = inc 1 >> visitGeneric expr >>= emit
     unrollBlowupThreshold = 12
     withLocalAccounting m = do
       oldCost <- get

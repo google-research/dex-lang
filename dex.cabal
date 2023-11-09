@@ -77,6 +77,7 @@ library
                      , Occurrence
                      , OccAnalysis
                      , Optimize
+                     , PeepholeOptimize
                      , PPrint
                      , RawName
                      , Runtime

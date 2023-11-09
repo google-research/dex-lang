@@ -83,7 +83,7 @@ showAnyTyCon tyCon atom = case tyCon of
   TypeKind -> printAsConstant
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
-    isFirst <- ieq iOrd (NatVal 0)
+    isFirst <- emit $ BinOp (ICmp Equal) iOrd (NatVal 0)
     void $ emitIf isFirst UnitTy (return UnitVal) (emitLit ", " >> return UnitVal)
     rec x
   NewtypeTyCon tc -> case tc of

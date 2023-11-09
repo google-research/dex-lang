@@ -122,7 +122,7 @@ inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case d
     _ -> do
       PairE block recon <- liftInfererM $ buildBlockInfWithRecon do
         val <- checkMaybeAnnExpr tyAnn rhs
-        v <- emitHinted (getNameHint p) $ Atom val
+        v <- emitDecl (getNameHint p) PlainLet $ Atom val
         bindLetPat p v do
           renameM result
       (topBlock, _) <- asTopBlock block
@@ -1597,6 +1597,9 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
     xs <- forM [0 .. n - 1] \i -> do
       emitToVar =<< mkTabApp (toAtom v) (toAtom $ NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i))
     bindLetPats ps xs cont
+  where
+    emitInline :: Emits n => CAtom  n -> InfererM i n (AtomVar CoreIR n)
+    emitInline atom = emitDecl noHint InlineLet $ Atom atom
 
 checkUType :: UType i -> InfererM i o (CType o)
 checkUType t = do

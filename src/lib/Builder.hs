@@ -29,12 +29,13 @@ import IRVariants
 import MTL1
 import Subst
 import Name
+import PeepholeOptimize
 import QueryType
 import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util (enumerate, transitiveClosureM, bindM2, toSnocList, (...))
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
 
 -- === Ordinary (local) builder class ===
 
@@ -66,50 +67,31 @@ emitDecl _ _ (Atom (Stuck _ (Var n))) = return n
 emitDecl hint ann expr = rawEmitDecl hint ann expr
 {-# INLINE emitDecl #-}
 
-emitInline :: (Builder r m, Emits n) => Atom r n -> m n (AtomVar r n)
-emitInline atom = emitDecl noHint InlineLet $ Atom atom
-{-# INLINE emitInline #-}
-
-emitHinted :: (Builder r m, Emits n) => NameHint -> Expr r n -> m n (AtomVar r n)
-emitHinted hint expr = emitDecl hint PlainLet expr
-{-# INLINE emitHinted #-}
-
 emit :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)
 emit e = case toExpr e of
   Atom x -> return x
   Block _ block -> emitDecls block >>= emit
-  expr -> toAtom <$> emitToVar expr
+  expr -> do
+    v <- emitDecl noHint PlainLet $ peepholeExpr expr
+    return $ toAtom v
 {-# INLINE emit #-}
 
 emitToVar :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (AtomVar r n)
-emitToVar e = case toExpr e of
-  Atom (Stuck _ (Var v)) -> return v
-  expr -> emitDecl noHint PlainLet expr
+emitToVar expr = emit expr >>= \case
+  Stuck _ (Var v) -> return v
+  atom -> emitDecl noHint PlainLet (toExpr atom)
 {-# INLINE emitToVar #-}
-
-emitHof :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
-emitHof hof = mkTypedHof hof >>= emit
-
-mkTypedHof :: (EnvReader m, IRRep r) => Hof r n -> m n (TypedHof r n)
-mkTypedHof hof = do
-  effTy <- effTyOfHof hof
-  return $ TypedHof effTy hof
-
-emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
-emitUnOp op x = emit $ UnOp op x
-{-# INLINE emitUnOp #-}
 
 emitDecls :: (Builder r m, Emits n, RenameE e, SinkableE e)
           => WithDecls r e n -> m n (e n)
-emitDecls (Abs decls result) = runSubstReaderT idSubst $ emitDecls' decls result
-
-emitDecls' :: (Builder r m, Emits o, RenameE e, SinkableE e)
-           => Nest (Decl r) i i' -> e i' -> SubstReaderT Name m i o (e o)
-emitDecls' Empty e = renameM e
-emitDecls' (Nest (Let b (DeclBinding ann expr)) rest) e = do
-  expr' <- renameM expr
-  AtomVar v _ <- emitDecl (getNameHint b) ann expr'
-  extendSubst (b @> v) $ emitDecls' rest e
+emitDecls (Abs decls result) = runSubstReaderT idSubst $ go decls result where
+  go :: (Builder r m, Emits o, RenameE e, SinkableE e)
+     => Nest (Decl r) i i' -> e i' -> SubstReaderT Name m i o (e o)
+  go Empty e = renameM e
+  go (Nest (Let b (DeclBinding ann expr)) rest) e = do
+    expr' <- renameM expr
+    AtomVar v _ <- emitDecl (getNameHint b) ann expr'
+    extendSubst (b @> v) $ go rest e
 
 buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
   => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -775,6 +757,14 @@ buildEffLam hint ty body = do
       body' <- buildBlock $ body (sink hVar) $ sink ref
       return $ LamExpr (BinaryNest h b) body'
 
+emitHof :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
+emitHof hof = mkTypedHof hof >>= emit
+
+mkTypedHof :: (EnvReader m, IRRep r) => Hof r n -> m n (TypedHof r n)
+mkTypedHof hof = do
+  effTy <- effTyOfHof hof
+  return $ TypedHof effTy hof
+
 buildForAnn
   :: (Emits n, ScopableBuilder r m)
   => NameHint -> ForAnn -> IxType r n
@@ -940,70 +930,38 @@ symbolicTangentNonZero val = do
 
 -- === builder versions of common local ops ===
 
-fLitLike :: (SBuilder m, Emits n) => Double -> SAtom n -> m n (SAtom n)
-fLitLike x t = case getTyCon t of
-  BaseType (Scalar Float64Type) -> return $ toAtom $ Lit $ Float64Lit x
-  BaseType (Scalar Float32Type) -> return $ toAtom $ Lit $ Float32Lit $ realToFrac x
-  _ -> error "Expected a floating point scalar"
-
 neg :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 neg x = emit $ UnOp FNeg x
 
 add :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 add x y = emit $ BinOp FAdd x y
 
--- TODO: Implement constant folding for fixed-width integer types as well!
-iadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-iadd (Con (Lit l)) y | getIntLit l == 0 = return y
-iadd x (Con (Lit l)) | getIntLit l == 0 = return x
-iadd x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (+) x y
-iadd x y = emit $ BinOp IAdd x y
-
 mul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 mul x y = emit $ BinOp FMul x y
 
+iadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+iadd x y = emit $ BinOp IAdd x y
+
 imul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-imul   (Con (Lit l)) y               | getIntLit l == 1 = return y
-imul x                 (Con (Lit l)) | getIntLit l == 1 = return x
-imul x@(Con (Lit _)) y@(Con (Lit _))                    = return $ applyIntBinOp (*) x y
 imul x y = emit $ BinOp IMul x y
-
-sub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-sub x y = emit $ BinOp FSub x y
-
-isub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-isub x (Con (Lit l)) | getIntLit l == 0 = return x
-isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
-isub x y = emit $ BinOp ISub x y
-
-select :: (Builder r m, Emits n) => Atom r n -> Atom r n -> Atom r n -> m n (Atom r n)
-select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
-select p x y = emit $ MiscOp $ Select p x y
 
 div' :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 div' x y = emit $ BinOp FDiv x y
 
-idiv :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-idiv x (Con (Lit l)) | getIntLit l == 1 = return x
-idiv x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp div x y
-idiv x y = emit $ BinOp IDiv x y
-
-irem :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-irem x y = emit $ BinOp IRem x y
-
 fpow :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 fpow x y = emit $ BinOp FPow x y
+
+sub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
+sub x y = emit $ BinOp FSub x y
 
 flog :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 flog x = emit $ UnOp Log x
 
-ilt :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
-ilt x y = emit $ BinOp (ICmp Less) x y
-
-ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
-ieq x y = emit $ BinOp (ICmp Equal) x y
+fLitLike :: (SBuilder m, Emits n) => Double -> SAtom n -> m n (SAtom n)
+fLitLike x t = case getTyCon t of
+  BaseType (Scalar Float64Type) -> return $ toAtom $ Lit $ Float64Lit x
+  BaseType (Scalar Float32Type) -> return $ toAtom $ Lit $ Float32Lit $ realToFrac x
+  _ -> error "Expected a floating point scalar"
 
 fromPair :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
 fromPair pair = do
@@ -1160,7 +1118,7 @@ app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
 app x i = mkApp x [i] >>= emit
 
 naryApp :: (CBuilder m, Emits n) => CAtom n -> [CAtom n] -> m n (CAtom n)
-naryApp = naryAppHinted noHint
+naryApp f xs= mkApp f xs >>= emit
 {-# INLINE naryApp #-}
 
 naryTopApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
@@ -1174,10 +1132,6 @@ naryTopAppInlined f xs = do
     DexTopFun _ lam _ -> instantiate lam xs >>= emit
     _ -> naryTopApp f xs
 {-# INLINE naryTopAppInlined #-}
-
-naryAppHinted :: (CBuilder m, Emits n)
-  => NameHint -> CAtom n -> [CAtom n] -> m n (CAtom n)
-naryAppHinted hint f xs = toAtom <$> (mkApp f xs >>= emitHinted hint)
 
 tabApp :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 tabApp x i = mkTabApp x i >>= emit
@@ -1581,30 +1535,3 @@ visitDeclsEmits (Nest (Let b (DeclBinding _ expr)) decls) cont = do
   x <- visitExprEmits expr
   extendSubst (b@>SubstVal x) do
     visitDeclsEmits decls cont
-
--- === Helpers for function evaluation over fixed-width types ===
-
-applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a)
-               => (a -> Atom r n) -> a -> a -> Atom r n) -> Atom r n -> Atom r n -> Atom r n
-applyIntBinOp' f x y = case (x, y) of
-  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
-  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
-  (Con (Lit (Word8Lit xv)), Con (Lit (Word8Lit yv))) -> f (Con . Lit . Word8Lit) xv yv
-  (Con (Lit (Word32Lit xv)), Con (Lit (Word32Lit yv))) -> f (Con . Lit . Word32Lit) xv yv
-  (Con (Lit (Word64Lit xv)), Con (Lit (Word64Lit yv))) -> f (Con . Lit . Word64Lit) xv yv
-  _ -> error "Expected integer atoms"
-
-applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
-applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
-
-applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom r n -> Atom r n -> Atom r n
-applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Word8Lit . fromIntegral . fromEnum) ... f) x y
-
-applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom r n -> Atom r n -> Atom r n
-applyFloatBinOp f x y = case (x, y) of
-  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
-  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
-  _ -> error "Expected float atoms"
-
-_applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom r n -> Atom r n
-_applyFloatUnOp f x = applyFloatBinOp (\_ -> f) (error "shouldn't be needed") x

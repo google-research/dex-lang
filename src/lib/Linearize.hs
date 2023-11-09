@@ -495,18 +495,18 @@ linearizeUnOp op x' = do
   let emitZeroT = withZeroT $ emit $ UnOp op x
   case op of
     Exp    -> do
-      y <- emitUnOp Exp x
+      y <- emit $ UnOp Exp x
       return $ WithTangent y (bindM2 mul tx (sinkM y))
     Exp2   -> notImplemented
-    Log    -> withT (emitUnOp Log x) $ (tx >>= (`div'` sink x))
+    Log    -> withT (emit $ UnOp Log x) $ (tx >>= (`div'` sink x))
     Log2   -> notImplemented
     Log10  -> notImplemented
     Log1p  -> notImplemented
-    Sin    -> withT (emitUnOp Sin x) $ bindM2 mul tx (emitUnOp Cos (sink x))
-    Cos    -> withT (emitUnOp Cos x) $ bindM2 mul tx (neg =<< emitUnOp Sin (sink x))
+    Sin    -> withT (emit $ UnOp Sin x) $ bindM2 mul tx (emit $ UnOp Cos (sink x))
+    Cos    -> withT (emit $ UnOp Cos x) $ bindM2 mul tx (neg =<< emit (UnOp Sin (sink x)))
     Tan    -> notImplemented
     Sqrt   -> do
-      y <- emitUnOp Sqrt x
+      y <- emit $ UnOp Sqrt x
       return $ WithTangent y do
         denominator <- bindM2 mul (2 `fLitLike` sink y) (sinkM y)
         bindM2 div' tx (pure denominator)

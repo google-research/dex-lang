@@ -26,7 +26,6 @@ import IRVariants
 import Linearize
 import Name
 import Subst
-import Optimize (peepholeExpr)
 import QueryType
 import RuntimePrint
 import Transpose
@@ -720,29 +719,17 @@ simplifyOp op = case op of
   RefOp ref eff -> do
     ref' <- toDataAtom ref
     liftResult =<< simplifyRefOp eff ref'
-  BinOp binop x' y' -> do
-    x <- toDataAtom x'
-    y <- toDataAtom y'
-    liftResult =<< case binop of
-      ISub -> isub x y
-      IAdd -> iadd x y
-      IMul -> imul x y
-      IDiv -> idiv x y
-      ICmp Less  -> ilt x y
-      ICmp Equal -> ieq x y
-      _ -> emit $ BinOp binop x y
-  UnOp unOp x' -> do
-    x <- toDataAtom x'
-    liftResult =<< emit (UnOp unOp x)
+  BinOp binop x y -> do
+    x' <- toDataAtom x
+    y' <- toDataAtom y
+    liftResult =<< emit (BinOp binop x' y')
+  UnOp unOp x -> do
+    x' <- toDataAtom x
+    liftResult =<< emit (UnOp unOp x')
   MiscOp op' -> case op' of
-    Select c' x' y' -> do
-      c <- toDataAtom c'
-      x <- toDataAtom x'
-      y <- toDataAtom y'
-      liftResult =<< select c x y
-    ShowAny x' -> do
-      x <- simplifyAtom x'
-      dropSubst $ showAny x >>= simplifyExpr
+    ShowAny x -> do
+      x' <- simplifyAtom x
+      dropSubst $ showAny x' >>= simplifyExpr
     _ -> simplifyGenericOp op'
   where
     liftResult x = do
@@ -757,8 +744,7 @@ simplifyGenericOp
 simplifyGenericOp op = do
   ty <- substM $ getType op
   op' <- traverseOp op getRepType toDataAtom (error "shouldn't have lambda left")
-  result <- liftEnvReaderM (peepholeExpr $ toExpr op') >>= emit
-  liftSimpAtom ty result
+  liftSimpAtom ty =<< emit op'
 {-# INLINE simplifyGenericOp #-}
 
 pattern CoerceReconAbs :: Abs (Nest b) ReconstructAtom n

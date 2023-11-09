@@ -50,7 +50,7 @@ newtype Polynomial (n::S) =
 -- us compute sums in closed form. This tries to compute
 -- `\sum_{i=0}^(lim-1) body`. `i`, `lim`, and `body` should all have type `Nat`.
 sumUsingPolys :: Emits n
-              => Atom SimpIR n -> Abs (Binder SimpIR) (Expr SimpIR) n -> BuilderM SimpIR n (Atom SimpIR n)
+              => SAtom n -> Abs (Binder SimpIR) (Expr SimpIR) n -> BuilderM SimpIR n (SAtom n)
 sumUsingPolys lim (Abs i body) = do
   sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
     exprAsPoly body' >>= \case
@@ -138,7 +138,7 @@ type BlockTraverserM i o a = SubstReaderT PolySubstVal (MaybeT1 (BuilderM SimpIR
 exprAsPoly :: (EnvExtender m, EnvReader m) => SExpr n -> m n (Maybe (Polynomial n))
 exprAsPoly expr = liftBuilder $ runMaybeT1 $ runSubstReaderT idSubst $ exprAsPolyRec expr
 
-atomAsPoly :: Atom SimpIR i -> BlockTraverserM i o (Polynomial o)
+atomAsPoly :: SAtom i -> BlockTraverserM i o (Polynomial o)
 atomAsPoly = \case
   Stuck _ (Var v)       -> atomVarAsPoly v
   Stuck _ (RepValAtom (RepVal _ (Leaf (IVar v' _)))) -> impNameAsPoly v'
@@ -190,7 +190,7 @@ blockAsPoly (Abs decls result) = case decls of
 -- coefficients. This is why we have to find the least common multiples and do the
 -- accumulation over numbers multiplied by that LCM. We essentially do fixed point
 -- fractional math here.
-emitPolynomial :: Emits n => Polynomial n -> BuilderM SimpIR n (Atom SimpIR n)
+emitPolynomial :: Emits n => Polynomial n -> BuilderM SimpIR n (SAtom n)
 emitPolynomial (Polynomial p) = do
   let constLCM = asAtom $ foldl lcm 1 $ fmap (denominator . snd) $ toList p
   monoAtoms <- flip traverse (toList p) $ \(m, c) -> do
@@ -204,7 +204,7 @@ emitPolynomial (Polynomial p) = do
     --       because it might be causing overflows due to all arithmetic being shifted.
     asAtom = IdxRepVal . fromInteger
 
-emitMonomial :: Emits n => Monomial n -> BuilderM SimpIR n (Atom SimpIR n)
+emitMonomial :: Emits n => Monomial n -> BuilderM SimpIR n (SAtom n)
 emitMonomial (Monomial m) = do
   varAtoms <- forM (toList m) \(v, e) -> case v of
     LeftE v' -> do
@@ -215,8 +215,11 @@ emitMonomial (Monomial m) = do
       ipow atom e
   foldM imul (IdxRepVal 1) varAtoms
 
-ipow :: Emits n => Atom SimpIR n -> Int -> BuilderM SimpIR n (Atom SimpIR n)
+ipow :: Emits n => SAtom n -> Int -> BuilderM SimpIR n (SAtom n)
 ipow x i = foldM imul (IdxRepVal 1) (replicate i x)
+
+idiv :: Emits n => SAtom n -> SAtom n -> BuilderM SimpIR n (SAtom n)
+idiv = undefined
 
 -- === instances ===
 

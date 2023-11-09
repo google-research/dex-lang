@@ -14,7 +14,7 @@ import IRVariants
 import Name
 import Subst
 import Occurrence hiding (Var)
-import Optimize
+import PeepholeOptimize
 import Types.Core
 import Types.Primitives
 
@@ -80,7 +80,7 @@ inlineDeclsSubst = \case
       s <- getSubst
       extendSubst (b @> SubstVal (SuspEx expr s)) $ inlineDeclsSubst rest
     else do
-      expr' <- inlineExpr Stop expr >>= (liftEnvReaderM . peepholeExpr)
+      expr' <- peepholeExpr <$> inlineExpr Stop expr
       -- If the inliner starts moving effectful expressions, it may become
       -- necessary to query the effects of the new expression here.
       let presInfo = resolveWorkConservation ann expr'
