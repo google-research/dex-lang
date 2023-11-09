@@ -639,8 +639,7 @@ compileTopLevelFun cc fSimp = do
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
 printCodegen x = do
-  block <- liftBuilder $ buildBlock do
-    emitExpr $ PrimOp $ MiscOp $ ShowAny $ sink x
+  block <- liftBuilder $ buildBlock $ emit $ ShowAny $ sink x
   (topBlock, _) <- asTopBlock block
   getDexString =<< evalBlock topBlock
 

@@ -640,7 +640,7 @@ applyFromLiteralMethod resultTy methodName litVal =
       MethodBinding className _ <- lookupEnv methodName'
       dictTy <- toType <$> dictType className [toAtom resultTy]
       Just d <- toMaybeDict <$> trySynthTerm dictTy Full
-      emitExpr =<< mkApplyMethod d 0 [litVal]
+      emit =<< mkApplyMethod d 0 [litVal]
 
 -- atom that requires instantiation to become a rho type
 data SigmaAtom n =
@@ -787,11 +787,11 @@ inlineTypeAliases v = do
    _ -> toAtom <$> toAtomVar v
 
 applySigmaAtom :: Emits o => SigmaAtom o -> [CAtom o] -> InfererM i o (CAtom o)
-applySigmaAtom (SigmaAtom _ f) args = emitExprWithEffects =<< mkApp f args
+applySigmaAtom (SigmaAtom _ f) args = emitWithEffects =<< mkApp f args
 applySigmaAtom (SigmaUVar _ _ f) args = case f of
   UAtomVar f' -> do
     f'' <- inlineTypeAliases f'
-    emitExprWithEffects =<< mkApp f'' args
+    emitWithEffects =<< mkApp f'' args
   UTyConVar f' -> do
     TyConDef sn roleExpls _ _ <- lookupTyCon f'
     let expls = snd <$> roleExpls
@@ -820,9 +820,9 @@ applySigmaAtom (SigmaUVar _ _ f) args = case f of
     let numParams = nestLength paramBs
     -- params aren't needed because they're already implied by the dict argument
     let (dictArg:args') = drop numParams args
-    emitExprWithEffects =<< mkApplyMethod (fromJust $ toMaybeDict dictArg) methodIdx args'
+    emitWithEffects =<< mkApplyMethod (fromJust $ toMaybeDict dictArg) methodIdx args'
 applySigmaAtom (SigmaPartialApp _ f prevArgs) args =
-  emitExprWithEffects =<< mkApp f (prevArgs ++ args)
+  emitWithEffects =<< mkApp f (prevArgs ++ args)
 
 splitParamPrefix :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n, [CAtom n])
 splitParamPrefix tc args = do
@@ -862,10 +862,10 @@ applyDataCon tc conIx topArgs = do
         where h:t = args
       _ -> error $ "Unexpected data con representation type: " ++ pprint rty
 
-emitExprWithEffects :: Emits o => CExpr o -> InfererM i o (CAtom o)
-emitExprWithEffects expr = do
+emitWithEffects :: Emits o => CExpr o -> InfererM i o (CAtom o)
+emitWithEffects expr = do
   addEffects $ getEffects expr
-  emitExpr expr
+  emit expr
 
 checkExplicitArity :: [Explicitness] -> [a] -> InfererM i o ()
 checkExplicitArity expls args = do
@@ -1016,7 +1016,7 @@ inferPrimArg x = do
     TyKind -> reduceExpr xBlock >>= \case
       Just reduced -> return reduced
       _ -> throw CompilerErr "Type args to primops must be reducible"
-    _ -> emitExpr xBlock
+    _ -> emit xBlock
 
 matchPrimApp :: Emits o => PrimName -> [CAtom o] -> InfererM i o (CAtom o)
 matchPrimApp = \case
@@ -1035,15 +1035,15 @@ matchPrimApp = \case
    P.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
    P.HeapVal -> \case ~[] -> return $ toAtom HeapVal
    P.SumCon _ -> error "not supported"
- UMiscOp op -> \x -> emitExpr =<< MiscOp <$> matchGenericOp op x
- UMemOp  op -> \x -> emitExpr =<< MemOp  <$> matchGenericOp op x
- UBinOp op -> \case ~[x, y] -> emitExpr $ BinOp op x y
- UUnOp  op -> \case ~[x]    -> emitExpr $ UnOp  op x
- UMAsk      -> \case ~[r]    -> emitExpr $ RefOp r MAsk
- UMGet      -> \case ~[r]    -> emitExpr $ RefOp r MGet
- UMPut      -> \case ~[r, x] -> emitExpr $ RefOp r $ MPut x
+ UMiscOp op -> \x -> emit =<< MiscOp <$> matchGenericOp op x
+ UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
+ UBinOp op -> \case ~[x, y] -> emit $ BinOp op x y
+ UUnOp  op -> \case ~[x]    -> emit $ UnOp  op x
+ UMAsk      -> \case ~[r]    -> emit $ RefOp r MAsk
+ UMGet      -> \case ~[r]    -> emit $ RefOp r MGet
+ UMPut      -> \case ~[r, x] -> emit $ RefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> indexRef r i
- UApplyMethod i -> \case ~(d:args) -> emitExpr =<< mkApplyMethod (fromJust $ toMaybeDict d) i args
+ UApplyMethod i -> \case ~(d:args) -> emit =<< mkApplyMethod (fromJust $ toMaybeDict d) i args
  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
  URunReader -> \case ~[x, f]  -> do f' <- lam2 f; emitHof $ RunReader x f'
@@ -1051,7 +1051,7 @@ matchPrimApp = \case
  UWhile     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ While f'
  URunIO     -> \case ~[f]     -> do f' <- lam0 f; emitHof $ RunIO f'
  UCatchException-> \case ~[f] -> do f' <- lam0 f; emitHof =<< mkCatchException f'
- UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emitExpr $ RefOp r $ MExtend (BaseMonoid z f') x
+ UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emit $ RefOp r $ MExtend (BaseMonoid z f') x
  URunWriter -> \args -> do
    [idVal, combiner, f] <- return args
    combiner' <- lam2 combiner
@@ -1131,8 +1131,8 @@ buildNthOrderedAlt alts _ resultTy i v = do
   case lookup i [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
-      emitExpr $ ThrowError resultTy'
-    Just alt -> applyAbs alt (SubstVal v) >>= emitExpr
+      emit $ ThrowError resultTy'
+    Just alt -> applyAbs alt (SubstVal v) >>= emit
 
 buildMonomorphicCase
   :: (Emits n, ScopableBuilder CoreIR m)
@@ -1159,7 +1159,7 @@ buildSortedCase scrut alts resultTy = do
         [_] -> do
           let [IndexedAlt _ alt] = alts
           scrut' <- unwrapNewtype scrut
-          emitExpr =<< applyAbs alt (SubstVal scrut')
+          emit =<< applyAbs alt (SubstVal scrut')
         _ -> do
           scrut' <- unwrapNewtype scrut
           liftEmitBuilder $ buildMonomorphicCase alts scrut' resultTy
@@ -1526,8 +1526,7 @@ checkCasePat (WithSrcB pos pat) scrutineeTy cont = addSrcContext pos $ case pat 
     withFreshBinderInf noHint Explicit repTy \b -> Abs b <$> do
       buildBlock do
         args <- forM idxs \projs -> do
-          ans <- applyProjectionsReduced (init projs) (sink $ toAtom $ binderVar b)
-          emit $ Atom ans
+          emitToVar =<< applyProjectionsReduced (init projs) (sink $ toAtom $ binderVar b)
         bindLetPats ps args $ cont
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
@@ -1596,7 +1595,7 @@ bindLetPat (WithSrcB pos pat) v cont = addSrcContext pos $ case pat of
       TyCon (TabPi (TabPiType _ (_:>FinConst n') _)) | n == n' -> return ()
       ty -> throw TypeErr $ "Expected a Fin " ++ show n ++ " table type but got: " ++ pprint ty
     xs <- forM [0 .. n - 1] \i -> do
-      emit =<< mkTabApp (toAtom v) (toAtom $ NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i))
+      emitToVar =<< mkTabApp (toAtom v) (toAtom $ NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i))
     bindLetPats ps xs cont
 
 checkUType :: UType i -> InfererM i o (CType o)
@@ -1621,7 +1620,7 @@ inferTabCon xs = do
   xs' <- forM xs \x -> topDown elemTy x
   let dTy = toType $ DataDictType elemTy
   Just dataDict <- toMaybeDict <$> trySynthTerm dTy Full
-  emitExpr $ TabCon (Just $ WhenIRE dataDict) tabTy xs'
+  emit $ TabCon (Just $ WhenIRE dataDict) tabTy xs'
 
 checkTabCon :: forall i o. Emits o => TabPiType CoreIR o -> [UExpr i] -> InfererM i o (CAtom o)
 checkTabCon tabTy@(TabPiType _ b elemTy) xs = do
@@ -1640,7 +1639,7 @@ checkTabCon tabTy@(TabPiType _ b elemTy) xs = do
         let dTy = toType $ DataDictType elemTy'
         return $ toType $ CorePiType ImplicitApp [Inferred Nothing Unify] (UnaryNest b') (EffTy Pure dTy)
   Just dataDict <- toMaybeDict <$> trySynthTerm dTy Full
-  emitExpr $ TabCon (Just $ WhenIRE dataDict) (TyCon (TabPi tabTy)) xs'
+  emit $ TabCon (Just $ WhenIRE dataDict) (TyCon (TabPi tabTy)) xs'
 
 addEffects :: EffectRow CoreIR o -> InfererM i o ()
 addEffects Pure = return ()

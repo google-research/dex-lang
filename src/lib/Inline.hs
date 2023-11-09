@@ -238,7 +238,7 @@ inlineStuck :: Emits o => Context SExpr e o -> SStuck i -> InlineM i o (e o)
 inlineStuck ctx = \case
   Var name -> inlineName ctx name
   StuckProject i x -> do
-    ans <- proj i =<< emitExprToAtom =<< inlineStuck Stop x
+    ans <- proj i =<< emit =<< inlineStuck Stop x
     reconstruct ctx $ Atom ans
   StuckTabApp _ _ -> error "not implemented"
   PtrVar t p -> do
@@ -305,8 +305,8 @@ reconstruct ctx e = case ctx of
   TabAppCtx ix s ctx' -> withSubst s $ reconstructTabApp ctx' e ix
   CaseCtx alts resultTy effs s ctx' ->
     withSubst s $ reconstructCase ctx' e alts resultTy effs
-  EmitToAtomCtx ctx' -> emitExprToAtom e >>= reconstruct ctx'
-  EmitToNameCtx ctx' -> emit (Atom e) >>= reconstruct ctx'
+  EmitToAtomCtx ctx' -> emit  e >>= reconstruct ctx'
+  EmitToNameCtx ctx' -> emitToVar e >>= reconstruct ctx'
 {-# INLINE reconstruct #-}
 
 reconstructTabApp :: Emits o
@@ -318,7 +318,7 @@ reconstructTabApp ctx expr i = case expr of
     dropSubst $ extendSubst (b@>Rename i') do
       inlineExpr ctx body
   _ -> do
-    array' <- emitExprToAtom expr
+    array' <- emit expr
     i' <- inline Stop i
     reconstruct ctx =<< mkTabApp array' i'
 
@@ -333,17 +333,17 @@ reconstructCase ctx scrutExpr alts resultTy effs =
       -- of the arms of the outer case
       resultTy' <- inline Stop resultTy
       reconstruct ctx =<< (buildCase' sscrut resultTy' \i val -> do
-        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emitExpr
+        ans <- applyAbs (sink $ salts !! i) (SubstVal val) >>= emit
         buildCase ans (sink resultTy') \j jval -> do
           Abs b body <- return $ alts !! j
           extendSubst (b @> (SubstVal $ DoneEx $ Atom jval)) do
-            inlineExpr Stop body >>= emitExprToAtom)
+            inlineExpr Stop body >>= emit)
     _ -> do
       -- Attempt case-of-known-constructor optimization
       -- I can't use `buildCase` here because I want to propagate the incoming
       -- context `ctx` into the selected alternative if the optimization fires,
       -- but leave it around the whole reconstructed `Case` if it doesn't.
-      scrut <- emitExprToAtom scrutExpr
+      scrut <- emit scrutExpr
       case scrut of
         Con con -> do
           SumCon _ i val <- return con

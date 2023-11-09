@@ -59,7 +59,7 @@ sumUsingPolys lim (Abs i body) = do
         "Algebraic simplification failed to model index computations:\n"
         ++ "Trying to sum from 0 to " ++ pprint lim ++ " - 1, \\"
         ++ pprint i' ++ "." ++ pprint body'
-  limName <- emit (Atom lim)
+  limName <- emitToVar (Atom lim)
   emitPolynomial $ sum (LeftE (atomVarName limName)) sumAbs
 
 mul :: Polynomial n-> Polynomial n -> Polynomial n

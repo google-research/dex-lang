@@ -145,7 +145,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- tangentBaseMonoidFor (getType ct)
-  void $ emitExpr $ RefOp ref $ MExtend baseMonoid ct
+  void $ emit $ RefOp ref $ MExtend baseMonoid ct
 
 getLinRegions :: TransposeM i o [SAtomVar o]
 getLinRegions = asks fromListE
@@ -166,7 +166,7 @@ transposeWithDecls (Nest (Let b (DeclBinding _ expr)) rest) result ct =
                     transposeWithDecls rest result (sink ct)
       transposeExpr expr ctExpr
     Just nonlinExpr -> do
-      v <- emit nonlinExpr
+      v <- emitToVar nonlinExpr
       extendSubst (b @> RenameNonlin (atomVarName v)) $
         transposeWithDecls rest result ct
 
@@ -226,7 +226,7 @@ transposeExpr expr ct = case expr of
       False -> do
         e' <- substNonlin e
         void $ buildCase e' UnitTy \i v -> do
-          v' <- emit (Atom v)
+          v' <- emitToVar v
           Abs b body <- return $ alts !! i
           extendSubst (b @> RenameNonlin (atomVarName v')) do
             transposeExpr body (sink ct)
@@ -244,7 +244,7 @@ transposeOp op ct = case op of
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
   RefOp refArg m   -> do
     refArg' <- substNonlin refArg
-    let emitEff = emitExpr . RefOp refArg'
+    let emitEff = emit . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- tangentBaseMonoidFor (getType ct)

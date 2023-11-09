@@ -278,7 +278,7 @@ applyLinLam :: Emits o => SLam i -> SubstReaderT AtomSubstVal TangentM i o (Atom
 applyLinLam (LamExpr bs body) = do
   TangentArgs args <- liftSubstReaderT $ getTangentArgs
   extendSubst (bs @@> ((Rename . atomVarName) <$> args)) do
-    substM body >>= emitExpr
+    substM body >>= emit
 
 -- === actual linearization passs ===
 
@@ -307,7 +307,7 @@ linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
           ts <- getUnpacked $ toAtom $ sink $ binderVar bTangent
           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
                         <.> bsTangent @@> map (SubstVal . sink) ts
-          emitExpr =<< applySubst substFrag tangentBody
+          emit =<< applySubst substFrag tangentBody
         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
     return (primalFun, tangentFun)
   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
@@ -316,7 +316,7 @@ linearizeTopLam (TopLam True _ _) _ = error "expected a non-destination-passing 
 -- reify the tangent builder as a lambda
 linearizeLambdaApp :: Emits o => SLam i -> SAtom o -> PrimalM i o (SAtom o, SLam o)
 linearizeLambdaApp (UnaryLamExpr b body) x = do
-  vp <- emit $ Atom x
+  vp <- emitToVar x
   extendActiveSubst b vp do
     WithTangent primalResult tangentAction <- linearizeExpr body
     tanFun <- tangentFunAsLambda tangentAction
@@ -348,7 +348,7 @@ linearizeDecls (Nest (Let b (DeclBinding ann expr)) rest) cont = do
   expr' <- renameM expr
   isTrivialForAD expr' >>= \case
     True -> do
-      v <- emit expr'
+      v <- emitToVar expr'
       extendSubst (b@>atomVarName v) $ linearizeDecls rest cont
     False -> do
       WithTangent p tf <- linearizeExpr expr
@@ -406,7 +406,7 @@ linearizeExpr expr = case expr of
         alts'' <- forM (enumerate alts') \(i, alt) -> do
           injectAltResult tys i alt
         let fullResultTy = PairTy resultTy' $ TyCon $ SumType tys
-        result <- emitExpr $ Case e' alts'' (EffTy effs' fullResultTy)
+        result <- emit $ Case e' alts'' (EffTy effs' fullResultTy)
         (primal, residualss) <- fromPair result
         resultTangentType <- tangentType resultTy'
         return $ WithTangent primal do
@@ -418,7 +418,7 @@ linearizeExpr expr = case expr of
   TabCon _ ty xs -> do
     ty' <- renameM ty
     seqLin (map linearizeAtom xs) `bindLin` \(ComposeE xs') ->
-      emitExpr $ TabCon Nothing (sink ty') xs'
+      emit $ TabCon Nothing (sink ty') xs'
   Project _ i x -> do
     WithTangent x' tx <- linearizeAtom x
     xi <- proj i x'
@@ -431,19 +431,19 @@ linearizeOp op = case op of
   Hof (TypedHof _ e) -> linearizeHof e
   DAMOp _        -> error "shouldn't occur here"
   RefOp ref m -> case m of
-    MAsk -> linearizeAtom ref `bindLin` \ref' -> liftM toAtom $ emit $ PrimOp $ RefOp ref' MAsk
+    MAsk -> linearizeAtom ref `bindLin` \ref' -> emit $ RefOp ref' MAsk
     MExtend monoid x -> do
       -- TODO: check that we're dealing with a +/0 monoid
       monoid' <- renameM monoid
       zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-        liftM toAtom $ emit $ PrimOp $ RefOp ref' $ MExtend (sink monoid') x'
-    MGet   -> linearizeAtom ref `bindLin` \ref' -> liftM toAtom $ emit $ PrimOp $ RefOp ref' MGet
+        emit $ RefOp ref' $ MExtend (sink monoid') x'
+    MGet   -> linearizeAtom ref `bindLin` \ref' -> emit $ RefOp ref' MGet
     MPut x -> zipLin (linearizeAtom ref) (linearizeAtom x) `bindLin` \(PairE ref' x') ->
-                liftM toAtom $ emit $ PrimOp $ RefOp ref' $ MPut x'
+                emit $ RefOp ref' $ MPut x'
     IndexRef _ i -> do
       zipLin (la ref) (pureLin i) `bindLin` \(PairE ref' i') ->
-        emitExpr =<< mkIndexRef ref' i'
-    ProjRef _ i -> la ref `bindLin` \ref' -> emitExpr =<< mkProjRef ref' i
+        emit =<< mkIndexRef ref' i'
+    ProjRef _ i -> la ref `bindLin` \ref' -> emit =<< mkProjRef ref' i
   UnOp  uop x       -> linearizeUnOp  uop x
   BinOp bop x y     -> linearizeBinOp bop x y
   -- XXX: This assumes that pointers are always constants
@@ -451,7 +451,7 @@ linearizeOp op = case op of
   MiscOp miscOp -> linearizeMiscOp miscOp
   VectorOp _ -> error "not implemented"
   where
-    emitZeroT = withZeroT $ liftM toAtom $ emit =<< renameM (PrimOp op)
+    emitZeroT = withZeroT $ emit =<< renameM (PrimOp op)
     la = linearizeAtom
 
 linearizeMiscOp :: Emits o => MiscOp SimpIR i -> LinM i o SAtom SAtom
@@ -459,7 +459,7 @@ linearizeMiscOp op = case op of
   SumTag _     -> emitZeroT
   ToEnum _ _   -> emitZeroT
   Select p t f -> (pureLin p `zipLin` la t `zipLin` la f) `bindLin`
-                     \(p' `PairE` t' `PairE` f') -> emitExpr $ MiscOp $ Select p' t' f'
+                     \(p' `PairE` t' `PairE` f') -> emit $ MiscOp $ Select p' t' f'
   CastOp t v -> do
     vt <- getType <$> renameM v
     t' <- renameM t
@@ -468,14 +468,14 @@ linearizeMiscOp op = case op of
     ((&&) <$> (vtTangentType `alphaEq` vt)
           <*> (tTangentType  `alphaEq` t')) >>= \case
       True -> do
-        linearizeAtom v `bindLin` \v' -> emitExpr $ MiscOp $ CastOp (sink t') v'
+        linearizeAtom v `bindLin` \v' -> emit $ MiscOp $ CastOp (sink t') v'
       False -> do
         WithTangent x xt <- linearizeAtom v
         yt <- case (vtTangentType, tTangentType) of
           (_     , UnitTy) -> return $ UnitVal
           (UnitTy, tt    ) -> zeroAt tt
           _                -> error "Expected at least one side of the CastOp to have a trivial tangent type"
-        y <- emitExpr $ MiscOp $ CastOp t' x
+        y <- emit $ MiscOp $ CastOp t' x
         return $ WithTangent y do xt >> return (sink yt)
   BitcastOp _ _    -> notImplemented
   UnsafeCoerce _ _ -> notImplemented
@@ -486,13 +486,13 @@ linearizeMiscOp op = case op of
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar _ -> error "Shouldn't have ShowScalar in simplified IR"
   where
-    emitZeroT = withZeroT $ liftM toAtom $ emit =<< renameM (PrimOp $ MiscOp op)
+    emitZeroT = withZeroT $ emit =<< renameM (PrimOp $ MiscOp op)
     la = linearizeAtom
 
 linearizeUnOp :: Emits o => UnOp -> Atom SimpIR i -> LinM i o SAtom SAtom
 linearizeUnOp op x' = do
   WithTangent x tx <- linearizeAtom x'
-  let emitZeroT = withZeroT $ emitExpr $ UnOp op x
+  let emitZeroT = withZeroT $ emit $ UnOp op x
   case op of
     Exp    -> do
       y <- emitUnOp Exp x
@@ -523,7 +523,7 @@ linearizeBinOp :: Emits o => BinOp -> SAtom i -> SAtom i -> LinM i o SAtom SAtom
 linearizeBinOp op x' y' = do
   WithTangent x tx <- linearizeAtom x'
   WithTangent y ty <- linearizeAtom y'
-  let emitZeroT = withZeroT $ emitExpr $ BinOp op x y
+  let emitZeroT = withZeroT $ emit $ BinOp op x y
   case op of
     IAdd   -> emitZeroT
     ISub   -> emitZeroT
@@ -541,7 +541,7 @@ linearizeBinOp op x' y' = do
       ty' <- bindM2 div' (bindM2 mul (referToPrimal x) ty)
                       (bindM2 mul (referToPrimal y) (referToPrimal y))
       sub tx' ty'
-    FPow -> withT (emitExpr $ BinOp FPow x y) do
+    FPow -> withT (emit $ BinOp FPow x y) do
       px <- referToPrimal x
       py <- referToPrimal y
       c <- (1.0 `fLitLike` py) >>= (sub py) >>= fpow px
@@ -569,7 +569,7 @@ referToPrimal x = do
       AtomNameBinding (LetBound (DeclBinding PlainLet (TabApp _ tab i))) -> do
         tab' <- referToPrimal tab
         i' <- referToPrimal i
-        emitExpr =<< mkTabApp tab' i'
+        emit =<< mkTabApp tab' i'
       _ -> sinkM x
     _ -> sinkM x
 

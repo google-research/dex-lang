@@ -178,8 +178,8 @@ vectorizeLoopsExpr expr = do
                 let vn = n `div` loopWidth
                 body' <- vectorizeSeq loopWidth ixty body
                 dest' <- renameM dest
-                emitExpr =<< mkSeq dir (IxType IdxRepTy (DictCon (IxRawFin (IdxRepVal vn)))) dest' body')
-              else renameM expr >>= emitExpr)
+                emit =<< mkSeq dir (IxType IdxRepTy (DictCon (IxRawFin (IdxRepVal vn)))) dest' body')
+              else renameM expr >>= emit)
           `catchErr` \err -> do
               let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
                   ctx = mempty { messageCtx = [msg] }
@@ -194,7 +194,7 @@ vectorizeLoopsExpr expr = do
         extendRenamer (hb' @> atomVarName hb) do
           extendRenamer (refb' @> atomVarName refb) do
             vectorizeLoopsExpr body
-      emitExpr =<< mkTypedHof (RunReader item' lam)
+      emit =<< mkTypedHof (RunReader item' lam)
     PrimOp (Hof (TypedHof (EffTy _ ty)
                  (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
       dest' <- renameM dest
@@ -206,8 +206,8 @@ vectorizeLoopsExpr expr = do
           extendRenamer (refb' @> atomVarName refb) do
             extendCommuteMap (atomVarName hb) commutativity do
               vectorizeLoopsExpr body
-      emitExpr =<< mkTypedHof (RunWriter (Just dest') monoid' lam)
-    _ -> renameM expr >>= emitExpr
+      emit =<< mkTypedHof (RunWriter (Just dest') monoid' lam)
+    _ -> renameM expr >>= emit
   where
     recurSeq :: (Emits o) => SExpr i -> TopVectorizeM i o (SAtom o)
     recurSeq (PrimOp (DAMOp (Seq effs dir ixty dest body))) = do
@@ -215,7 +215,7 @@ vectorizeLoopsExpr expr = do
       ixty' <- renameM ixty
       dest' <- renameM dest
       body' <- vectorizeLoopsLamExpr body
-      emitExpr $ Seq effs' dir ixty' dest' body'
+      emit $ Seq effs' dir ixty' dest' body'
     recurSeq _ = error "Impossible"
 
 simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
@@ -385,7 +385,7 @@ vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
-          VVal Varying <$> emitExpr (VectorIdx tbl' ix' vty)
+          VVal Varying <$> emit (VectorIdx tbl' ix' vty)
         tblTy -> do
           throwVectErr $ "bad type: " ++ pprint tblTy ++ "\ntbl' : " ++ pprint tbl'
     Atom atom -> vectorizeAtom atom
@@ -405,11 +405,11 @@ vectorizeDAMOp op =
       VVal vref ref <- vectorizeAtom ref'
       sval@(VVal vval val) <- vectorizeAtom val'
       VVal Uniform <$> case (vref, vval) of
-        (Uniform   , Uniform   ) -> emitExpr $ Place ref val
+        (Uniform   , Uniform   ) -> emit $ Place ref val
         (Uniform   , _         ) -> throwVectErr "Write conflict? This should never happen!"
         (Varying   , _         ) -> throwVectErr "Vector scatter not implemented"
-        (Contiguous, Varying   ) -> emitExpr $ Place ref val
-        (Contiguous, Contiguous) -> emitExpr . Place ref =<< ensureVarying sval
+        (Contiguous, Varying   ) -> emit $ Place ref val
+        (Contiguous, Contiguous) -> emit . Place ref =<< ensureVarying sval
         _ -> throwVectErr "Not implemented yet"
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
@@ -420,7 +420,7 @@ vectorizeRefOp ref' op =
       -- TODO A contiguous reference becomes a vector load producing a varying
       -- result.
       VVal Uniform ref <- vectorizeAtom ref'
-      VVal Uniform <$> emitExpr (RefOp ref MAsk)
+      VVal Uniform <$> emit (RefOp ref MAsk)
     MExtend basemonoid' x' -> do
       VVal refStab ref <- vectorizeAtom ref'
       VVal xStab x <- vectorizeAtom x'
@@ -437,7 +437,7 @@ vectorizeRefOp ref' op =
         Contiguous -> do
           vectorizeBaseMonoid basemonoid' Varying xStab
         s -> throwVectErr $ "Cannot vectorize reference with loop-varying stability " ++ show s
-      VVal Uniform <$> emitExpr (RefOp ref $ MExtend basemonoid x)
+      VVal Uniform <$> emit (RefOp ref $ MExtend basemonoid x)
     IndexRef _ i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
@@ -446,7 +446,7 @@ vectorizeRefOp ref' op =
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
-          VVal Contiguous <$> emitExpr (VectorSubref ref i vty)
+          VVal Contiguous <$> emit (VectorSubref ref i vty)
         refTy -> do
           throwVectErr do
             "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
@@ -472,7 +472,7 @@ vectorizePrimOp op = case op of
     sx@(VVal vx x) <- vectorizeAtom arg
     let v = case vx of Uniform -> Uniform; _ -> Varying
     x' <- if vx /= v then ensureVarying sx else return x
-    VVal v <$> emitExpr (UnOp opk x')
+    VVal v <$> emit (UnOp opk x')
   BinOp opk arg1 arg2 -> do
     sx@(VVal vx x) <- vectorizeAtom arg1
     sy@(VVal vy y) <- vectorizeAtom arg2
@@ -483,7 +483,7 @@ vectorizePrimOp op = case op of
               _ -> Varying
     x' <- if v == Varying then ensureVarying sx else return x
     y' <- if v == Varying then ensureVarying sy else return y
-    VVal v <$> emitExpr (BinOp opk x' y')
+    VVal v <$> emit (BinOp opk x' y')
   MiscOp (CastOp tyArg arg) -> do
     ty <- vectorizeType tyArg
     VVal vx x <- vectorizeAtom arg
@@ -492,19 +492,19 @@ vectorizePrimOp op = case op of
       Varying    -> getVectorType ty
       Contiguous -> return ty
       ProdStability _ -> throwVectErr "Unexpected cast of product type"
-    VVal vx <$> emitExpr (CastOp ty' x)
+    VVal vx <$> emit (CastOp ty' x)
   DAMOp op' -> vectorizeDAMOp op'
   RefOp ref op' -> vectorizeRefOp ref op'
   MemOp (PtrOffset arg1 arg2) -> do
     VVal Uniform ptr    <- vectorizeAtom arg1
     VVal Contiguous off <- vectorizeAtom arg2
-    VVal Contiguous <$> emitExpr (PtrOffset ptr off)
+    VVal Contiguous <$> emit (PtrOffset ptr off)
   MemOp (PtrLoad arg) -> do
     VVal Contiguous ptr <- vectorizeAtom arg
     BaseTy (PtrType (addrSpace, a)) <- return $ getType ptr
     BaseTy av <- getVectorType $ BaseTy a
-    ptr' <- emitExpr $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
-    VVal Varying <$> emitExpr (PtrLoad ptr')
+    ptr' <- emit $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
+    VVal Varying <$> emit (PtrLoad ptr')
   -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
   -- being picky about the IO-inducing ops it supports, and expect it to
   -- complain about FFI calls and the like.
@@ -570,16 +570,16 @@ ensureVarying (VVal s val) = case s of
   Varying -> return val
   Uniform -> do
     vty <- getVectorType $ getType val
-    emitExpr $ VectorBroadcast val vty
+    emit $ VectorBroadcast val vty
   -- Note that the implementation of this case will depend on val's type.
   Contiguous -> do
     let ty = getType val
     vty <- getVectorType ty
     case ty of
       BaseTy (Scalar sbt) -> do
-        bval <- emitExpr $ VectorBroadcast val vty
-        iota <- emitExpr $ VectorIota vty
-        emitExpr $ BinOp (if isIntegral sbt then IAdd else FAdd) bval iota
+        bval <- emit $ VectorBroadcast val vty
+        iota <- emit $ VectorIota vty
+        emit $ BinOp (if isIntegral sbt then IAdd else FAdd) bval iota
       _ -> throwVectErr "Not implemented"
   ProdStability _ -> throwVectErr "Not implemented"
 ensureVarying (VRename v) = do

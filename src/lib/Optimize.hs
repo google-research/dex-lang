@@ -254,7 +254,7 @@ ulExpr expr = case expr of
               getLamExprType body' >>= \case
                 PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
                   let tabTy = toType $ TabPiType (DictCon $ IxRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
-                  emitExpr $ TabCon Nothing tabTy vals
+                  emit $ TabCon Nothing tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
           False -> do
@@ -268,8 +268,7 @@ ulExpr expr = case expr of
   _ -> nothingSpecial
   where
     inc i = modify \(ULS n) -> ULS (n + i)
-    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr)
-                     >>= emitExprToAtom
+    nothingSpecial = inc 1 >> (visitGeneric expr >>= liftEnvReaderM . peepholeExpr) >>= emit
     unrollBlowupThreshold = 12
     withLocalAccounting m = do
       oldCost <- get
@@ -344,7 +343,7 @@ licmExpr = \case
       block <- mkBlock =<< applyRename (lnb@>binderName i) bodyAbs
       return $ UnaryLamExpr i block
     emitHof $ For dir ix' body'
-  expr -> visitGeneric expr >>= emitExpr
+  expr -> visitGeneric expr >>= emit
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
         -> [SAtomName n2]          -- hoisted dests

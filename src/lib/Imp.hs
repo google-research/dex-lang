@@ -353,7 +353,7 @@ toImpRefOp refDest' m = do
         True -> do
           BinaryLamExpr xb yb body <- return bc
           body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
-          ans <- liftBuilderImp $ emitExpr (sink body')
+          ans <- liftBuilderImp $ emit (sink body')
           storeAtom accDest ans
         False -> case accTy of
           TyCon (TabPi t) -> do

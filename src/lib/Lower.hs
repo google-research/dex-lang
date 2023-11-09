@@ -111,15 +111,15 @@ lowerFor ansTy maybeDest dir ixTy (UnaryLamExpr (ib:>ty) body) = do
     False -> do
       initDest <- Con . ProdCon . (:[]) <$> case maybeDest of
         Just  d -> return d
-        Nothing -> emitExpr $ AllocDest ansTy
+        Nothing -> emit $ AllocDest ansTy
       let destTy = getType initDest
       body' <- buildUnaryLamExpr noHint (PairTy ty' destTy) \b' -> do
         (i, destProd) <- fromPair $ toAtom b'
         dest <- proj 0 destProd
-        idest <- emitExpr =<< mkIndexRef dest i
+        idest <- emit =<< mkIndexRef dest i
         extendSubst (ib @> SubstVal i) $ lowerExpr (Just idest) body $> UnitVal
       ans <- emitSeq dir ixTy' initDest body' >>= proj 0
-      emitExpr $ Freeze ans
+      emit $ Freeze ans
 lowerFor _ _ _ _ _ = error "expected a unary lambda expression"
 
 lowerTabCon :: Emits o => OptDest o -> SType i -> [SAtom i] -> LowerM i o (SAtom o)
@@ -127,7 +127,7 @@ lowerTabCon maybeDest tabTy elems = do
   TyCon (TabPi tabTy') <- substM tabTy
   dest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitExpr $ AllocDest $ TyCon $ TabPi tabTy'
+    Nothing -> emit $ AllocDest $ TyCon $ TabPi tabTy'
   Abs bord ufoBlock <- buildAbs noHint IdxRepTy \ord -> do
     buildBlock $ unsafeFromOrdinal (sink $ tabIxType tabTy') $ toAtom $ sink ord
   -- This is emitting a chain of RememberDest ops to force `dest` to be used
@@ -146,7 +146,7 @@ lowerTabCon maybeDest tabTy elems = do
           return UnitVal
         go carried_dest rest
   dest' <- go dest (enumerate elems)
-  emitExpr $ Freeze dest'
+  emit $ Freeze dest'
 
 lowerCase :: Emits o
   => OptDest o -> SAtom i -> [Alt SimpIR i] -> SType i
@@ -155,7 +155,7 @@ lowerCase maybeDest scrut alts resultTy = do
   resultTy' <- substM resultTy
   dest <- case maybeDest of
     Just  d -> return d
-    Nothing -> emitExpr $ AllocDest resultTy'
+    Nothing -> emit $ AllocDest resultTy'
   scrut' <- visitAtom scrut
   dest' <- buildRememberDest "case_dest" dest \local_dest -> do
     alts' <- forM alts \(Abs (b:>ty) body) -> do
@@ -164,9 +164,9 @@ lowerCase maybeDest scrut alts resultTy = do
         extendSubst (b @> Rename (atomVarName b')) $
           buildBlock do
             lowerExpr (Just (toAtom $ sink $ local_dest)) body $> UnitVal
-    void $ mkCase (sink scrut') UnitTy alts' >>= emitExpr
+    void $ mkCase (sink scrut') UnitTy alts' >>= emit
     return UnitVal
-  emitExpr $ Freeze dest'
+  emit $ Freeze dest'
 
 -- Destination-passing traversals
 --
@@ -246,7 +246,7 @@ lowerExpr dest expr = case expr of
                   Rename v -> toAtom <$> toAtomVar v
                   SubstVal a -> return a
                 place d x
-              withSubst s' (substM result) >>= emitExpr
+              withSubst s' (substM result) >>= emit
   TabCon Nothing ty els -> lowerTabCon dest ty els
   PrimOp (Hof (TypedHof (EffTy _ ansTy) (For dir ixDict body))) -> do
     ansTy' <- substM ansTy
@@ -263,13 +263,13 @@ lowerExpr dest expr = case expr of
       emitHof $ RunState ref' s' body'
   -- this case is important because this pass changes effects
   PrimOp (Hof (TypedHof _ hof)) -> do
-    hof' <- emitExpr =<< (visitGeneric hof >>= mkTypedHof)
+    hof' <- emit =<< (visitGeneric hof >>= mkTypedHof)
     placeGeneric hof'
   Case e alts (EffTy _ ty) -> lowerCase dest e alts ty
   _ -> generic
   where
     generic :: LowerM i o (SAtom o)
-    generic = visitGeneric expr >>= emitExpr >>= placeGeneric
+    generic = visitGeneric expr >>= emit >>= placeGeneric
 
     placeGeneric :: SAtom o -> LowerM i o (SAtom o)
     placeGeneric e = do
@@ -301,7 +301,7 @@ lowerExpr dest expr = case expr of
         return $ Just (Just bd, Just rd)
 
 place :: Emits o => Dest o -> SAtom o -> LowerM i o ()
-place d x = void $ emitExpr $ Place d x
+place d x = void $ emit $ Place d x
 
 -- === Extensions to the name system ===
 

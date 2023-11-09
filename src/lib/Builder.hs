@@ -66,10 +66,6 @@ emitDecl _ _ (Atom (Stuck _ (Var n))) = return n
 emitDecl hint ann expr = rawEmitDecl hint ann expr
 {-# INLINE emitDecl #-}
 
-emit :: (Builder r m, Emits n) => Expr r n -> m n (AtomVar r n)
-emit expr = emitDecl noHint PlainLet expr
-{-# INLINE emit #-}
-
 emitInline :: (Builder r m, Emits n) => Atom r n -> m n (AtomVar r n)
 emitInline atom = emitDecl noHint InlineLet $ Atom atom
 {-# INLINE emitInline #-}
@@ -78,21 +74,21 @@ emitHinted :: (Builder r m, Emits n) => NameHint -> Expr r n -> m n (AtomVar r n
 emitHinted hint expr = emitDecl hint PlainLet expr
 {-# INLINE emitHinted #-}
 
-emitExpr :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)
-emitExpr e = case toExpr e of
+emit :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)
+emit e = case toExpr e of
   Atom x -> return x
-  Block _ block -> emitDecls block >>= emitExpr
-  expr -> toAtom <$> emit expr
-{-# INLINE emitExpr #-}
+  Block _ block -> emitDecls block >>= emit
+  expr -> toAtom <$> emitToVar expr
+{-# INLINE emit #-}
 
 emitToVar :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (AtomVar r n)
 emitToVar e = case toExpr e of
   Atom (Stuck _ (Var v)) -> return v
-  expr -> emit expr
+  expr -> emitDecl noHint PlainLet expr
 {-# INLINE emitToVar #-}
 
 emitHof :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
-emitHof hof = mkTypedHof hof >>= emitExpr
+emitHof hof = mkTypedHof hof >>= emit
 
 mkTypedHof :: (EnvReader m, IRRep r) => Hof r n -> m n (TypedHof r n)
 mkTypedHof hof = do
@@ -100,7 +96,7 @@ mkTypedHof hof = do
   return $ TypedHof effTy hof
 
 emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
-emitUnOp op x = emitExpr $ UnOp op x
+emitUnOp op x = emit $ UnOp op x
 {-# INLINE emitUnOp #-}
 
 emitDecls :: (Builder r m, Emits n, RenameE e, SinkableE e)
@@ -114,11 +110,6 @@ emitDecls' (Nest (Let b (DeclBinding ann expr)) rest) e = do
   expr' <- renameM expr
   AtomVar v _ <- emitDecl (getNameHint b) ann expr'
   extendSubst (b @> v) $ emitDecls' rest e
-
-emitExprToAtom :: (Builder r m, Emits n) => Expr r n -> m n (Atom r n)
-emitExprToAtom (Atom atom) = return atom
-emitExprToAtom expr = toAtom <$> emit expr
-{-# INLINE emitExprToAtom #-}
 
 buildScopedAssumeNoDecls :: (SinkableE e, ScopableBuilder r m)
   => (forall l. (Emits l, DExt n l) => m l (e l))
@@ -739,7 +730,7 @@ buildCaseAlts scrut indexedAltBody = do
 injectAltResult :: EnvReader m => [SType n] -> Int -> Alt SimpIR n -> m n (Alt SimpIR n)
 injectAltResult sumTys con (Abs b body) = liftBuilder do
   buildAlt (binderType b) \v -> do
-    originalResult <- emitExpr =<< applySubst (b@>SubstVal (toAtom v)) body
+    originalResult <- emit =<< applySubst (b@>SubstVal (toAtom v)) body
     (dataResult, nonDataResult) <- fromPairReduced originalResult
     return $ toAtom $ ProdCon [dataResult, Con $ SumCon (sinkList sumTys) con nonDataResult]
 
@@ -768,7 +759,7 @@ buildCase :: (Emits n, ScopableBuilder r m)
   => Atom r n -> Type r n
   -> (forall l. (Emits l, DExt n l) => Int -> Atom r l -> m l (Atom r l))
   -> m n (Atom r n)
-buildCase s r b = emitExprToAtom =<< buildCase' s r b
+buildCase s r b = emit =<< buildCase' s r b
 
 buildEffLam
   :: ScopableBuilder r m
@@ -845,7 +836,7 @@ emitSeq :: (Emits n, ScopableBuilder SimpIR m)
         -> m n (Atom SimpIR n)
 emitSeq d t x f = do
   op <- mkSeq d t x f
-  emitExpr $ PrimOp $ DAMOp op
+  emit $ PrimOp $ DAMOp op
 
 mkSeq :: EnvReader m
       => Direction -> IxType SimpIR n -> Atom SimpIR n -> LamExpr SimpIR n
@@ -862,7 +853,7 @@ buildRememberDest hint dest cont = do
   ty <- return $ getType dest
   doit <- buildUnaryLamExpr hint ty cont
   effs <- functionEffs doit
-  emitExpr $ PrimOp $ DAMOp $ RememberDest effs dest doit
+  emit $ PrimOp $ DAMOp $ RememberDest effs dest doit
 
 -- === vector space (ish) type class ===
 
@@ -918,7 +909,7 @@ tangentBaseMonoidFor ty = do
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getTyCon x of
-    BaseType (Scalar _) -> emitExpr $ BinOp FAdd x y
+    BaseType (Scalar _) -> emit $ BinOp FAdd x y
     ProdType _          -> do
       xs <- getUnpacked x
       ys <- getUnpacked y
@@ -956,63 +947,63 @@ fLitLike x t = case getTyCon t of
   _ -> error "Expected a floating point scalar"
 
 neg :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-neg x = emitExpr $ UnOp FNeg x
+neg x = emit $ UnOp FNeg x
 
 add :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-add x y = emitExpr $ BinOp FAdd x y
+add x y = emit $ BinOp FAdd x y
 
 -- TODO: Implement constant folding for fixed-width integer types as well!
 iadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 iadd (Con (Lit l)) y | getIntLit l == 0 = return y
 iadd x (Con (Lit l)) | getIntLit l == 0 = return x
 iadd x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (+) x y
-iadd x y = emitExpr $ BinOp IAdd x y
+iadd x y = emit $ BinOp IAdd x y
 
 mul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-mul x y = emitExpr $ BinOp FMul x y
+mul x y = emit $ BinOp FMul x y
 
 imul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 imul   (Con (Lit l)) y               | getIntLit l == 1 = return y
 imul x                 (Con (Lit l)) | getIntLit l == 1 = return x
 imul x@(Con (Lit _)) y@(Con (Lit _))                    = return $ applyIntBinOp (*) x y
-imul x y = emitExpr $ BinOp IMul x y
+imul x y = emit $ BinOp IMul x y
 
 sub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-sub x y = emitExpr $ BinOp FSub x y
+sub x y = emit $ BinOp FSub x y
 
 isub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 isub x (Con (Lit l)) | getIntLit l == 0 = return x
 isub x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp (-) x y
-isub x y = emitExpr $ BinOp ISub x y
+isub x y = emit $ BinOp ISub x y
 
 select :: (Builder r m, Emits n) => Atom r n -> Atom r n -> Atom r n -> m n (Atom r n)
 select (Con (Lit (Word8Lit p))) x y = return $ if p /= 0 then x else y
-select p x y = emitExpr $ MiscOp $ Select p x y
+select p x y = emit $ MiscOp $ Select p x y
 
 div' :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-div' x y = emitExpr $ BinOp FDiv x y
+div' x y = emit $ BinOp FDiv x y
 
 idiv :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 idiv x (Con (Lit l)) | getIntLit l == 1 = return x
 idiv x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntBinOp div x y
-idiv x y = emitExpr $ BinOp IDiv x y
+idiv x y = emit $ BinOp IDiv x y
 
 irem :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-irem x y = emitExpr $ BinOp IRem x y
+irem x y = emit $ BinOp IRem x y
 
 fpow :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fpow x y = emitExpr $ BinOp FPow x y
+fpow x y = emit $ BinOp FPow x y
 
 flog :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-flog x = emitExpr $ UnOp Log x
+flog x = emit $ UnOp Log x
 
 ilt :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
-ilt x y = emitExpr $ BinOp (ICmp Less) x y
+ilt x y = emit $ BinOp (ICmp Less) x y
 
 ieq :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ieq x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (==) x y
-ieq x y = emitExpr $ BinOp (ICmp Equal) x y
+ieq x y = emit $ BinOp (ICmp Equal) x y
 
 fromPair :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n, Atom r n)
 fromPair pair = do
@@ -1026,7 +1017,7 @@ applyProjectionsRef [] ref = return ref
 applyProjectionsRef (i:is) ref = getProjRef i =<< applyProjectionsRef is ref
 
 getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
-getProjRef i r = emitExpr =<< mkProjRef r i
+getProjRef i r = emit =<< mkProjRef r i
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
@@ -1048,7 +1039,7 @@ unwrapNewtype (Con (NewtypeCon _ x)) = return x
 unwrapNewtype x = case getType x of
   TyCon (NewtypeTyCon con) -> do
     (_, ty) <- unwrapNewtypeType con
-    emitExpr $ Unwrap ty x
+    emit $ Unwrap ty x
   _ -> error "not a newtype"
 {-# INLINE unwrapNewtype #-}
 
@@ -1061,7 +1052,7 @@ proj i = \case
     _ -> error "not a product"
   x -> do
     ty <- projType i x
-    emitExpr $ Project ty i x
+    emit $ Project ty i x
 
 getFst :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 getFst = proj 0
@@ -1166,21 +1157,21 @@ mkCatchException body = do
   return $ CatchException resultTy body
 
 app :: (CBuilder m, Emits n) => CAtom n -> CAtom n -> m n (CAtom n)
-app x i = mkApp x [i] >>= emitExpr
+app x i = mkApp x [i] >>= emit
 
 naryApp :: (CBuilder m, Emits n) => CAtom n -> [CAtom n] -> m n (CAtom n)
 naryApp = naryAppHinted noHint
 {-# INLINE naryApp #-}
 
 naryTopApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
-naryTopApp f xs = emitExpr =<< mkTopApp f xs
+naryTopApp f xs = emit =<< mkTopApp f xs
 {-# INLINE naryTopApp #-}
 
 naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
 naryTopAppInlined f xs = do
   TopFunBinding f' <- lookupEnv f
   case f' of
-    DexTopFun _ lam _ -> instantiate lam xs >>= emitExpr
+    DexTopFun _ lam _ -> instantiate lam xs >>= emit
     _ -> naryTopApp f xs
 {-# INLINE naryTopAppInlined #-}
 
@@ -1189,29 +1180,29 @@ naryAppHinted :: (CBuilder m, Emits n)
 naryAppHinted hint f xs = toAtom <$> (mkApp f xs >>= emitHinted hint)
 
 tabApp :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-tabApp x i = mkTabApp x i >>= emitExpr
+tabApp x i = mkTabApp x i >>= emit
 
 naryTabApp :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryTabApp f [] = return f
 naryTabApp f (x:xs) = do
-  ans <- mkTabApp f x >>= emitExpr
+  ans <- mkTabApp f x >>= emit
   naryTabApp ans xs
 {-# INLINE naryTabApp #-}
 
 indexRef :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-indexRef ref i = emitExpr =<< mkIndexRef ref i
+indexRef ref i = emit =<< mkIndexRef ref i
 
 naryIndexRef :: (Builder r m, Emits n) => Atom r n -> [Atom r n] -> m n (Atom r n)
 naryIndexRef ref is = foldM indexRef ref is
 
 ptrOffset :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ptrOffset x (IdxRepVal 0) = return x
-ptrOffset x i = emitExpr $ MemOp $ PtrOffset x i
+ptrOffset x i = emit $ MemOp $ PtrOffset x i
 {-# INLINE ptrOffset #-}
 
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
 unsafePtrLoad x = do
-  body <- liftEmitBuilder $ buildBlock $ emitExpr . MemOp . PtrLoad =<< sinkM x
+  body <- liftEmitBuilder $ buildBlock $ emit . MemOp . PtrLoad =<< sinkM x
   emitHof $ RunIO body
 
 mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Atom r n -> Atom r n -> m n (PrimOp r n)
@@ -1236,7 +1227,7 @@ applyIxMethod (DictCon dict) method args = case dict of
   IxSpecialized d params -> do
     SpecializedDict _ maybeFs <- lookupSpecDict d
     Just fs <- return maybeFs
-    instantiate (fs !! fromEnum method) (params ++ args) >>= emitExpr
+    instantiate (fs !! fromEnum method) (params ++ args) >>= emit
 
 unsafeFromOrdinal :: (SBuilder m, Emits n) => IxType SimpIR n -> Atom SimpIR n -> m n (Atom SimpIR n)
 unsafeFromOrdinal (IxType _ dict) i = applyIxMethod dict UnsafeFromOrdinal [i]
@@ -1251,7 +1242,7 @@ indexSetSize (IxType _ dict) = applyIxMethod dict Size []
 
 applyIxMethodCore :: (CBuilder m, Emits n) => IxMethod -> IxType CoreIR n -> [CAtom n] -> m n (CAtom n)
 applyIxMethodCore method (IxType _ dict) args = 
-  emitExpr =<< mkApplyMethod dict (fromEnum method) args
+  emit =<< mkApplyMethod dict (fromEnum method) args
 
 -- === pseudo-prelude ===
 
@@ -1267,7 +1258,7 @@ emitIf :: (Emits n, ScopableBuilder r m)
        -> (forall l. (Emits l, DExt n l) => m l (Atom r l))
        -> m n (Atom r n)
 emitIf predicate resultTy trueCase falseCase = do
-  predicate' <- emitExpr $ ToEnum (TyCon (SumType [UnitTy, UnitTy])) predicate
+  predicate' <- emit $ ToEnum (TyCon (SumType [UnitTy, UnitTy])) predicate
   buildCase predicate' resultTy \i _ ->
     case i of
       0 -> falseCase
@@ -1291,7 +1282,7 @@ fromJustE :: (Emits n, Builder r m) => Atom r n -> m n (Atom r n)
 fromJustE x = liftEmitBuilder do
   MaybeTy a <- return $ getType x
   emitMaybeCase x a
-    (emitExpr $ MiscOp $ ThrowError $ sink a)
+    (emit $ MiscOp $ ThrowError $ sink a)
     (return)
 
 -- Maybe a -> Bool
@@ -1307,12 +1298,12 @@ reduceE monoid xs = liftEmitBuilder do
   getSnd =<< emitRunWriter noHint a monoid \_ ref ->
     buildFor noHint Fwd (sink $ tabIxType tabPi) \i -> do
       x <- tabApp (sink xs) (toAtom i)
-      emitExpr $ PrimOp $ RefOp (sink $ toAtom ref) $ MExtend (sink monoid) x
+      emit $ PrimOp $ RefOp (sink $ toAtom ref) $ MExtend (sink monoid) x
 
 andMonoid :: (EnvReader m, IRRep r) => m n (BaseMonoid r n)
 andMonoid = liftM (BaseMonoid TrueAtom) $ liftBuilder $
   buildBinaryLamExpr (noHint, BoolTy) (noHint, BoolTy) \x y ->
-    emitExpr $ BinOp BAnd (sink $ toAtom x) (toAtom y)
+    emit $ BinOp BAnd (sink $ toAtom x) (toAtom y)
 
 -- (a-> {|eff} b) -> n=>a -> {|eff} (n=>b)
 mapE :: (Emits n, ScopableBuilder SimpIR m)
@@ -1363,7 +1354,7 @@ runMaybeWhile body = do
     emitWhile do
       ans <- body
       emitMaybeCase ans Word8Ty
-        (emit (toExpr $ RefOp (sink $ toAtom ref) $ MPut TrueAtom) >> return FalseAtom)
+        (emit (RefOp (sink $ toAtom ref) $ MPut TrueAtom) >> return FalseAtom)
         (return)
     return UnitVal
   emitIf hadError (MaybeTy UnitTy)

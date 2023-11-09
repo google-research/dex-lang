@@ -67,9 +67,9 @@ showAnyTyCon tyCon atom = case tyCon of
     Vector _ _ -> error "not implemented"
     PtrType _  -> printTypeOnly "pointer"
     Scalar _ -> do
-      (n, tab) <- fromPair =<< emitExpr (ShowScalar atom)
+      (n, tab) <- fromPair =<< emit (ShowScalar atom)
       logicalTabTy <- finTabTyCore (Con $ NewtypeCon NatCon n) CharRepTy
-      tab' <- emitExpr $ UnsafeCoerce logicalTabTy tab
+      tab' <- emit $ UnsafeCoerce logicalTabTy tab
       emitCharTab tab'
   -- TODO: we could do better than this but it's not urgent because raw sum types
   -- aren't user-facing.
@@ -92,7 +92,7 @@ showAnyTyCon tyCon atom = case tyCon of
       n <- unwrapNewtype atom
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = toType $ BaseType (Scalar Int64Type)
-      emitExpr (CastOp intTy n) >>= rec
+      emit (CastOp intTy n) >>= rec
     EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Con (TyConAtom (BaseType (Scalar (Word8Type))))]) -> do
@@ -199,7 +199,7 @@ pushBuffer buf x = do
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
-  emitExpr $ TabCon Nothing t (map charRepVal s)
+  emit $ TabCon Nothing t (map charRepVal s)
 
 finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = return $ IxType (FinTy n) (DictCon $ IxFin n) ==> eltTy

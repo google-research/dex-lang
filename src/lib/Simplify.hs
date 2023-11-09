@@ -400,7 +400,7 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     ty' <- substM ty
     tySimp <- getRepType ty
     xs' <- forM xs \x -> toDataAtom x
-    liftSimpAtom ty' =<< emitExpr (TabCon Nothing tySimp xs')
+    liftSimpAtom ty' =<< emit (TabCon Nothing tySimp xs')
   Case scrut alts (EffTy _ resultTy) -> do
     scrut' <- simplifyAtom scrut
     resultTy' <- substM resultTy
@@ -427,17 +427,17 @@ simplifyRefOp op ref = case op of
     x'   <- toDataAtom x
     (cb', CoerceReconAbs) <- simplifyLam cb
     emitRefOp $ MExtend (BaseMonoid em' cb') x'
-  MGet   -> emitExpr $ RefOp ref MGet
+  MGet   -> emit $ RefOp ref MGet
   MPut x -> do
     x' <- toDataAtom x
     emitRefOp $ MPut x'
   MAsk   -> emitRefOp MAsk
   IndexRef _ x -> do
     x' <- toDataAtom x
-    emitExpr =<< mkIndexRef ref x'
-  ProjRef _ (ProjectProduct i) -> emitExpr =<< mkProjRef ref (ProjectProduct i)
+    emit =<< mkIndexRef ref x'
+  ProjRef _ (ProjectProduct i) -> emit =<< mkProjRef ref (ProjectProduct i)
   ProjRef _ UnwrapNewtype -> return ref
-  where emitRefOp op' = emitExpr $ RefOp ref op'
+  where emitRefOp op' = emit $ RefOp ref op'
 
 defuncCaseCore :: Emits o
   => Atom CoreIR o -> Type CoreIR o
@@ -472,7 +472,7 @@ defuncCase scrut resultTy cont = do
               ans <- cont i (toAtom $ sink x)
               dropSubst $ toDataAtom ans
           caseExpr <- mkCase scrut resultTyData alts'
-          emitExpr caseExpr >>= liftSimpAtom resultTy
+          emit caseExpr >>= liftSimpAtom resultTy
         Nothing -> do
           split <- splitDataComponents resultTy
           (alts', closureTys, recons) <- unzip3 <$> forM (enumerate altBinderTys) \(i, bTy) -> do
@@ -481,7 +481,7 @@ defuncCase scrut resultTy cont = do
           let newNonDataTy = nonDataTy split
           alts'' <- forM (enumerate alts') \(i, alt) -> injectAltResult closureTys i alt
           caseExpr <- mkCase scrut  (PairTy (dataTy split) closureSumTy) alts''
-          caseResult <- emitExpr $ caseExpr
+          caseResult <- emit $ caseExpr
           (dataVal, sumVal) <- fromPair caseResult
           reconAlts <- forM (zip closureTys recons) \(ty, recon) ->
             buildAbs noHint ty \v -> applyRecon (sink recon) (toAtom v)
@@ -519,7 +519,7 @@ simplifyApp resultTy f xs = case f of
   CCFun ccFun -> case ccFun of
     CCLiftSimpFun _ lam -> do
       xs' <- dropSubst $ mapM toDataAtom xs
-      result <- instantiate lam xs' >>= emitExpr
+      result <- instantiate lam xs' >>= emit
       liftSimpAtom resultTy result
     CCNoInlineFun v _ _ -> simplifyTopFunApp v xs
     CCFFIFun _ f' -> do
@@ -627,7 +627,7 @@ simplifyDictMethod absDict@(Abs bs dict) method = do
   lamExpr <- liftBuilder $ buildTopLamFromPi ty \allArgs -> do
     let (extraArgs, methodArgs) = splitAt (nestLength bs) allArgs
     dict' <- applyRename (bs @@> (atomVarName <$> extraArgs)) dict
-    emitExpr =<< mkApplyMethod dict' (fromEnum method) (toAtom <$> methodArgs)
+    emit =<< mkApplyMethod dict' (fromEnum method) (toAtom <$> methodArgs)
   simplifyTopFunction lamExpr
 
 ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType CoreIR n)
@@ -730,10 +730,10 @@ simplifyOp op = case op of
       IDiv -> idiv x y
       ICmp Less  -> ilt x y
       ICmp Equal -> ieq x y
-      _ -> emitExpr $ BinOp binop x y
+      _ -> emit $ BinOp binop x y
   UnOp unOp x' -> do
     x <- toDataAtom x'
-    liftResult =<< emitExpr (UnOp unOp x)
+    liftResult =<< emit (UnOp unOp x)
   MiscOp op' -> case op' of
     Select c' x' y' -> do
       c <- toDataAtom c'
@@ -757,7 +757,7 @@ simplifyGenericOp
 simplifyGenericOp op = do
   ty <- substM $ getType op
   op' <- traverseOp op getRepType toDataAtom (error "shouldn't have lambda left")
-  result <- liftEnvReaderM (peepholeExpr $ toExpr op') >>= emitExprToAtom
+  result <- liftEnvReaderM (peepholeExpr $ toExpr op') >>= emit
   liftSimpAtom ty result
 {-# INLINE simplifyGenericOp #-}
 
@@ -861,7 +861,7 @@ simplifyHof resultTy = \case
     SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyExpr body
     block <- liftBuilder $ runSubstReaderT idSubst $ buildBlock $
       exceptToMaybeExpr body'
-    result <- emitExpr block
+    result <- emit block
     case recon of
       CoerceRecon ty -> do
         maybeTy <- makePreludeMaybeTy ty
@@ -1029,7 +1029,7 @@ defuncLinearized ab = liftBuilder $ refreshAbs ab \bs ab' -> do
   primalFun <- LamExpr bs <$> mkBlock declsAndResult
   LamExpr residualAndTangentBs tangentBody <- buildLamExpr residualsTangentsBs \(residuals:tangents) -> do
     LamExpr tangentBs' body <- applyReconAbs (sink reconAbs) (toAtom residuals)
-    applyRename (tangentBs' @@> (atomVarName <$> tangents)) body >>= emitExpr
+    applyRename (tangentBs' @@> (atomVarName <$> tangents)) body >>= emit
   let tangentFun = LamExpr (bs >>> residualAndTangentBs) tangentBody
   return $ PairE primalFun tangentFun
 
@@ -1106,7 +1106,7 @@ exceptToMaybeExpr expr = case expr of
       False -> do
         v <- emit expr'
         let ty = getType v
-        return $ JustAtom ty (toAtom v)
+        return $ JustAtom ty v
 
 hasExceptions :: SExpr n -> Bool
 hasExceptions expr = case getEffects expr of
