@@ -2013,7 +2013,7 @@ generalizeDict ty dict = do
   result <- liftEnvReaderT $ liftInfererM $ generalizeDictRec ty dict
   case result of
     Failure e -> error $ "Failed to generalize " ++ pprint dict
-      ++ " to " ++ pprint ty ++ " because " ++ pprint e
+      ++ " to " ++ show ty ++ " because " ++ pprint e
     Success ans -> return ans
 
 generalizeDictRec :: CType n -> CDict n -> InfererM i n (CDict n)

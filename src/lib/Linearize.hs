@@ -270,7 +270,7 @@ applyLinLam :: Emits o => SLam i -> SubstReaderT AtomSubstVal TangentM i o (Atom
 applyLinLam (LamExpr bs body) = do
   TangentArgs args <- liftSubstReaderT $ getTangentArgs
   extendSubst (bs @@> ((Rename . atomVarName) <$> args)) do
-    substM body >>= emit
+    substM body >>= emitLin
 
 -- === actual linearization passs ===
 
@@ -299,7 +299,7 @@ linearizeTopLam (TopLam False _ (LamExpr bs body)) actives = do
           ts <- getUnpacked $ toAtom $ sink $ binderVar bTangent
           let substFrag =   bsRecon   @@> map (SubstVal . sink) xs
                         <.> bsTangent @@> map (SubstVal . sink) ts
-          emit =<< applySubst substFrag tangentBody
+          emitLin =<< applySubst substFrag tangentBody
         return $ LamExpr (bs' >>> BinaryNest bResidual bTangent) tangentBody'
     return (primalFun, tangentFun)
   (,) <$> asTopLam primalFun <*> asTopLam tangentFun
@@ -358,7 +358,7 @@ linearizeDecls (Nest (Let b (DeclBinding ann expr)) rest) cont = do
         WithTangent pRest tfRest <- linearizeDecls rest cont
         return $ WithTangent pRest do
           t <- tf
-          vt <- emitDecl (getNameHint b) ann (Atom t)
+          vt <- emitDecl (getNameHint b) LinearLet (Atom t)
           extendTangentArgs vt $
             tfRest
 
@@ -410,7 +410,7 @@ linearizeExpr expr = case expr of
         (primal, residualss) <- fromPair result
         resultTangentType <- tangentType resultTy'
         return $ WithTangent primal do
-          buildCase (sink residualss) (sink resultTangentType) \i residuals -> do
+          emitLin =<< buildCase' (sink residualss) (sink resultTangentType) \i residuals -> do
             ObligateRecon _ (Abs bs linLam) <- return $ sinkList recons !! i
             residuals' <- unpackTelescope bs residuals
             withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
@@ -613,13 +613,13 @@ linearizeHof hof = case hof of
       TrivialRecon linLam' ->
         return $ WithTangent primalsAux do
           Abs ib'' linLam'' <- sinkM (Abs ib' linLam')
-          withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
+          withSubstReaderT $ emitLin =<< mkFor noHint d (sink ixTy) \i' -> do
             extendSubst (ib''@>Rename (atomVarName i')) $ applyLinLam linLam''
       ReconWithData reconAbs -> do
         primals <- buildMap primalsAux getFst
         return $ WithTangent primals do
           Abs ib'' (Abs bs linLam') <- sinkM (Abs ib' reconAbs)
-          withSubstReaderT $ buildFor noHint d (sink ixTy) \i' -> do
+          withSubstReaderT $ emitLin =<< mkFor noHint d (sink ixTy) \i' -> do
             extendSubst (ib''@> Rename (atomVarName i')) do
               residuals' <- tabApp (sink primalsAux) (toAtom i') >>= getSnd >>= unpackTelescope bs
               extendSubst (bs @@> (SubstVal <$> residuals')) $
@@ -636,7 +636,7 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitHof $ RunReader rLin' tanEffLam
+      emitHofLin $ RunReader rLin' tanEffLam
   RunState Nothing sInit lam -> do
     WithTangent sInit' sLin <- linearizeAtom sInit
     (lam', recon) <- linearizeEffectFun State lam
@@ -649,7 +649,7 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitHof $ RunState Nothing sLin' tanEffLam
+      emitHofLin $ RunState Nothing sLin' tanEffLam
   RunWriter Nothing bm lam -> do
     -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
     bm' <- renameM bm
@@ -663,7 +663,7 @@ linearizeHof hof = case hof of
       tanEffLam <- buildEffLam noHint tt \h ref ->
         extendTangentArgss [h, ref] do
           withSubstReaderT $ applyLinLam $ sink linLam
-      emitHof $ RunWriter Nothing bm'' tanEffLam
+      emitHofLin $ RunWriter Nothing bm'' tanEffLam
   RunIO body -> do
     (body', recon) <- linearizeExprDefunc body
     primalAux <- emitHof $ RunIO body'

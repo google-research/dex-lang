@@ -1056,7 +1056,7 @@ exceptToMaybeExpr expr = case expr of
     return $ JustAtom ty x'
   PrimOp (Hof (TypedHof _ (For ann ixTy' (UnaryLamExpr b body)))) -> do
     ixTy <- substM ixTy'
-    maybes <- buildForAnn (getNameHint b) ann ixTy \i -> do
+    maybes <- buildFor (getNameHint b) ann ixTy \i -> do
       extendSubst (b@>Rename (atomVarName i)) $ exceptToMaybeExpr body
     catMaybesE maybes
   PrimOp (MiscOp (ThrowException _)) -> do

@@ -765,23 +765,23 @@ mkTypedHof hof = do
   effTy <- effTyOfHof hof
   return $ TypedHof effTy hof
 
-buildForAnn
-  :: (Emits n, ScopableBuilder r m)
+mkFor
+  :: (ScopableBuilder r m)
   => NameHint -> ForAnn -> IxType r n
   -> (forall l. (Emits l, DExt n l) => AtomVar r l -> m l (Atom r l))
-  -> m n (Atom r n)
-buildForAnn hint ann (IxType iTy ixDict) body = do
+  -> m n (Expr r n)
+mkFor hint ann (IxType iTy ixDict) body = do
   lam <- withFreshBinder hint iTy \b -> do
     let v = binderVar b
     body' <- buildBlock $ body $ sink v
     return $ LamExpr (UnaryNest b) body'
-  emitHof $ For ann (IxType iTy ixDict) lam
+  liftM toExpr $ mkTypedHof $ For ann (IxType iTy ixDict) lam
 
 buildFor :: (Emits n, ScopableBuilder r m)
          => NameHint -> Direction -> IxType r n
          -> (forall l. (Emits l, DExt n l) => AtomVar r l -> m l (Atom r l))
          -> m n (Atom r n)
-buildFor hint dir ty body = buildForAnn hint dir ty body
+buildFor hint ann ty body = mkFor hint ann ty body >>= emit
 
 buildMap :: (Emits n, ScopableBuilder SimpIR m)
          => SAtom n
@@ -852,6 +852,10 @@ emitLin e = case toExpr e of
   Atom x -> return x
   expr -> liftM toAtom $ emitDecl noHint LinearLet $ peepholeExpr expr
 {-# INLINE emitLin #-}
+
+emitHofLin :: (Builder r m, Emits n) => Hof r n -> m n (Atom r n)
+emitHofLin hof = mkTypedHof hof >>= emitLin
+{-# INLINE emitHofLin #-}
 
 zeroAt :: (Emits n, SBuilder m) => SType n -> m n (SAtom n)
 zeroAt ty = liftEmitBuilder $ go ty where
@@ -1100,9 +1104,8 @@ mkApplyMethod d i xs = do
 mkInstanceDict :: EnvReader m => InstanceName n -> [CAtom n] -> m n (CDict n)
 mkInstanceDict instanceName args = do
   instanceDef@(InstanceDef className _ _ _ _) <- lookupInstanceDef instanceName
-  sourceName <- getSourceName <$> lookupClassDef className
   PairE (ListE params) _ <- instantiate instanceDef args
-  let ty = toType $ DictType sourceName className params
+  ty <- toType <$> dictType className params
   return $ toDict $ InstanceDict ty instanceName args
 
 mkCase :: (EnvReader m, IRRep r) => Atom r n -> Type r n -> [Alt r n] -> m n (Expr r n)

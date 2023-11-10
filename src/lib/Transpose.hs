@@ -80,16 +80,12 @@ data TransposeSubstVal c n where
 
 type TransposeM a = SubstReaderT TransposeSubstVal (BuilderM SimpIR) a
 
--- TODO: it might make sense to replace substNonlin/isLin
--- with a single `trySubtNonlin :: e i -> Maybe (e o)`.
--- But for that we need a way to traverse names, like a monadic
--- version of `substE`.
-substNonlin :: (SinkableE e, RenameE e, HasCallStack) => e i -> TransposeM i o (e o)
+substNonlin :: (PrettyE e, SinkableE e, RenameE e, HasCallStack) => e i -> TransposeM i o (e o)
 substNonlin e = do
   subst <- getSubst
   fmapRenamingM (\v -> case subst ! v of
                          RenameNonlin v' -> v'
-                         _ -> error "not a nonlinear expression") e
+                         _ -> error $ "not a nonlinear expression: " ++ pprint e) e
 
 withAccumulator
   :: Emits o
@@ -113,7 +109,7 @@ withAccumulator ty cont = do
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
   baseMonoid <- tangentBaseMonoidFor (getType ct)
-  void $ emit $ RefOp ref $ MExtend baseMonoid ct
+  void $ emitLin $ RefOp ref $ MExtend baseMonoid ct
 
 -- === actual pass ===
 
@@ -190,7 +186,7 @@ transposeOp op ct = case op of
   DAMOp _        -> error "unreachable" -- TODO: rule out statically
   RefOp refArg m   -> do
     refArg' <- substNonlin refArg
-    let emitEff = emit . RefOp refArg'
+    let emitEff = emitLin . RefOp refArg'
     case m of
       MAsk -> do
         baseMonoid <- tangentBaseMonoidFor (getType ct)
@@ -251,9 +247,7 @@ transposeAtom atom ct = case atom of
     PtrVar _ _      -> notTangent
     Var v -> do
       lookupSubstM (atomVarName v) >>= \case
-        RenameNonlin _ ->
-          -- XXX: we seem to need this case, but it feels like it should be an error!
-          return ()
+        RenameNonlin _ -> error "nonlinear"
         LinRef ref -> emitCTToRef ref ct
         LinTrivial -> return ()
     StuckProject _ _ -> error "not linear"
@@ -266,7 +260,7 @@ transposeHof hof ct = case hof of
   For ann ixTy' lam -> do
     UnaryLamExpr b  body <- return lam
     ixTy <- substNonlin ixTy'
-    void $ buildForAnn (getNameHint b) (flipDir ann) ixTy \i -> do
+    void $ emitLin =<< mkFor (getNameHint b) (flipDir ann) ixTy \i -> do
       ctElt <- tabApp (sink ct) (toAtom i)
       extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeExpr body ctElt
       return UnitVal
