@@ -58,7 +58,8 @@ def complex_pow(base:Complex, power:Complex) -> Complex = complex_exp(power * co
 
 def complex_sqrt(x:Complex) -> Complex =
   m = complex_mag x
-  Complex (sqrt ((x.re + m) / 2.0)) (sign x.im * sqrt ((m - x.re) / 2.0))
+  sgn = if x.im >= 0 then 1.0 else -1.0
+  Complex (sqrt ((x.re + m) / 2.0)) (sgn * sqrt ((m - x.re) / 2.0))
 
 def complex_sin( x:Complex) -> Complex = Complex(sin  x.re * cosh x.im, cos  x.re * sinh x.im)
 def complex_sinh(x:Complex) -> Complex = Complex(sinh x.re *  cos x.im, cosh x.re * sin  x.im)
