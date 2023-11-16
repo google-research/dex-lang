@@ -24,8 +24,8 @@ function lookup_address(cell, address) {
     return node
 }
 
-function renderHovertips() {
-    var spans = document.querySelectorAll(".code-span");
+function renderHovertips(root) {
+    var spans = root.querySelectorAll(".code-span");
     Array.from(spans).map((span) => attachHovertip(span));
 }
 
@@ -63,14 +63,14 @@ function removeHighlighting(event, node) {
     })
 }
 
-function renderLaTeX() {
+function renderLaTeX(root) {
     // Render LaTeX equations in prose blocks via KaTeX, if available.
     // Skip rendering if KaTeX is unavailable.
     if (typeof renderMathInElement == 'undefined') {
         return;
     }
     // Render LaTeX equations in prose blocks via KaTeX.
-    var proseBlocks = document.querySelectorAll(".prose-block");
+    var proseBlocks = root.querySelectorAll(".prose-block");
     Array.from(proseBlocks).map((proseBlock) =>
         renderMathInElement(proseBlock, katexOptions)
     );
@@ -177,8 +177,8 @@ var body = document.getElementById("main-output");
 function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
-        renderLaTeX();
-        renderHovertips();
+        renderLaTeX(document);
+        renderHovertips(document);
         updateNavigation();
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
@@ -191,9 +191,6 @@ function render(renderMode) {
                 return
             } else {
                 process_update(msg);
-                renderLaTeX();
-                renderHovertips();
-                updateNavigation();
             }
         };
     }
@@ -214,6 +211,8 @@ function set_cell_contents(cell, contents) {
     } else {
         console.error(tag);
     }
+    renderLaTeX(cell);
+    renderHovertips(cell);
 }
 
 function process_update(msg) {

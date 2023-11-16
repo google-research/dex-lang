@@ -44,7 +44,8 @@ serveResults resultsSubscribe request respond = do
            [("Content-Type", "text/plain")] "404 - Not Found"
   where
     respondWith dataFname ctype = do
-      fname <- getDataFileName dataFname
+      fname <- return dataFname -- lets us skip rebuilding during development
+      -- fname <- getDataFileName dataFname
       respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
 resultStream :: ResultsServer -> StreamingBody
