@@ -22,7 +22,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Map.Strict as M
 
-import PPrint (toJSONStr, printResult)
+import PPrint (resultAsJSON, printResult)
 import TopLevel
 import Err
 import Name
@@ -30,7 +30,7 @@ import AbstractSyntax (parseTopDeclRepl)
 import ConcreteSyntax (keyWordStrs, preludeImportBlock)
 #ifdef DEX_LIVE
 import RenderHtml
-import Live.Terminal (runTerminal)
+-- import Live.Terminal (runTerminal)
 import Live.Web (runWeb)
 #endif
 import Core
@@ -84,14 +84,10 @@ runMode evalMode opts = case evalMode of
           _ -> liftIO $ putStrLn $ pprint result
   ClearCache -> clearCache
 #ifdef DEX_LIVE
-  -- These are broken if the prelude produces any arrays because the blockId
-  -- counter restarts at zero. TODO: make prelude an implicit import block
   WebMode    fname -> do
     env <- loadCache
     runWeb fname opts env
-  WatchMode  fname -> do
-    env <- loadCache
-    runTerminal fname opts env
+  WatchMode  _ -> error "not implemented"
 #endif
 
 printIncrementalSource :: DocFmt -> SourceBlock -> IO ()
@@ -106,7 +102,7 @@ printIncrementalSource fmt sb = case fmt of
 printIncrementalResult :: DocFmt -> Result -> IO ()
 printIncrementalResult fmt result = case fmt of
   ResultOnly -> case pprint result of [] -> return (); msg -> putStrLn msg
-  JSONDoc    -> case toJSONStr result of "{}" -> return (); s -> putStrLn s
+  JSONDoc    -> case resultAsJSON result of "{}" -> return (); s -> putStrLn s
   TextDoc    -> do
     isatty <- queryTerminal stdOutput
     putStr $ printResult isatty result

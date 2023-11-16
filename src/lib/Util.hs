@@ -12,6 +12,7 @@ import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Applicative
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import System.CPUTime
 import GHC.Base (getTag)

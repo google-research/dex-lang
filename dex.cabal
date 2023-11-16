@@ -58,6 +58,7 @@ library
                      , Generalize
                      , Imp
                      , ImpToLLVM
+                     , IncState
                      , Inference
                      , Inline
                      , IRVariants
@@ -72,6 +73,7 @@ library
                      , Linearize
                      , Logging
                      , Lower
+                     , MonadUtil
                      , MTL1
                      , Name
                      , Occurrence
@@ -103,7 +105,6 @@ library
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval
-                     , Live.Terminal
                      , Live.Web
                      , RenderHtml
   other-modules:       Paths_dex
@@ -136,6 +137,7 @@ library
                        -- Serialization
                      , aeson
                      , store
+                     , time
                        -- Floating-point pedanticness (correcting for GHC < 9.2.2)
                      , floating-bits
   if flag(live)

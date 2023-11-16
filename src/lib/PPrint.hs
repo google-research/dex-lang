@@ -9,11 +9,12 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (
-  pprint, pprintCanonicalized, pprintList, asStr , atPrec, toJSONStr,
+  pprint, pprintCanonicalized, pprintList, asStr , atPrec, resultAsJSON,
   PrettyPrec(..), PrecedenceLevel (..), prettyBlock, printLitBlock,
   printResult, prettyFromPrettyPrec) where
 
 import Data.Aeson hiding (Result, Null, Value, Success)
+import Data.Aeson.Encoding (encodingToLazyByteString, value)
 import GHC.Exts (Constraint)
 import GHC.Float
 import Data.Foldable (toList, fold)
@@ -1015,21 +1016,19 @@ addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
   ++ s ++ setSGRCode [Reset]
 
-toJSONStr :: ToJSON a => a -> String
-toJSONStr = B.unpack . encode
-
-instance ToJSON Result where
-  toJSON (Result outs err) = object (outMaps <> errMaps)
-    where
-      errMaps = case err of
-        Failure e   -> ["error" .= String (fromString $ pprint e)]
-        Success () -> []
-      outMaps = flip foldMap outs $ \case
-        BenchResult name compileTime runTime _ ->
-          [ "bench_name"   .= toJSON name
-          , "compile_time" .= toJSON compileTime
-          , "run_time"     .= toJSON runTime ]
-        out -> ["result" .= String (fromString $ pprint out)]
+resultAsJSON :: Result -> String
+resultAsJSON (Result outs err) =
+  B.unpack $ encodingToLazyByteString $ value $ object (outMaps <> errMaps)
+  where
+    errMaps = case err of
+      Failure e   -> ["error" .= String (fromString $ pprint e)]
+      Success () -> []
+    outMaps = flip foldMap outs $ \case
+      BenchResult name compileTime runTime _ ->
+        [ "bench_name"   .= toJSON name
+        , "compile_time" .= toJSON compileTime
+        , "run_time"     .= toJSON runTime ]
+      out -> ["result" .= String (fromString $ pprint out)]
 
 -- === Concrete syntax rendering ===
 

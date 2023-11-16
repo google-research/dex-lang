@@ -14,12 +14,12 @@ import Network.Wai (Application, StreamingBody, pathInfo,
 import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (status200, status404)
 import Data.Aeson (ToJSON, encode)
-import Data.Binary.Builder (fromByteString, Builder)
+import Data.Binary.Builder (fromByteString)
 import Data.ByteString.Lazy (toStrict)
+import qualified Data.ByteString as BS
 
 import Paths_dex (getDataFileName)
 
-import Actor
 import Live.Eval
 import TopLevel
 
@@ -29,7 +29,7 @@ runWeb fname opts env = do
   putStrLn "Streaming output to http://localhost:8000/"
   run 8000 $ serveResults resultsChan
 
-serveResults :: ToJSON a => PChan (PChan a) -> Application
+serveResults :: ResultsServer -> Application
 serveResults resultsSubscribe request respond = do
   print (pathInfo request)
   case pathInfo request of
@@ -47,13 +47,18 @@ serveResults resultsSubscribe request respond = do
       fname <- getDataFileName dataFname
       respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
-resultStream :: ToJSON a => PChan (PChan a) -> StreamingBody
-resultStream resultsSubscribe write flush = runActor \self -> do
-  write (makeBuilder ("start"::String)) >> flush
-  resultsSubscribe `sendPChan` (sendOnly self)
-  forever $ do msg <- readChan self
-               write (makeBuilder msg) >> flush
+resultStream :: ResultsServer -> StreamingBody
+resultStream resultsServer write flush = do
+  write (fromByteString $ encodeResults ("start"::String)) >> flush
+  (initResult, resultsChan) <- subscribeIO resultsServer
+  sendUpdate $ dagAsUpdate initResult
+  forever $ readChan resultsChan >>= sendUpdate
+  where
+    sendUpdate :: ResultsUpdate -> IO ()
+    sendUpdate update = do
+      let s = encodeResults update
+      write (fromByteString s) >> flush
 
-makeBuilder :: ToJSON a => a -> Builder
-makeBuilder = fromByteString . toStrict . wrap . encode
-  where wrap s = "data:" <> s <> "\n\n"
+    encodeResults :: ToJSON a => a -> BS.ByteString
+    encodeResults = toStrict . wrap . encode
+      where wrap s = "data:" <> s <> "\n\n"

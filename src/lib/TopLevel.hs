@@ -136,6 +136,7 @@ newtype TopperM (n::S) a = TopperM
 -- Hides the `n` parameter as an existential
 data TopStateEx where
   TopStateEx :: Distinct n => Env n -> RuntimeEnv -> TopStateEx
+instance Show TopStateEx where show _ = "TopStateEx"
 
 -- Hides the `n` parameter as an existential
 data TopSerializedStateEx where

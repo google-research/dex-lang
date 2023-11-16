@@ -103,3 +103,14 @@ code {
 .iso-sugar {
   color: #25BBA7;
 }
+
+.waiting-cell {
+  background-color: #DDDDFF;
+}
+
+.running-cell {
+  background-color: #DDFFDD;
+}
+
+.complete-cell {
+}
