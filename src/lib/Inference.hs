@@ -434,12 +434,8 @@ topDownExplicit reqTy exprWithSrc@(WithSrcE pos expr) = addSrcContext pos case e
     case reqTy of
       TyCon (TabPi tabPiTy) -> checkTabCon tabPiTy xs
       _ -> throw TypeErr $ "Unexpected table constructor. Expected: " ++ pprint reqTy
-  UNatLit x -> do
-    let litVal = Con $ Lit $ Word64Lit $ fromIntegral x
-    applyFromLiteralMethod reqTy "from_unsigned_integer" litVal
-  UIntLit x  -> do
-    let litVal = Con $ Lit $ Int64Lit $ fromIntegral x
-    applyFromLiteralMethod reqTy "from_integer" litVal
+  UNatLit x -> fromNatLit x reqTy
+  UIntLit x -> fromIntLit x reqTy
   UPrim UTuple xs -> case reqTy of
     TyKind -> toAtom . ProdType <$> mapM checkUType xs
     TyCon (ProdType reqTys) -> do
@@ -554,8 +550,8 @@ bottomUpExplicit (WithSrcE pos expr) = addSrcContext pos case expr of
           _ -> return $ toAtom v
         x' -> return x'
     liftM (SigmaAtom Nothing) $ matchPrimApp prim xs'
-  UNatLit _ -> throw TypeErr $ "Can't infer type of literal. Try an explicit annotation"
-  UIntLit _ -> throw TypeErr $ "Can't infer type of literal. Try an explicit annotation"
+  UNatLit l -> liftM (SigmaAtom Nothing) $ fromNatLit l NatTy
+  UIntLit l -> liftM (SigmaAtom Nothing) $ fromIntLit l (BaseTy $ Scalar Int32Type)
   UFloatLit x -> return $ SigmaAtom Nothing $ Con $ Lit  $ Float32Lit $ realToFrac x
   UHole -> throw TypeErr "Can't infer value of hole"
 
@@ -565,6 +561,16 @@ expectEq reqTy actualTy = alphaEq reqTy actualTy >>= \case
   False -> throw TypeErr $ "Expected: " ++ pprint reqTy ++
                          "\nActual:   " ++ pprint actualTy
 {-# INLINE expectEq #-}
+
+fromIntLit :: Emits o => Int -> CType o -> InfererM i o (CAtom o)
+fromIntLit x ty = do
+  let litVal = Con $ Lit $ Int64Lit $ fromIntegral x
+  applyFromLiteralMethod ty "from_integer" litVal
+
+fromNatLit :: Emits o => Word64 -> CType o -> InfererM i o (CAtom o)
+fromNatLit x ty = do
+  let litVal = Con $ Lit $ Word64Lit $ fromIntegral x
+  applyFromLiteralMethod ty "from_unsigned_integer" litVal
 
 matchReq :: Ext o o' => RequiredTy o -> CAtom o' -> InfererM i o' (CAtom o')
 matchReq (Check reqTy) x = do
