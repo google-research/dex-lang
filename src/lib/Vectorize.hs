@@ -619,6 +619,8 @@ instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
       let ty = getType expr'
       modify (\(LiftE x) -> LiftE $ min (typeByteWidth ty) x)
       return expr'
+    Block _ (Abs decls result) -> mkBlock =<< visitDeclsNoEmits decls \decls' -> do
+      Abs decls' <$> visitExprNoEmits result
     _ -> fallback
     where fallback = visitGeneric expr
 

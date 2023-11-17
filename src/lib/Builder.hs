@@ -1506,6 +1506,20 @@ visitLamNoEmits
 visitLamNoEmits (LamExpr bs body) =
   visitBinders bs \bs' -> LamExpr bs' <$> visitExprNoEmits body
 
+visitDeclsNoEmits
+  :: (ExprVisitorNoEmits2 m r, IRRep r, AtomSubstReader v m, EnvExtender2 m)
+  => Nest (Decl r) i i'
+  -> (forall o'. DExt o o' => Nest (Decl r) o o' -> m i' o' a)
+  -> m i o a
+visitDeclsNoEmits Empty cont = getDistinct >>= \Distinct -> cont Empty
+visitDeclsNoEmits (Nest (Let b (DeclBinding ann expr)) decls) cont = do
+  expr' <- visitExprNoEmits expr
+  withFreshBinder (getNameHint b) (getType expr') \(b':>_) -> do
+    let decl' = Let b' $ DeclBinding ann expr'
+    extendRenamer (b@>binderName b') do
+      visitDeclsNoEmits decls \decls' ->
+        cont $ Nest decl' decls'
+
 -- === Emitting expression visitor ===
 
 class Visitor m r i o => ExprVisitorEmits m r i o | m -> i, m -> o where

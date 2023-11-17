@@ -35,6 +35,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Util
+import GHC.Stack
 
 -- Carry out the reductions we are willing to carry out during type
 -- inference.  The goal is to support type aliases like `Int = Int32`
@@ -341,7 +342,7 @@ class NonAtomRenamer m i o => Visitor m r i o | m -> i, m -> o where
   visitPi   :: PiType  r i -> m (PiType  r o)
 
 class VisitGeneric (e:: E) (r::IR) | e -> r where
-  visitGeneric :: Visitor m r i o => e i -> m (e o)
+  visitGeneric :: HasCallStack => Visitor m r i o => e i -> m (e o)
 
 type Visitor2 (m::MonadKind2) r = forall i o . Visitor (m i o) r i o
 

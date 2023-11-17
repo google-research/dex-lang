@@ -170,6 +170,7 @@ licmExpr = \case
       block <- mkBlock =<< applyRename (lnb@>binderName i) bodyAbs
       return $ UnaryLamExpr i block
     emitHof $ For dir ix' body'
+  Block _ (Abs decls result) -> visitDeclsEmits decls $ licmExpr result
   expr -> visitGeneric expr >>= emit
 
 seqLICM :: RNest SDecl n1 n2      -- hoisted decls
