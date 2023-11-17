@@ -18,13 +18,16 @@
 
 struct Work;
 
-// A Task is a function pointer that consumes a Work* and returns a Work*
-// The input is the `Work` Always passed a pointer to the containing Work struct
+// A Task is a function pointer that consumes a Work* and returns a Work*.
+// The input `Work` is always a pointer to the Work struct containing that
+// Task, which it accepts in order to be able to deallocate it.
 // Question: Do we also want to tell the task the thread id of the worker
 // that's running it?  Maybe to support thread-local accumulators for
 // commutative reductions?
 // Oh yeah, also to know which worker's queue to put more stuff onto.
-// Trampoline: returns the next work to do, if ready, or NULL if not.
+//
+// The return value is a trampoline: a `Task` returns the next work to do, if
+// it's runnable, or NULL if there isn't one.
 typedef struct Work* (*Task)(struct Work*);
 
 typedef struct Work {
@@ -213,6 +216,81 @@ void* thread(void* payload) {
   }
   printf("Worker %d finished\n", id);
   return NULL;
+}
+
+//////////////////////
+// Dex loop support //
+//////////////////////
+
+// Return a `Work*` such that joining it `joiners` times is equivalent to joining
+// the argument `cont` once.
+// - `joiners` >= 1.
+// - Do not use `cont` directly afterward, as this is allowed to mutate it.
+Work* increase_cont_capacity(Work* cont, int joiners) {
+  // One way to achieve the goal is to just atomically increase the `join_count`
+  // of `cont` by `joiners - 1` and reuse it:
+  atomic_add(&cont->join_count, joiners - 1);
+  return cont;
+  // An alternative would be allocate a new `Work` with `join_count` equal to
+  // `joiners` and `task` to `join` the current `cont`.  The advantage of this
+  // alternative is avoiding the atomic increment (on a potentially contentious
+  // variable if `cont` has many joiners already); the disadvantage is the
+  // allocation (which presumably entails some synchronization of its own), and
+  // an extra indirection at the end due to executing that mini-task.
+}
+
+Work* execute_pure_loop(Work* cont, Task body, void* args[], int start_iter, int end_iter) {
+  if (end_iter - start_iter <= 1) {
+    // Few enough iterations; just do it.
+    // TODO: Can we avoid allocating this Work struct that the body is going to just
+    // immediately deallocate?  I guess the type of `body` would then have to change
+    // from `Task`, and we'd have to code-gen it differently than if it were a `Task`.
+    Work* work = (Work*) malloc(sizeof(Work) + 3 * sizeof(int*));
+    work->code = body;
+    work->join_count = 0;
+    work->args[0] = args;
+    work->args[1] = *start_iter;
+    work->args[2] = cont;
+    return body(work);
+  } else {
+    // Create Works that represent schedulable pieces of the loop.
+    int branching_factor = 2;
+    div_t iters_per_branch = div(end_iter - start_iter, branching_factor);
+    int this_iter = start_iter;
+    Work* subcont = increase_cont_capacity(cont, branching_factor);
+    for (i = 0; i < branching_factor; i++) {
+      int next_iter = this_iter + iters_per_branch.quot;
+      if (i < iters_per_branch.rem) {
+        next_iter++;
+      }
+      Work* section = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
+      section->code = &execute_pure_loop_task;
+      section->join_count = 0;
+      section->args[0] = subcont;
+      section->args[1] = body;
+      section->args[2] = args;
+      section->args[3] = this_iter;
+      section->args[4] = next_iter;
+      // TODO I need to know my id so that I push onto my own queue
+      int me = 0;
+      if (i == branching_factor - 1) {
+        // TODO Maybe I could skip allocating this Work, too?
+        return do_one_work(me, section);
+      } else {
+        push(&thread_queues[me], section);
+      }
+      this_iter = next_iter;
+    }  // This loop never completes because it hits the `return`
+  }
+}
+
+Work* execute_pure_loop_task(Work* self) {
+  Work* cont = self->args[0];
+  Task body = self->args[1];
+  void* args[] = self->args[2];
+  int start_iter = self->args[3];  // Do I have to box these ints, or can I just store them?
+  int end_iter = self->args[4];
+  return execute_pure_loop(cont, body, args, start_iter, end_iter);
 }
 
 ////////////////////
