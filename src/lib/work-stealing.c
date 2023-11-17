@@ -393,23 +393,55 @@ void finish_work_stealing() {
 // Client program //
 ////////////////////
 
-Work* print_gen_block(int thread_id, void** env) {
+// A slightly silly program that iterates a single loop a synamic number of
+// times, and has each loop iteration (and the coda) echo the trip count + 1,
+// just to show that data can be mutated.
+
+Work* gen_loop_body(int thread_id, int iteration, void** env) {
   int* payload = (int*)env[0];
   int item = *payload;
-  printf("Did payload %d\n", item);
+  printf("Loop iteration %d on worker %d, payload %d\n",
+         iteration, thread_id, item);
+  return NULL;
+}
+
+Work* end_gen_block(int thread_id, void** env) {
+  int* payload = (int*)env[0];
+  int item = *payload;
+  printf("Finishing on worker %d, payload %d\n", thread_id, item);
   free(payload);
   free(env);
   finish_work_stealing();
   return NULL;
 }
 
+Work* start_gen_block(int thread_id, void** env) {
+  int* payload = (int*)env[0];
+  int item = *payload;
+  printf("Starting on worker %d, payload %d\n", thread_id, item);
+  *payload = item + 1;
+  return begin_pure_loop(thread_id, gen_loop_body, end_gen_block, env, item);
+}
+
 int main(int argc, char **argv) {
   initialize_work_stealing(24);
   void** env = malloc(sizeof(int*));
   int* payload = malloc(sizeof(int));
-  *payload = 17;
+  int num_iters = 200;
+  *payload = num_iters;
   env[0] = payload;
-  execute_top_block(&print_gen_block, env);
-  printf("Expect %d lines of output (including this one)\n", 3 + thread_count);
+  execute_top_block(&start_gen_block, env);
+  int expected_output_lines =
+      1    // "Starting"
+      + 1  // "Finishing"
+      + thread_count  // "Worker n finished"
+      + 1  // Expected line report
+      + num_iters  // Each loop iteration
+      + 1  // "Worker running item" for the entry point
+      + 1  // "Worker running item" for the end
+      + (num_iters - 1)  // "Worker running item" for itermediates in the loop tree
+      ;
+  printf("Expect %d lines of output (including this one)\n",
+         expected_output_lines);
   return 0;
 }
