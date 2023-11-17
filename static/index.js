@@ -197,16 +197,23 @@ function render(renderMode) {
 }
 
 function set_cell_contents(cell, contents) {
-    var source_text = contents[0];
-    cell.innerHTML = source_text
+    var line_num = contents[0][0];
+    var source_text = contents[0][1];
+    var line_num_div = document.createElement("div");
+
+    line_num_div.innerHTML = line_num.toString();
+    line_num_div.className = "line-num";
+    cell.innerHTML = ""
+    cell.appendChild(line_num_div);
+    cell.innerHTML += source_text
     var results     = contents[1];
     tag             = results["tag"]
     if (tag == "Waiting") {
-        cell.className = "waiting-cell";
+        cell.className = "cell waiting-cell";
     } else if (tag == "Running") {
-        cell.className = "running-cell";
+        cell.className = "cell running-cell";
     } else if (tag == "Complete") {
-        cell.className = "complete-cell";
+        cell.className = "cell complete-cell";
         cell.innerHTML += results["contents"]
     } else {
         console.error(tag);
@@ -222,8 +229,7 @@ function process_update(msg) {
 
     // drop_dead_cells
     for (i = 0; i < num_dropped; i++) {
-        body.lastElementChild.remove();
-    }
+        body.lastElementChild.remove();}
 
     Object.keys(cell_updates).forEach(function (node_id) {
         var update = cell_updates[node_id];

@@ -11,7 +11,6 @@ body {
   display: flex;
   justify-content: space-between;
   overflow-x: hidden;
-
   --main-width: 50rem;
   --nav-width: 20rem;
 }
@@ -47,7 +46,12 @@ nav ol {
   margin: auto;
 }
 
+
+.code-block {
+}
+
 .code-block, .err-block, .result-block {
+  margin: 0em 0em 0em 4em;
   padding: 0em 0em 0em 2em;
   display: block;
   font-family: monospace;
@@ -104,12 +108,25 @@ code {
   color: #25BBA7;
 }
 
+.cell {
+}
+
+.line-num {
+  display: block;
+  font-family: monospace;
+  width: 3em;
+  color: #808080;
+  float: left;
+  text-align: right;
+}
+
+
 .waiting-cell {
-  background-color: #DDDDFF;
+  border-left: 6px solid #AAAAFF;
 }
 
 .running-cell {
-  background-color: #DDFFDD;
+  border-left: 6px solid #AAFFAA;
 }
 
 .complete-cell {

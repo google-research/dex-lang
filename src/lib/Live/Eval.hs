@@ -304,7 +304,8 @@ instance ToJSON a => ToJSON (MapEltUpdate a)
 instance ToJSON o => ToJSON (NodeEvalStatus o)
 instance (ToJSON i, ToJSON o) => ToJSON (NodeState i o)
 
-instance ToJSON SourceBlock where toJSON = toJSONViaHtml
+instance ToJSON SourceBlock where
+  toJSON b = toJSON (sbLine b, pprintHtml b)
 instance ToJSON Result      where toJSON = toJSONViaHtml
 
 toJSONViaHtml :: ToMarkup a => a -> Value
