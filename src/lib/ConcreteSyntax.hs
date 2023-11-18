@@ -61,7 +61,7 @@ parseUModule name s = do
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" $ Misc $ ImportModule Prelude
+preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty (Misc $ ImportModule Prelude)
 
 sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
@@ -108,11 +108,12 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
-  (src, (level, b)) <- withSource $ withRecovery recover $ do
+  (src, (sm, (level, b))) <- withSource $ withSourceMaps $ withRecovery recover do
     level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src b
+  let sm' = sm { lexemeInfo = lexemeInfo sm <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src sm' b
 
 recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do
@@ -154,7 +155,7 @@ consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 logLevel :: Parser LogLevel
 logLevel = do
-  void $ try $ lexeme $ char '%' >> string "passes"
+  void $ try $ lexeme MiscLexeme $ char '%' >> string "passes"
   passes <- many passName
   eol
   case passes of
@@ -163,13 +164,13 @@ logLevel = do
 
 logTime :: Parser LogLevel
 logTime = do
-  void $ try $ lexeme $ char '%' >> string "time"
+  void $ try $ lexeme MiscLexeme $ char '%' >> string "time"
   eol
   return PrintEvalTime
 
 logBench :: Parser LogLevel
 logBench = do
-  void $ try $ lexeme $ char '%' >> string "bench"
+  void $ try $ lexeme MiscLexeme $ char '%' >> string "bench"
   benchName <- strLit
   eol
   return $ PrintBench benchName
@@ -391,7 +392,7 @@ immediateLParen = label "'(' (without preceding whitespace)" do
   nextChar >>= \case
     '(' -> precededByWhitespace >>= \case
       True -> empty
-      False -> charLexeme '('
+      False -> lParen
     _ -> empty
 
 immediateParens :: Parser a -> Parser a

@@ -206,7 +206,7 @@ catchLogsAndErrs m = do
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
   case block of
-    SourceBlock _ _ _ _ (Misc (ImportModule name)) -> do
+    SourceBlock _ _ _ _ _ (Misc (ImportModule name)) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()

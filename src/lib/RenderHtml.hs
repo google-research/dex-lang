@@ -7,30 +7,26 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
-module RenderHtml (pprintHtml, progHtml, ToMarkup, treeToHtml) where
+module RenderHtml (pprintHtml, progHtml, ToMarkup) where
 
+import Text.Blaze.Internal (MarkupM)
 import Text.Blaze.Html5 as H hiding (map)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.List    qualified as L
+import qualified Data.Map.Strict as M
+import Control.Monad.State.Strict
+import Data.Maybe (fromJust)
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
 import System.IO.Unsafe
 
-import Control.Monad
-import Text.Megaparsec hiding (chunk)
-import Text.Megaparsec.Char as C
 
 import Err
-import Lexing (Parser, symChar, keyWordStrs, symbol, parseit, withSource)
 import Paths_dex (getDataFileName)
 import PPrint ()
-import SourceInfo
-import TraverseSourceInfo
 import Types.Misc
 import Types.Source
-import Util
 
 cssSource :: T.Text
 cssSource = unsafePerformIO $
@@ -79,9 +75,7 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of
     (Misc (ProseBlock s)) -> cdiv "prose-block" $ mdToHtml s
-    TopDecl decl -> renderSpans decl block
-    Command _ g -> renderSpans g block
-    _ -> cdiv "code-block" $ highlightSyntax (sbText block)
+    _ -> renderSpans (sbSourceMaps block) (sbText block)
 
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s
@@ -89,94 +83,43 @@ mdToHtml s = preEscapedText $ commonmarkToHtml [] s
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
--- === syntax highlighting ===
+renderSpans :: SourceMaps -> T.Text -> Markup
+renderSpans sm sourceText = cdiv "code-block" do
+  runTextWalkerT sourceText do
+    forM_ (lexemeList sm) \sourceId -> do
+      let (lexemeTy, (l, r)) = fromJust $ M.lookup sourceId (lexemeInfo sm)
+      takeTo l >>= emitSpan ""
+      takeTo r >>= emitSpan (lexemeClass lexemeTy)
+    takeRest >>= emitSpan ""
 
-spanDelimitedCode :: SourceBlock -> [SrcPosCtx] -> Html
-spanDelimitedCode block ctxs =
-  let (Just tree) = srcCtxsToTree block ctxs in
-  spanDelimitedCode' block tree
+emitSpan :: String -> T.Text -> TextWalker ()
+emitSpan className t = lift $ H.span (toHtml t) ! class_ (stringValue className)
 
-spanDelimitedCode' :: SourceBlock -> SpanTree -> Html
-spanDelimitedCode' block tree = treeToHtml (sbText block) tree
+lexemeClass :: LexemeType -> String
+lexemeClass = \case
+   Keyword             -> "keyword"
+   Symbol              -> "symbol"
+   TypeName            -> "type-name"
+   LowerName           -> ""
+   UpperName           -> ""
+   LiteralLexeme       -> "literal"
+   StringLiteralLexeme -> ""
+   MiscLexeme          -> ""
 
-treeToHtml :: T.Text -> SpanTree -> Html
-treeToHtml source' tree =
-  let tree' = fillTreeAndAddTrivialLeaves (T.unpack source') tree in
-  treeToHtml' source' tree'
+type TextWalker a = StateT (Int, T.Text) MarkupM a
 
-treeToHtml' :: T.Text -> SpanTree -> Html
-treeToHtml' source' tree = case tree of
-  Span (_, _, _) children ->
-    let body' = foldMap (treeToHtml' source') children in
-    H.span body' ! spanClass
-  LeafSpan (l, r, _) ->
-    let spanText = sliceText l r source' in
-    H.span (highlightSyntax spanText) ! spanLeaf
-  Trivia (l, r) ->
-    let spanText = sliceText l r source' in
-    highlightSyntax spanText
-  where
-    spanClass :: Attribute
-    spanClass = At.class_ "code-span"
+runTextWalkerT :: T.Text -> TextWalker a -> MarkupM a
+runTextWalkerT t cont = evalStateT cont (0, t)
 
-    spanLeaf :: Attribute
-    spanLeaf = At.class_ "code-span-leaf"
+-- index is the *absolute* index, from the very beginning
+takeTo :: Int -> TextWalker T.Text
+takeTo startPos = do
+  (curPos, curText) <- get
+  let (prefix, remText) = T.splitAt (startPos- curPos) curText
+  put (startPos, remText)
+  return prefix
 
-srcCtxsToSpanInfos :: SourceBlock -> [SrcPosCtx] -> [SpanPayload]
-srcCtxsToSpanInfos block ctxs =
-  let blockOffset = sbOffset block in
-  let ctxs' = L.sort ctxs in
-  (0, maxBound, 0) : mapMaybe (convert' blockOffset) ctxs'
-  where convert' :: Int -> SrcPosCtx -> Maybe SpanPayload
-        convert' offset (SrcPosCtx (Just (l, r)) (Just spanId)) = Just (l - offset, r - offset, spanId + 1)
-        convert' _ _ = Nothing
-
-srcCtxsToTree :: SourceBlock -> [SrcPosCtx] -> Maybe SpanTree
-srcCtxsToTree block ctxs = makeEmptySpanTree (srcCtxsToSpanInfos block ctxs)
-
-renderSpans :: HasSourceInfo a => a -> SourceBlock -> Html
-renderSpans x block =
-  let x' = addSpanIds x in
-  let ctxs = gatherSourceInfo x' in
-  toHtml $ cdiv "code-block" $ spanDelimitedCode block ctxs
-
-highlightSyntax :: T.Text -> Html
-highlightSyntax s = foldMap (uncurry syntaxSpan) classified
-  where classified = ignoreExcept $ parseit s (many (withSource classify) <* eof)
-
-syntaxSpan :: T.Text -> StrClass -> Html
-syntaxSpan s NormalStr = toHtml s
-syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
-  where
-    className = case c of
-      CommentStr  -> "comment"
-      KeywordStr  -> "keyword"
-      CommandStr  -> "command"
-      SymbolStr   -> "symbol"
-      TypeNameStr -> "type-name"
-      IsoSugarStr -> "iso-sugar"
-      WhitespaceStr -> "whitespace"
-      NormalStr -> error "Should have been matched already"
-
-data StrClass = NormalStr
-              | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
-              | IsoSugarStr | WhitespaceStr
-
-classify :: Parser StrClass
-classify =
-       (try (char ':' >> lowerWord) >> return CommandStr)
-   <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
-   <|> (do s <- lowerWord
-           return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
-   <|> (upperWord >> return TypeNameStr)
-   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
-        >> lowerWord >> return IsoSugarStr)
-   <|> (some symChar >> return SymbolStr)
-   <|> (some space1 >> return WhitespaceStr)
-   <|> (anySingle >> return NormalStr)
-
-lowerWord :: Parser String
-lowerWord = (:) <$> lowerChar <*> many alphaNumChar
-
-upperWord :: Parser String
-upperWord = (:) <$> upperChar <*> many alphaNumChar
+takeRest :: TextWalker T.Text
+takeRest = do
+  endPos <- gets $ T.length . snd
+  takeTo endPos

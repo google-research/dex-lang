@@ -91,7 +91,6 @@ library
                      , SourceRename
                      , TopLevel
                      , Transpose
-                     , TraverseSourceInfo
                      , Types.Core
                      , Types.Imp
                      , Types.Misc
@@ -143,6 +142,7 @@ library
   if flag(live)
     build-depends:     binary
                      , blaze-html
+                     , blaze-markup
                      , cmark
                      , http-types
                      , wai

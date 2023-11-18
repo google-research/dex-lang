@@ -20,7 +20,6 @@
 
 module Types.Source where
 
-import Data.Data
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
@@ -37,7 +36,7 @@ import Name
 import qualified Types.OpNames as P
 import IRVariants
 import SourceInfo
-import Util (File (..))
+import Util (File (..), SnocList)
 
 import Types.Primitives
 
@@ -66,8 +65,39 @@ newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr 
 pattern SISourceName :: (n ~ VoidS) => SourceName -> SourceOrInternalName c n
 pattern SISourceName n = SourceOrInternalName (SourceName EmptySrcPosCtx n)
 
-pattern SIInternalName :: SourceName -> Name c n -> Maybe SrcPos -> Maybe SpanId -> SourceOrInternalName c n
+pattern SIInternalName :: SourceName -> Name c n -> Maybe SrcPos -> Maybe SourceId -> SourceOrInternalName c n
 pattern SIInternalName n a srcPos spanId = SourceOrInternalName (InternalName (SrcPosCtx srcPos spanId) n a)
+
+-- === Source Info ===
+
+-- This is just for syntax highlighting. It won't be needed if we have
+-- a separate lexing pass where we have a complete lossless data type for
+-- lexemes.
+data LexemeType =
+   Keyword
+ | Symbol
+ | TypeName
+ | LowerName
+ | UpperName
+ | LiteralLexeme
+ | StringLiteralLexeme
+ | MiscLexeme
+ deriving (Show, Generic)
+
+type Span = (Int, Int)
+data SourceMaps = SourceMaps
+  { lexemeList  :: SnocList SourceId
+  , lexemeInfo  :: M.Map SourceId (LexemeType, Span)
+  , astParent   :: M.Map SourceId SourceId
+  , astChildren :: M.Map SourceId [SourceId]}
+  deriving (Show, Generic)
+
+instance Semigroup SourceMaps where
+  SourceMaps a b c d <> SourceMaps a' b' c' d' =
+    SourceMaps (a <> a') (b <> b') (c <> c') (d <> d')
+
+instance Monoid SourceMaps where
+  mempty = SourceMaps mempty mempty mempty mempty
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -393,7 +423,7 @@ data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
   deriving (Show, Generic)
 
 data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
-  deriving (Show, Data, Generic)
+  deriving (Show, Generic)
 
 class HasSrcPos a where
   srcPos :: a -> SrcPosCtx
@@ -443,11 +473,12 @@ data UModule = UModule
 -- === top-level blocks ===
 
 data SourceBlock = SourceBlock
-  { sbLine     :: Int
-  , sbOffset   :: Int
-  , sbLogLevel :: LogLevel
-  , sbText     :: Text
-  , sbContents :: SourceBlock' }
+  { sbLine       :: Int
+  , sbOffset     :: Int
+  , sbLogLevel   :: LogLevel
+  , sbText       :: Text
+  , sbSourceMaps :: SourceMaps
+  , sbContents   :: SourceBlock' }
   deriving (Show, Generic)
 
 type ReachedEOF = Bool

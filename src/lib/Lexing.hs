@@ -15,6 +15,7 @@ import Data.Text (Text)
 import Data.Text          qualified as T
 import Data.Void
 import Data.Word
+import qualified Data.Map.Strict as M
 
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
@@ -25,15 +26,18 @@ import Text.Megaparsec.Debug
 import Err
 import SourceInfo
 import Types.Primitives
+import Types.Source
+import Util (toSnocList)
 
 data ParseCtx = ParseCtx
   { curIndent      :: Int  -- used Reader-style (i.e. ask/local)
   , canBreak       :: Bool -- used Reader-style (i.e. ask/local)
   , prevWhitespace :: Bool -- tracks whether we just consumed whitespace
-  }
+  , sourceIdCounter :: Int
+  , curSourceMap    :: SourceMaps } -- append to, writer-style
 
 initParseCtx :: ParseCtx
-initParseCtx = ParseCtx 0 False False
+initParseCtx = ParseCtx 0 False False 0 mempty
 
 type Parser = StateT ParseCtx (Parsec Void Text)
 
@@ -64,7 +68,7 @@ nextChar = do
 {-# INLINE nextChar #-}
 
 anyCaseName  :: Lexer SourceName
-anyCaseName = label "name" $ lexeme $
+anyCaseName = label "name" $ lexeme LowerName $ -- TODO: distinguish lowercase/uppercase
   checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
     (T.unpack <$> takeWhileP Nothing (\c -> isAlphaNum c || c == '\'' || c == '_'))
 
@@ -121,7 +125,7 @@ keyWordToken = \case
   PassKW          -> "pass"
 
 keyWord :: KeyWord -> Lexer ()
-keyWord kw = lexeme $ try $ string (fromString $ keyWordToken kw)
+keyWord kw = lexeme Keyword $ try $ string (fromString $ keyWordToken kw)
   >> notFollowedBy nameTailChar
 
 keyWordSet :: HS.HashSet String
@@ -131,19 +135,19 @@ keyWordStrs :: [String]
 keyWordStrs = map keyWordToken [DefKW .. PassKW]
 
 primName :: Lexer String
-primName = lexeme $ try $ char '%' >> some alphaNumChar
+primName = lexeme MiscLexeme $ try $ char '%' >> some alphaNumChar
 
 charLit :: Lexer Char
-charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
+charLit = lexeme MiscLexeme $ char '\'' >> L.charLiteral <* char '\''
 
 strLit :: Lexer String
-strLit = lexeme $ char '"' >> manyTill L.charLiteral (char '"')
+strLit = lexeme StringLiteralLexeme $ char '"' >> manyTill L.charLiteral (char '"')
 
 natLit :: Lexer Word64
-natLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
+natLit = lexeme LiteralLexeme $ try $ L.decimal <* notFollowedBy (char '.')
 
 doubleLit :: Lexer Double
-doubleLit = lexeme $
+doubleLit = lexeme LiteralLexeme $
       try L.float
   <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
   <|> try do
@@ -161,22 +165,22 @@ knownSymStrs = HS.fromList
 
 -- string must be in `knownSymStrs`
 sym :: Text -> Lexer ()
-sym s = lexeme $ try $ string s >> notFollowedBy symChar
+sym s = lexeme Symbol $ try $ string s >> notFollowedBy symChar
 
 anySym :: Lexer String
-anySym = lexeme $ try $ do
+anySym = lexeme Symbol $ try $ do
   s <- some symChar
   failIf (s `HS.member` knownSymStrs) ""
   return s
 
 symName :: Lexer SourceName
-symName = label "symbol name" $ lexeme $ try $ do
+symName = label "symbol name" $ lexeme Symbol $ try $ do
   s <- between (char '(') (char ')') $ some symChar
   return $ "(" <> s <> ")"
 
 backquoteName :: Lexer SourceName
 backquoteName = label "backquoted name" $
-  lexeme $ try $ between (char '`') (char '`') anyCaseName
+  lexeme Symbol $ try $ between (char '`') (char '`') anyCaseName
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
@@ -192,7 +196,7 @@ semicolon = charLexeme ';'
 underscore = charLexeme '_'
 
 charLexeme :: Char -> Parser ()
-charLexeme c = void $ lexeme $ char c
+charLexeme c = void $ lexeme Symbol $ char c
 
 nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
@@ -243,10 +247,10 @@ recordNonWhitespace = modify \ctx -> ctx { prevWhitespace = False }
 {-# INLINE recordNonWhitespace #-}
 
 nameString :: Parser String
-nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar
+nameString = lexeme LowerName . try $ (:) <$> lowerChar <*> many alphaNumChar
 
 thisNameString :: Text -> Parser ()
-thisNameString s = lexeme $ try $ string s >> notFollowedBy alphaNumChar
+thisNameString s = lexeme MiscLexeme $ try $ string s >> notFollowedBy alphaNumChar
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
 bracketed left right p = between left right $ mayBreak $ sc >> p
@@ -310,10 +314,37 @@ failIf :: Bool -> String -> Parser ()
 failIf True s = fail s
 failIf False _ = return ()
 
-lexeme :: Parser a -> Parser a
-lexeme p = L.lexeme sc (p <* recordNonWhitespace)
+newSourceId :: Parser SourceId
+newSourceId = do
+  c <- gets sourceIdCounter
+  modify \ctx -> ctx { sourceIdCounter = c + 1 }
+  return $ SourceId c
+
+withSourceMaps :: Parser a -> Parser (SourceMaps, a)
+withSourceMaps cont = do
+  smPrev <- gets curSourceMap
+  modify \ctx -> ctx { curSourceMap = mempty }
+  result <- cont
+  sm <- gets curSourceMap
+  modify \ctx -> ctx { curSourceMap = smPrev }
+  return (sm, result)
+
+emitSourceMaps :: SourceMaps -> Parser ()
+emitSourceMaps m = modify \ctx -> ctx { curSourceMap = curSourceMap ctx <> m }
+
+lexeme :: LexemeType -> Parser a -> Parser a
+lexeme lexemeType p = do
+  start <- getOffset
+  ans <- p
+  end <- getOffset
+  recordNonWhitespace
+  sc
+  name <- newSourceId
+  emitSourceMaps $ mempty
+    { lexemeList = toSnocList [name]
+    , lexemeInfo = M.singleton name (lexemeType, (start, end)) }
+  return ans
 {-# INLINE lexeme #-}
 
 symbol :: Text -> Parser ()
 symbol s = void $ L.symbol sc s
-
