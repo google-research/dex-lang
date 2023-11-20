@@ -39,16 +39,12 @@ checkTypeIs e ty = liftTyperM (void $ e |: ty) >>= liftExcept
 -- === the type checking/querying monad ===
 
 newtype TyperM (r::IR) (i::S) (o::S) (a :: *) =
-  TyperM { runTyperT' :: SubstReaderT Name (StateT1 (NameMap (AtomNameC r) Int) FallibleEnvReaderM) i o a }
+  TyperM { runTyperT' :: SubstReaderT Name (StateT1 (NameMap (AtomNameC r) Int) (EnvReaderT Except)) i o a }
   deriving ( Functor, Applicative, Monad , SubstReader Name , MonadFail , Fallible , ScopeReader
-           , EnvReader, EnvExtender)
+           , EnvReader, EnvExtender, Catchable)
 
 liftTyperM :: EnvReader m => TyperM r n n a -> m n (Except a)
-liftTyperM cont =
-  liftM runFallibleM $ liftEnvReaderT $
-    flip evalStateT1 mempty $
-      runSubstReaderT idSubst $
-        runTyperT' cont
+liftTyperM cont = liftEnvReaderT $ flip evalStateT1 mempty $ runSubstReaderT idSubst $ runTyperT' cont
 {-# INLINE liftTyperM #-}
 
 -- I can't make up my mind whether a `Seq` loop should be allowed to
@@ -201,7 +197,7 @@ checkBinderType ty b cont = do
     cont b'
 
 instance IRRep r => CheckableWithEffects r (Expr r) where
-  checkWithEffects allowedEffs expr = addContext ("Checking expr:\n" ++ pprint expr) case expr of
+  checkWithEffects allowedEffs expr = case expr of
     App effTy f xs -> do
       effTy' <- checkEffTy allowedEffs effTy
       f' <- checkE f

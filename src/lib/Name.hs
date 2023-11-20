@@ -881,9 +881,6 @@ type MonadIO2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadIO (m n l)
 type Catchable1 (m :: MonadKind1) = forall (n::S)        . Catchable (m n  )
 type Catchable2 (m :: MonadKind2) = forall (n::S) (l::S) . Catchable (m n l)
 
-type CtxReader1 (m :: MonadKind1) = forall (n::S)        . CtxReader (m n  )
-type CtxReader2 (m :: MonadKind2) = forall (n::S) (l::S) . CtxReader (m n l)
-
 type MonadFail1 (m :: MonadKind1) = forall (n::S)        . MonadFail (m n  )
 type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
 
@@ -1562,13 +1559,6 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
   throwErr errs = UnsafeMakeInplaceT \_ _ -> throwErr errs
-  addErrCtx ctx cont = UnsafeMakeInplaceT \env decls ->
-    addErrCtx ctx $ unsafeRunInplaceT cont env decls
-  {-# INLINE addErrCtx #-}
-
-instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, CtxReader m)
-         => CtxReader (InplaceT bindings decls m n) where
-  getErrCtx = lift1 getErrCtx
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m
          , Alternative m)
@@ -1637,7 +1627,7 @@ newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a ::
   { unsafeRunDoubleInplaceT
     :: StateT (Scope UnsafeS, d1 UnsafeS UnsafeS) (InplaceT bindings d2 m n) a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, MonadWriter w, MonadReader r, MonadIO, Catchable)
+           , MonadWriter w, MonadReader r, MonadIO, Catchable)
 
 liftDoubleInplaceT
   :: (Monad m, ExtOutMap bindings d2, OutFrag d2)

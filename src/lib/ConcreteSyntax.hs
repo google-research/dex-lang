@@ -9,7 +9,7 @@ module ConcreteSyntax (
   keyWordStrs, showPrimName,
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
-  pattern Binary, pattern Prefix, pattern Postfix, pattern Identifier) where
+  pattern Identifier) where
 
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
@@ -28,8 +28,6 @@ import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 
 import Lexing
-import Name
-import SourceInfo
 import Types.Core
 import Types.Source
 import Types.Primitives
@@ -72,8 +70,8 @@ mustParseSourceBlock s = mustParseit s sourceBlock
 
 -- === helpers for target ADT ===
 
-interp_operator :: String -> Bin'
-interp_operator = \case
+interpOperator :: WithSrc String -> Bin
+interpOperator (WithSrc sid s) = case s of
   "&>"  -> DepAmpersand
   "."   -> Dot
   ",>"  -> DepComma
@@ -84,23 +82,10 @@ interp_operator = \case
   "->>" -> ImplicitArrow
   "=>"  -> FatArrow
   "="   -> CSEqual
-  name  -> EvalBinOp $ "(" <> name <> ")"
+  name  -> EvalBinOp $ WithSrc sid $ "(" <> name <> ")"
 
-pattern Binary :: Bin' -> Group -> Group -> Group
-pattern Binary op lhs rhs <- (WithSrc _ (CBin (WithSrc _ op) lhs rhs)) where
-  Binary op lhs rhs = joinSrc lhs rhs $ CBin (WithSrc emptySrcPosCtx op) lhs rhs
-
-pattern Prefix :: SourceName -> Group -> Group
-pattern Prefix op g <- (WithSrc _ (CPrefix op g)) where
-  Prefix op g = WithSrc emptySrcPosCtx $ CPrefix op g
-
-pattern Postfix :: SourceName -> Group -> Group
-pattern Postfix op g <- (WithSrc _ (CPostfix op g)) where
-  Postfix op g = WithSrc emptySrcPosCtx $ CPostfix op g
-
-pattern Identifier :: SourceName -> Group
-pattern Identifier name <- (WithSrc _ (CIdentifier name)) where
-  Identifier name = WithSrc emptySrcPosCtx $ CIdentifier name
+pattern Identifier :: SourceName -> GroupW
+pattern Identifier name <- (WithSrcs _ _ (CLeaf (CIdentifier name)))
 
 -- === Parser (top-level structure) ===
 
@@ -127,7 +112,7 @@ recover e = do
 importModule :: Parser SourceBlock'
 importModule = Misc . ImportModule . OrdinaryModule <$> do
   keyWord ImportKW
-  s <- anyCaseName
+  WithSrc _ s <- anyCaseName
   eol
   return s
 
@@ -171,7 +156,7 @@ logTime = do
 logBench :: Parser LogLevel
 logBench = do
   void $ try $ lexeme MiscLexeme $ char '%' >> string "bench"
-  benchName <- strLit
+  WithSrc _ benchName <- strLit
   eol
   return $ PrintBench benchName
 
@@ -190,10 +175,10 @@ sourceBlock' =
   <|> hidden (some eol >> return (Misc EmptyLines))
   <|> hidden (sc >> eol >> return (Misc CommentLine))
 
-topDecl :: Parser CTopDecl
-topDecl = withSrc $ topDecl' <* eolf
+topDecl :: Parser CTopDeclW
+topDecl = withSrcs topDecl' <* eolf
 
-topDecl' :: Parser CTopDecl'
+topDecl' :: Parser CTopDecl
 topDecl' =
       dataDef
   <|> structDef
@@ -202,7 +187,8 @@ topDecl' =
   <|> (CInstanceDecl <$> instanceDef False)
 
 proseBlock :: Parser SourceBlock'
-proseBlock = label "prose block" $ char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
+proseBlock = label "prose block" $
+  char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
@@ -214,14 +200,15 @@ topLevelCommand =
   <?> "top-level command"
 
 envQuery :: Parser EnvQuery
-envQuery = string ":debug" >> sc >> (
-      (DumpSubst        <$  (string "env"   >> sc))
-  <|> (InternalNameInfo <$> (string "iname" >> sc >> rawName))
-  <|> (SourceNameInfo   <$> (string "sname" >> sc >> anyName)))
-       <* eol
-  where
-    rawName :: Parser RawName
-    rawName = undefined -- RawName <$> (fromString <$> anyName) <*> intLit
+envQuery = error "not implemented"
+-- string ":debug" >> sc >> (
+--       (DumpSubst        <$  (string "env"   >> sc))
+--   <|> (InternalNameInfo <$> (string "iname" >> sc >> rawName))
+--   <|> (SourceNameInfo   <$> (string "sname" >> sc >> anyName)))
+--        <* eol
+--   where
+--     rawName :: Parser RawName
+--     rawName = RawName <$> (fromString <$> anyName) <*> intLit
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do
@@ -237,13 +224,13 @@ explicitCommand = do
   b <- cBlock <* eolf
   e <- case b of
     ExprBlock e -> return e
-    IndentedBlock decls -> return $ WithSrc emptySrcPosCtx $ CDo $ IndentedBlock decls
+    IndentedBlock sid decls -> withSrcs $ return $ CDo $ IndentedBlock sid decls
   return $ case (e, cmd) of
-    (WithSrc _ (CIdentifier v), GetType) -> Misc $ GetNameType v
+    (WithSrcs sid _ (CLeaf (CIdentifier v)), GetType) -> Misc $ GetNameType (WithSrc sid v)
     _ -> Command cmd e
 
-type CDefBody = ([(SourceName, Group)], [(LetAnn, CDef)])
-structDef :: Parser CTopDecl'
+type CDefBody = ([(SourceNameW, GroupW)], [(LetAnn, CDef)])
+structDef :: Parser CTopDecl
 structDef = do
   keyWord StructKW
   tyName <- anyName
@@ -267,18 +254,18 @@ funDefLetWithAnn = do
   def <- funDefLet
   return (ann, def)
 
-dataDef :: Parser CTopDecl'
+dataDef :: Parser CTopDecl
 dataDef = do
   keyWord DataKW
   tyName <- anyName
   (params, givens) <- typeParams
   dataCons <- onePerLine do
     dataConName <- anyName
-    dataConArgs <- optExplicitParams
+    dataConArgs <- optional explicitParams
     return (dataConName, dataConArgs)
   return $ CData tyName params givens dataCons
 
-interfaceDef :: Parser CTopDecl'
+interfaceDef :: Parser CTopDecl
 interfaceDef = do
   keyWord InterfaceKW
   className <- anyName
@@ -291,7 +278,7 @@ interfaceDef = do
       return (methodName, ty)
   return $ CInterface className params methodDecls
 
-nameAndType :: Parser (SourceName, Group)
+nameAndType :: Parser (SourceNameW, GroupW)
 nameAndType = do
   n <- anyName
   sym ":"
@@ -299,14 +286,14 @@ nameAndType = do
   return (n, arg)
 
 topLetOrExpr :: Parser SourceBlock'
-topLetOrExpr = withSrc topLet >>= \case
-  WithSrc _ (CSDecl ann (CExpr e)) -> do
+topLetOrExpr = topLet >>= \case
+  WithSrcs _ _ (CSDecl ann (CExpr e)) -> do
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
     return $ Command (EvalExpr (Printed Nothing)) e
   d -> return $ TopDecl d
 
-topLet :: Parser CTopDecl'
-topLet = do
+topLet :: Parser CTopDeclW
+topLet = withSrcs do
   lAnn <- topLetAnn <|> return PlainLet
   decl <- cDecl
   return $ CSDecl lAnn decl
@@ -330,15 +317,16 @@ cBlock :: Parser CSBlock
 cBlock = indentedBlock <|> ExprBlock <$> cGroup
 
 indentedBlock :: Parser CSBlock
-indentedBlock = withIndent $
-  IndentedBlock <$> (withSrc cDecl `sepBy1` (semicolon <|> try nextLine))
+indentedBlock = withIndent do
+  WithSrcs sid _ decls <- withSrcs $ withSrcs cDecl `sepBy1` (void semicolon <|> try nextLine)
+  return $ IndentedBlock sid decls
 
-cDecl :: Parser CSDecl'
+cDecl :: Parser CSDecl
 cDecl =   (CDefDecl <$> funDefLet)
       <|> simpleLet
       <|> (keyWord PassKW >> return CPass)
 
-simpleLet :: Parser CSDecl'
+simpleLet :: Parser CSDecl
 simpleLet = do
   lhs <- cGroupNoEqual
   next <- nextChar
@@ -352,14 +340,14 @@ instanceDef isNamed = do
   optNameAndArgs <- case isNamed of
     False -> keyWord InstanceKW $> Nothing
     True  -> keyWord NamedInstanceKW >> do
-      name <- fromString <$> anyName
+      name <- anyName
       args <-  (sym ":" >> return Nothing)
-           <|> ((Just <$> parens (commaSep cParenGroup)) <* sym "->")
+           <|> ((Just <$> parenList cParenGroup) <* sym "->")
       return $ Just (name, args)
   className <- anyName
   args <- argList
   givens <- optional givenClause
-  methods <- withIndent $ withSrc cDecl `sepBy1` try nextLine
+  methods <- withIndent $ (withSrcs cDecl) `sepBy1` try nextLine
   return $ CInstanceDef className args givens methods optNameAndArgs
 
 funDefLet :: Parser CDef
@@ -384,8 +372,10 @@ explicitness =   (sym "->"  $> ExplicitApp)
              <|> (sym "->>" $> ImplicitApp)
 
 -- Intended for occurrences, like `foo(x, y, z)` (cf. defParamsList).
-argList :: Parser [Group]
-argList = immediateParens (commaSep cParenGroup)
+argList :: Parser [GroupW]
+argList = do
+  WithSrcs _ _ gs <- withSrcs $ bracketedGroup immediateLParen rParen cParenGroup
+  return gs
 
 immediateLParen :: Parser ()
 immediateLParen = label "'(' (without preceding whitespace)" do
@@ -395,25 +385,24 @@ immediateLParen = label "'(' (without preceding whitespace)" do
       False -> lParen
     _ -> empty
 
-immediateParens :: Parser a -> Parser a
-immediateParens p = bracketed immediateLParen rParen p
-
 -- Putting `sym =` inside the cases gives better errors.
-typeParams :: Parser (ExplicitParams, Maybe GivenClause)
+typeParams :: Parser (Maybe ExplicitParams, Maybe GivenClause)
 typeParams =
       (explicitParamsAndGivens <* sym "=")
-  <|> (return ([], Nothing)    <* sym "=")
+  <|> (return (Nothing, Nothing)    <* sym "=")
 
-explicitParamsAndGivens :: Parser (ExplicitParams, Maybe GivenClause)
-explicitParamsAndGivens = (,) <$> explicitParams <*> optional givenClause
-
-optExplicitParams :: Parser ExplicitParams
-optExplicitParams = label "optional parameter list" $
-  explicitParams <|> return []
+explicitParamsAndGivens :: Parser (Maybe ExplicitParams, Maybe GivenClause)
+explicitParamsAndGivens = (,) <$> (Just <$> explicitParams) <*> optional givenClause
 
 explicitParams :: Parser ExplicitParams
 explicitParams = label "parameter list in parentheses (without preceding whitespace)" $
-  immediateParens $ commaSep cParenGroup
+  withSrcs $ bracketedGroup immediateLParen rParen cParenGroup
+
+parenList :: Parser GroupW -> Parser BracketedGroup
+parenList p = withSrcs $ bracketedGroup lParen rParen p
+
+bracketedGroup :: Parser () -> Parser () -> Parser GroupW -> Parser [GroupW]
+bracketedGroup l r p = bracketed l r $ commaSep p
 
 noGap :: Parser ()
 noGap = precededByWhitespace >>= \case
@@ -421,66 +410,63 @@ noGap = precededByWhitespace >>= \case
   False -> return ()
 
 givenClause :: Parser GivenClause
-givenClause = keyWord GivenKW >> do
-  (,) <$> parens (commaSep cGroup)
-      <*> optional (parens (commaSep cGroup))
+givenClause = do
+  keyWord GivenKW
+  (,) <$> parenList cGroup <*> optional (parenList cGroup)
 
 withClause :: Parser WithClause
-withClause = keyWord WithKW >> parens (commaSep cGroup)
-
-arrowOptEffs :: Parser (Maybe CEffs)
-arrowOptEffs = sym "->" >> optional cEffs
+withClause = keyWord WithKW >> parenList cGroup
 
 cEffs :: Parser CEffs
-cEffs = braces do
+cEffs = withSrcs $ braces do
   effs <- commaSep cGroupNoPipe
   effTail <- optional $ sym "|" >> cGroup
   return (effs, effTail)
 
 commaSep :: Parser a -> Parser [a]
-commaSep p = p `sepBy` sym ","
+commaSep p = sepBy p (sym ",")
 
-cParenGroup :: Parser Group
-cParenGroup = withSrc (CGivens <$> givenClause) <|> cGroup
+cParenGroup :: Parser GroupW
+cParenGroup = (withSrcs (CGivens <$> givenClause)) <|> cGroup
 
-cGroup :: Parser Group
+cGroup :: Parser GroupW
 cGroup = makeExprParser leafGroup ops
 
-cGroupNoJuxt :: Parser Group
+cGroupNoJuxt :: Parser GroupW
 cGroupNoJuxt = makeExprParser leafGroup $
   withoutOp "space" $ withoutOp "." ops
 
-cGroupNoEqual :: Parser Group
+cGroupNoEqual :: Parser GroupW
 cGroupNoEqual = makeExprParser leafGroup $
   withoutOp "=" ops
 
-cGroupNoPipe :: Parser Group
+cGroupNoPipe :: Parser GroupW
 cGroupNoPipe = makeExprParser leafGroup $
   withoutOp "|" ops
 
-cGroupNoArrow :: Parser Group
+cGroupNoArrow :: Parser GroupW
 cGroupNoArrow = makeExprParser leafGroup $
   withoutOp "->" ops
 
-cNullaryLam :: Parser Group'
+cNullaryLam :: Parser Group
 cNullaryLam = do
-  sym "\\."
+  void $ sym "\\."
   body <- cBlock
   return $ CLambda [] body
 
-cLam :: Parser Group'
+cLam :: Parser Group
 cLam = do
-  sym "\\"
+  void $ sym "\\"
   bs <- many cGroupNoJuxt
-  mayNotBreak $ sym "."
+  void $ mayNotBreak $ sym "."
   body <- cBlock
   return $ CLambda bs body
 
-cFor :: Parser Group'
+cFor :: Parser Group
 cFor = do
   kw <- forKW
   indices <- many cGroupNoJuxt
-  mayNotBreak $ sym "."
+  void $ mayNotBreak $ sym "."
   body <- cBlock
   return $ CFor kw indices body
   where forKW =     keyWord ForKW  $> KFor
@@ -488,58 +474,26 @@ cFor = do
                 <|> keyWord RofKW  $> KRof
                 <|> keyWord Rof_KW $> KRof_
 
-cDo :: Parser Group'
-cDo = keyWord DoKW >> CDo <$> cBlock
+cDo :: Parser Group
+cDo = CDo <$> cBlock
 
-cCase :: Parser Group'
+cCase :: Parser Group
 cCase = do
   keyWord CaseKW
   scrut <- cGroup
   keyWord OfKW
-  alts <- onePerLine $ (,) <$> cGroupNoArrow <*> (sym "->" *> cBlock)
+  alts <- onePerLine cAlt
   return $ CCase scrut alts
 
--- We support the following syntaxes for `if`:
--- - 1-armed then-newline
---     if predicate
---       then consequent
---     if predicate
---       then
---         consequent1
---         consequent2
--- - 2-armed then-newline else-newline
---     if predicate
---       then consequent
---       else alternate
---   and the three other versions where the consequent or the
---   alternate are themselves blocks
--- - 1-armed then-inline
---     if predicate then consequent
---     if predicate then
---       consequent1
---       consequent2
--- - 2-armed then-inline else-inline
---     if predicate then consequent else alternate
---     if predicate then consequent else
---       alternate1
---       alternate2
--- - Notably, an imagined 2-armed then-inline else-newline
---     if predicate then
---       consequent1
---       consequent2
---     else alternate
---   is not an option, because the indentation lines up badly.  To wit,
---   one would want the `else` to be indented relative to the `if`,
---   but outdented relative to the consequent block, and if the `then` is
---   inline there is no indentation level that does that.
--- - Last candiate is
---      if predicate
---        then consequent else alternate
---      if predicate
---        then consequent else
---          alternate1
---          alternate2
-cIf :: Parser Group'
+cAlt :: Parser CaseAlt
+cAlt = do
+  pat <- cGroupNoArrow
+  sym "->"
+  body <- cBlock
+  return (pat, body)
+
+-- see [Note if-syntax]
+cIf :: Parser Group
 cIf = mayNotBreak do
   keyWord IfKW
   predicate <- cGroup
@@ -548,14 +502,14 @@ cIf = mayNotBreak do
 
 thenSameLine :: Parser (CSBlock, Maybe CSBlock)
 thenSameLine = do
-  keyWord ThenKW
+  void $ keyWord ThenKW
   cBlock >>= \case
-    IndentedBlock blk -> do
+    IndentedBlock sid blk -> do
       let msg = ("No `else` may follow same-line `then` and indented consequent"
                   ++ "; indent and align both `then` and `else`, or write the "
                   ++ "whole `if` on one line.")
       mayBreak $ noElse msg
-      return (IndentedBlock blk, Nothing)
+      return (IndentedBlock sid blk, Nothing)
     ExprBlock ex -> do
       alt <- optional
         $ (keyWord ElseKW >> cBlock)
@@ -565,17 +519,17 @@ thenSameLine = do
 
 thenNewLine :: Parser (CSBlock, Maybe CSBlock)
 thenNewLine = withIndent $ do
-  keyWord ThenKW
+  void $ keyWord ThenKW
   cBlock >>= \case
-    IndentedBlock blk -> do
+    IndentedBlock sid blk -> do
       alt <- do
         -- With `mayNotBreak`, this just forbids inline else
         noElse ("Same-line `else` may not follow indented consequent;"
                 ++ " put the `else` on the next line.")
         optional $ do
-          try $ nextLine >> keyWord ElseKW
+          void $ try $ nextLine >> keyWord ElseKW
           cBlock
-      return (IndentedBlock blk, alt)
+      return (IndentedBlock sid blk, alt)
     ExprBlock ex -> do
       void $ optional $ try nextLine
       alt <- optional $ keyWord ElseKW >> cBlock
@@ -583,59 +537,69 @@ thenNewLine = withIndent $ do
 
 noElse :: String -> Parser ()
 noElse msg = (optional $ try $ sc >> keyWord ElseKW) >>= \case
-  Just () -> fail msg
+  Just _ -> fail msg
   Nothing -> return ()
 
-leafGroup :: Parser Group
-leafGroup = do
-  leaf <- leafGroup'
-  postOps <- many postfixGroup
-  return $ foldl (\accum (op, opLhs) -> joinSrc accum opLhs $ CBin (WithSrc emptySrcPosCtx op) accum opLhs) leaf postOps
+leafGroup :: Parser GroupW
+leafGroup = leafGroup' >>= appendPostfixGroups
  where
-
-  leafGroup' :: Parser Group
-  leafGroup' = withSrc do
+  leafGroup' :: Parser GroupW
+  leafGroup' = do
     next <- nextChar
     case next of
-      '_'  ->  underscore $> CHole
-      '('  ->  (CIdentifier <$> symName)
+      '_'  ->  withSrcs $ CLeaf <$> (underscore >> pure CHole)
+      '('  ->  toCLeaf CIdentifier <$> symName
            <|> cParens
       '['  -> cBrackets
-      '\"' -> CString <$> strLit
-      '\'' -> CChar <$> charLit
+      '\"' -> toCLeaf CString <$> strLit
+      '\'' -> toCLeaf CChar   <$> charLit
       '%'  -> do
-        name <- primName
+        WithSrc sid name <- primName
         case strToPrimName name of
-          Just prim -> CPrim prim <$> argList
+          Just prim -> WithSrcs sid [] <$> CPrim prim <$> argList
           Nothing   -> fail $ "Unrecognized primitive: " ++ name
-      _ | isDigit next -> (    CNat   <$> natLit
-                           <|> CFloat <$> doubleLit)
-      '\\' -> cNullaryLam <|> cLam
+      _ | isDigit next -> (    toCLeaf CNat   <$> natLit
+                           <|> toCLeaf CFloat <$> doubleLit)
+      '\\' -> withSrcs (cNullaryLam <|> cLam)
       -- For exprs include for, rof, for_, rof_
-      'f'  -> cFor  <|> cIdentifier
-      'd'  -> cDo   <|> cIdentifier
-      'r'  -> cFor  <|> cIdentifier
-      'c'  -> cCase <|> cIdentifier
-      'i'  -> cIf   <|> cIdentifier
+      'f'  -> (withSrcs cFor)  <|> cIdentifier
+      'd'  -> (withSrcs cDo)   <|> cIdentifier
+      'r'  -> (withSrcs cFor)  <|> cIdentifier
+      'c'  -> (withSrcs cCase) <|> cIdentifier
+      'i'  -> (withSrcs cIf)   <|> cIdentifier
       _    -> cIdentifier
 
-  postfixGroup :: Parser (Bin', Group)
-  postfixGroup = noGap >>
-        ((JuxtaposeNoSpace,) <$> withSrc cParens)
-    <|> ((JuxtaposeNoSpace,) <$> withSrc cBrackets)
-    <|> ((Dot,)              <$> (try $ char '.' >> withSrc cFieldName))
+  appendPostfixGroups :: GroupW -> Parser GroupW
+  appendPostfixGroups g =
+        (noGap >> appendPostfixGroup g >>= appendPostfixGroups)
+    <|> return g
 
-cFieldName :: Parser Group'
-cFieldName = cIdentifier <|> (CNat <$> natLit)
+  appendPostfixGroup :: GroupW -> Parser GroupW
+  appendPostfixGroup g = withSrcs $
+        (CJuxtapose False g <$> cParens)
+    <|> (CJuxtapose False g <$> cBrackets)
+    <|> appendFieldAccess g
 
-cIdentifier :: Parser Group'
-cIdentifier = CIdentifier <$> anyName
+  appendFieldAccess :: GroupW -> Parser Group
+  appendFieldAccess g = try do
+    void $ char '.'
+    field <- cFieldName
+    return $ CBin Dot g field
 
-cParens :: Parser Group'
-cParens = CParens <$> parens (commaSep cParenGroup)
+cFieldName :: Parser GroupW
+cFieldName = cIdentifier <|> (toCLeaf CNat <$> natLit)
 
-cBrackets :: Parser Group'
-cBrackets = CBrackets <$> brackets (commaSep cGroup)
+cIdentifier :: Parser GroupW
+cIdentifier = toCLeaf CIdentifier <$> anyName
+
+toCLeaf :: (a -> CLeaf) -> WithSrc a -> GroupW
+toCLeaf toLeaf (WithSrc sid leaf) = WithSrcs sid [] $ CLeaf $ toLeaf leaf
+
+cParens :: Parser GroupW
+cParens = withSrcs $ CParens <$> bracketedGroup lParen rParen cParenGroup
+
+cBrackets :: Parser GroupW
+cBrackets = withSrcs $ CBrackets <$> bracketedGroup lBracket rBracket cGroup
 
 -- A `PrecTable` is enough information to (i) remove or replace
 -- operators for special contexts, and (ii) build the input structure
@@ -649,7 +613,7 @@ makeExprParser p tbl = Expr.makeExprParser p tbl' where
 withoutOp :: SourceName -> PrecTable a -> PrecTable a
 withoutOp op tbl = map (filter ((/= op) . fst)) tbl
 
-ops :: PrecTable Group
+ops :: PrecTable GroupW
 ops =
   [ [symOpL   "!"]
   , [juxtaposition]
@@ -670,7 +634,6 @@ ops =
   , [symOpN  "==", symOpN  "!="]
   , [symOpL  "&&"]
   , [symOpL  "||"]
-  , [unOpPre "..", unOpPre "..<", unOpPost "..", unOpPost "<.."]
   , [symOpR  "=>"]
   , [arrow, symOpR "->>"]
   , [symOpL ">>>"]
@@ -689,87 +652,79 @@ ops =
   , [symOpL   "="]
   ] where
   other = ("other", anySymOp)
-  backquote = ("backquote", Expr.InfixL $ opWithSrc $ backquoteName >>= (return . binApp . EvalBinOp))
-  juxtaposition  = ("space", Expr.InfixL $ opWithSrc $ sc $> (binApp JuxtaposeWithSpace))
+  backquote = ("backquote", Expr.InfixL backquoteOp)
+  juxtaposition  = ("space", Expr.InfixL $ sc >> addSrcIdToBinOp (return $ CJuxtapose True))
+  withClausePostfix = ("with", Expr.Postfix withClausePostfixOp)
   arrow = ("->", Expr.InfixR arrowOp)
 
-opWithSrc :: Parser (SrcPos -> a -> a -> a)
-          -> Parser (a -> a -> a)
-opWithSrc p = do
-  (f, pos) <- withPos p
-  return $ f pos
-{-# INLINE opWithSrc #-}
+addSrcIdToBinOp :: Parser (GroupW -> GroupW -> Group) -> Parser (GroupW -> GroupW -> GroupW)
+addSrcIdToBinOp op = do
+  f <- op
+  sid <- freshSrcId
+  return \x y -> WithSrcs sid [] $ f x y
+{-# INLINE addSrcIdToBinOp #-}
 
-anySymOp :: Expr.Operator Parser Group
-anySymOp = Expr.InfixL $ opWithSrc $ do
+addSrcIdToUnOp :: Parser (GroupW -> Group) -> Parser (GroupW -> GroupW)
+addSrcIdToUnOp op = do
+  f <- op
+  sid <- freshSrcId
+  return \x -> WithSrcs sid [] $ f x
+{-# INLINE addSrcIdToUnOp #-}
+
+backquoteOp :: Parser (GroupW -> GroupW -> GroupW)
+backquoteOp = binApp do
+  fname <- backquoteName
+  return $ EvalBinOp fname
+
+anySymOp :: Expr.Operator Parser GroupW
+anySymOp = Expr.InfixL $ binApp do
   s <- label "infix operator" (mayBreak anySym)
-  return $ binApp $ interp_operator s
+  return $ interpOperator s
 
-infixSym :: SourceName -> Parser ()
-infixSym s = mayBreak $ sym $ T.pack s
+infixSym :: SourceName -> Parser SrcId
+infixSym s = mayBreak $ symWithId $ T.pack s
 
-symOpN :: SourceName -> (SourceName, Expr.Operator Parser Group)
+symOpN :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
 symOpN s = (s, Expr.InfixN $ symOp s)
 
-symOpL :: SourceName -> (SourceName, Expr.Operator Parser Group)
+symOpL :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
 symOpL s = (s, Expr.InfixL $ symOp s)
 
-symOpR :: SourceName -> (SourceName, Expr.Operator Parser Group)
+symOpR :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
 symOpR s = (s, Expr.InfixR $ symOp s)
 
-symOp :: SourceName -> Parser (Group -> Group -> Group)
-symOp s = opWithSrc $ do
-  label "infix operator" (infixSym s)
-  return $ binApp $ interp_operator s
+symOp :: SourceName -> Parser (GroupW -> GroupW -> GroupW)
+symOp s = binApp do
+  sid <- label "infix operator" (infixSym s)
+  return $ interpOperator (WithSrc sid s)
 
-arrowOp :: Parser (Group -> Group -> Group)
-arrowOp = do
-  WithSrc src effs <- withSrc arrowOptEffs
-  return \lhs rhs -> WithSrc src $ CArrow lhs effs rhs
+arrowOp :: Parser (GroupW -> GroupW -> GroupW)
+arrowOp = addSrcIdToBinOp do
+  sym "->"
+  optEffs <- optional cEffs
+  return \lhs rhs -> CArrow lhs optEffs rhs
 
-unOpPre :: SourceName -> (SourceName, Expr.Operator Parser Group)
-unOpPre s = (s, Expr.Prefix $ unOp CPrefix s)
+unOpPre :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
+unOpPre s = (s, Expr.Prefix $ prefixOp s)
 
-unOpPost :: SourceName -> (SourceName, Expr.Operator Parser Group)
-unOpPost s = (s, Expr.Postfix $ unOp CPostfix s)
+prefixOp :: SourceName -> Parser (GroupW -> GroupW)
+prefixOp s = addSrcIdToUnOp do
+  symId <- symWithId (fromString s)
+  return $ CPrefix (WithSrc symId s)
 
-unOp :: (SourceName -> Group -> Group') -> SourceName -> Parser (Group -> Group)
-unOp f s = do
-  ((), pos) <- withPos $ sym $ fromString s
-  return \g@(WithSrc grpPos _) -> WithSrc (joinPos (fromPos pos) grpPos) $ f s g
+binApp :: Parser Bin -> Parser (GroupW -> GroupW -> GroupW)
+binApp f = addSrcIdToBinOp $ CBin <$> f
 
-binApp :: Bin' -> SrcPos -> Group -> Group -> Group
-binApp f pos x y = joinSrc3 f' x y $ CBin f' x y
-  where f' = WithSrc (fromPos pos) f
+withClausePostfixOp :: Parser (GroupW -> GroupW)
+withClausePostfixOp = addSrcIdToUnOp do
+  rhs <- withClause
+  return \lhs -> CWith lhs rhs
 
-withClausePostfix :: (SourceName, Expr.Operator Parser Group)
-withClausePostfix = ("with", op)
-  where
-    op = Expr.Postfix do
-      rhs <- withClause
-      return \lhs -> WithSrc emptySrcPosCtx $ CWith lhs rhs  -- TODO: source info
-
-withSrc :: Parser a -> Parser (WithSrc a)
-withSrc p = do
-  (x, pos) <- withPos p
-  return $ WithSrc (fromPos pos) x
-
-joinSrc :: WithSrc a1 -> WithSrc a2 -> a3 -> WithSrc a3
-joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
-
-joinSrc3 :: WithSrc a1 -> WithSrc a2 -> WithSrc a3 -> a4 -> WithSrc a4
-joinSrc3 (WithSrc p1 _) (WithSrc p2 _) (WithSrc p3 _) x =
-  WithSrc (concatPos [p1, p2, p3]) x
-
-joinPos :: SrcPosCtx -> SrcPosCtx -> SrcPosCtx
-joinPos (SrcPosCtx Nothing _) c@(SrcPosCtx _ _) = c
-joinPos c@(SrcPosCtx _ _) (SrcPosCtx Nothing _) = c
-joinPos (SrcPosCtx (Just (l, h)) spanId) (SrcPosCtx (Just (l', h')) _) =
-  SrcPosCtx (Just (min l l', max h h')) spanId
-
-concatPos :: [SrcPosCtx] -> SrcPosCtx
-concatPos [] = error "concatPos: unexpected empty [SrcPosCtx]"
-concatPos (pos:rest) = foldl joinPos pos rest
+withSrcs :: Parser a -> Parser (WithSrcs a)
+withSrcs p = do
+  sid <- freshSrcId
+  (sids, result) <- collectAtomicLexemeIds p
+  return $ WithSrcs sid sids result
 
 -- === primitive constructors and operators ===
 
@@ -865,3 +820,47 @@ primNames = M.fromList
     unary  op = UUnOp  op
     ptrTy  ty = PtrType (CPU, ty)
     miscOp op = UMiscOp op
+
+-- === notes ===
+
+-- note [if-syntax]
+-- We support the following syntaxes for `if`:
+-- - 1-armed then-newline
+--     if predicate
+--       then consequent
+--     if predicate
+--       then
+--         consequent1
+--         consequent2
+-- - 2-armed then-newline else-newline
+--     if predicate
+--       then consequent
+--       else alternate
+--   and the three other versions where the consequent or the
+--   alternate are themselves blocks
+-- - 1-armed then-inline
+--     if predicate then consequent
+--     if predicate then
+--       consequent1
+--       consequent2
+-- - 2-armed then-inline else-inline
+--     if predicate then consequent else alternate
+--     if predicate then consequent else
+--       alternate1
+--       alternate2
+-- - Notably, an imagined 2-armed then-inline else-newline
+--     if predicate then
+--       consequent1
+--       consequent2
+--     else alternate
+--   is not an option, because the indentation lines up badly.  To wit,
+--   one would want the `else` to be indented relative to the `if`,
+--   but outdented relative to the consequent block, and if the `then` is
+--   inline there is no indentation level that does that.
+-- - Last candiate is
+--      if predicate
+--        then consequent else alternate
+--      if predicate
+--        then consequent else
+--          alternate1
+--          alternate2

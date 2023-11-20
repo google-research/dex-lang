@@ -85,7 +85,7 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
       SubstReaderT Name
         (ReaderT1 CommuteMap
           (ReaderT1 (LiftE Word32)
-            (StateT1 (LiftE [Err]) (BuilderT SimpIR FallibleM)))) i o a }
+            (StateT1 (LiftE [Err]) (BuilderT SimpIR Except)))) i o a }
   deriving ( Functor, Applicative, Monad, MonadFail, MonadReader (CommuteMap o)
            , MonadState (LiftE [Err] o), Fallible, ScopeReader, EnvReader
            , EnvExtender, Builder SimpIR, ScopableBuilder SimpIR, Catchable
@@ -108,23 +108,15 @@ liftTopVectorizeM vectorByteWidth action = do
     flip runStateT1 mempty $ runReaderT1 (LiftE vectorByteWidth) $
       runReaderT1 mempty $ runSubstReaderT idSubst $
         runTopVectorizeM action
-  case runFallibleM fallible of
+  case fallible of
     -- The failure case should not occur: vectorization errors should have been
     -- caught inside `vectorizeLoopsDecls` (and should have been added to the
     -- `Err` state of the `StateT` instance that is run with `runStateT` above).
     Failure errs -> error $ pprint errs
     Success (a, (LiftE errs)) -> return $ (a, errs)
 
-addVectErrCtx :: Fallible m => String -> String -> m a -> m a
-addVectErrCtx name payload m =
-  let ctx = mempty { messageCtx = ["In `" ++ name ++ "`:\n" ++ payload] }
-  in addErrCtx ctx m
-
 throwVectErr :: Fallible m => String -> m a
-throwVectErr msg = throwErr (Err MiscErr mempty msg)
-
-prependCtxToErr :: ErrCtx -> Err -> Err
-prependCtxToErr ctx (Err ty ctx' msg) = Err ty (ctx <> ctx') msg
+throwVectErr msg = throw MiscErr msg
 
 askVectorByteWidth :: TopVectorizeM i o Word32
 askVectorByteWidth = TopVectorizeM $ liftSubstReaderT $ lift11 (fromLiftE <$> ask)
@@ -181,10 +173,7 @@ vectorizeLoopsExpr expr = do
                 emit =<< mkSeq dir (IxType IdxRepTy (DictCon (IxRawFin (IdxRepVal vn)))) dest' body')
               else renameM expr >>= emit)
           `catchErr` \err -> do
-              let msg = "In `vectorizeLoopsDecls`:\nExpr:\n" ++ pprint expr
-                  ctx = mempty { messageCtx = [msg] }
-                  err' = prependCtxToErr ctx err
-              modify (\(LiftE errs) -> LiftE (err':errs))
+              modify (\(LiftE errs) -> LiftE (err:errs))
               recurSeq expr
         _ -> recurSeq expr
     PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
@@ -333,7 +322,7 @@ vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
-    SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 FallibleM)) i o a }
+    SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 Except)) i o a }
   deriving ( Functor, Applicative, Monad, Fallible, MonadFail
            , SubstReader VSubstValC , Builder SimpIR, EnvReader, EnvExtender
            , ScopeReader, ScopableBuilder SimpIR)
@@ -343,8 +332,7 @@ liftVectorizeM :: (SubstReader Name m, EnvReader (m i), Fallible (m i o))
 liftVectorizeM loopWidth action = do
   subst <- getSubst
   act <- liftBuilderT $ runSubstReaderT (newSubst $ vSubst subst) $ runVectorizeM action
-  let fallible = flip runReaderT loopWidth act
-  case runFallibleM fallible of
+  case flip runReaderT loopWidth act of
     Success a -> return a
     Failure errs -> throwErr errs  -- re-raise inside ambient monad
   where
@@ -374,7 +362,7 @@ vectorizeLamExpr (LamExpr bs body) argStabilities = case (bs, argStabilities) of
   _ -> error "Zip error"
 
 vectorizeExpr :: Emits o => SExpr i -> VectorizeM i o (VAtom o)
-vectorizeExpr expr = addVectErrCtx "vectorizeExpr" ("Expr:\n" ++ pprint expr) do
+vectorizeExpr expr = do
   case expr of
     Block _ block -> vectorizeBlock block
     TabApp _ tbl ix -> do
@@ -523,7 +511,7 @@ vectorizeType t = do
   fmapNamesM (uniformSubst subst) t
 
 vectorizeAtom :: SAtom i -> VectorizeM i o (VAtom o)
-vectorizeAtom atom = addVectErrCtx "vectorizeAtom" ("Atom:\n" ++ pprint atom) do
+vectorizeAtom atom = do
   case atom of
     Stuck _ e -> vectorizeStuck e
     Con con -> case con of
@@ -557,13 +545,12 @@ uniformSubst subst n = case subst ! n of
   _ -> error "Can't vectorize atom"
 
 getVectorType :: SType o -> VectorizeM i o (SType o)
-getVectorType ty = addVectErrCtx "getVectorType" ("Type:\n" ++ pprint ty) do
-  case ty of
-    BaseTy (Scalar sbt) -> do
-      els <- getLoopWidth
-      return $ BaseTy $ Vector [els] sbt
-    -- TODO: Should we support tables?
-    _ -> throwVectErr $ "Can't make a vector of " ++ pprint ty
+getVectorType ty = case ty of
+  BaseTy (Scalar sbt) -> do
+    els <- getLoopWidth
+    return $ BaseTy $ Vector [els] sbt
+  -- TODO: Should we support tables?
+  _ -> throwVectErr $ "Can't make a vector of " ++ pprint ty
 
 ensureVarying :: Emits o => VAtom o -> VectorizeM i o (SAtom o)
 ensureVarying (VVal s val) = case s of

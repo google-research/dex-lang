@@ -379,9 +379,9 @@ instance Pretty IxMethod where
   pretty method = p $ show method
 
 instance Pretty (SolverBinding n) where
-  pretty (InfVarBound  ty _) = "Inference variable of type:" <+> p ty
-  pretty (SkolemBound  ty  ) = "Skolem variable of type:"    <+> p ty
-  pretty (DictBound    ty  ) = "Dictionary variable of type:"  <+> p ty
+  pretty (InfVarBound  ty) = "Inference variable of type:" <+> p ty
+  pretty (SkolemBound  ty) = "Skolem variable of type:"    <+> p ty
+  pretty (DictBound    ty) = "Dictionary variable of type:"  <+> p ty
 
 instance Pretty (Binding c n) where
   pretty b = case b of
@@ -510,24 +510,24 @@ instance Pretty Result where
     where maybeErr = case r of Failure err -> p err
                                Success () -> mempty
 
-instance Pretty (UBinder c n l) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UBinder c n l) where
+instance Pretty (UBinder' c n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UBinder' c n l) where
   prettyPrec b = atPrec ArgPrec case b of
-    UBindSource _ v -> p v
-    UIgnore         -> "_"
-    UBind _ v _     -> p v
+    UBindSource v -> p v
+    UIgnore       -> "_"
+    UBind v _     -> p v
 
-instance PrettyE e => Pretty (WithSrcE e n) where
-  pretty (WithSrcE _ x) = p x
+instance Pretty e => Pretty (WithSrcs e) where pretty (WithSrcs _ _ x) = p x
+instance PrettyPrec e => PrettyPrec (WithSrcs e) where prettyPrec (WithSrcs _ _ x) = prettyPrec x
 
-instance PrettyPrecE e => PrettyPrec (WithSrcE e n) where
-  prettyPrec (WithSrcE _ x) = prettyPrec x
+instance Pretty e => Pretty (WithSrc e) where pretty (WithSrc _ x) = p x
+instance PrettyPrec e => PrettyPrec (WithSrc e) where prettyPrec (WithSrc _ x) = prettyPrec x
 
-instance PrettyB b => Pretty (WithSrcB b n l) where
-  pretty (WithSrcB _ x) = p x
+instance PrettyE e => Pretty (WithSrcE e n) where pretty (WithSrcE _ x) = p x
+instance PrettyPrecE e => PrettyPrec (WithSrcE e n) where prettyPrec (WithSrcE _ x) = prettyPrec x
 
-instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where
-  prettyPrec (WithSrcB _ x) = prettyPrec x
+instance PrettyB b => Pretty (WithSrcB b n l) where pretty (WithSrcB _ x) = p x
+instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where prettyPrec (WithSrcB _ x) = prettyPrec x
 
 instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName _ v) = p v
@@ -1037,9 +1037,6 @@ instance Pretty SourceBlock' where
   pretty d = fromString $ show d
 
 instance Pretty CTopDecl where
-  pretty (WithSrc _ d) = p d
-
-instance Pretty CTopDecl' where
   pretty (CSDecl ann decl) = annDoc <> p decl
     where annDoc = case ann of
             PlainLet -> mempty
@@ -1047,9 +1044,6 @@ instance Pretty CTopDecl' where
   pretty d = fromString $ show d
 
 instance Pretty CSDecl where
-  pretty (WithSrc _ d) = p d
-
-instance Pretty CSDecl' where
   pretty = undefined
   -- pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
   -- pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
@@ -1070,38 +1064,27 @@ instance Pretty AppExplicitness where
   pretty ImplicitApp = "->>"
 
 instance Pretty CSBlock where
-  pretty (IndentedBlock decls) = nest 2 $ prettyLines decls
+  pretty (IndentedBlock _ decls) = nest 2 $ prettyLines decls
   pretty (ExprBlock g) = pArg g
 
+instance Pretty Group where pretty = prettyFromPrettyPrec
 instance PrettyPrec Group where
-  prettyPrec (WithSrc _ g) = prettyPrec g
-
-instance Pretty Group where
-  pretty = prettyFromPrettyPrec
-
-instance PrettyPrec Group' where
-  prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
-  prettyPrec (CPrim prim args) = prettyOpDefault prim args
-  prettyPrec (CParens blk)  =
-    atPrec ArgPrec $ "(" <> p blk <> ")"
-  prettyPrec (CBrackets g) = atPrec ArgPrec $ pretty g
-  prettyPrec (CBin (WithSrc _ JuxtaposeWithSpace) lhs rhs) =
-    atPrec AppPrec $ pApp lhs <+> pArg rhs
-  prettyPrec (CBin op lhs rhs) =
-    atPrec LowestPrec $ pArg lhs <+> p op <+> pArg rhs
-  prettyPrec (CLambda args body) =
-    atPrec LowestPrec $ "\\" <> spaced args <> "." <> p body
-  prettyPrec (CCase scrut alts) =
-    atPrec LowestPrec $ "case " <> p scrut <> " of " <> prettyLines alts
-  prettyPrec g = atPrec ArgPrec $ fromString $ show g
+  prettyPrec = undefined
+  -- prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
+  -- prettyPrec (CPrim prim args) = prettyOpDefault prim args
+  -- prettyPrec (CParens blk)  =
+  --   atPrec ArgPrec $ "(" <> p blk <> ")"
+  -- prettyPrec (CBrackets g) = atPrec ArgPrec $ pretty g
+  -- prettyPrec (CBin op lhs rhs) =
+  --   atPrec LowestPrec $ pArg lhs <+> p op <+> pArg rhs
+  -- prettyPrec (CLambda args body) =
+  --   atPrec LowestPrec $ "\\" <> spaced args <> "." <> p body
+  -- prettyPrec (CCase scrut alts) =
+  --   atPrec LowestPrec $ "case " <> p scrut <> " of " <> prettyLines alts
+  -- prettyPrec g = atPrec ArgPrec $ fromString $ show g
 
 instance Pretty Bin where
-  pretty (WithSrc _ b) = p b
-
-instance Pretty Bin' where
-  pretty (EvalBinOp name) = fromString name
-  pretty JuxtaposeWithSpace = " "
-  pretty JuxtaposeNoSpace = ""
+  pretty (EvalBinOp name) = fromString (withoutSrc name)
   pretty DepAmpersand = "&>"
   pretty Dot = "."
   pretty DepComma = ",>"

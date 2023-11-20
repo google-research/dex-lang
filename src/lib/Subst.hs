@@ -334,7 +334,6 @@ deriving instance (Monad1 m, MonadFail1   m) => MonadFail   (SubstReaderT v m i 
 deriving instance (Monad1 m, Alternative1 m) => Alternative (SubstReaderT v m i o)
 deriving instance Fallible1  m => Fallible  (SubstReaderT v m i o)
 deriving instance Catchable1 m => Catchable (SubstReaderT v m i o)
-deriving instance CtxReader1 m => CtxReader (SubstReaderT v m i o)
 
 type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
 

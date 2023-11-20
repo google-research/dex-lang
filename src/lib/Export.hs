@@ -87,7 +87,7 @@ instance FromName (Rename r) where
   fromName = JustRefer
 
 newtype ExportSigM (r::IR) (i::S) (o::S) (a:: *) = ExportSigM {
-  runExportSigM :: SubstReaderT (Rename r) (EnvReaderT FallibleM) i o a }
+  runExportSigM :: SubstReaderT (Rename r) (EnvReaderT Except) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader (Rename r), MonadFail)
 
@@ -95,7 +95,7 @@ liftExportSigM :: (EnvReader m, Fallible1 m) => ExportSigM r n n a -> m n a
 liftExportSigM cont = do
   Distinct <- getDistinct
   env <- unsafeGetEnv
-  liftExcept $ runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $
+  liftExcept $ runEnvReaderT env $ runSubstReaderT idSubst $
     runExportSigM cont
 
 corePiToExportSig :: CallingConvention

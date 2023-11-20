@@ -59,7 +59,6 @@ import Inline
 import Logging
 import Lower
 import MTL1
-import SourceInfo
 import Subst
 import Name
 import OccAnalysis
@@ -237,12 +236,12 @@ evalSourceBlock mname block = do
   case resultErrs result of
     Failure _ -> case sbContents block of
       TopDecl decl -> do
-        case runFallibleM (parseDecl decl) of
+        case parseDecl decl of
           Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
           Failure _ -> return ()
       _ -> return ()
     _ -> return ()
-  return $ filterLogs block $ addResultCtx block result
+  return $ filterLogs block result
 
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
@@ -267,7 +266,7 @@ evalSourceBlock' mname block = case sbContents block of
             s <- getDexString stringVal
             logTop $ TextOut s
       RenderHtml -> do
-        stringVal <- evalUExpr $ addTypeAnn expr (referTo "String")
+        stringVal <- evalUExpr $ addTypeAnn expr (referTo $ WithSrc (srcPos expr) "String")
         s <- getDexString stringVal
         logTop $ HtmlOut s
     ExportFun _ -> error "not implemented"
@@ -280,23 +279,21 @@ evalSourceBlock' mname block = case sbContents block of
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUExpr expr
       logTop $ TextOut $ pprintCanonicalized $ getType val
-  DeclareForeign fname dexName cTy -> do
-    let b = fromString dexName :: UBinder (AtomNameC CoreIR) VoidS VoidS
+  DeclareForeign fname (WithSrc _ dexName) cTy -> do
     ty <- evalUType =<< parseExpr cTy
     asFFIFunType ty >>= \case
       Nothing -> throw TypeErr
         "FFI functions must be n-ary first order functions with the IO effect"
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
-        let hint = getNameHint b
-        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun fname impFunTy
+        let hint = fromString dexName
+        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun (withoutSrc fname) impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
-        UBindSource _ sourceName <- return b
         emitSourceMap $ SourceMap $
-          M.singleton sourceName [ModuleVar mname (Just $ UAtomVar vCore)]
+          M.singleton dexName [ModuleVar mname (Just $ UAtomVar vCore)]
   DeclareCustomLinearization fname zeros g -> do
     expr <- parseExpr g
-    lookupSourceMap fname >>= \case
+    lookupSourceMap (withoutSrc fname) >>= \case
       Nothing -> throw UnboundVarErr $ pprint fname
       Just (UAtomVar fname') -> do
         lookupCustomRules fname' >>= \case
@@ -328,7 +325,7 @@ evalSourceBlock' mname block = case sbContents block of
   UnParseable _ s -> throw ParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- sourceNameType v
+      ty <- sourceNameType (withoutSrc v)
       logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
@@ -337,11 +334,11 @@ evalSourceBlock' mname block = case sbContents block of
     EmptyLines   -> return ()
   where
     addTypeAnn :: UExpr n -> UExpr n -> UExpr n
-    addTypeAnn e = WithSrcE emptySrcPosCtx . UTypeAnn e
+    addTypeAnn e = WithSrcE (srcPos e) . UTypeAnn e
     addShowAny :: UExpr n -> UExpr n
-    addShowAny e = WithSrcE emptySrcPosCtx $ UApp (referTo "show_any") [e] []
-    referTo :: SourceName -> UExpr n
-    referTo = WithSrcE emptySrcPosCtx . UVar . SourceName emptySrcPosCtx
+    addShowAny e = WithSrcE (srcPos e) $ UApp (referTo $ WithSrc (srcPos e) "show_any") [e] []
+    referTo :: SourceNameW -> UExpr n
+    referTo (WithSrc sid name) =  WithSrcE sid $ UVar $ SourceName sid name
 
 runEnvQuery :: Topper m => EnvQuery -> m n ()
 runEnvQuery query = do
@@ -737,10 +734,6 @@ checkPass name cont = do
   logTop $ MiscLog $ "Checks skipped (not a debug build)"
 #endif
   return result
-
-addResultCtx :: SourceBlock -> Result -> Result
-addResultCtx block (Result outs errs) =
-  Result outs (addSrcTextContext (sbOffset block) (sbText block) errs)
 
 logTop :: TopLogger m => Output -> m ()
 logTop x = logIO [x]

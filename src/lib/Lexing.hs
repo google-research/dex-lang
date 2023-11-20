@@ -24,7 +24,6 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
 
 import Err
-import SourceInfo
 import Types.Primitives
 import Types.Source
 import Util (toSnocList)
@@ -34,10 +33,11 @@ data ParseCtx = ParseCtx
   , canBreak       :: Bool -- used Reader-style (i.e. ask/local)
   , prevWhitespace :: Bool -- tracks whether we just consumed whitespace
   , sourceIdCounter :: Int
+  , curAtomicLexemes :: [SrcId]
   , curSourceMap    :: SourceMaps } -- append to, writer-style
 
 initParseCtx :: ParseCtx
-initParseCtx = ParseCtx 0 False False 0 mempty
+initParseCtx = ParseCtx 0 False False 0 mempty mempty
 
 type Parser = StateT ParseCtx (Parsec Void Text)
 
@@ -67,12 +67,15 @@ nextChar = do
   return $ T.head i
 {-# INLINE nextChar #-}
 
-anyCaseName  :: Lexer SourceName
-anyCaseName = label "name" $ lexeme LowerName $ -- TODO: distinguish lowercase/uppercase
+anyCaseName  :: Lexer (WithSrc SourceName)
+anyCaseName = label "name" $ lexeme LowerName anyCaseName' -- TODO: distinguish lowercase/uppercase
+
+anyCaseName' :: Lexer SourceName
+anyCaseName' =
   checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
     (T.unpack <$> takeWhileP Nothing (\c -> isAlphaNum c || c == '\'' || c == '_'))
 
-anyName :: Lexer SourceName
+anyName :: Lexer (WithSrc SourceName)
 anyName = anyCaseName <|> symName
 
 checkNotKeyword :: Parser String -> Parser String
@@ -125,8 +128,11 @@ keyWordToken = \case
   PassKW          -> "pass"
 
 keyWord :: KeyWord -> Lexer ()
-keyWord kw = lexeme Keyword $ try $ string (fromString $ keyWordToken kw)
-  >> notFollowedBy nameTailChar
+keyWord kw = atomicLexeme Keyword $ try $
+  string (fromString $ keyWordToken kw) >> notFollowedBy nameTailChar
+  where
+    nameTailChar :: Parser Char
+    nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
 
 keyWordSet :: HS.HashSet String
 keyWordSet = HS.fromList keyWordStrs
@@ -134,19 +140,19 @@ keyWordSet = HS.fromList keyWordStrs
 keyWordStrs :: [String]
 keyWordStrs = map keyWordToken [DefKW .. PassKW]
 
-primName :: Lexer String
+primName :: Lexer (WithSrc String)
 primName = lexeme MiscLexeme $ try $ char '%' >> some alphaNumChar
 
-charLit :: Lexer Char
+charLit :: Lexer (WithSrc Char)
 charLit = lexeme MiscLexeme $ char '\'' >> L.charLiteral <* char '\''
 
-strLit :: Lexer String
+strLit :: Lexer (WithSrc String)
 strLit = lexeme StringLiteralLexeme $ char '"' >> manyTill L.charLiteral (char '"')
 
-natLit :: Lexer Word64
+natLit :: Lexer (WithSrc Word64)
 natLit = lexeme LiteralLexeme $ try $ L.decimal <* notFollowedBy (char '.')
 
-doubleLit :: Lexer Double
+doubleLit :: Lexer (WithSrc Double)
 doubleLit = lexeme LiteralLexeme $
       try L.float
   <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
@@ -163,24 +169,30 @@ knownSymStrs = HS.fromList
   , "->", "->>", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>"
   , "..", "<..", "..<", "..<", "<..<", "?", "#", "##", "#?", "#&", "#|", "@"]
 
--- string must be in `knownSymStrs`
 sym :: Text -> Lexer ()
-sym s = lexeme Symbol $ try $ string s >> notFollowedBy symChar
+sym s = atomicLexeme Symbol $ sym' s
 
-anySym :: Lexer String
+symWithId :: Text -> Lexer SrcId
+symWithId s = liftM srcPos $ lexeme Symbol $ sym' s
+
+-- string must be in `knownSymStrs`
+sym' :: Text -> Lexer ()
+sym' s = void $ try $ string s >> notFollowedBy symChar
+
+anySym :: Lexer (WithSrc String)
 anySym = lexeme Symbol $ try $ do
   s <- some symChar
   failIf (s `HS.member` knownSymStrs) ""
   return s
 
-symName :: Lexer SourceName
+symName :: Lexer (WithSrc SourceName)
 symName = label "symbol name" $ lexeme Symbol $ try $ do
   s <- between (char '(') (char ')') $ some symChar
   return $ "(" <> s <> ")"
 
-backquoteName :: Lexer SourceName
+backquoteName :: Lexer (WithSrc SourceName)
 backquoteName = label "backquoted name" $
-  lexeme Symbol $ try $ between (char '`') (char '`') anyCaseName
+  lexeme Symbol $ try $ between (char '`') (char '`') anyCaseName'
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
@@ -196,10 +208,7 @@ semicolon = charLexeme ';'
 underscore = charLexeme '_'
 
 charLexeme :: Char -> Parser ()
-charLexeme c = void $ lexeme Symbol $ char c
-
-nameTailChar :: Parser Char
-nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
+charLexeme c = atomicLexeme Symbol $ void $ char c
 
 symChar :: Parser Char
 symChar = token (\c -> if HS.member c symChars then Just c else Nothing) mempty
@@ -247,34 +256,22 @@ recordNonWhitespace = modify \ctx -> ctx { prevWhitespace = False }
 {-# INLINE recordNonWhitespace #-}
 
 nameString :: Parser String
-nameString = lexeme LowerName . try $ (:) <$> lowerChar <*> many alphaNumChar
+nameString = lexemeIgnoreSrcId LowerName . try $ (:) <$> lowerChar <*> many alphaNumChar
 
 thisNameString :: Text -> Parser ()
-thisNameString s = lexeme MiscLexeme $ try $ string s >> notFollowedBy alphaNumChar
+thisNameString s = lexemeIgnoreSrcId MiscLexeme $ try $ string s >> notFollowedBy alphaNumChar
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
-bracketed left right p = between left right $ mayBreak $ sc >> p
+bracketed left right p = do
+  left
+  ans <- mayBreak $ sc >> p
+  right
+  return ans
 {-# INLINE bracketed #-}
-
-parens :: Parser a -> Parser a
-parens p = bracketed lParen rParen p
-{-# INLINE parens #-}
-
-brackets :: Parser a -> Parser a
-brackets p = bracketed lBracket rBracket p
-{-# INLINE brackets #-}
 
 braces :: Parser a -> Parser a
 braces p = bracketed lBrace rBrace p
 {-# INLINE braces #-}
-
-withPos :: Parser a -> Parser (a, SrcPos)
-withPos p = do
-  n <- getOffset
-  x <- p
-  n' <- getOffset
-  return $ (x, (n, n'))
-{-# INLINE withPos #-}
 
 nextLine :: Parser ()
 nextLine = do
@@ -286,7 +283,9 @@ nextLine = do
 withSource :: Parser a -> Parser (Text, a)
 withSource p = do
   s <- getInput
-  (x, (start, end)) <- withPos p
+  start <- getOffset
+  x <- p
+  end <- getOffset
   return (T.take (end - start) s, x)
 {-# INLINE withSource #-}
 
@@ -314,11 +313,11 @@ failIf :: Bool -> String -> Parser ()
 failIf True s = fail s
 failIf False _ = return ()
 
-newSourceId :: Parser SourceId
-newSourceId = do
+freshSrcId :: Parser SrcId
+freshSrcId = do
   c <- gets sourceIdCounter
   modify \ctx -> ctx { sourceIdCounter = c + 1 }
-  return $ SourceId c
+  return $ SrcId c
 
 withSourceMaps :: Parser a -> Parser (SourceMaps, a)
 withSourceMaps cont = do
@@ -332,19 +331,37 @@ withSourceMaps cont = do
 emitSourceMaps :: SourceMaps -> Parser ()
 emitSourceMaps m = modify \ctx -> ctx { curSourceMap = curSourceMap ctx <> m }
 
-lexeme :: LexemeType -> Parser a -> Parser a
+lexemeIgnoreSrcId :: LexemeType -> Parser a -> Parser a
+lexemeIgnoreSrcId lexemeType p = withoutSrc <$> lexeme lexemeType p
+
+symbol :: Text -> Parser ()
+symbol s = void $ L.symbol sc s
+
+lexeme :: LexemeType -> Parser a -> Parser (WithSrc a)
 lexeme lexemeType p = do
   start <- getOffset
   ans <- p
   end <- getOffset
   recordNonWhitespace
   sc
-  name <- newSourceId
+  sid <- freshSrcId
   emitSourceMaps $ mempty
-    { lexemeList = toSnocList [name]
-    , lexemeInfo = M.singleton name (lexemeType, (start, end)) }
-  return ans
+    { lexemeList = toSnocList [sid]
+    , lexemeInfo = M.singleton sid (lexemeType, (start, end)) }
+  return $ WithSrc sid ans
 {-# INLINE lexeme #-}
 
-symbol :: Text -> Parser ()
-symbol s = void $ L.symbol sc s
+atomicLexeme :: LexemeType -> Parser () -> Parser ()
+atomicLexeme lexemeType p = do
+  WithSrc sid () <- lexeme lexemeType p
+  modify \ctx -> ctx { curAtomicLexemes = curAtomicLexemes ctx ++ [sid] }
+{-# INLINE atomicLexeme #-}
+
+collectAtomicLexemeIds :: Parser a -> Parser ([SrcId], a)
+collectAtomicLexemeIds p = do
+  prevAtomicLexemes <- gets curAtomicLexemes
+  modify \ctx -> ctx { curAtomicLexemes = [] }
+  ans <- p
+  localLexemes <- gets curAtomicLexemes
+  modify \ctx -> ctx { curAtomicLexemes = prevAtomicLexemes }
+  return (localLexemes, ans)

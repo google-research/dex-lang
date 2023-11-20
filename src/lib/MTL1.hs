@@ -12,7 +12,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Class
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
-import qualified Control.Monad.Trans.Except as MTE
 import Control.Applicative
 import Data.Foldable (toList)
 
@@ -137,16 +136,9 @@ instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
 
 instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
   throwErr = lift11 . throwErr
-  addErrCtx ctx (ReaderT1 m) = ReaderT1 $ addErrCtx ctx m
-  {-# INLINE addErrCtx #-}
 
 instance (Monad1 m, Catchable (m n)) => Catchable (ReaderT1 s m n) where
   catchErr (ReaderT1 m) f = ReaderT1 $ catchErr m (runReaderT1' . f)
-
-instance (Monad1 m, CtxReader (m n)) => CtxReader (ReaderT1 s m n) where
-  getErrCtx = lift11 getErrCtx
-  {-# INLINE getErrCtx #-}
-
 
 -------------------- StateT1 --------------------
 
@@ -194,15 +186,9 @@ instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
 
 instance (Monad1 m, Fallible (m n)) => Fallible (StateT1 s m n) where
   throwErr = lift11 . throwErr
-  addErrCtx ctx (WrapStateT1 m) = WrapStateT1 $ addErrCtx ctx m
-  {-# INLINE addErrCtx #-}
 
 instance (Monad1 m, Catchable (m n)) => Catchable (StateT1 s m n) where
   catchErr (WrapStateT1 m) f = WrapStateT1 $ catchErr m (runStateT1' . f)
-
-instance (Monad1 m, CtxReader (m n)) => CtxReader (StateT1 s m n) where
-  getErrCtx = lift11 getErrCtx
-  {-# INLINE getErrCtx #-}
 
 instance (Monad1 m, Alternative1 m) => Alternative ((StateT1 s m) n) where
   empty = lift11 empty
@@ -259,7 +245,6 @@ runScopedT1 m s = fst <$> runStateT1 (runScopedT1' m) s
 
 deriving instance (Monad1 m, Fallible1 m) => Fallible (ScopedT1 s m n)
 deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
-deriving instance (Monad1 m, CtxReader1 m) => CtxReader (ScopedT1 s m n)
 
 instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
   refreshAbs ab cont = ScopedT1 \s -> do
@@ -286,8 +271,6 @@ instance Monad (m n) => MonadFail (MaybeT1 m n) where
 
 instance Monad (m n) => Fallible (MaybeT1 m n) where
   throwErr _ = empty
-  addErrCtx _ cont = cont
-  {-# INLINE addErrCtx #-}
 
 instance EnvReader m => EnvReader (MaybeT1 m) where
   unsafeGetEnv = lift11 unsafeGetEnv
@@ -302,39 +285,6 @@ instance ScopeReader m => ScopeReader (MaybeT1 m) where
 instance EnvExtender m => EnvExtender (MaybeT1 m) where
   refreshAbs ab cont = MaybeT1 $ MaybeT $
     refreshAbs ab \b e -> runMaybeT $ runMaybeT1' $ cont b e
-
--------------------- FallibleT1 --------------------
-
-newtype FallibleT1 (m::MonadKind1) (n::S) a =
-  FallibleT1 { fromFallibleT :: ReaderT ErrCtx (MTE.ExceptT Err (m n)) a }
-  deriving (Functor, Applicative, Monad)
-
-runFallibleT1 :: Monad1 m => FallibleT1 m n a -> m n (Except a)
-runFallibleT1 m =
-  MTE.runExceptT (runReaderT (fromFallibleT m) mempty) >>= \case
-    Right ans -> return $ Success ans
-    Left errs -> return $ Failure errs
-{-# INLINE runFallibleT1 #-}
-
-instance Monad1 m => MonadFail (FallibleT1 m n) where
-  fail s = throw SearchFailure s
-  {-# INLINE fail #-}
-
-instance Monad1 m => Fallible (FallibleT1 m n) where
-  throwErr (Err errTy ctx s) = FallibleT1 $ ReaderT \ambientCtx ->
-    MTE.throwE $ Err errTy (ambientCtx <> ctx) s
-  addErrCtx ctx (FallibleT1 m) = FallibleT1 $ local (<> ctx) m
-  {-# INLINE addErrCtx #-}
-
-instance ScopeReader m => ScopeReader (FallibleT1 m) where
-  unsafeGetScope = FallibleT1 $ lift $ lift unsafeGetScope
-  {-# INLINE unsafeGetScope #-}
-  getDistinct = FallibleT1 $ lift $ lift $ getDistinct
-  {-# INLINE getDistinct #-}
-
-instance EnvReader m => EnvReader (FallibleT1 m) where
-  unsafeGetEnv = FallibleT1 $ lift $ lift unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
 
 -------------------- StreamWriter --------------------
 
@@ -389,7 +339,7 @@ class MonoidE d => DiffStateE (s::E) (d::E) where
 newtype DiffStateT1 (s::E) (d::E) (m::MonadKind1) (n::S) (a:: *) =
   DiffStateT1' { runDiffStateT1'' :: StateT (s n, d n) (m n) a }
   deriving ( Functor, Applicative, Monad, MonadFail, MonadIO
-           , Fallible, Catchable, CtxReader)
+           , Fallible, Catchable)
 
 pattern DiffStateT1 :: ((s n, d n) -> m n (a, (s n, d n))) -> DiffStateT1 s d m n a
 pattern DiffStateT1 cont = DiffStateT1' (StateT cont)

@@ -87,7 +87,6 @@ library
                      , Serialize
                      , Simplify
                      , Subst
-                     , SourceInfo
                      , SourceRename
                      , TopLevel
                      , Transpose

@@ -24,7 +24,6 @@ import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
-import Data.String (IsString, fromString)
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 import Data.Word
@@ -35,26 +34,16 @@ import Data.Store (Store (..))
 import Name
 import qualified Types.OpNames as P
 import IRVariants
-import SourceInfo
 import Util (File (..), SnocList)
 
 import Types.Primitives
 
-data SourceName' = SourceName' SrcPosCtx SourceName
-  deriving (Show, Eq, Ord, Generic)
-
-fromName :: SourceName -> SourceName'
-fromName = SourceName' emptySrcPosCtx
-
-instance HasNameHint SourceName' where
-  getNameHint (SourceName' _ name) = getNameHint name
-
 data SourceNameOr (a::E) (n::S) where
   -- Only appears before renaming pass
-  SourceName :: SrcPosCtx -> SourceName -> SourceNameOr a n
+  SourceName :: SrcId -> SourceName -> SourceNameOr a n
   -- Only appears after renaming pass
   -- We maintain the source name for user-facing error messages.
-  InternalName :: SrcPosCtx -> SourceName -> a n -> SourceNameOr a n
+  InternalName :: SrcId -> SourceName -> a n -> SourceNameOr a n
 deriving instance Eq (a n) => Eq (SourceNameOr a n)
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
@@ -62,13 +51,9 @@ deriving instance Show (a n) => Show (SourceNameOr a n)
 newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr (Name c) n)
   deriving (Eq, Ord, Show, Generic)
 
-pattern SISourceName :: (n ~ VoidS) => SourceName -> SourceOrInternalName c n
-pattern SISourceName n = SourceOrInternalName (SourceName EmptySrcPosCtx n)
-
-pattern SIInternalName :: SourceName -> Name c n -> Maybe SrcPos -> Maybe SourceId -> SourceOrInternalName c n
-pattern SIInternalName n a srcPos spanId = SourceOrInternalName (InternalName (SrcPosCtx srcPos spanId) n a)
-
 -- === Source Info ===
+
+newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
 -- This is just for syntax highlighting. It won't be needed if we have
 -- a separate lexing pass where we have a complete lossless data type for
@@ -86,10 +71,10 @@ data LexemeType =
 
 type Span = (Int, Int)
 data SourceMaps = SourceMaps
-  { lexemeList  :: SnocList SourceId
-  , lexemeInfo  :: M.Map SourceId (LexemeType, Span)
-  , astParent   :: M.Map SourceId SourceId
-  , astChildren :: M.Map SourceId [SourceId]}
+  { lexemeList  :: SnocList SrcId
+  , lexemeInfo  :: M.Map SrcId (LexemeType, Span)
+  , astParent   :: M.Map SrcId SrcId
+  , astChildren :: M.Map SrcId [SrcId]}
   deriving (Show, Generic)
 
 instance Semigroup SourceMaps where
@@ -102,93 +87,100 @@ instance Monoid SourceMaps where
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
 
--- optional arrow, effects, result type
-type ExplicitParams = [Group]
-type GivenClause = ([Group], Maybe [Group])  -- implicits, classes
-type WithClause  = [Group] -- no classes because we don't want to carry class dicts at runtime
+-- aliases for the "with source ID versions"
 
-type CTopDecl = WithSrc CTopDecl'
-data CTopDecl'
-  = CSDecl LetAnn CSDecl'
+type GroupW      = WithSrcs Group
+type CTopDeclW   = WithSrcs CTopDecl
+type CSDeclW     = WithSrcs CSDecl
+type SourceNameW = WithSrc SourceName
+
+type BracketedGroup = WithSrcs [GroupW]
+-- optional arrow, effects, result type
+type ExplicitParams = BracketedGroup
+type GivenClause = (BracketedGroup, Maybe BracketedGroup)  -- implicits, classes
+type WithClause  = BracketedGroup -- no classes because we don't want to carry class dicts at runtime
+
+data CTopDecl
+  = CSDecl LetAnn CSDecl
   | CData
-      SourceName      -- Type constructor name
-      ExplicitParams
+      SourceNameW      -- Type constructor name
+      (Maybe ExplicitParams)
       (Maybe GivenClause)
-      [(SourceName, ExplicitParams)]   -- Constructor names and argument sets
+      [(SourceNameW, Maybe ExplicitParams)]  -- Constructor names and argument sets
   | CStruct
-      SourceName      -- Type constructor name
-      ExplicitParams
+      SourceNameW      -- Type constructor name
+      (Maybe ExplicitParams)
       (Maybe GivenClause)
-      [(SourceName, Group)] -- Field names and types
+      [(SourceNameW, GroupW)] -- Field names and types
       [(LetAnn, CDef)]
   | CInterface
-      SourceName  -- Interface name
+      SourceNameW  -- Interface name
       ExplicitParams
-      [(SourceName, Group)]  -- Method declarations
+      [(SourceNameW, GroupW)]  -- Method declarations
   -- header, givens (may be empty), methods, optional name.  The header should contain
   -- the prerequisites, class name, and class arguments.
   | CInstanceDecl CInstanceDef
   deriving (Show, Generic)
 
-type CSDecl = WithSrc CSDecl'
-data CSDecl'
-  = CLet Group CSBlock
+data CSDecl
+  = CLet GroupW CSBlock
   | CDefDecl CDef
-  | CExpr Group
-  | CBind Group CSBlock -- Arrow binder <-
+  | CExpr GroupW
+  | CBind GroupW CSBlock -- Arrow binder <-
   | CPass
     deriving (Show, Generic)
 
-type CEffs = ([Group], Maybe Group)
+type CEffs = WithSrcs ([GroupW], Maybe GroupW)
 data CDef = CDef
-  SourceName
-  (ExplicitParams)
+  SourceNameW
+  ExplicitParams
   (Maybe CDefRhs)
   (Maybe GivenClause)
   CSBlock
   deriving (Show, Generic)
 
-type CDefRhs = (AppExplicitness, Maybe CEffs, Group)
+type CDefRhs = (AppExplicitness, Maybe CEffs, GroupW)
 
 data CInstanceDef = CInstanceDef
-  SourceName         -- interface name
-  [Group]            -- args at which we're instantiating the interface
+  SourceNameW -- interface name
+  [GroupW]              -- args at which we're instantiating the interface
   (Maybe GivenClause)
-  [CSDecl]           -- Method definitions
-  (Maybe (SourceName, Maybe [Group])) -- Optional name of instance, with explicit parameters
+  [CSDeclW]           -- Method definitions
+  (Maybe (SourceNameW, Maybe BracketedGroup)) -- Optional name of instance, with explicit parameters
   deriving (Show, Generic)
 
-type Group = WithSrc Group'
-data Group'
-  = CEmpty
-  | CIdentifier SourceName
-  | CPrim PrimName [Group]
+data Group
+  = CLeaf CLeaf
+  | CPrim PrimName [GroupW]
+  | CParens   [GroupW]
+  | CBrackets [GroupW]
+  | CBin Bin GroupW GroupW
+  | CJuxtapose Bool GroupW GroupW -- Bool means "there's a space between the groups"
+  | CPrefix SourceNameW GroupW -- covers unary - and unary + among others
+  | CGivens GivenClause
+  | CLambda [GroupW] CSBlock
+  | CFor ForKind [GroupW] CSBlock -- also for_, rof, rof_
+  | CCase GroupW [CaseAlt] -- scrutinee, alternatives
+  | CIf GroupW CSBlock (Maybe CSBlock)
+  | CDo CSBlock
+  | CArrow GroupW (Maybe CEffs) GroupW
+  | CWith GroupW WithClause
+    deriving (Show, Generic)
+
+data CLeaf
+  = CIdentifier SourceName
   | CNat Word64
   | CInt Int
   | CString String
   | CChar Char
   | CFloat Double
   | CHole
-  | CParens   [Group]
-  | CBrackets [Group]
-  | CBin Bin Group Group
-  | CPrefix SourceName Group -- covers unary - and unary + among others
-  | CPostfix SourceName Group
-  | CLambda [Group] CSBlock
-  | CFor ForKind [Group] CSBlock -- also for_, rof, rof_
-  | CCase Group [(Group, CSBlock)] -- scrutinee, alternatives
-  | CIf Group CSBlock (Maybe CSBlock)
-  | CDo CSBlock
-  | CGivens GivenClause
-  | CArrow Group (Maybe CEffs) Group
-  | CWith Group WithClause
     deriving (Show, Generic)
 
-type Bin = WithSrc Bin'
-data Bin'
-  = JuxtaposeWithSpace
-  | JuxtaposeNoSpace
-  | EvalBinOp String
+type CaseAlt = (GroupW, CSBlock) -- scrutinee, lexeme Id, body
+
+data Bin
+  = EvalBinOp SourceNameW
   | DepAmpersand
   | Dot
   | DepComma
@@ -199,7 +191,7 @@ data Bin'
   | FatArrow      -- =>
   | Pipe
   | CSEqual
-  deriving (Eq, Ord, Show, Generic)
+  deriving (Show, Generic)
 
 data LabelPrefix = PlainLabel
   deriving (Show, Generic)
@@ -213,8 +205,8 @@ data ForKind
 
 -- `CSBlock` instead of `CBlock` because the latter is an alias for `Block CoreIR`.
 data CSBlock =
-   IndentedBlock [CSDecl] -- last decl should be a CExpr
- | ExprBlock Group
+   IndentedBlock SrcId [CSDeclW] -- last decl should be a CExpr
+ | ExprBlock GroupW
    deriving (Show, Generic)
 
 -- === Untyped IR ===
@@ -244,15 +236,16 @@ data UVar (n::S) =
    deriving (Eq, Ord, Show, Generic)
 
 type UAtomBinder = UBinder (AtomNameC CoreIR)
-data UBinder (c::C) (n::S) (l::S) where
+type UBinder c = WithSrcB (UBinder' c)
+data UBinder' (c::C) (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SrcPosCtx -> SourceName -> UBinder c n n
+  UBindSource :: SourceName -> UBinder' c n n
   -- May appear before or after renaming pass
-  UIgnore :: UBinder c n n
+  UIgnore :: UBinder' c n n
   -- The following binders only appear after the renaming pass.
   -- We maintain the source name for user-facing error messages
   -- and named arguments.
-  UBind :: SrcPosCtx -> SourceName -> NameBinder c n l -> UBinder c n l
+  UBind :: SourceName -> NameBinder c n l -> UBinder' c n l
 
 type UBlock = WithSrcE UBlock'
 data UBlock' (n::S) where
@@ -326,7 +319,7 @@ data UStructDef (n::S) where
   UStructDef
     :: SourceName    -- source name for pretty printing
     -> Nest UAnnBinder n l
-    -> [(SourceName, UType l)]                    -- named payloads
+    -> [(SourceNameW, UType l)]                    -- named payloads
     -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
 
@@ -381,6 +374,7 @@ data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamEx
 
 data UAnn (n::S) = UAnn (UType n) | UNoAnn deriving Show
 
+-- TODO: SrcId
 data UAnnBinder (n::S) (l::S) =
   UAnnBinder Explicitness (UAtomBinder n l) (UAnn n) [UConstraint n]
   deriving (Show, Generic)
@@ -397,48 +391,84 @@ data UPat' (n::S) (l::S) =
  | UPatTable (Nest UPat n l)
   deriving (Show, Generic)
 
-pattern UPatIgnore :: UPat' (n::S) n
-pattern UPatIgnore = UPatBinder UIgnore
-
 -- === source names for error messages ===
 
 class HasSourceName a where
   getSourceName :: a -> SourceName
 
+instance HasSourceName (b n l) => HasSourceName (WithSrcB b n l) where
+  getSourceName (WithSrcB _ b) = getSourceName b
+
 instance HasSourceName (UAnnBinder n l) where
   getSourceName (UAnnBinder _ b _ _) = getSourceName b
 
-instance HasSourceName (UBinder c n l) where
+instance HasSourceName (UBinder' c n l) where
   getSourceName = \case
-    UBindSource _ sn -> sn
-    UIgnore          -> "_"
-    UBind _ sn _     -> sn
+    UBindSource sn -> sn
+    UIgnore        -> "_"
+    UBind sn _     -> sn
 
 -- === Source context helpers ===
 
-data WithSrc a = WithSrc SrcPosCtx a
+-- First SrcId is for the group itself. The rest are for keywords, symbols, etc.
+data WithSrcs a = WithSrcs SrcId [SrcId] a
   deriving (Show, Functor, Generic)
 
-data WithSrcE (a::E) (n::S) = WithSrcE SrcPosCtx (a n)
+data WithSrc a = WithSrc SrcId a
+  deriving (Show, Functor, Generic)
+
+data WithSrcE (a::E) (n::S) = WithSrcE SrcId (a n)
   deriving (Show, Generic)
 
-data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcPosCtx (binder n l)
+data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcId (binder n l)
   deriving (Show, Generic)
 
-class HasSrcPos a where
-  srcPos :: a -> SrcPosCtx
+class HasSrcPos withSrc a | withSrc -> a where
+  srcPos :: withSrc -> SrcId
+  withoutSrc :: withSrc -> a
 
-instance HasSrcPos (WithSrcE (a::E) (n::S)) where
+instance HasSrcPos (WithSrc (a:: *)) a where
+  srcPos (WithSrc pos _) = pos
+  withoutSrc (WithSrc _ x) = x
+
+instance HasSrcPos (WithSrcs (a:: *)) a where
+  srcPos (WithSrcs pos _ _) = pos
+  withoutSrc (WithSrcs _ _ x) = x
+
+instance HasSrcPos (WithSrcE (e::E) (n::S)) (e n) where
   srcPos (WithSrcE pos _) = pos
+  withoutSrc (WithSrcE _ x) = x
 
-instance HasSrcPos (WithSrcB (b::B) (n::S) (n::S)) where
+instance HasSrcPos (WithSrcB (b::B) (n::S) (l::S)) (b n l) where
   srcPos (WithSrcB pos _) = pos
+  withoutSrc (WithSrcB _ x) = x
 
-instance HasSrcPos (UBinder c n l) where
-  srcPos = \case
-    UBindSource ctx _ -> ctx
-    UIgnore -> SrcPosCtx Nothing Nothing
-    UBind ctx _ _ -> ctx
+class FromSourceNameW a where
+  fromSourceNameW :: SourceNameW -> a
+
+instance FromSourceNameW (SourceNameOr a VoidS) where
+  fromSourceNameW (WithSrc sid x) = SourceName sid x
+
+instance FromSourceNameW (SourceOrInternalName c VoidS) where
+  fromSourceNameW x = SourceOrInternalName $ fromSourceNameW x
+
+instance FromSourceNameW (UBinder' s VoidS VoidS) where
+  fromSourceNameW x = UBindSource $ withoutSrc x
+
+instance FromSourceNameW (UPat' VoidS VoidS) where
+  fromSourceNameW = UPatBinder . fromSourceNameW
+
+instance FromSourceNameW (UAnnBinder VoidS VoidS) where
+  fromSourceNameW s = UAnnBinder Explicit (fromSourceNameW s) UNoAnn []
+
+instance FromSourceNameW (UExpr' VoidS) where
+  fromSourceNameW = UVar . fromSourceNameW
+
+instance FromSourceNameW (a n) => FromSourceNameW (WithSrcE a n) where
+  fromSourceNameW x = WithSrcE (srcPos x) $ fromSourceNameW x
+
+instance FromSourceNameW (b n l) => FromSourceNameW (WithSrcB b n l) where
+  fromSourceNameW x = WithSrcB (srcPos x) $ fromSourceNameW x
 
 -- === SourceMap ===
 
@@ -487,16 +517,16 @@ data SymbolicZeros = SymbolicZeros | InstantiateZeros
                      deriving (Generic, Eq, Show)
 
 data SourceBlock'
-  = TopDecl CTopDecl
-  | Command CmdName Group
-  | DeclareForeign SourceName SourceName Group
-  | DeclareCustomLinearization SourceName SymbolicZeros Group
+  = TopDecl CTopDeclW
+  | Command CmdName GroupW
+  | DeclareForeign SourceNameW SourceNameW GroupW
+  | DeclareCustomLinearization SourceNameW SymbolicZeros GroupW
   | Misc SourceBlockMisc
   | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
 data SourceBlockMisc
-  = GetNameType SourceName
+  = GetNameType SourceNameW
   | ImportModule ModuleSourceName
   | QueryEnv EnvQuery
   | ProseBlock Text
@@ -669,32 +699,48 @@ instance HasNameHint ModuleSourceName where
   getNameHint Prelude = getNameHint @String "prelude"
   getNameHint Main = getNameHint @String "main"
 
-instance HasNameHint (UBinder c n l) where
+instance HasNameHint (UBinder' c n l) where
   getNameHint b = case b of
-    UBindSource _ v -> getNameHint v
-    UIgnore         -> noHint
-    UBind _ v _     -> getNameHint v
+    UBindSource v -> getNameHint v
+    UIgnore       -> noHint
+    UBind v _     -> getNameHint v
 
-instance Color c => BindsNames (UBinder c) where
-  toScopeFrag (UBindSource _ _) = emptyOutFrag
+instance Color c => BindsNames (UBinder' c) where
+  toScopeFrag (UBindSource _) = emptyOutFrag
   toScopeFrag (UIgnore)       = emptyOutFrag
-  toScopeFrag (UBind _ _ b)     = toScopeFrag b
+  toScopeFrag (UBind _ b)     = toScopeFrag b
 
-instance Color c => ProvesExt (UBinder c) where
-instance Color c => BindsAtMostOneName (UBinder c) c where
+instance Color c => ProvesExt (UBinder' c) where
+instance Color c => BindsAtMostOneName (UBinder' c) c where
   b @> x = case b of
-    UBindSource _ _ -> emptyInFrag
-    UIgnore         -> emptyInFrag
-    UBind _ _ b'    -> b' @> x
+    UBindSource _ -> emptyInFrag
+    UIgnore       -> emptyInFrag
+    UBind _ b'    -> b' @> x
 
-instance Color c => SinkableB (UBinder c) where
+instance Color c => SinkableB (UBinder' c) where
   sinkingProofB _ _ _ = todoSinkableProof
 
-instance Color c => RenameB (UBinder c) where
+instance Color c => RenameB (UBinder' c) where
   renameB env ub cont = case ub of
-    UBindSource pos sn -> cont env $ UBindSource pos sn
+    UBindSource sn -> cont env $ UBindSource sn
     UIgnore -> cont env UIgnore
-    UBind ctx sn b -> renameB env b \env' b' -> cont env' $ UBind ctx sn b'
+    UBind sn b -> renameB env b \env' b' -> cont env' $ UBind sn b'
+
+instance SinkableB b => SinkableB (WithSrcB b) where
+  sinkingProofB _ _ _ = todoSinkableProof
+
+instance RenameB b => RenameB (WithSrcB b) where
+  renameB env (WithSrcB sid b) cont =
+    renameB env b \env' b' -> cont env' (WithSrcB sid b')
+
+instance ProvesExt b => ProvesExt (WithSrcB b) where
+  toExtEvidence (WithSrcB _ b) = toExtEvidence b
+
+instance BindsNames b => BindsNames (WithSrcB b)  where
+  toScopeFrag (WithSrcB _ b) = toScopeFrag b
+
+instance BindsAtMostOneName b r => BindsAtMostOneName (WithSrcB b) r where
+  WithSrcB _ b @> x = b @> x
 
 instance ProvesExt  UAnnBinder where
 instance BindsNames  UAnnBinder where
@@ -704,7 +750,7 @@ instance BindsAtMostOneName UAnnBinder (AtomNameC CoreIR) where
   UAnnBinder _ b _ _ @> x = b @> x
 
 instance GenericE (WithSrcE e) where
-  type RepE (WithSrcE e) = PairE (LiftE SrcPosCtx) e
+  type RepE (WithSrcE e) = PairE (LiftE SrcId) e
   fromE (WithSrcE ctx x) = PairE (LiftE ctx) x
   toE   (PairE (LiftE ctx) x) = WithSrcE ctx x
 
@@ -738,37 +784,7 @@ instance Store (SourceMap n)
 
 instance Hashable ModuleSourceName
 
-instance Store SourceName'
-instance Hashable SourceName'
-
-instance IsString SourceName' where
-  fromString = SourceName' emptySrcPosCtx
-
-instance IsString (SourceNameOr a VoidS) where
-  fromString = SourceName emptySrcPosCtx
-
-instance IsString (SourceOrInternalName c VoidS) where
-  fromString = SISourceName
-
-instance IsString (UBinder s VoidS VoidS) where
-  fromString = UBindSource emptySrcPosCtx
-
-instance IsString (UPat' VoidS VoidS) where
-  fromString = UPatBinder . fromString
-
-instance IsString (UAnnBinder VoidS VoidS) where
-  fromString s = UAnnBinder Explicit (fromString s) UNoAnn []
-
-instance IsString (UExpr' VoidS) where
-  fromString = UVar . fromString
-
-instance IsString (a n) => IsString (WithSrcE a n) where
-  fromString = WithSrcE emptySrcPosCtx . fromString
-
-instance IsString (b n l) => IsString (WithSrcB b n l) where
-  fromString = WithSrcB emptySrcPosCtx . fromString
-
-deriving instance Show (UBinder s n l)
+deriving instance Show (UBinder' s n l)
 deriving instance Show (UDataDefTrail n)
 deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)

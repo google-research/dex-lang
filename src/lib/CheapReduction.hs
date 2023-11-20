@@ -85,11 +85,11 @@ reduceTabApp f x = liftM fromJust $ liftReducerM $ reduceTabAppM f x
 
 -- === internal ===
 
-type ReducerM = SubstReaderT AtomSubstVal (EnvReaderT FallibleM)
+type ReducerM = SubstReaderT AtomSubstVal (EnvReaderT Except)
 
 liftReducerM :: EnvReader m => ReducerM n n a -> m n (Maybe a)
 liftReducerM cont = do
-  liftM (ignoreExcept . runFallibleM) $ liftEnvReaderT $ runSubstReaderT idSubst do
+  liftM ignoreExcept $ liftEnvReaderT $ runSubstReaderT idSubst do
     (Just <$> cont) <|> return Nothing
 
 reduceWithDeclsM :: IRRep r => Nest (Decl r) i i' -> ReducerM i' o a -> ReducerM i o a
@@ -644,7 +644,7 @@ substMStuck stuck = do
 
 substStuck :: (IRRep r, Distinct o) => (Env o, Subst AtomSubstVal i o) -> Stuck r i -> Atom r o
 substStuck (env, subst) stuck =
-  ignoreExcept $ runFallibleM $ runEnvReaderT env $ runSubstReaderT subst $ reduceStuck stuck
+  ignoreExcept $ runEnvReaderT env $ runSubstReaderT subst $ reduceStuck stuck
 
 reduceStuck :: (IRRep r, Distinct o) => Stuck r i -> ReducerM i o (Atom r o)
 reduceStuck = \case

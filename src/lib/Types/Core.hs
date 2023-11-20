@@ -38,7 +38,6 @@ import Foreign.Ptr
 import Name
 import Util (FileHash, SnocList (..), Tree (..))
 import IRVariants
-import SourceInfo
 
 import qualified Types.OpNames as P
 import Types.Primitives
@@ -809,14 +808,10 @@ data InfVarDesc =
    deriving (Show, Generic, Eq, Ord)
 
 data SolverBinding (n::S) =
-   InfVarBound (CType n) InfVarCtx
+   InfVarBound (CType n)
  | SkolemBound (CType n)
  | DictBound   (CType n)
    deriving (Show, Generic)
-
--- Context for why we created an inference variable.
--- This helps us give better "ambiguous variable" errors.
-type InfVarCtx = (SrcPosCtx, InfVarDesc)
 
 newtype EnvFrag (n::S) (l::S) = EnvFrag (RecSubstFrag Binding n l)
         deriving (OutFrag)
@@ -2314,19 +2309,19 @@ instance AlphaHashableE LinearizationSpec
 
 instance GenericE SolverBinding where
   type RepE SolverBinding = EitherE3
-                                  (PairE CType (LiftE InfVarCtx))
+                                  CType
                                   CType
                                   CType
   fromE = \case
-    InfVarBound  ty ctx -> Case0 (PairE ty (LiftE ctx))
-    SkolemBound  ty     -> Case1 ty
-    DictBound    ty     -> Case2 ty
+    InfVarBound ty -> Case0 ty
+    SkolemBound ty -> Case1 ty
+    DictBound   ty -> Case2 ty
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (PairE ty (LiftE ct)) -> InfVarBound  ty ct
-    Case1 ty                    -> SkolemBound  ty
-    Case2 ty                    -> DictBound    ty
+    Case0 ty -> InfVarBound ty
+    Case1 ty -> SkolemBound ty
+    Case2 ty -> DictBound   ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 

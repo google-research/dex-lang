@@ -144,7 +144,7 @@ liftTopBuilderAndEmit cont = do
 newtype DoubleBuilderT (r::IR) (topEmissions::B) (m::MonadKind) (n::S) (a:: *) =
   DoubleBuilderT { runDoubleBuilderT' :: DoubleInplaceT Env topEmissions (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, MonadIO, Catchable, MonadReader r')
+           , MonadIO, Catchable, MonadReader r')
 
 deriving instance (ExtOutMap Env frag, HoistableB frag, OutFrag frag, Fallible m, IRRep r)
                   => ScopeReader (DoubleBuilderT r frag m)
@@ -349,7 +349,7 @@ getCache = withEnv $ envCache . topEnv
 newtype TopBuilderT (m::MonadKind) (n::S) (a:: *) =
   TopBuilderT { runTopBuilderT' :: InplaceT Env TopEnvFrag m n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, ScopeReader, MonadTrans1, MonadReader r
+           , ScopeReader, MonadTrans1, MonadReader r
            , MonadWriter w, MonadState s, MonadIO, Catchable)
 
 type TopBuilderM = TopBuilderT HardFailM
@@ -424,7 +424,7 @@ type BuilderEmissions r = RNest (Decl r)
 newtype BuilderT (r::IR) (m::MonadKind) (n::S) (a:: *) =
   BuilderT { runBuilderT' :: InplaceT Env (BuilderEmissions r) m n a }
   deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
-           , Catchable, CtxReader, ScopeReader, Alternative
+           , Catchable, ScopeReader, Alternative
            , MonadWriter w, MonadReader r')
 
 type BuilderM (r::IR) = BuilderT r HardFailM

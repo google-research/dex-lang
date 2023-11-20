@@ -31,7 +31,7 @@ instance IRRep r => HasType r (AtomBinding r) where
   getType = \case
     LetBound    (DeclBinding _ e)  -> getType e
     MiscBound   ty                 -> ty
-    SolverBound (InfVarBound ty _) -> ty
+    SolverBound (InfVarBound ty)   -> ty
     SolverBound (SkolemBound ty)   -> ty
     SolverBound (DictBound   ty)   -> ty
     NoinlineFun ty _               -> ty

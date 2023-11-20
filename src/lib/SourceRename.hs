@@ -60,7 +60,7 @@ data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
                                    , renamerMayShadow :: Bool }
 
 newtype RenamerM (n::S) (a:: *) =
-  RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT FallibleM) n a }
+  RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT Except) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , ScopeReader, ScopeExtender)
 
@@ -68,7 +68,7 @@ liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m 
 liftRenamer cont = do
   sm <- withEnv $ envSourceMap . moduleEnv
   Distinct <- getDistinct
-  (liftExcept =<<) $ liftM runFallibleM $ liftScopeReaderT $
+  (liftExcept =<<) $ liftScopeReaderT $
     runOutReaderT (RenamerSubst sm False) $ runRenamerM $ cont
 
 class ( Monad1 m, ScopeReader m
@@ -154,8 +154,8 @@ instance SourceRenamableE (SourceNameOr (Name c)) => SourceRenamableE (SourceOrI
 instance (SourceRenamableE e, SourceRenamableB b) => SourceRenamableE (Abs b e) where
   sourceRenameE (Abs b e) = sourceRenameB b \b' -> Abs b' <$> sourceRenameE e
 
-instance SourceRenamableB (UBinder (AtomNameC CoreIR)) where
-  sourceRenameB b cont = sourceRenameUBinder UAtomVar b cont
+instance SourceRenamableB (UBinder' (AtomNameC CoreIR)) where
+  sourceRenameB b cont = sourceRenameUBinder' UAtomVar b cont
 
 instance SourceRenamableE UAnn where
   sourceRenameE UNoAnn = return UNoAnn
@@ -218,12 +218,10 @@ instance SourceRenamableE UEffect where
   sourceRenameE UIOEffect = return UIOEffect
 
 instance SourceRenamableE a => SourceRenamableE (WithSrcE a) where
-  sourceRenameE (WithSrcE pos e) = addSrcContext pos $
-    WithSrcE pos <$> sourceRenameE e
+  sourceRenameE (WithSrcE pos e) = WithSrcE pos <$> sourceRenameE e
 
 instance SourceRenamableB a => SourceRenamableB (WithSrcB a) where
-  sourceRenameB (WithSrcB pos b) cont = addSrcContext pos $
-    sourceRenameB b \b' -> cont $ WithSrcB pos b'
+  sourceRenameB (WithSrcB pos b) cont = sourceRenameB b \b' -> cont $ WithSrcB pos b'
 
 instance SourceRenamableB UTopDecl where
   sourceRenameB decl cont = case decl of
@@ -302,13 +300,13 @@ sourceRenameUBinderNest asUVar (Nest b bs) cont =
     sourceRenameUBinderNest asUVar bs \bs' ->
       cont $ Nest b' bs'
 
-sourceRenameUBinder :: (Color c, Distinct o, Renamer m)
+sourceRenameUBinder' :: (Color c, Distinct o, Renamer m)
                     => (forall l. Name c l -> UVar l)
-                    -> UBinder c i i'
-                    -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
+                    -> UBinder' c i i'
+                    -> (forall o'. DExt o o' => UBinder' c o o' -> m o' a)
                     -> m o a
-sourceRenameUBinder asUVar ubinder cont = case ubinder of
-  UBindSource pos b -> do
+sourceRenameUBinder' asUVar ubinder cont = case ubinder of
+  UBindSource b -> do
     SourceMap sm <- askSourceMap
     mayShadow <- askMayShadow
     let shadows = M.member b sm
@@ -317,9 +315,17 @@ sourceRenameUBinder asUVar ubinder cont = case ubinder of
     withFreshM (getNameHint b) \freshName -> do
       Distinct <- getDistinct
       extendSourceMap b (asUVar $ binderName freshName) $
-        cont $ UBind pos b freshName
-  UBind _ _ _ -> error "Shouldn't be source-renaming internal names"
-  UIgnore -> cont UIgnore
+        cont $ UBind b freshName
+  UBind _ _ -> error "Shouldn't be source-renaming internal names"
+  UIgnore -> cont $ UIgnore
+
+sourceRenameUBinder :: (Color c, Distinct o, Renamer m)
+                    => (forall l. Name c l -> UVar l)
+                    -> UBinder c i i'
+                    -> (forall o'. DExt o o' => UBinder c o o' -> m o' a)
+                    -> m o a
+sourceRenameUBinder asUVar (WithSrcB sid ubinder) cont =
+  sourceRenameUBinder' asUVar ubinder \ubinder' -> cont (WithSrcB sid ubinder')
 
 instance SourceRenamableE UDataDef where
   sourceRenameE (UDataDef tyConName paramBs dataCons) = do
@@ -384,14 +390,14 @@ class SourceRenamablePat (pat::B) where
                   -> (forall o'. DExt o o' => SiblingSet -> pat o o' -> m o' a)
                   -> m o a
 
-instance SourceRenamablePat (UBinder (AtomNameC CoreIR)) where
+instance SourceRenamablePat (UBinder' (AtomNameC CoreIR)) where
   sourceRenamePat sibs ubinder cont = do
     newSibs <- case ubinder of
-      UBindSource _ b -> do
+      UBindSource b -> do
         when (S.member b sibs) $ throw RepeatedPatVarErr $ pprint b
         return $ S.singleton b
       UIgnore -> return mempty
-      UBind _ _ _ -> error "Shouldn't be source-renaming internal names"
+      UBind _ _ -> error "Shouldn't be source-renaming internal names"
     sourceRenameB ubinder \ubinder' ->
       cont (sibs <> newSibs) ubinder'
 
@@ -431,7 +437,7 @@ instance (SourceRenamablePat p1, SourceRenamablePat p2)
     cont sibs' $ RightB p'
 
 instance SourceRenamablePat p => SourceRenamablePat (WithSrcB p) where
-   sourceRenamePat sibs (WithSrcB pos pat) cont = addSrcContext pos do
+   sourceRenamePat sibs (WithSrcB pos pat) cont = do
      sourceRenamePat sibs pat \sibs' pat' ->
        cont sibs' $ WithSrcB pos pat'
 
@@ -460,11 +466,11 @@ class HasSourceNames (b::B) where
 instance HasSourceNames UTopDecl where
   sourceNames decl = case decl of
     ULocalDecl d -> sourceNames d
-    UDataDefDecl _ ~(UBindSource _ tyConName) dataConNames -> do
+    UDataDefDecl _ ~(WithSrcB _ (UBindSource tyConName)) dataConNames -> do
       S.singleton tyConName <> sourceNames dataConNames
-    UStructDecl ~(UBindSource _ tyConName) _ -> do
+    UStructDecl ~(WithSrcB _ (UBindSource tyConName)) _ -> do
       S.singleton tyConName
-    UInterface _ _ ~(UBindSource _ className) methodNames -> do
+    UInterface _ _ ~(WithSrcB _ (UBindSource className)) methodNames -> do
       S.singleton className <> sourceNames methodNames
     UInstance _ _ _ _ instanceName _ -> sourceNames instanceName
 
@@ -499,11 +505,11 @@ instance HasSourceNames b => HasSourceNames (Nest b)where
   sourceNames (Nest b rest) =
     sourceNames b <> sourceNames rest
 
-instance HasSourceNames (UBinder c) where
+instance HasSourceNames (UBinder' c) where
   sourceNames b = case b of
-    UBindSource _ name -> S.singleton name
+    UBindSource name -> S.singleton name
     UIgnore -> mempty
-    UBind {} -> error "Shouldn't be source-renaming internal names"
+    UBind _ _ -> error "Shouldn't be source-renaming internal names"
 
 -- === misc instance ===
 

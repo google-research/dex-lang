@@ -18,7 +18,7 @@ import Data.Binary.Builder (fromByteString)
 import Data.ByteString.Lazy (toStrict)
 import qualified Data.ByteString as BS
 
-import Paths_dex (getDataFileName)
+-- import Paths_dex (getDataFileName)
 
 import Live.Eval
 import TopLevel

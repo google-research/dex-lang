@@ -347,11 +347,11 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
 isData :: EnvReader m => Type CoreIR n -> m n Bool
 isData ty = do
   result <- liftEnvReaderT $ withSubstReaderT $ checkDataLike ty
-  case runFallibleM result of
+  case result of
     Success () -> return True
     Failure _  -> return False
 
-checkDataLike :: Type CoreIR i -> SubstReaderT Name FallibleEnvReaderM i o ()
+checkDataLike :: Type CoreIR i -> SubstReaderT Name (EnvReaderT Except) i o ()
 checkDataLike ty = case ty of
   StuckTy _ _ -> notData
   TyCon con -> case con of

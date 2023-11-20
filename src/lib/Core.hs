@@ -82,7 +82,6 @@ newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
            , MonadWriter w, Fallible, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
-type FallibleEnvReaderM = EnvReaderT FallibleM
 
 runEnvReaderM :: Distinct n => Env n -> EnvReaderM n a -> a
 runEnvReaderM bindings m = runIdentity $ runEnvReaderT bindings m
@@ -131,10 +130,6 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
   {-# INLINE liftIO #-}
 
 deriving instance (Monad m, MonadState s m) => MonadState s (EnvReaderT m o)
-
-instance (Monad m, CtxReader m) => CtxReader (EnvReaderT m o) where
-  getErrCtx = EnvReaderT $ lift getErrCtx
-  {-# INLINE getErrCtx #-}
 
 instance (Monad m, Catchable m) => Catchable (EnvReaderT m o) where
   catchErr (EnvReaderT (ReaderT m)) f = EnvReaderT $ ReaderT \env ->
