@@ -59,7 +59,7 @@ typedef struct {
   _Atomic(Array *) array;
 } Deque;
 
-void init(Deque* q, int size_hint) {
+void init(Deque* q, size_t size_hint) {
   // This does not appear in https://fzn.fr/readings/ppopp13.pdf; I am imputing
   // it.
   // Initialize the buffer indices at 1 to prevent underflow.  The buffer
@@ -236,7 +236,7 @@ typedef Work* (*GenBlock)(int thread_id, void** env);
 
 // A (pointer to a) code-generated function that is a loop body.
 // This should either return the result of calling `begin_pure_loop` or return `NULL`.
-typedef Work* (*GenLoopBody)(int thread_id, int iteration, void** env);
+typedef Work* (*GenLoopBody)(int thread_id, size_t iteration, void** env);
 
 // Call this from Haskell once at the start of the process.
 // The integer is the number of OS threads to spawn to run work-stealing.
@@ -254,7 +254,7 @@ void finish_work_stealing();
 // parallelize.
 // This assumes that the environment frame for the loop body and for the
 // continuation is the same.  That assumption isn't hard to change.
-Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env, int trip_count);
+Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env, size_t trip_count);
 
 /////////////////////////
 // Dex codegen support //
@@ -287,11 +287,11 @@ Work* increase_cont_capacity(Work* cont, int joiners) {
 Work* execute_pure_loop_task(int id, Work* self);
 
 // The recursive workhorse for running a pure loop.
-Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env, int start_iter, int end_iter) {
-  int grain_size = 1
+Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env, size_t start_iter, size_t end_iter) {
+  int grain_size = 1;
   if (end_iter - start_iter <= grain_size) {
     // Few enough iterations; just do them.
-    for (int i = start_iter; i < end_iter; i++) {
+    for (size_t i = start_iter; i < end_iter; i++) {
       do_work(thread_id, body(thread_id, i, env));
     }
     return join_work(cont);
@@ -299,14 +299,14 @@ Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env,
     // Break the loop up into chunks of iterations, and schedule those.
     int branching_factor = 2;
     div_t iters_per_branch = div(end_iter - start_iter, branching_factor);
-    int this_iter = start_iter;
+    size_t this_iter = start_iter;
     // We are increasing the number of `Work`s that are permitted to join our
     // continuation `cont`.  Account for that.
     Work* subcont = increase_cont_capacity(cont, branching_factor);
     // Queue up all but one chunk of the loop for idle workers to potentially
     // steal.
     for (int i = 0; i < branching_factor - 1; i++) {
-      int next_iter = this_iter + iters_per_branch.quot;
+      size_t next_iter = this_iter + iters_per_branch.quot;
       if (i < iters_per_branch.rem) {
         // The chunks may be slightly uneven if the trip count is not evenly
         // divisible by the branching factor.
@@ -334,12 +334,12 @@ Work* execute_pure_loop_task(int id, Work* self) {
   Work* cont = self->args[0];
   GenLoopBody body = self->args[1];
   void** env = self->args[2];
-  int start_iter = (int)self->args[3];
-  int end_iter = (int)self->args[4];
+  size_t start_iter = (size_t)self->args[3];
+  size_t end_iter = (size_t)self->args[4];
   return execute_pure_loop(id, cont, body, env, start_iter, end_iter);
 }
 
-Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env, int trip_count) {
+Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env, size_t trip_count) {
   // TODO: If the whole loop is smaller than the grain size for
   // execute_pure_loop, I can avoid allocating the `Work` for the continuation
   // too by just executing the iterations inline here.
@@ -404,7 +404,7 @@ void finish_work_stealing() {
 // times, and has each loop iteration (and the coda) echo the trip count + 1,
 // just to show that data can be mutated.
 
-Work* gen_loop_body(int thread_id, int iteration, void** env) {
+Work* gen_loop_body(int thread_id, size_t iteration, void** env) {
   int* payload = (int*)env[0];
   int item = *payload;
   printf("Loop iteration %d on worker %d, payload %d\n",
