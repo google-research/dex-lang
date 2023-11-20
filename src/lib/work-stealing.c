@@ -267,6 +267,15 @@ Work* run_gen_block_task(int thread_id, Work* self) {
   return body(thread_id, env);
 }
 
+Work* allocate_run_gen_block_work(int join_count, GenBlock cont, void** env) {
+  Work* work = (Work*) malloc(sizeof(Work) + 2 * sizeof(int*));
+  work->task = &run_gen_block_task;
+  work->join_count = join_count;
+  work->args[0] = cont;
+  work->args[1] = env;
+  return work;
+}
+
 // Return a `Work*` such that joining it `joiners` times is equivalent to joining
 // the argument `cont` once.
 // - `joiners` >= 1.
@@ -286,8 +295,24 @@ Work* increase_cont_capacity(Work* cont, int joiners) {
 
 Work* execute_pure_loop_task(int id, Work* self);
 
+Work* allocate_execute_pure_loop_work(
+    Work* cont, GenLoopBody body, void** env,
+    size_t start_iter, size_t end_iter) {
+  Work* chunk = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
+  chunk->task = &execute_pure_loop_task;
+  chunk->join_count = 0;
+  chunk->args[0] = cont;
+  chunk->args[1] = body;
+  chunk->args[2] = env;
+  chunk->args[3] = (void*)start_iter;
+  chunk->args[4] = (void*)end_iter;
+  return chunk;
+}
+
 // The recursive workhorse for running a pure loop.
-Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env, size_t start_iter, size_t end_iter) {
+Work* execute_pure_loop(
+    int thread_id, Work* cont, GenLoopBody body, void** env,
+    size_t start_iter, size_t end_iter) {
   int grain_size = 1;
   if (end_iter - start_iter <= grain_size) {
     // Few enough iterations; just do them.
@@ -312,16 +337,8 @@ Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env,
         // divisible by the branching factor.
         next_iter++;
       }
-      Work* chunk = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
-      chunk->task = &execute_pure_loop_task;
-      chunk->join_count = 0;
-      chunk->args[0] = subcont;
-      chunk->args[1] = body;
-      chunk->args[2] = env;
-      // TODO Is just casting ok here, or do I have to heap-allocate these ints?
-      // gcc complains about the integer and the pointer having different sizes.
-      chunk->args[3] = (void*)this_iter;
-      chunk->args[4] = (void*)next_iter;
+      Work* chunk = allocate_execute_pure_loop_work(
+          subcont, body, env, this_iter, next_iter);
       push(&thread_queues[thread_id], chunk);
       this_iter = next_iter;
     }
@@ -343,11 +360,7 @@ Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env
   // TODO: If the whole loop is smaller than the grain size for
   // execute_pure_loop, I can avoid allocating the `Work` for the continuation
   // too by just executing the iterations inline here.
-  Work* k = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
-  k->task = &run_gen_block_task;
-  k->join_count = 1;
-  k->args[0] = cont;
-  k->args[1] = env;
+  Work* k = allocate_run_gen_block_work(1, cont, env);
   return execute_pure_loop(thread_id, k, body, env, 0, trip_count);
 }
 
@@ -368,11 +381,7 @@ void initialize_work_stealing(int nthreads) {
 }
 
 void execute_top_block(GenBlock body, void** env) {
-  Work* job = (Work*) malloc(sizeof(Work) + 2 * sizeof(int*));
-  job->task = &run_gen_block_task;
-  job->join_count = 0;
-  job->args[0] = body;
-  job->args[1] = env;
+  Work* job = allocate_run_gen_block_work(0, body, env);
   atomic_store(&done, false);
   push(&thread_queues[0], job);
   // TODO: Do we really want to start and kill all the threads for every top
