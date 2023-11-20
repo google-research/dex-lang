@@ -286,39 +286,46 @@ Work* increase_cont_capacity(Work* cont, int joiners) {
 
 Work* execute_pure_loop_task(int id, Work* self);
 
+// The recursive workhorse for running a pure loop.
 Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env, int start_iter, int end_iter) {
-  if (end_iter - start_iter <= 1) {
+  int grain_size = 1
+  if (end_iter - start_iter <= grain_size) {
     // Few enough iterations; just do them.
     for (int i = start_iter; i < end_iter; i++) {
       do_work(thread_id, body(thread_id, i, env));
     }
     return join_work(cont);
   } else {
-    // Create Works that represent schedulable pieces of the loop.
+    // Break the loop up into chunks of iterations, and schedule those.
     int branching_factor = 2;
     div_t iters_per_branch = div(end_iter - start_iter, branching_factor);
     int this_iter = start_iter;
+    // We are increasing the number of `Work`s that are permitted to join our
+    // continuation `cont`.  Account for that.
     Work* subcont = increase_cont_capacity(cont, branching_factor);
-    // Queue up all but one chunk of the loop
+    // Queue up all but one chunk of the loop for idle workers to potentially
+    // steal.
     for (int i = 0; i < branching_factor - 1; i++) {
       int next_iter = this_iter + iters_per_branch.quot;
       if (i < iters_per_branch.rem) {
+        // The chunks may be slightly uneven if the trip count is not evenly
+        // divisible by the branching factor.
         next_iter++;
       }
-      Work* section = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
-      section->code = &execute_pure_loop_task;
-      section->join_count = 0;
-      section->args[0] = subcont;
-      section->args[1] = body;
-      section->args[2] = env;
+      Work* chunk = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
+      chunk->code = &execute_pure_loop_task;
+      chunk->join_count = 0;
+      chunk->args[0] = subcont;
+      chunk->args[1] = body;
+      chunk->args[2] = env;
       // TODO Is just casting ok here, or do I have to heap-allocate these ints?
       // gcc complains about the integer and the pointer having different sizes.
-      section->args[3] = (void*)this_iter;
-      section->args[4] = (void*)next_iter;
-      push(&thread_queues[thread_id], section);
+      chunk->args[3] = (void*)this_iter;
+      chunk->args[4] = (void*)next_iter;
+      push(&thread_queues[thread_id], chunk);
       this_iter = next_iter;
     }
-    // Do the last chunk directly yourself
+    // Do the last chunk immediately, to avoid allocating a `Work` for it.
     return execute_pure_loop(thread_id, subcont, body, env, this_iter, end_iter);
   }
 }
