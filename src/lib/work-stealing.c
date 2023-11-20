@@ -34,7 +34,7 @@ struct Work;
 typedef struct Work* (*Task)(int thread_id, struct Work*);
 
 typedef struct Work {
-  Task code;
+  Task task;
   atomic_int join_count;
   void* args[];
 } Work;
@@ -167,7 +167,7 @@ atomic_bool done;
 // Trampoline: Returns the next item to work on, or NULL if there aren't any.
 Work* do_one_work(int id, Work* work) {
   printf("Worker %d running item %p\n", id, work);
-  return (*(work->code))(id, work);
+  return (*(work->task))(id, work);
 }
 
 void do_work(int id, Work* work) {
@@ -260,7 +260,7 @@ Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env
 // Dex codegen support //
 /////////////////////////
 
-Work* run_gen_block(int thread_id, Work* self) {
+Work* run_gen_block_task(int thread_id, Work* self) {
   GenBlock body = (GenBlock)self->args[0];
   void** env = (void**)self->args[1];
   free(self);
@@ -313,7 +313,7 @@ Work* execute_pure_loop(int thread_id, Work* cont, GenLoopBody body, void** env,
         next_iter++;
       }
       Work* chunk = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
-      chunk->code = &execute_pure_loop_task;
+      chunk->task = &execute_pure_loop_task;
       chunk->join_count = 0;
       chunk->args[0] = subcont;
       chunk->args[1] = body;
@@ -344,7 +344,7 @@ Work* begin_pure_loop(int thread_id, GenLoopBody body, GenBlock cont, void** env
   // execute_pure_loop, I can avoid allocating the `Work` for the continuation
   // too by just executing the iterations inline here.
   Work* k = (Work*) malloc(sizeof(Work) + 5 * sizeof(int*));
-  k->code = &run_gen_block;
+  k->task = &run_gen_block_task;
   k->join_count = 1;
   k->args[0] = cont;
   k->args[1] = env;
@@ -369,7 +369,7 @@ void initialize_work_stealing(int nthreads) {
 
 void execute_top_block(GenBlock body, void** env) {
   Work* job = (Work*) malloc(sizeof(Work) + 2 * sizeof(int*));
-  job->code = &run_gen_block;
+  job->task = &run_gen_block_task;
   job->join_count = 0;
   job->args[0] = body;
   job->args[1] = env;
