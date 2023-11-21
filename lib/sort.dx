@@ -63,6 +63,11 @@ def sort(xs: n=>a) -> n=>a given (n|Ix, a|Ord) =
   AsList(_, r) = reduce mempty mcombine xlists
   unsafe_cast_table(to=n, r)
 
+def arg_sort(xs: n=>a) -> n=>n given (n|Ix|Ord, a|Ord) =
+  indexed_table = for i. (xs[i], i)
+  sorted = sort indexed_table
+  map snd sorted
+
 def (+|)(i:n, delta:Nat) -> n  given (n|Ix) =
   i' = ordinal i + delta
   from_ordinal $ select (i' >= size n) (size n -| 1) i'

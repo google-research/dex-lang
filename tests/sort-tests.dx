@@ -54,3 +54,9 @@ import sort
 
 :p is_sorted $ sort ["Charlie", "Alice", "Bob", "Aaron"]
 > True
+
+'### Test argsort
+xs = ['1', '2', '3', '4', '9', '8', '7', '6']
+ixs = arg_sort xs
+sort xs == for i. xs[ixs[i]]
+> True

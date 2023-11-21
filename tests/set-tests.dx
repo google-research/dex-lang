@@ -78,3 +78,39 @@ setix : Person = from_just $ member "Bob" names2
 setix2 : Person = from_just $ member "Charlie" names2
 :p setix2
 > Element(2)
+
+
+'#### Multiset tests
+
+-- check order invariance.
+:p (to_multiset ["Bob", "Alice", "Bob", "Charlie"]) == (to_multiset ["Charlie", "Bob", "Alice", "Bob"])
+> True
+
+-- check counts matter for equality.
+:p (to_multiset ["Bob", "Alice", "Bob", "Charlie"]) == (to_multiset ["Charlie", "Bob", "Alice"])
+> False
+
+multiset1 = to_multiset ["Xeno", "Alice", "Bob", "Bob"]
+multiset2 = to_multiset ["Bob", "Xeno", "Charlie", "Xeno", "Alice"]
+
+:p multiset1 == multiset2
+> False
+
+:p multiset1 + multiset2
+> (UnsafeAsMultiset 4 [("Alice", 2), ("Bob", 3), ("Charlie", 1), ("Xeno", 3)])
+
+:p multiset1 == (multiset1 + multiset1)
+> False
+
+'#### Empty multiset tests
+
+emptymultiset = to_multiset ([]::(Fin 0)=>String)
+
+:p emptymultiset == emptymultiset
+> True
+
+:p emptymultiset == (emptymultiset + emptymultiset)
+> True
+
+:p multiset1 == (multiset1 + emptymultiset)
+> True
