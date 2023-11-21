@@ -73,6 +73,7 @@ instance HasSourceInfo Occ.UsageInfo
 instance HasSourceInfo LetAnn
 instance HasSourceInfo UResumePolicy
 instance HasSourceInfo CInstanceDef
+instance HasSourceInfo CDerivingDef
 instance HasSourceInfo CTopDecl'
 
 instance HasSourceInfo AppExplicitness

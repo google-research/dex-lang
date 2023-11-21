@@ -134,6 +134,7 @@ topDecl = dropSrc topDecl' where
       return (fromString methodName, ty')
     return $ UInterface params' methodTys (fromString name) (toNest methodNames)
   topDecl' (CInstanceDecl def) = aInstanceDef def
+  topDecl' (CDerivingDecl def) = aDerivingDef def
   topDecl' (CEffectDecl _ _) = error "not implemented"
   topDecl' (CHandlerDecl _ _ _ _ _ _) = error "not implemented"
 
@@ -164,6 +165,13 @@ aInstanceDef (CInstanceDef clName args givens methods instNameAndParams) = do
           params' <- aExplicitParams params
           return $ UInstance clName' (catUOptAnnExplBinders givens' params') args' methods' instName' ExplicitApp
         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
+
+aDerivingDef :: CDerivingDef -> SyntaxM (UTopDecl VoidS VoidS)
+aDerivingDef (CDerivingDef clName args givens) = do
+  let clName' = fromString clName
+  args' <- mapM expr args
+  givens' <- aOptGivens givens
+  return $ UDerivingInstance clName' givens' args'
 
 aDef :: CDef -> SyntaxM (SourceName, ULamExpr VoidS)
 aDef (CDef name params optRhs optGivens body) = do

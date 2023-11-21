@@ -638,6 +638,8 @@ instance Pretty (UTopDecl n l) where
   pretty (UInstance className bs params methods (RightB UnitB) _) =
     "instance" <+> p bs <+> p className <+> spaced params <+>
        prettyLines methods
+  pretty (UDerivingInstance className bs params) =
+    "deriving instance" <+> p bs <+> p className <+> spaced params
   pretty (UInstance className bs params methods (LeftB v) _) =
     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
         <> prettyLines methods

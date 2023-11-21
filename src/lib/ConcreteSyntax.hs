@@ -199,6 +199,7 @@ topDecl' =
   <|> interfaceDef
   <|> (CInstanceDecl <$> instanceDef True)
   <|> (CInstanceDecl <$> instanceDef False)
+  <|> (CDerivingDecl <$> derivingDef)
   <|> effectDef
 
 proseBlock :: Parser SourceBlock'
@@ -376,6 +377,15 @@ instanceDef isNamed = do
   givens <- optional givenClause
   methods <- withIndent $ withSrc cDecl `sepBy1` try nextLine
   return $ CInstanceDef className args givens methods optNameAndArgs
+
+derivingDef :: Parser CDerivingDef
+derivingDef = do
+  keyWord DerivingKW
+  keyWord InstanceKW
+  className <- anyName
+  args <- argList
+  givens <- optional givenClause
+  return $ CDerivingDef className args givens
 
 funDefLet :: Parser CDef
 funDefLet = label "function definition" do

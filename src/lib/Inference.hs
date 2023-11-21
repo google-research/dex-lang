@@ -126,6 +126,106 @@ inferTopUDecl (UInstance className instanceBs params methods maybeName expl) res
       instanceAtomName <- emitTopLet (getNameHint instanceName') PlainLet $ Atom lam
       applyRename (instanceName' @> atomVarName instanceAtomName) result
     _ -> error "impossible"
+inferTopUDecl (UDerivingInstance className instanceBs params) result = do
+  let (InternalName _ _ className') = className
+  -- Extract the following:
+  --   1) type parameter (`newTy`) for this instance,
+  --   2) the underlying type (`wrappedTy`) that is wrapped by `newTy`,
+  --   3) superclasses and method definitions from the instance definition for
+  --      `wrappedTy`.
+  --      (Note that in order to find the instance definition for `wrappedTy`
+  --      and instance dictionary for `wrappedTy` is synthesized first.)
+  -- All of 1-3 are valid under the binders `instanceBs`. Hence we create an
+  -- abstraction whose body contains 1), 2), and 3).
+  ab :: Abs (Nest (WithRoleExpl CBinder))
+            (CType `PairE` CType `PairE` (ListE CAtom) `PairE` (ListE CAtom))
+            n
+    <- liftInfererM $ solveLocal do
+      withRoleUBinders instanceBs do
+        ClassDef classSourceName _ _ roleExpls paramBinders _ _ <- lookupClassDef (sink className')
+        let expls = snd <$> roleExpls
+        params' <- checkInstanceParams expls paramBinders params
+        case params' of
+          [param] -> do
+            case param of
+              TypeAsAtom newTy@(NewtypeTyCon (UserADTType _ tcName (TyConParams _ tcParams))) -> do
+                tcDef <- lookupTyCon tcName
+                case tcDef of
+                  TyConDef _ _ conBs (ADTCons [DataConDef _ (EmptyAbs (Nest (_:>wrappedTy) Empty)) _ _]) -> do
+                    wrappedTy' <- applySubst (conBs @@> map SubstVal tcParams) wrappedTy
+                    let wrappedDictTy = DictType classSourceName (sink className') [TypeAsAtom wrappedTy']
+                    -- Synthesize the dictionary for `wrappedTy'`
+                    synthWrappedDict <- trySynthTerm (DictTy wrappedDictTy) Full
+                    -- Extract superclasses and methods from the synthesized dictionary for `wrappedTy'`:
+                    DictCon _ (InstanceDict wrappedInstName wrappedInstParams) <- return synthWrappedDict
+                    InstanceDef _ _ wrappedBinders _ body <- lookupInstanceDef wrappedInstName
+                    InstanceBody scs methods <- applySubst (wrappedBinders @@> map SubstVal wrappedInstParams) body
+                    return $ newTy `PairE` wrappedTy' `PairE` (ListE scs) `PairE` (ListE methods)
+                  TyConDef _ _ _ _ ->
+                    throw TypeErr $ "User-defined ADT " ++ pprint newTy ++
+                                    " does not have exactly one (data) constructor" ++
+                                    " that takes exactly one (data) argument"
+              _ -> throw TypeErr $ "Parameter " ++ pprint param ++ " not a user-defined ADT"
+          _ -> throw TypeErr $ "More than one parameter when deriving instance of class " ++ pprint className ++
+                              "\nparameters: " ++ pprint params'
+  -- Check that the class method types mention neither `newTy` nor `wrappedTy`.
+  -- There is no fundamental reason for disallowing occurrences of `newTy` or
+  -- `wrappedTy` in the class method types, but the current implementation of
+  -- `convertAtom` necessitates that neither `newTy` nor `wrappedTy` appears in
+  -- any of the class method types. The function `convertAtom` is used below to
+  -- synthesize instance methods for `newTy`, and this synthesis is guided by
+  -- occurrences of `newTy` and `wrappedTy` in the _instance_ method types of
+  -- `wrappedTy`. For `convertAtom` to work correctly, the types `newTy` and
+  -- `wrappedTy` may only occur in the _instance_ method types in those positions
+  -- where `clParamBinders` (defined by a pattern match below) occur in the
+  -- corresponding _class_ method types.
+  -- (Note that at this point, `clParamBinders` necessarily  consists of exactly
+  -- one binder, corresponding to `param` that has been scrutinized in the nested
+  -- `case` expressions above.)
+  liftExceptEnvReaderM $ refreshAbs ab \_ body -> do
+    let newTy `PairE` wrappedTy `PairE` _ `PairE` _ = body
+    ClassDef _ methodNames _ _ clParamBinders clScs methodTys <- lookupClassDef (sink className')
+    refreshAbs (concatAbs (Abs clParamBinders (Abs clScs (ListE methodTys)))) \_ (ListE methodTys') ->
+      foldM (\_ (mty, mname) -> do whenM (corePiTypeMentionsType mty (sink wrappedTy))
+                                         (throw TypeErr $ "Cannot derive instance of " ++ pprint className' ++ ": " ++
+                                                          "interface method `" ++ pprint mname ++ "` has type `" ++
+                                                          pprint mty ++ "`, which mentions the wrapped instance type `" ++
+                                                          pprint wrappedTy ++ "`")
+                                   whenM (corePiTypeMentionsType mty (sink newTy))
+                                         (throw TypeErr $ "Cannot derive instance of " ++ pprint className' ++ ": " ++
+                                                          "interface method `" ++ pprint mname ++ "` has type `" ++
+                                                          pprint mty ++ "`, which mentions the new instance type `" ++
+                                                          pprint newTy ++ "`")
+                                   return ())
+            ()
+            (zip methodTys' methodNames)
+  -- Finally, synthesize an instance definition for `newTy`. This requires, in
+  -- particular, that instance method definitions are synthesized for `newTy`.
+  -- The function `convertAtom` is used below to synthesize method definitions for
+  -- `newTy` from the corresponding instance methods for `wrappedTy` (the definitions
+  -- of which are held in the variable `methods` that is bound by a pattern match
+  -- on `body` below). In order to call `convertAtom`, an isomorphism (variable
+  -- `iso` below) between the types `newTy` and `wrappedTy` is first set up below.
+  def <- liftEnvReaderM $ refreshAbs ab \bs body -> do
+    let newTy `PairE` wrappedTy `PairE` ListE scs `PairE` ListE methods = body
+    case newTy of
+      NewtypeTyCon (UserADTType sName tcName tcParams) -> do
+        -- Forward isomorphism:
+        fwdAbs <- buildAbs noHint wrappedTy \x ->
+          return $ NewtypeCon (sink $ UserADTData sName tcName tcParams) (Var x)
+        -- Backward isomorphism:
+        bwdAbs <- buildAbs noHint newTy \x ->
+          return $ ProjectElt (sink newTy) UnwrapNewtype (Var x)
+        -- Bundled up isomorphisms:
+        let iso = Iso wrappedTy newTy fwdAbs bwdAbs
+        -- Convert methods with the constructed isomorphism between `wrappedTy'` and `newTy'`:
+        methods' <- liftBuilder $ mapM (convertAtom iso) methods
+        let (roleExpls, bs') = unzipAttrs bs
+        return $ InstanceDef className' roleExpls bs' [TypeAsAtom newTy] $ InstanceBody scs methods'
+      _ -> error "internal error"
+  instanceName <- emitInstanceDef def
+  addInstanceSynthCandidate className' instanceName
+  UDeclResultDone <$> return result
 inferTopUDecl (ULocalDecl (WithSrcB src decl)) result = addSrcContext src case decl of
   UPass -> return $ UDeclResultDone result
   UExprDecl _ -> error "Shouldn't have this at the top level (should have become a command instead)"
@@ -160,6 +260,121 @@ getInstanceType (InstanceDef className roleExpls bs params _) = liftEnvReaderM d
     ClassDef classSourceName _ _ _ _ _ _ <- lookupClassDef className'
     let dTy = DictTy $ DictType classSourceName className' params'
     return $ CorePiType ImplicitApp (snd <$> roleExpls) bs' $ EffTy Pure dTy
+
+absMentionsType :: (EnvReader m, ScopeReader m) => Abs (Nest CBinder) CType n -> CType n -> m n Bool
+absMentionsType (Abs Empty scrut) ty = typeMentionsType scrut ty
+absMentionsType (Abs (Nest b@(_ :> bty) rest) scrut) ty = do
+  btyMentions <- typeMentionsType bty ty
+  restMentions <- liftEnvReaderM $ refreshAbs (Abs b (Abs rest scrut)) \_ ab -> absMentionsType ab (sink ty)
+  return $ btyMentions || restMentions
+
+corePiTypeMentionsType :: (EnvReader m, ScopeReader m) => CorePiType n -> CType n -> m n Bool
+corePiTypeMentionsType (CorePiType _ _ bs (EffTy _ scrut)) ty = absMentionsType (Abs bs scrut) ty
+
+typeMentionsType :: (EnvReader m, ScopeReader m) => CType n -> CType n -> m n Bool
+typeMentionsType scrutinee ty = do
+  isAlphaEq <- alphaEq scrutinee ty
+  if isAlphaEq then return True
+  else case scrutinee of
+    TC (BaseType _) -> return False
+    TC (ProdType scruts) -> anyM (flip typeMentionsType $ ty) scruts
+    TC (SumType scruts) -> anyM (flip typeMentionsType $ ty) scruts
+    TC (RefType _ scrut) -> typeMentionsType scrut ty
+    TC TypeKind -> return False
+    TC HeapType -> return False
+    TabPi (TabPiType _ b scrut) -> absMentionsType (Abs (Nest b Empty) scrut) ty
+    DepPairTy (DepPairType _ b scrut) -> absMentionsType (Abs (Nest b Empty) scrut) ty
+    TyVar _ -> return False
+    DictTy _ -> return False
+    Pi corePiType -> corePiTypeMentionsType corePiType ty
+    NewtypeTyCon _ -> return False
+    ProjectEltTy scrut _ _ -> typeMentionsType scrut ty
+
+data Iso n = Iso { inType :: CType n
+                 , outType :: CType n
+                 , fwd :: Abs CBinder CAtom n  -- single-argument abstraction that implements forward isomorphism
+                 , bwd :: Abs CBinder CAtom n  -- single-argument abstraction that implements backward isomorphism
+                 }
+
+instance GenericE Iso where
+  type RepE Iso = (CType `PairE` CType `PairE` (Abs CBinder CAtom) `PairE` (Abs CBinder CAtom))
+  fromE (Iso inType outType fwd bwd) = inType `PairE` outType `PairE` fwd `PairE` bwd
+  {-# INLINE fromE #-}
+  toE (inType `PairE` outType `PairE` fwd `PairE` bwd) = Iso inType outType fwd bwd
+  {-# INLINE toE #-}
+
+instance HoistableE Iso
+instance SinkableE Iso
+instance RenameE Iso
+
+instance Show (Iso n) where
+  show (Iso inType outType _ _) = "Iso " ++ pprint inType ++ " -> " ++ pprint outType
+
+instance Pretty (Iso n) where
+  pretty (Iso inType outType fwd bwd) = "Iso" <+> pretty inType <+> pretty outType <+>
+                                                  pretty (show fwd) <+> pretty (show bwd)
+
+invert :: Iso n -> Iso n
+invert iso = Iso inType' outType' fwd' bwd'
+  where inType' = outType iso
+        outType' = inType iso
+        fwd' = bwd iso
+        bwd' = fwd iso
+
+convertType :: EnvExtender m
+             => Iso o -> CType o -> m o (CType o)
+convertType iso ty = do
+  isTyEqualToInType <- alphaEq (inType iso) ty
+  if isTyEqualToInType then return $ outType iso
+  else case ty of
+    Pi (CorePiType appExpl expls bs (EffTy effs resultTy)) -> do
+      (Abs bs' (effs' `PairE` resultTy')) <- convertBinders iso (Abs (zipAttrs expls bs) (effs `PairE` resultTy))
+      let (_, bs'') = unzipAttrs bs'
+      return $ Pi $ CorePiType appExpl expls bs'' (EffTy effs' resultTy')
+    _ -> return ty
+
+convertBinders :: EnvExtender m
+               => Iso o
+               -> Abs (Nest (WithExpl CBinder)) (EffectRow 'CoreIR `PairE` CType) o
+               -> m o (Abs (Nest (WithExpl CBinder)) (EffectRow 'CoreIR `PairE` CType) o)
+convertBinders iso (Abs Empty (eff `PairE` ty)) = do
+  ty' <- convertType iso ty
+  return $ Abs Empty (eff `PairE` ty')
+convertBinders iso (Abs (Nest (WithAttrB expl (b:>bTy)) rest) x) = do
+  bTy' <- convertType iso bTy
+  refreshAbs (Abs (WithAttrB expl (b:>bTy')) (Abs rest x))
+    \(WithAttrB expl' (b':>bTy'')) ab -> do
+      Abs rest' x' <- convertBinders (sink iso) ab
+      return $ Abs (Nest (WithAttrB expl' (b':>bTy'')) rest') x'
+
+convertAtom :: (EnvExtender m, ScopableBuilder CoreIR m)
+         => Iso i
+         -> CAtom i ->  m i (CAtom i)
+convertAtom iso atom = do
+  let ty = getType atom
+  isTyEqualToInType <- alphaEq (inType iso) ty
+  if isTyEqualToInType
+    then applyAbs (fwd iso) (SubstVal atom)
+    else case ty of
+      Pi (CorePiType appExpl expl bs (EffTy effs bodyTy)) -> case atom of
+        Lam (CoreLamExpr _ _) -> do
+          Abs bs' (effs' `PairE` bodyTy') <- convertBinders iso (Abs (zipAttrs expl bs) (effs `PairE` bodyTy))
+          let (_, bs'') = unzipAttrs bs'
+          lamExpr <- buildCoreLam (CorePiType appExpl expl bs'' (EffTy effs' bodyTy')) \binderNames -> do
+            let args = map Var binderNames
+            args' <- mapM (convertAtom (sink $ invert iso)) args
+            -- Note that `App atom args'` (two lines down) has the unconverted
+            -- type `bodyTy` (and unconverted effects `effs`). After the recursive
+            -- call to `convertMethodAtom` (three lines down), the resulting
+            -- `atom''` will have the correct converted type and effects (i.e.
+            -- type and effects equivalent to `bodyTy'` and `effs'`).
+            effTy <- applyRename (bs @@> (map atomVarName binderNames)) $ EffTy effs bodyTy
+            atom' <- emitExpr $ App effTy (sink atom) args'
+            atom'' <- convertAtom (sink iso) atom'
+            emitExpr $ Atom atom''
+          return $ Lam lamExpr
+        _ -> error "should not occur"
+      _ -> return atom
 
 -- === Inferer interface ===
 
