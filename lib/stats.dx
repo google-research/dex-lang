@@ -1,6 +1,8 @@
 '# Stats
 Probability distributions and other functions useful for statistical computing.
 
+import linalg
+
 '## Log-space floating point numbers
 When working with probability densities, mass functions, distributions,
 likelihoods, etc., we often work on a logarithmic scale to prevent floating
@@ -332,6 +334,26 @@ instance OrderedDist(Uniform, Float, Float)
         else Exp $ log (d.high - x) - log (d.high - d.low)
   def quantile(d, q) = d.low + ((d.high - d.low) * q)
 
+
+'## Multivariate probability distributions
+Some commonly encountered multivariate distributions. 
+### Multivariate Normal distribution
+The [Multivariate Normal distribution](https://en.wikipedia.org/wiki/Multivariate_normal_distribution) is parameterised by its *mean*, `loc`, and Cholesky-factored `scale`.
+
+struct MultivariateNormal(n|Ix) =
+  loc : (n=>Float)
+  chol_cov : LowerTriMat n Float
+
+instance Random(MultivariateNormal(n), n=>Float) given (n|Ix)
+  def draw(d, k) =
+    std_norm = for i:n. randn (ixkey k i)
+    d.loc + for i:n. sum(for j:(..i). d.chol_cov[i, j] * std_norm[inject j])
+
+instance Dist(MultivariateNormal(n), n=>Float, Float) given (n|Ix)
+  def density(d, x) = 
+    y = forward_substitute d.chol_cov (x - d.loc)
+    dim = n_to_f (size n)
+    Exp (-(dim / 2) * log (2 * pi) - sum(log (lower_tri_diag d.chol_cov)) - 0.5 * dot y y)
 
 '## Data summaries
 Some data summary functions. Note that `mean` is provided by the prelude.

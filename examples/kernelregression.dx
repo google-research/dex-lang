@@ -1,6 +1,7 @@
 '# Kernel Regression
 
 import linalg
+import stats
 import plot
 
 struct ConjGradState(a|VSpace) =
@@ -43,7 +44,7 @@ The optimal coefficients are found by solving a linear system $\alpha=G^{-1}y$,\
 where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,y_N)^\top\in\mathbb R^N$
 
 -- Synthetic data
-Nx = Fin 100
+Nx = Fin 20
 noise = 0.1
 [k1, k2] = split_key (new_key 0)
 
@@ -69,9 +70,15 @@ Nxtest = Fin 1000
 xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
 preds = map predict xtest
 
+-- True function.
+:html show_plot $ xy_plot xtest (map trueFun xtest)
+> <html output>
+
+-- Observed values.
 :html show_plot $ xy_plot xs ys
 > <html output>
 
+-- Ridge regression prediction.
 :html show_plot $ xy_plot xtest preds
 > <html output>
 
@@ -83,29 +90,44 @@ with the Bayes rule, gives the variance of the prediction.
 ' In this implementation, the conjugate gradient solver is replaced with the
 cholesky solver from `lib/linalg.dx` for efficiency.
 
-def gp_regress(
-    kernel: (a, a) -> Float,
-    xs: n=>a,
-    ys: n=>Float
-    ) -> ((a) -> (Float, Float)) given (n|Ix, a) =
-    noise_var = 0.0001
+def gp(
+  kernel: (a, a) -> Float,
+  xs: n=>a,
+  mean_fn: (a) -> Float,
+  noise_var: Float
+) -> MultivariateNormal n given (n|Ix, a) =
     gram = for i j. kernel xs[i] xs[j]
-    c = chol (gram + eye *. noise_var)
-    alpha = chol_solve c ys
-    predict = \x.
-        k' = for i. kernel xs[i] x
-        mu = sum for i. alpha[i] * k'[i]
-        alpha' = chol_solve c k'
-        var = kernel x x + noise_var - sum for i. k'[i] * alpha'[i]
-        (mu, var)
-    predict
+    loc = for i. mean_fn xs[i]
+    chol_cov = chol (gram + eye *. noise_var)
+    MultivariateNormal loc chol_cov
 
-gp_predict = gp_regress (\x y. rbf 0.2 x y) xs ys
+def gp_regress(
+  kernel: (a, a) -> Float,
+  xs: n=>a,
+  ys: n=>Float,
+  mean_fn: (a) -> Float,
+  noise_var: Float
+) -> ((m=>a) -> MultivariateNormal m) given (n|Ix, m|Ix, a) =
+    prior_gp = gp kernel xs mean_fn noise_var
+    gram_obs_inv_y = chol_solve prior_gp.chol_cov (ys - prior_gp.loc)
+    predictive_gp_fn = \xs_pred:m=>a.
+      gram_pred_obs = for i j. kernel xs_pred[i] xs[j]
+      loc = gram_pred_obs **. gram_obs_inv_y + (for i. mean_fn xs_pred[i])
+      gram_pred = (for i j. kernel xs_pred[i] xs_pred[j]) + eye *. noise_var
+      gram_obs_inv_gram_pred_obs = for i. chol_solve prior_gp.chol_cov gram_pred_obs[i]
+      schur = gram_pred - gram_obs_inv_gram_pred_obs ** (transpose gram_pred_obs)
+      MultivariateNormal loc (chol schur)
+    predictive_gp_fn
 
-(gp_preds, vars) = unzip (map gp_predict xtest)
+def mean_fn(x:Float) -> Float = 0. * x
+gp_predict_fn : (Nxtest=>Float) -> MultivariateNormal Nxtest = gp_regress (\x y. rbf 0.2 x y) xs ys mean_fn 0.0001 
+gp_predict_dist = gp_predict_fn xtest
+var_pred = for i. vdot gp_predict_dist.chol_cov[i] gp_predict_dist.chol_cov[i]
 
-:html show_plot $ xyc_plot xtest gp_preds (map sqrt vars)
+-- GP posterior predictive mean, colored by variance.
+:html show_plot $ xyc_plot xtest gp_predict_dist.loc (map sqrt var_pred)
 > <html output>
 
-:html show_plot $ xy_plot xtest vars
+-- Posterior predictive variance.
+:html show_plot $ xy_plot xtest var_pred
 > <html output>
