@@ -204,8 +204,8 @@ catchLogsAndErrs m = do
 -- know ahead of time which modules will be needed.
 evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
 evalSourceBlockRepl block = do
-  case block of
-    SourceBlock _ _ _ _ _ (Misc (ImportModule name)) -> do
+  case sbContents block of
+    Misc (ImportModule name) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
@@ -286,8 +286,8 @@ evalSourceBlock' mname block = case sbContents block of
         "FFI functions must be n-ary first order functions with the IO effect"
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
-        let hint = fromString dexName
-        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun (withoutSrc fname) impFunTy
+        let hint = fromString $ pprint dexName
+        fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun (pprint $ withoutSrc fname) impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
         emitSourceMap $ SourceMap $
           M.singleton dexName [ModuleVar mname (Just $ UAtomVar vCore)]
@@ -751,7 +751,7 @@ loadModuleSource
   :: (MonadIO m, Fallible m) => EvalConfig -> ModuleSourceName -> m File
 loadModuleSource config moduleName = do
   fullPath <- case moduleName of
-    OrdinaryModule moduleName' -> findFullPath $ moduleName' ++ ".dx"
+    OrdinaryModule moduleName' -> findFullPath $ pprint moduleName' ++ ".dx"
     Prelude -> case preludeFile config of
       Nothing -> findFullPath "prelude.dx"
       Just path -> return path
@@ -766,7 +766,7 @@ loadModuleSource config moduleName = do
         Nothing    -> throw ModuleImportErr $ unlines
           [ "Couldn't find a source file for module " ++
             (case moduleName of
-               OrdinaryModule n -> n; Prelude -> "prelude"; Main -> error "")
+               OrdinaryModule n -> pprint n; Prelude -> "prelude"; Main -> error "")
           , "Hint: Consider extending --lib-path?"
           ]
 

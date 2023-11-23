@@ -638,7 +638,7 @@ applyFromLiteralMethod
   :: Emits n => CType n -> SourceName -> CAtom n -> InfererM i n (CAtom n)
 applyFromLiteralMethod resultTy methodName litVal =
   lookupSourceMap methodName >>= \case
-    Nothing -> error $ "prelude function not found: " ++ methodName
+    Nothing -> error $ "prelude function not found: " ++ pprint methodName
     Just ~(UMethodVar methodName') -> do
       MethodBinding className _ <- lookupEnv methodName'
       dictTy <- toType <$> dictType className [toAtom resultTy]
@@ -955,14 +955,14 @@ inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgs
         (arg:argsRest, namedArgs) <- return args
         if isHole arg
           then do
-            let desc = (fSourceName, "_")
+            let desc = (pprint fSourceName, "_")
             withFreshUnificationVar (ImplicitArgInfVar desc) argTy \v ->
               cont (toAtom v) (argsRest, namedArgs)
           else do
             arg' <- checkOrInferExplicitArg isDependent arg argTy
             withDistinct $ cont arg' (argsRest, namedArgs)
       Inferred argName infMech -> do
-        let desc = (fSourceName, fromMaybe "_" argName)
+        let desc = (pprint $ fSourceName, fromMaybe "_" (fmap pprint argName))
         case lookupNamedArg args argName of
           Just arg -> do
             arg' <- checkOrInferExplicitArg isDependent arg argTy
@@ -1471,7 +1471,7 @@ checkMethodDef className methodTys (WithSrcE _ m) = do
   MethodBinding className' i <- renameM v >>= lookupEnv
   when (className /= className') do
     ClassBinding classDef <- lookupEnv className
-    throw TypeErr $ pprint sourceName ++ " is not a method of " ++ getSourceName classDef
+    throw TypeErr $ pprint sourceName ++ " is not a method of " ++ pprint (getSourceName classDef)
   (i,) <$> toAtom <$> Lam <$> checkULam rhs (methodTys !! i)
 
 checkUEffRow :: UEffectRow i -> InfererM i o (EffectRow CoreIR o)

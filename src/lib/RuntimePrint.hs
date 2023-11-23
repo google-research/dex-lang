@@ -109,7 +109,7 @@ showAnyTyCon tyCon atom = case tyCon of
           showDataCon (sink $ cons !! i) arg
           return UnitVal
         StructFields fields -> do
-          emitLit tySourceName
+          emitLit $ pprint tySourceName
           parens do
             sepBy ", " $ (enumerate fields) <&> \(i, _) ->
               rec =<< projectStruct i atom
@@ -117,9 +117,9 @@ showAnyTyCon tyCon atom = case tyCon of
         showDataCon :: Emits n' => DataConDef n' -> CAtom n' -> Print n'
         showDataCon (DataConDef sn _ _ projss) arg = do
           case projss of
-            [] -> emitLit sn
+            [] -> emitLit $ pprint sn
             _ -> parens do
-              emitLit (sn ++ " ")
+              emitLit (pprint sn ++ " ")
               sepBy " " $ projss <&> \projs ->
                 -- we use `init` to strip off the `UnwrapCompoundNewtype` since
                 -- we're already under the case alternative
@@ -204,16 +204,16 @@ stringLitAsCharTab s = do
 finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = return $ IxType (FinTy n) (DictCon $ IxFin n) ==> eltTy
 
-getPreludeFunction :: EnvReader m => String -> m n (CAtom n)
+getPreludeFunction :: EnvReader m => SourceName -> m n (CAtom n)
 getPreludeFunction sourceName = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of
       UAtomVar v -> toAtom <$> toAtomVar v
       _ -> notfound
     Nothing -> notfound
- where notfound = error $ "Function not defined: " ++ sourceName
+ where notfound = error $ "Function not defined: " ++ pprint sourceName
 
-applyPreludeFunction :: (Emits n, CBuilder m) => String -> [CAtom n] -> m n (CAtom n)
+applyPreludeFunction :: (Emits n, CBuilder m) => SourceName -> [CAtom n] -> m n (CAtom n)
 applyPreludeFunction name args = do
   f <- getPreludeFunction name
   naryApp f args
@@ -221,14 +221,14 @@ applyPreludeFunction name args = do
 strType :: forall n m. EnvReader m => m n (CType n)
 strType = constructPreludeType "List" $ TyConParams [Explicit] [toAtom (CharRepTy :: CType n)]
 
-constructPreludeType :: EnvReader m => String -> TyConParams n -> m n (CType n)
+constructPreludeType :: EnvReader m => SourceName -> TyConParams n -> m n (CType n)
 constructPreludeType sourceName params = do
   lookupSourceMap sourceName >>= \case
     Just uvar -> case uvar of
       UTyConVar v -> return $ toType $ UserADTType sourceName v params
       _ -> notfound
     Nothing -> notfound
- where notfound = error $ "Type constructor not defined: " ++ sourceName
+ where notfound = error $ "Type constructor not defined: " ++ pprint sourceName
 
 forEachTabElt
   :: (Emits n, ScopableBuilder CoreIR m)

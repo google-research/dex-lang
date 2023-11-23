@@ -111,7 +111,7 @@ lookupSourceName v = do
     LocalVar v' : _ -> return v'
     [ModuleVar _ maybeV] -> case maybeV of
       Just v' -> return v'
-      Nothing -> throw VarDefErr v
+      Nothing -> throw VarDefErr $ pprint v
     vs -> throw AmbiguousVarErr $ ambiguousVarErrMsg v vs
 
 ambiguousVarErrMsg :: SourceName -> [SourceNameDef n] -> String

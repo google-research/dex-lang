@@ -311,7 +311,7 @@ compileInstr instr = case instr of
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
   IQueryParallelism f s -> do
     let IFunType cc _ _ = snd f
-    let kernelFuncName = topLevelFunName $ fst f
+    let kernelFuncName = topLevelFunName $ fromString $ fst f
     n <- (`asIntWidth` i64) =<< compileExpr s
     case cc of
       MCThreadLaunch -> do
@@ -339,7 +339,7 @@ compileInstr instr = case instr of
   ILaunch (fname, IFunType cc _ _) size args -> [] <$ do
     size' <- (`asIntWidth` i64) =<< compileExpr size
     args' <- mapM compileExpr args
-    let kernelFuncName = topLevelFunName fname
+    let kernelFuncName = topLevelFunName (fromString fname)
     case cc of
       MCThreadLaunch -> do
         kernelParams <- packArgs args'
@@ -508,11 +508,11 @@ compileInstr instr = case instr of
             let resultTys = map scalarTy impResultTys
             case cc of
               FFICC -> do
-                ans <- emitExternCall (makeFunSpec fname ty) args'
+                ans <- emitExternCall (makeFunSpec (fromString fname) ty) args'
                 return [ans]
               FFIMultiResultCC -> do
                 resultPtr <- makeMultiResultAlloc resultTys
-                emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
+                emitVoidExternCall (makeFunSpec (fromString fname) ty) (resultPtr : args')
                 loadMultiResultAlloc resultTys resultPtr
               _ -> error $ "Unsupported calling convention: " ++ show cc
   DebugPrint fmtStr x -> [] <$ do
@@ -539,11 +539,11 @@ compileInstr instr = case instr of
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
 topLevelFunName :: SourceName -> L.Name
-topLevelFunName name = fromString name
+topLevelFunName name = fromString $ pprint name
 
 makeFunSpec :: SourceName -> IFunType -> ExternFunSpec
 makeFunSpec name impFunTy =
-  ExternFunSpec (L.Name (fromString name)) retTy [] [] argTys
+  ExternFunSpec (L.Name (fromString $ pprint name)) retTy [] [] argTys
   where (retTy, argTys) = impFunTyToLLVMTy impFunTy
 
 impFunTyToLLVMTy :: IFunType -> LLVMFunType

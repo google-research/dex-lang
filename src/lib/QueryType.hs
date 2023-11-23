@@ -151,7 +151,7 @@ getMethodIndex :: EnvReader m => ClassName n -> SourceName -> m n Int
 getMethodIndex className methodSourceName = do
   ClassDef _ _ methodNames _ _ _ _ _ <- lookupClassDef className
   case elemIndex methodSourceName methodNames of
-    Nothing -> error $ methodSourceName ++ " is not a method of " ++ pprint className
+    Nothing -> error $ pprint methodSourceName ++ " is not a method of " ++ pprint className
     Just i -> return i
 {-# INLINE getMethodIndex #-}
 

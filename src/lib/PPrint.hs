@@ -835,7 +835,7 @@ instance PrettyPrec (NewtypeTyCon n) where
     UserADTType name _ (TyConParams infs params) -> case (infs, params) of
       ([], []) -> atPrec ArgPrec $ p name
       ([Explicit, Explicit], [l, r])
-        | Just sym <- fromInfix (fromString name) ->
+        | Just sym <- fromInfix (fromString $ pprint name) ->
         atPrec ArgPrec $ align $ group $
           parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) $ ignoreSynthParams (TyConParams infs params)
@@ -1084,7 +1084,7 @@ instance PrettyPrec Group where
   -- prettyPrec g = atPrec ArgPrec $ fromString $ show g
 
 instance Pretty Bin where
-  pretty (EvalBinOp name) = fromString (withoutSrc name)
+  pretty (EvalBinOp name) = pretty (withoutSrc name)
   pretty DepAmpersand = "&>"
   pretty Dot = "."
   pretty DepComma = ",>"

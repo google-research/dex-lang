@@ -31,6 +31,7 @@ import Lexing
 import Types.Core
 import Types.Source
 import Types.Primitives
+import SourceIdTraversal (getASTInfo)
 import qualified Types.OpNames as P
 import Util
 
@@ -59,7 +60,7 @@ parseUModule name s = do
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty (Misc $ ImportModule Prelude)
+preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty mempty (Misc $ ImportModule Prelude)
 
 sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
@@ -82,7 +83,7 @@ interpOperator (WithSrc sid s) = case s of
   "->>" -> ImplicitArrow
   "=>"  -> FatArrow
   "="   -> CSEqual
-  name  -> EvalBinOp $ WithSrc sid $ "(" <> name <> ")"
+  name  -> EvalBinOp $ WithSrc sid $ fromString $ "(" <> name <> ")"
 
 pattern Identifier :: SourceName -> GroupW
 pattern Identifier name <- (WithSrcs _ _ (CLeaf (CIdentifier name)))
@@ -93,12 +94,13 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
-  (src, (sm, (level, b))) <- withSource $ withSourceMaps $ withRecovery recover do
+  (src, (lexInfo, (level, b))) <- withSource $ withLexemeInfo $ withRecovery recover do
     level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
-  let sm' = sm { lexemeInfo = lexemeInfo sm <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src sm' b
+  let lexInfo' = lexInfo { lexemeInfo = lexemeInfo lexInfo <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
+  let astInfo = getASTInfo b
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src lexInfo' astInfo b
 
 recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do
@@ -124,7 +126,7 @@ declareForeign = do
   void $ label "type annotation" $ sym ":"
   ty <- cGroup
   eol
-  return $ DeclareForeign foreignName b ty
+  return $ DeclareForeign (fmap fromString foreignName) b ty
 
 declareCustomLinearization :: Parser SourceBlock'
 declareCustomLinearization = do
@@ -681,19 +683,19 @@ anySymOp = Expr.InfixL $ binApp do
   s <- label "infix operator" (mayBreak anySym)
   return $ interpOperator s
 
-infixSym :: SourceName -> Parser SrcId
+infixSym :: String -> Parser SrcId
 infixSym s = mayBreak $ symWithId $ T.pack s
 
-symOpN :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
-symOpN s = (s, Expr.InfixN $ symOp s)
+symOpN :: String -> (SourceName, Expr.Operator Parser GroupW)
+symOpN s = (fromString s, Expr.InfixN $ symOp s)
 
-symOpL :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
-symOpL s = (s, Expr.InfixL $ symOp s)
+symOpL :: String -> (SourceName, Expr.Operator Parser GroupW)
+symOpL s = (fromString s, Expr.InfixL $ symOp s)
 
-symOpR :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
-symOpR s = (s, Expr.InfixR $ symOp s)
+symOpR :: String -> (SourceName, Expr.Operator Parser GroupW)
+symOpR s = (fromString s, Expr.InfixR $ symOp s)
 
-symOp :: SourceName -> Parser (GroupW -> GroupW -> GroupW)
+symOp :: String -> Parser (GroupW -> GroupW -> GroupW)
 symOp s = binApp do
   sid <- label "infix operator" (infixSym s)
   return $ interpOperator (WithSrc sid s)
@@ -704,13 +706,13 @@ arrowOp = addSrcIdToBinOp do
   optEffs <- optional cEffs
   return \lhs rhs -> CArrow lhs optEffs rhs
 
-unOpPre :: SourceName -> (SourceName, Expr.Operator Parser GroupW)
-unOpPre s = (s, Expr.Prefix $ prefixOp s)
+unOpPre :: String -> (SourceName, Expr.Operator Parser GroupW)
+unOpPre s = (fromString s, Expr.Prefix $ prefixOp s)
 
-prefixOp :: SourceName -> Parser (GroupW -> GroupW)
+prefixOp :: String -> Parser (GroupW -> GroupW)
 prefixOp s = addSrcIdToUnOp do
   symId <- symWithId (fromString s)
-  return $ CPrefix (WithSrc symId s)
+  return $ CPrefix (WithSrc symId $ fromString s)
 
 binApp :: Parser Bin -> Parser (GroupW -> GroupW -> GroupW)
 binApp f = addSrcIdToBinOp $ CBin <$> f

@@ -32,12 +32,12 @@ data ParseCtx = ParseCtx
   { curIndent      :: Int  -- used Reader-style (i.e. ask/local)
   , canBreak       :: Bool -- used Reader-style (i.e. ask/local)
   , prevWhitespace :: Bool -- tracks whether we just consumed whitespace
-  , sourceIdCounter :: Int
+  , sourceIdCounter :: Int  -- starts at 1 (0 is reserved for the root)
   , curAtomicLexemes :: [SrcId]
-  , curSourceMap    :: SourceMaps } -- append to, writer-style
+  , curLexemeInfo    :: LexemeInfo } -- append to, writer-style
 
 initParseCtx :: ParseCtx
-initParseCtx = ParseCtx 0 False False 0 mempty mempty
+initParseCtx = ParseCtx 0 False False 1 mempty mempty
 
 type Parser = StateT ParseCtx (Parsec Void Text)
 
@@ -72,7 +72,7 @@ anyCaseName = label "name" $ lexeme LowerName anyCaseName' -- TODO: distinguish 
 
 anyCaseName' :: Lexer SourceName
 anyCaseName' =
-  checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
+  liftM MkSourceName $ checkNotKeyword $ (:) <$> satisfy (\c -> isLower c || isUpper c) <*>
     (T.unpack <$> takeWhileP Nothing (\c -> isAlphaNum c || c == '\'' || c == '_'))
 
 anyName :: Lexer (WithSrc SourceName)
@@ -188,7 +188,7 @@ anySym = lexeme Symbol $ try $ do
 symName :: Lexer (WithSrc SourceName)
 symName = label "symbol name" $ lexeme Symbol $ try $ do
   s <- between (char '(') (char ')') $ some symChar
-  return $ "(" <> s <> ")"
+  return $ MkSourceName $ "(" <> s <> ")"
 
 backquoteName :: Lexer (WithSrc SourceName)
 backquoteName = label "backquoted name" $
@@ -319,17 +319,17 @@ freshSrcId = do
   modify \ctx -> ctx { sourceIdCounter = c + 1 }
   return $ SrcId c
 
-withSourceMaps :: Parser a -> Parser (SourceMaps, a)
-withSourceMaps cont = do
-  smPrev <- gets curSourceMap
-  modify \ctx -> ctx { curSourceMap = mempty }
+withLexemeInfo :: Parser a -> Parser (LexemeInfo, a)
+withLexemeInfo cont = do
+  smPrev <- gets curLexemeInfo
+  modify \ctx -> ctx { curLexemeInfo = mempty }
   result <- cont
-  sm <- gets curSourceMap
-  modify \ctx -> ctx { curSourceMap = smPrev }
+  sm <- gets curLexemeInfo
+  modify \ctx -> ctx { curLexemeInfo = smPrev }
   return (sm, result)
 
-emitSourceMaps :: SourceMaps -> Parser ()
-emitSourceMaps m = modify \ctx -> ctx { curSourceMap = curSourceMap ctx <> m }
+emitLexemeInfo :: LexemeInfo -> Parser ()
+emitLexemeInfo m = modify \ctx -> ctx { curLexemeInfo = curLexemeInfo ctx <> m }
 
 lexemeIgnoreSrcId :: LexemeType -> Parser a -> Parser a
 lexemeIgnoreSrcId lexemeType p = withoutSrc <$> lexeme lexemeType p
@@ -345,7 +345,7 @@ lexeme lexemeType p = do
   recordNonWhitespace
   sc
   sid <- freshSrcId
-  emitSourceMaps $ mempty
+  emitLexemeInfo $ mempty
     { lexemeList = toSnocList [sid]
     , lexemeInfo = M.singleton sid (lexemeType, (start, end)) }
   return $ WithSrc sid ans

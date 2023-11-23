@@ -53,6 +53,7 @@ newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr 
 
 -- === Source Info ===
 
+-- XXX: 0 is reserved for the root
 newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
 -- This is just for syntax highlighting. It won't be needed if we have
@@ -70,19 +71,25 @@ data LexemeType =
  deriving (Show, Generic)
 
 type Span = (Int, Int)
-data SourceMaps = SourceMaps
+data LexemeInfo = LexemeInfo
   { lexemeList  :: SnocList SrcId
-  , lexemeInfo  :: M.Map SrcId (LexemeType, Span)
-  , astParent   :: M.Map SrcId SrcId
+  , lexemeInfo  :: M.Map SrcId (LexemeType, Span) }
+  deriving (Show, Generic)
+
+data ASTInfo = ASTInfo
+  { astParent   :: M.Map SrcId SrcId
   , astChildren :: M.Map SrcId [SrcId]}
   deriving (Show, Generic)
 
-instance Semigroup SourceMaps where
-  SourceMaps a b c d <> SourceMaps a' b' c' d' =
-    SourceMaps (a <> a') (b <> b') (c <> c') (d <> d')
+instance Semigroup LexemeInfo where
+  LexemeInfo a b <> LexemeInfo a' b' = LexemeInfo (a <> a') (b <> b')
+instance Monoid LexemeInfo where
+  mempty = LexemeInfo mempty mempty
 
-instance Monoid SourceMaps where
-  mempty = SourceMaps mempty mempty mempty mempty
+instance Semigroup ASTInfo where
+  ASTInfo a b <> ASTInfo a' b' = ASTInfo (a <> a') (M.unionWith (<>) b b')
+instance Monoid ASTInfo where
+  mempty = ASTInfo mempty mempty
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -507,7 +514,8 @@ data SourceBlock = SourceBlock
   , sbOffset     :: Int
   , sbLogLevel   :: LogLevel
   , sbText       :: Text
-  , sbSourceMaps :: SourceMaps
+  , sbLexemeInfo :: LexemeInfo
+  , sbASTInfo    :: ASTInfo
   , sbContents   :: SourceBlock' }
   deriving (Show, Generic)
 

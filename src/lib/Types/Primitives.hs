@@ -24,9 +24,11 @@ module Types.Primitives (
 
 import qualified Data.ByteString       as BS
 import Data.Int
+import Data.String (IsString (..))
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
+import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 
@@ -34,8 +36,9 @@ import GHC.Generics (Generic (..))
 
 import Occurrence
 import Types.OpNames (UnOp (..), BinOp (..), CmpOp (..), Projection (..))
+import Name
 
-type SourceName = String
+newtype SourceName = MkSourceName String  deriving (Show, Eq, Ord, Generic)
 
 newtype AlwaysEqual a = AlwaysEqual a
         deriving (Show, Generic, Functor, Foldable, Traversable, Hashable, Store)
@@ -181,6 +184,16 @@ emptyLit = \case
 
 -- === Typeclass instances ===
 
+instance HasNameHint SourceName where
+  getNameHint (MkSourceName v) = getNameHint v
+
+instance Pretty SourceName where
+  pretty (MkSourceName v) = pretty v
+
+instance IsString SourceName where
+  fromString v = MkSourceName v
+
+instance Store SourceName
 instance Store RequiredMethodAccess
 instance Store LetAnn
 instance Store RWS
@@ -194,6 +207,7 @@ instance Store AppExplicitness
 instance Store DepPairExplicitness
 instance Store InferenceMechanism
 
+instance Hashable SourceName
 instance Hashable RWS
 instance Hashable Direction
 instance Hashable BaseType

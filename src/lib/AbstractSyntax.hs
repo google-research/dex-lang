@@ -496,7 +496,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
         WithSrcE _ (UIntLit   i) -> UIntLit   (-i)
         WithSrcE _ (UFloatLit i) -> UFloatLit (-i)
         e -> unaryApp (mkUVar sid "neg") e
-      _ -> throw SyntaxErr $ "Prefix (" ++ name ++ ") not legal as a bare expression"
+      _ -> throw SyntaxErr $ "Prefix (" ++ pprint name ++ ") not legal as a bare expression"
   CLambda params body -> do
     params' <- explicitBindersOptAnn $ WithSrcs sid [] $ map stripParens params
     body' <- block body
