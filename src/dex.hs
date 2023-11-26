@@ -116,7 +116,7 @@ printFinal fmt prog = case fmt of
   TextDoc    -> return ()
   JSONDoc    -> return ()
 #ifdef DEX_LIVE
-  HTMLDoc    -> putStr $ progHtml prog
+  HTMLDoc    -> undefined -- putStr $ progHtml prog
 #endif
 
 readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock

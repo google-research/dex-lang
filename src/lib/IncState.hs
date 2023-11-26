@@ -8,7 +8,7 @@
 
 module IncState (
   IncState (..), MapEltUpdate (..), MapUpdate (..),
-  Overwrite (..), TailUpdate (..)) where
+  Overwrite (..), TailUpdate (..), mapUpdateMapWithKey) where
 
 import qualified Data.Map.Strict as M
 import GHC.Generics
@@ -28,6 +28,9 @@ data MapEltUpdate v =
 
 data MapUpdate k v = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate v) }
      deriving (Functor, Show, Generic)
+
+mapUpdateMapWithKey :: MapUpdate k v -> (k -> v -> v') -> MapUpdate k v'
+mapUpdateMapWithKey (MapUpdate m) f = MapUpdate $ M.mapWithKey (\k v -> fmap (f k) v) m
 
 instance Ord k => Monoid (MapUpdate k v) where
   mempty = MapUpdate mempty

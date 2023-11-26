@@ -509,6 +509,8 @@ data UModule = UModule
 
 -- === top-level blocks ===
 
+data SourceBlockWithId = SourceBlockWithId Int SourceBlock
+
 data SourceBlock = SourceBlock
   { sbLine       :: Int
   , sbOffset     :: Int

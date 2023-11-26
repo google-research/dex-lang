@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Live.Eval (
-  watchAndEvalFile, ResultsServer, ResultsUpdate, subscribeIO, dagAsUpdate) where
+  watchAndEvalFile, ResultsServer, ResultsUpdate, subscribeIO, dagAsUpdate, addSourceBlockIds) where
 
 import Control.Concurrent
 import Control.Monad
@@ -33,12 +33,15 @@ import MonadUtil
 
 -- `watchAndEvalFile` returns the channel by which a client may
 -- subscribe by sending a write-only view of its input channel.
-watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx
-                 -> IO (Evaluator SourceBlock Result)
+watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO ResultsServer
 watchAndEvalFile fname opts env = do
   watcher <- launchFileWatcher fname
   parser <- launchCellParser watcher \source -> uModuleSourceBlocks $ parseUModule Main source
   launchDagEvaluator parser env (evalSourceBlockIO opts)
+
+addSourceBlockIds :: NodeListUpdate (NodeState SourceBlock o) -> NodeListUpdate (NodeState SourceBlockWithId o)
+addSourceBlockIds (NodeListUpdate listUpdate mapUpdate) = NodeListUpdate listUpdate mapUpdate'
+   where mapUpdate' = mapUpdateMapWithKey mapUpdate \k (NodeState i o) -> NodeState (SourceBlockWithId k i) o
 
 type ResultsServer = Evaluator        SourceBlock Result
 type ResultsUpdate = EvalStatusUpdate SourceBlock Result
@@ -297,15 +300,15 @@ processDagUpdate dagUpdate = do
 
 -- === instances ===
 
-instance ToJSON a => ToJSON (NodeListUpdate a)
+instance (ToJSON i, ToJSON o) => ToJSON (NodeListUpdate (NodeState i o)) where
 instance (ToJSON a, ToJSONKey k) => ToJSON (MapUpdate k a)
 instance ToJSON a => ToJSON (TailUpdate a)
 instance ToJSON a => ToJSON (MapEltUpdate a)
 instance ToJSON o => ToJSON (NodeEvalStatus o)
 instance (ToJSON i, ToJSON o) => ToJSON (NodeState i o)
 
-instance ToJSON SourceBlock where
-  toJSON b = toJSON (sbLine b, pprintHtml b)
+instance ToJSON SourceBlockWithId where
+  toJSON b@(SourceBlockWithId _ b') = toJSON (sbLine b', pprintHtml b)
 instance ToJSON Result      where toJSON = toJSONViaHtml
 
 toJSONViaHtml :: ToMarkup a => a -> Value

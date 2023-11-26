@@ -197,12 +197,12 @@ topLevelCommand =
       importModule
   <|> declareForeign
   <|> declareCustomLinearization
-  <|> (Misc . QueryEnv <$> envQuery)
+  -- <|> (Misc . QueryEnv <$> envQuery)
   <|> explicitCommand
   <?> "top-level command"
 
-envQuery :: Parser EnvQuery
-envQuery = error "not implemented"
+_envQuery :: Parser EnvQuery
+_envQuery = error "not implemented"
 -- string ":debug" >> sc >> (
 --       (DumpSubst        <$  (string "env"   >> sc))
 --   <|> (InternalNameInfo <$> (string "iname" >> sc >> rawName))

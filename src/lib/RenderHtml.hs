@@ -16,6 +16,7 @@ import Text.Blaze.Html.Renderer.String
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import Data.Maybe (fromJust)
+import Data.String (fromString)
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
@@ -72,10 +73,10 @@ instance ToMarkup Output where
     HtmlOut s -> preEscapedString s
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
-instance ToMarkup SourceBlock where
-  toMarkup block = case sbContents block of
-    (Misc (ProseBlock s)) -> cdiv "prose-block" $ mdToHtml s
-    _ -> renderSpans (sbLexemeInfo block) (sbASTInfo block) (sbText block)
+instance ToMarkup SourceBlockWithId where
+  toMarkup (SourceBlockWithId blockId block) = case sbContents block of
+    Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
+    _ -> renderSpans blockId (sbLexemeInfo block) (sbASTInfo block) (sbText block)
 
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s
@@ -83,28 +84,37 @@ mdToHtml s = preEscapedText $ commonmarkToHtml [] s
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
-renderSpans :: LexemeInfo -> ASTInfo -> T.Text -> Markup
-renderSpans lexInfo astInfo sourceText = cdiv "code-block" do
+type BlockId = Int
+
+renderSpans :: BlockId -> LexemeInfo -> ASTInfo -> T.Text -> Markup
+renderSpans blockId lexInfo astInfo sourceText = cdiv "code-block" do
   runTextWalkerT sourceText do
     forM_ (lexemeList lexInfo) \sourceId -> do
       let (lexemeTy, (l, r)) = fromJust $ M.lookup sourceId (lexemeInfo lexInfo)
-      takeTo l >>= emitSpan ""
-      takeTo r >>= emitSpan (lexemeClass lexemeTy)
-    takeRest >>= emitSpan ""
+      takeTo l >>= emitSpan Nothing (Just "comment")
+      takeTo r >>= emitSpan (Just (blockId, sourceId)) (lexemeClass lexemeTy)
+    takeRest >>= emitSpan Nothing (Just "comment")
 
-emitSpan :: String -> T.Text -> TextWalker ()
-emitSpan className t = lift $ H.span (toHtml t) ! class_ (stringValue className)
+emitSpan :: Maybe (BlockId, SrcId) -> Maybe String -> T.Text -> TextWalker ()
+emitSpan maybeSrcId className t = lift do
+  let classAttr = case className of
+        Nothing -> mempty
+        Just c -> class_ (stringValue c)
+  let idAttr = case maybeSrcId of
+        Nothing -> mempty
+        Just (bid, SrcId sid) -> At.id (fromString $ "span_" ++ show bid ++ "_"++ show sid)
+  H.span (toHtml t) ! classAttr ! idAttr
 
-lexemeClass :: LexemeType -> String
+lexemeClass :: LexemeType -> Maybe String
 lexemeClass = \case
-   Keyword             -> "keyword"
-   Symbol              -> "symbol"
-   TypeName            -> "type-name"
-   LowerName           -> ""
-   UpperName           -> ""
-   LiteralLexeme       -> "literal"
-   StringLiteralLexeme -> ""
-   MiscLexeme          -> ""
+   Keyword             -> Just "keyword"
+   Symbol              -> Just "symbol"
+   TypeName            -> Just "type-name"
+   LowerName           -> Nothing
+   UpperName           -> Nothing
+   LiteralLexeme       -> Just "literal"
+   StringLiteralLexeme -> Nothing
+   MiscLexeme          -> Nothing
 
 type TextWalker a = StateT (Int, T.Text) MarkupM a
 
@@ -121,5 +131,6 @@ takeTo startPos = do
 
 takeRest :: TextWalker T.Text
 takeRest = do
-  endPos <- gets $ T.length . snd
-  takeTo endPos
+  (curPos, curText) <- get
+  put (curPos + T.length curText, mempty)
+  return curText

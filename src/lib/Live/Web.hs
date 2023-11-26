@@ -57,7 +57,7 @@ resultStream resultsServer write flush = do
   where
     sendUpdate :: ResultsUpdate -> IO ()
     sendUpdate update = do
-      let s = encodeResults update
+      let s = encodeResults $ addSourceBlockIds update
       write (fromByteString s) >> flush
 
     encodeResults :: ToJSON a => a -> BS.ByteString

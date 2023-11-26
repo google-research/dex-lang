@@ -235,12 +235,21 @@ space = gets canBreak >>= \case
   True  -> space1
   False -> void $ takeWhile1P (Just "white space") (`elem` (" \t" :: String))
 
+setCanBreakLocally :: Bool -> Parser a -> Parser a
+setCanBreakLocally brLocal p = do
+  brPrev <- gets canBreak
+  modify \ctx -> ctx {canBreak = brLocal}
+  ans <- p
+  modify \ctx -> ctx {canBreak = brPrev}
+  return ans
+{-# INLINE setCanBreakLocally #-}
+
 mayBreak :: Parser a -> Parser a
-mayBreak p = pLocal (\ctx -> ctx { canBreak = True }) p
+mayBreak p = setCanBreakLocally True p
 {-# INLINE mayBreak #-}
 
 mayNotBreak :: Parser a -> Parser a
-mayNotBreak p = pLocal (\ctx -> ctx { canBreak = False }) p
+mayNotBreak p = setCanBreakLocally False p
 {-# INLINE mayNotBreak #-}
 
 precededByWhitespace :: Parser Bool
@@ -294,14 +303,16 @@ withIndent p = do
   nextLine
   indent <- T.length <$> takeWhileP (Just "space") (==' ')
   when (indent <= 0) empty
-  pLocal (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ mayNotBreak p
+  locallyExtendCurIndent indent $ mayNotBreak p
 {-# INLINE withIndent #-}
 
-pLocal :: (ParseCtx -> ParseCtx) -> Parser a -> Parser a
-pLocal f p = do
-  s <- get
-  put (f s) >> p <* put s
-{-# INLINE pLocal #-}
+locallyExtendCurIndent :: Int -> Parser a -> Parser a
+locallyExtendCurIndent n p = do
+  indentPrev <- gets curIndent
+  modify \ctx -> ctx { curIndent = indentPrev + n }
+  ans <- p
+  modify \ctx -> ctx { curIndent = indentPrev }
+  return ans
 
 eol :: Parser ()
 eol = void MC.eol
