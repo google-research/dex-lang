@@ -76,7 +76,7 @@ instance ToMarkup Output where
 instance ToMarkup SourceBlockWithId where
   toMarkup (SourceBlockWithId blockId block) = case sbContents block of
     Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
-    _ -> renderSpans blockId (sbLexemeInfo block) (sbASTInfo block) (sbText block)
+    _ -> renderSpans blockId (sbLexemeInfo block) (sbText block)
 
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s
@@ -86,8 +86,8 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 
 type BlockId = Int
 
-renderSpans :: BlockId -> LexemeInfo -> ASTInfo -> T.Text -> Markup
-renderSpans blockId lexInfo astInfo sourceText = cdiv "code-block" do
+renderSpans :: BlockId -> LexemeInfo -> T.Text -> Markup
+renderSpans blockId lexInfo sourceText = cdiv "code-block" do
   runTextWalkerT sourceText do
     forM_ (lexemeList lexInfo) \sourceId -> do
       let (lexemeTy, (l, r)) = fromJust $ M.lookup sourceId (lexemeInfo lexInfo)

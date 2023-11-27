@@ -49,7 +49,7 @@ instance IsTree Group where
     CPrim _   xs -> mapM_ visit xs
     CParens   xs -> mapM_ visit xs
     CBrackets xs -> mapM_ visit xs
-    CBin _       l r -> visit l >> visit r
+    CBin       b l r -> visit b >> visit l >> visit r
     CJuxtapose _ l r -> visit l >> visit r
     CPrefix      l r -> visit l >> visit r
     CGivens (x,y) -> visit x >> visit y
@@ -111,3 +111,4 @@ instance (IsTree a, IsTree b, IsTree c) => IsTree (a, b, c) where
 instance IsTree AppExplicitness where visit _ = return ()
 instance IsTree SourceName      where visit _ = return ()
 instance IsTree LetAnn          where visit _ = return ()
+instance IsTree Bin             where visit _ = return ()

@@ -216,6 +216,10 @@ symChar = token (\c -> if HS.member c symChars then Just c else Nothing) mempty
 symChars :: HS.HashSet Char
 symChars = HS.fromList ".,!$^&*:-~+/=<>|?\\@#"
 
+-- XXX: unlike other lexemes, this doesn't consume trailing whitespace
+dot :: Parser SrcId
+dot = srcPos <$> lexeme' (return ()) Symbol (void $ char '.')
+
 -- === Util ===
 
 sc :: Parser ()
@@ -349,18 +353,22 @@ symbol :: Text -> Parser ()
 symbol s = void $ L.symbol sc s
 
 lexeme :: LexemeType -> Parser a -> Parser (WithSrc a)
-lexeme lexemeType p = do
+lexeme lexemeType p = lexeme' sc lexemeType p
+{-# INLINE lexeme #-}
+
+lexeme' :: Parser () -> LexemeType -> Parser a -> Parser (WithSrc a)
+lexeme' sc' lexemeType p = do
   start <- getOffset
   ans <- p
   end <- getOffset
   recordNonWhitespace
-  sc
+  sc'
   sid <- freshSrcId
   emitLexemeInfo $ mempty
     { lexemeList = toSnocList [sid]
     , lexemeInfo = M.singleton sid (lexemeType, (start, end)) }
   return $ WithSrc sid ans
-{-# INLINE lexeme #-}
+{-# INLINE lexeme' #-}
 
 atomicLexeme :: LexemeType -> Parser () -> Parser ()
 atomicLexeme lexemeType p = do

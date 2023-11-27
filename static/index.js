@@ -16,53 +16,6 @@ var katexOptions = {
     trust: true
 };
 
-function lookup_address(cell, address) {
-    var node = cell
-    for (i = 0; i < address.length; i++) {
-        node = node.children[address[i]]
-    }
-    return node
-}
-
-function renderHovertips(root) {
-    var spans = root.querySelectorAll(".code-span");
-    Array.from(spans).map((span) => attachHovertip(span));
-}
-
-function attachHovertip(node) {
-    node.addEventListener("mouseover", (event) => highlightNode(     event, node));
-    node.addEventListener("mouseout" , (event) => removeHighlighting(event, node));
-}
-
-function highlightNode(event, node) {
-    event.stopPropagation();
-    node.style.backgroundColor = "lightblue";
-    node.style.outlineColor = "lightblue";
-    node.style.outlineStyle = "solid";
-    Array.from(node.children).map(function (child) {
-        if (isCodeSpanOrLeaf(child)) {
-            child.style.backgroundColor = "yellow";
-        }
-    })
-}
-
-function isCodeSpanOrLeaf(node) {
-  return node.classList.contains("code-span") || node.classList.contains("code-span-leaf")
-
-}
-
-function removeHighlighting(event, node) {
-    event.stopPropagation();
-    node.style.backgroundColor = null;
-    node.style.outlineColor = null;
-    node.style.outlineStyle = null;
-    Array.from(node.children).map(function (child) {
-        if (isCodeSpanOrLeaf(child)) {
-          child.style.backgroundColor = null;
-        }
-    })
-}
-
 function renderLaTeX(root) {
     // Render LaTeX equations in prose blocks via KaTeX, if available.
     // Skip rendering if KaTeX is unavailable.
@@ -74,84 +27,6 @@ function renderLaTeX(root) {
     Array.from(proseBlocks).map((proseBlock) =>
         renderMathInElement(proseBlock, katexOptions)
     );
-}
-
-/**
- * Rendering the Table of Contents / Navigation Bar
- * 2 key functions
- *  - `updateNavigation()` which inserts/updates the navigation bar
- *  - and its helper `extractStructure()` which extracts the structure of the page
- *    and adds ids to heading elements.
-*/
-function updateNavigation() {
-    function navItemList(struct) {
-        var listEle = document.createElement('ol')
-        struct.children.forEach(childStruct=>
-            listEle.appendChild(navItem(childStruct))
-        );
-        return listEle;
-    }
-    function navItem(struct) {
-        var a = document.createElement('a');
-        a.appendChild(document.createTextNode(struct.text));
-        a.title = struct.text;
-        a.href = "#"+struct.id;
-
-        var ele = document.createElement('li')
-        ele.appendChild(a)
-        ele.appendChild(navItemList(struct));
-        return ele;
-    }
-
-    var navbarEle = document.getElementById("navbar")
-    if (navbarEle === null) {  // create it
-        navbarEle = document.createElement("div");
-        navbarEle.id="navbar";
-        navOuterEle = document.createElement("nav")
-        navOuterEle.appendChild(navbarEle);
-        document.body.prepend(navOuterEle);
-    }
-
-    navbarEle.innerHTML = ""
-    var structure = extractStructure()
-    navbarEle.appendChild(navItemList(structure));
-}
-
-function extractStructure() { // Also sets ids on h1,h2,...
-    var headingsNodes = document.querySelectorAll("h1, h2, h3, h4, h5, h6");
-    // For now we are just fulling going to regenerate the structure each time
-    // Might be better if we made minimal changes, but 🤷
-
-    // Extract the structure of the document
-    var structure = {children:[]}
-    var active = [structure.children];
-    headingsNodes.forEach(
-        function(currentValue, currentIndex) {
-            currentValue.id = "s-" + currentIndex;
-            var currentLevel = parseInt(currentValue.nodeName[1]);
-
-            // Insert dummy levels up for any levels that are skipped
-            for (var i=active.length; i < currentLevel; i++) {
-                var dummy = {id: "", text: "", children: []}
-                active.push(dummy.children);
-                var parentList = active[i-1]
-                parentList.push(dummy);
-            }
-            // delete this level and everything after
-            active.splice(currentLevel, active.length);
-
-            var currentStructure = {
-                id: currentValue.id,
-                text: currentValue.textContent,
-                children: [],
-            };
-            active.push(currentStructure.children);
-
-            var parentList = active[active.length-2]
-            parentList.push(currentStructure);
-        },
-    );
-    return structure;
 }
 
 /**
@@ -178,8 +53,6 @@ function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
         renderLaTeX(document);
-        renderHovertips(document);
-        updateNavigation();
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
         var source = new EventSource("/getnext");
@@ -190,24 +63,88 @@ function render(renderMode) {
                 cells = {}
                 return
             } else {
-                process_update(msg);
+                processUpdate(msg);
             }
         };
     }
 }
 
-function set_cell_contents(cell, contents) {
-    var line_num = contents[0][0];
-    var source_text = contents[0][1];
-    var line_num_div = document.createElement("div");
+function selectSpan(cellCtx, srcId) {
+    let [cell, blockId, _] = cellCtx
+    return cell.querySelector("#span_".concat(blockId.toString(), "_", srcId.toString()));}
 
-    line_num_div.innerHTML = line_num.toString();
-    line_num_div.className = "line-num";
+function attachHovertip(cellCtx, srcId) {
+    let span = selectSpan(cellCtx, srcId);
+    span.addEventListener("mouseover", (event) => enterSpan(event, cellCtx, srcId));
+    span.addEventListener("mouseout" , (event) => leaveSpan(event, cellCtx, srcId));}
+
+function getParent(cellCtx, srcId) {
+    let [ ,  , astInfo] = cellCtx;
+    let parent = astInfo["astParent"][srcId.toString()]
+    if (parent == undefined) {
+        console.error(srcId, astInfo);
+        throw new Error("Can't find parent");
+    } else {
+        return parent;
+    }}
+
+function getChildren(cellCtx, srcId) {
+    let [ ,  , astInfo] = cellCtx;
+    let children = astInfo["astChildren"][srcId.toString()]
+    if (children == undefined) {
+        return [];
+    } else {
+        return children;
+    }}
+
+function traverseSpans(cellCtx, srcId, f) {
+    let span = selectSpan(cellCtx, srcId)
+    if (span !== null) f(span);
+    getChildren(cellCtx, srcId).map(function (childId) {
+        traverseSpans(cellCtx, childId, f);
+    })}
+
+function enterSpan(event, cellCtx, srcId) {
+    event.stopPropagation();
+    let parentId = getParent(cellCtx, srcId);
+    traverseSpans(cellCtx, parentId, function (span) {
+        span.style.backgroundColor = "lightblue";
+        span.style.outlineColor = "lightblue";
+        span.style.outlineStyle = "solid";
+    });
+    let siblingIds = getChildren(cellCtx, parentId);
+    siblingIds.map(function (siblingId) {
+        traverseSpans(cellCtx, siblingId, function (span) {
+            span.style.backgroundColor = "yellow";
+    })})}
+
+function leaveSpan(event, cellCtx, srcId) {
+    event.stopPropagation();
+    let parentId = getParent(cellCtx, srcId);
+    traverseSpans(cellCtx, parentId, function (span) {
+        span.style.backgroundColor = null;
+        span.style.outlineColor = null;
+        span.style.outlineStyle = null;
+    });
+    let siblingIds = getChildren(cellCtx, parentId);
+    siblingIds.map(function (siblingId) {
+        traverseSpans(cellCtx, siblingId, function (span) {
+            span.style.backgroundColor = null;
+    })})}
+
+function setCellContents(cell, contents) {
+    let source  = contents[0];
+    let results = contents[1];
+    let lineNum    = source["jdLine"];
+    let sourceText = source["jdHTML"];
+    let lineNumDiv = document.createElement("div");
+    lineNumDiv.innerHTML = lineNum.toString();
+    lineNumDiv.className = "line-num";
     cell.innerHTML = ""
-    cell.appendChild(line_num_div);
-    cell.innerHTML += source_text
-    var results     = contents[1];
-    tag             = results["tag"]
+    cell.appendChild(lineNumDiv);
+    cell.innerHTML += sourceText
+
+    tag = results["tag"]
     if (tag == "Waiting") {
         cell.className = "cell waiting-cell";
     } else if (tag == "Running") {
@@ -219,10 +156,9 @@ function set_cell_contents(cell, contents) {
         console.error(tag);
     }
     renderLaTeX(cell);
-    renderHovertips(cell);
 }
 
-function process_update(msg) {
+function processUpdate(msg) {
     var cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
     var num_dropped  = msg["orderedNodesUpdate"]["numDropped"];
     var new_tail     = msg["orderedNodesUpdate"]["newTail"];
@@ -238,10 +174,10 @@ function process_update(msg) {
         if (tag == "Create") {
             var cell = document.createElement("div");
             cells[node_id] = cell;
-            set_cell_contents(cell, contents)
+            setCellContents(cell, contents)
         } else if (tag == "Update") {
             var cell = cells[node_id];
-            set_cell_contents(cell, contents);
+            setCellContents(cell, contents);
         } else if (tag == "Delete") {
             delete cells[node_id]
         } else {
@@ -251,7 +187,22 @@ function process_update(msg) {
 
     // append_new_cells
     new_tail.forEach(function (node_id) {
-        body.appendChild(cells[node_id]);
-    });
+        cell = cells[node_id];
+        body.appendChild(cell);
+    })
 
+    // add hovertips
+    new_tail.forEach(function (node_id) {
+        cell = cells[node_id];
+        var update = cell_updates[node_id];
+        if (update["tag"] == "Create") {
+            var source = update["contents"][0];
+            var blockId    = source["jdBlockId"];
+            var astInfo    = source["jdASTInfo"];
+            var lexemeList = source["jdLexemeList"];
+            cellCtx = [cell, blockId, astInfo];
+            lexemeList.map(function (lexemeId) {attachHovertip(cellCtx, lexemeId)})
+        }
+    });
 }
+

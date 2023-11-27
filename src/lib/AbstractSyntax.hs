@@ -195,7 +195,7 @@ withTrailingConstraints
   :: GroupW -> (GroupW -> SyntaxM (UAnnBinder VoidS VoidS))
   -> SyntaxM (Nest UAnnBinder VoidS VoidS)
 withTrailingConstraints g cont = case g of
-  WithSrcs _ _ (CBin Pipe lhs c) -> do
+  WithSrcs _ _ (CBin (WithSrc _ Pipe) lhs c) -> do
     Nest (UAnnBinder expl (WithSrcB sid b) ann cs) bs <- withTrailingConstraints lhs cont
     s <- case b of
       UBindSource s -> return s
@@ -253,7 +253,7 @@ explicitBindersOptAnn (WithSrcs _ _ bs) =
 
 -- Binder pattern with an optional type annotation
 patOptAnn :: GroupW -> SyntaxM (UPat VoidS VoidS, Maybe (UType VoidS))
-patOptAnn (WithSrcs _ _ (CBin Colon lhs typeAnn)) = (,) <$> pat lhs <*> (Just <$> expr typeAnn)
+patOptAnn (WithSrcs _ _ (CBin (WithSrc _ Colon) lhs typeAnn)) = (,) <$> pat lhs <*> (Just <$> expr typeAnn)
 patOptAnn (WithSrcs _ _ (CParens [g])) = patOptAnn g
 patOptAnn g = (,Nothing) <$> pat g
 
@@ -267,7 +267,7 @@ uBinder (WithSrcs sid _ b) = case b of
 tyOptPat :: GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
 tyOptPat grpTop@(WithSrcs sid _ grp) = case grp of
   -- Named type
-  CBin Colon lhs typeAnn ->
+  CBin (WithSrc _ Colon) lhs typeAnn ->
     UAnnBinder Explicit <$> uBinder lhs <*> (UAnn <$> expr typeAnn) <*> pure []
   -- Binder in grouping parens.
   CParens [g] -> tyOptPat g
@@ -285,7 +285,7 @@ casePat = \case
 
 pat :: GroupW -> SyntaxM (UPat VoidS VoidS)
 pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
-  CBin DepComma lhs rhs -> do
+  CBin (WithSrc _ DepComma) lhs rhs -> do
     lhs' <- pat lhs
     rhs' <- pat rhs
     return $ UPatDepPair $ PairB lhs' rhs'
@@ -317,8 +317,8 @@ pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
 
 tyOptBinder :: Explicitness -> GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
 tyOptBinder expl (WithSrcs sid sids grp) = case grp of
-  CBin Pipe  _ _     -> throw SyntaxErr "Unexpected constraint"
-  CBin Colon name ty -> do
+  CBin (WithSrc _ Pipe)  _ _     -> throw SyntaxErr "Unexpected constraint"
+  CBin (WithSrc _ Colon) name ty -> do
     b <- uBinder name
     ann <- UAnn <$> expr ty
     return $ UAnnBinder expl b ann []
@@ -328,7 +328,7 @@ tyOptBinder expl (WithSrcs sid sids grp) = case grp of
 
 binderOptTy :: Explicitness -> GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
 binderOptTy expl = \case
-  WithSrcs _ _ (CBin Colon name ty) -> do
+  WithSrcs _ _ (CBin (WithSrc _ Colon) name ty) -> do
     b <- uBinder name
     ann <- UAnn <$> expr ty
     return $ UAnnBinder expl b ann []
@@ -337,7 +337,7 @@ binderOptTy expl = \case
     return $ UAnnBinder expl b UNoAnn []
 
 binderReqTy :: Explicitness -> GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
-binderReqTy expl (WithSrcs _ _ (CBin Colon name ty)) = do
+binderReqTy expl (WithSrcs _ _ (CBin (WithSrc _ Colon) name ty)) = do
   b <- uBinder name
   ann <- UAnn <$> expr ty
   return $ UAnnBinder expl b ann []
@@ -348,7 +348,7 @@ argList gs = partitionEithers <$> mapM singleArg gs
 
 singleArg :: GroupW -> SyntaxM (Either (UExpr VoidS) (UNamedArg VoidS))
 singleArg = \case
-  WithSrcs _ _ (CBin CSEqual lhs rhs) -> Right <$>
+  WithSrcs _ _ (CBin (WithSrc _ CSEqual) lhs rhs) -> Right <$>
     ((,) <$> withoutSrc <$> identifier "named argument" lhs <*> expr rhs)
   g -> Left <$> expr g
 
@@ -450,7 +450,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
           args' <- mapM expr args
           return $ UTabApp f args'
         _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
-  CBin op lhs rhs -> case op of
+  CBin (WithSrc opSid op) lhs rhs -> case op of
     Dollar             -> extendAppRight <$> expr lhs <*> expr rhs
     Pipe               -> extendAppLeft  <$> expr lhs <*> expr rhs
     Dot -> do
@@ -480,7 +480,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
       UTabPi . (UTabPiExpr lhs') <$> expr rhs
    where
     evalOp s = do
-      let f = WithSrcE (srcPos s) (fromSourceNameW s)
+      let f = WithSrcE opSid (fromSourceNameW (WithSrc opSid s))
       lhs' <- expr lhs
       rhs' <- expr rhs
       return $ explicitApp f [lhs', rhs']

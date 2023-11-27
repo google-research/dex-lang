@@ -100,6 +100,7 @@ type GroupW      = WithSrcs Group
 type CTopDeclW   = WithSrcs CTopDecl
 type CSDeclW     = WithSrcs CSDecl
 type SourceNameW = WithSrc SourceName
+type BinW        = WithSrc Bin
 
 type BracketedGroup = WithSrcs [GroupW]
 -- optional arrow, effects, result type
@@ -161,7 +162,7 @@ data Group
   | CPrim PrimName [GroupW]
   | CParens   [GroupW]
   | CBrackets [GroupW]
-  | CBin Bin GroupW GroupW
+  | CBin BinW GroupW GroupW
   | CJuxtapose Bool GroupW GroupW -- Bool means "there's a space between the groups"
   | CPrefix SourceNameW GroupW -- covers unary - and unary + among others
   | CGivens GivenClause
@@ -187,7 +188,7 @@ data CLeaf
 type CaseAlt = (GroupW, CSBlock) -- scrutinee, lexeme Id, body
 
 data Bin
-  = EvalBinOp SourceNameW
+  = EvalBinOp SourceName
   | DepAmpersand
   | Dot
   | DepComma

@@ -28,6 +28,7 @@ import TopLevel
 import ConcreteSyntax
 import RenderHtml (ToMarkup, pprintHtml)
 import MonadUtil
+import Util (unsnoc)
 
 -- === Top-level interface ===
 
@@ -305,10 +306,24 @@ instance (ToJSON a, ToJSONKey k) => ToJSON (MapUpdate k a)
 instance ToJSON a => ToJSON (TailUpdate a)
 instance ToJSON a => ToJSON (MapEltUpdate a)
 instance ToJSON o => ToJSON (NodeEvalStatus o)
+instance ToJSON SrcId
+deriving instance ToJSONKey SrcId
+instance ToJSON ASTInfo
+instance ToJSON LexemeType
 instance (ToJSON i, ToJSON o) => ToJSON (NodeState i o)
 
+data SourceBlockJSONData = SourceBlockJSONData
+  { jdLine        :: Int
+  , jdBlockId     :: Int
+  , jdLexemeList  :: [SrcId]
+  , jdASTInfo     :: ASTInfo
+  , jdHTML        :: String }  deriving (Generic)
+
+instance ToJSON SourceBlockJSONData
+
 instance ToJSON SourceBlockWithId where
-  toJSON b@(SourceBlockWithId _ b') = toJSON (sbLine b', pprintHtml b)
+  toJSON b@(SourceBlockWithId blockId b') = toJSON $ SourceBlockJSONData
+   (sbLine b') blockId (unsnoc $ lexemeList $ sbLexemeInfo b') (sbASTInfo b') (pprintHtml b)
 instance ToJSON Result      where toJSON = toJSONViaHtml
 
 toJSONViaHtml :: ToMarkup a => a -> Value

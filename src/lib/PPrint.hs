@@ -1084,7 +1084,7 @@ instance PrettyPrec Group where
   -- prettyPrec g = atPrec ArgPrec $ fromString $ show g
 
 instance Pretty Bin where
-  pretty (EvalBinOp name) = pretty (withoutSrc name)
+  pretty (EvalBinOp name) = pretty name
   pretty DepAmpersand = "&>"
   pretty Dot = "."
   pretty DepComma = ",>"
