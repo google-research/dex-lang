@@ -49,7 +49,7 @@ instance IsTree Group where
     CPrim _   xs -> mapM_ visit xs
     CParens   xs -> mapM_ visit xs
     CBrackets xs -> mapM_ visit xs
-    CBin       b l r -> visit b >> visit l >> visit r
+    CBin       b l r -> visit l >> visit b >> visit r
     CJuxtapose _ l r -> visit l >> visit r
     CPrefix      l r -> visit l >> visit r
     CGivens (x,y) -> visit x >> visit y

@@ -56,6 +56,9 @@ newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr 
 -- XXX: 0 is reserved for the root
 newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
+rootSrcId :: SrcId
+rootSrcId = SrcId 0
+
 -- This is just for syntax highlighting. It won't be needed if we have
 -- a separate lexing pass where we have a complete lossless data type for
 -- lexemes.

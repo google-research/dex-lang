@@ -70,16 +70,16 @@ function render(renderMode) {
 }
 
 function selectSpan(cellCtx, srcId) {
-    let [cell, blockId, _] = cellCtx
+    let [cell, blockId,  ,  ] = cellCtx
     return cell.querySelector("#span_".concat(blockId.toString(), "_", srcId.toString()));}
 
 function attachHovertip(cellCtx, srcId) {
     let span = selectSpan(cellCtx, srcId);
-    span.addEventListener("mouseover", (event) => enterSpan(event, cellCtx, srcId));
-    span.addEventListener("mouseout" , (event) => leaveSpan(event, cellCtx, srcId));}
+    span.addEventListener("mouseover", (event) => toggleSpan(event, cellCtx, srcId));
+    span.addEventListener("mouseout" , (event) => toggleSpan(event, cellCtx, srcId));}
 
 function getParent(cellCtx, srcId) {
-    let [ ,  , astInfo] = cellCtx;
+    let [ ,  , astInfo, ] = cellCtx;
     let parent = astInfo["astParent"][srcId.toString()]
     if (parent == undefined) {
         console.error(srcId, astInfo);
@@ -89,7 +89,7 @@ function getParent(cellCtx, srcId) {
     }}
 
 function getChildren(cellCtx, srcId) {
-    let [ ,  , astInfo] = cellCtx;
+    let [ ,  , astInfo, ] = cellCtx;
     let children = astInfo["astChildren"][srcId.toString()]
     if (children == undefined) {
         return [];
@@ -97,40 +97,43 @@ function getChildren(cellCtx, srcId) {
         return children;
     }}
 
-function traverseSpans(cellCtx, srcId, f) {
-    let span = selectSpan(cellCtx, srcId)
-    if (span !== null) f(span);
-    getChildren(cellCtx, srcId).map(function (childId) {
-        traverseSpans(cellCtx, childId, f);
+function isLeafGroup(span) {
+    return span !== null && (span.classList.contains("keyword") || span.classList.contains("symbol"))
+}
+
+function toggleSrcIdHighlighting(cellCtx, srcId) {
+    let maybeLeaf = selectSpan(cellCtx, srcId)
+    // XXX: this is a bit of a hack. We should probably collect information
+    // about node types on the Haskell side
+    if (isLeafGroup(maybeLeaf)) {
+        maybeLeaf.classList.toggle("highlighted-leaf");
+    } else {
+        getSrcIdSpans(cellCtx, srcId).map(function (span) {
+          span.classList.toggle("highlighted");
+    })}}
+
+// All HTML spans associated with the srcId (these should be contiguous)
+function getSrcIdSpans(cellCtx, srcId) {
+    let [ , , , nodeSpans] = cellCtx;
+    let [leftSrcId, rightSrcId] = nodeSpans[srcId];
+    return spansBetween(selectSpan(cellCtx, leftSrcId), selectSpan(cellCtx, rightSrcId));}
+
+function spansBetween(l, r) {
+    let spans = []
+    while (l !== null && !(Object.is(l, r))) {
+        spans.push(l);
+        l = l.nextSibling;
+    }
+    spans.push(r)
+    return spans;}
+
+function toggleSpan(event, cellCtx, srcId) {
+    event.stopPropagation();
+    let parentId = getParent(cellCtx, srcId);
+    let siblingIds = getChildren(cellCtx, parentId);
+    siblingIds.map(function (siblingId) {
+        toggleSrcIdHighlighting(cellCtx, siblingId)
     })}
-
-function enterSpan(event, cellCtx, srcId) {
-    event.stopPropagation();
-    let parentId = getParent(cellCtx, srcId);
-    traverseSpans(cellCtx, parentId, function (span) {
-        span.style.backgroundColor = "lightblue";
-        span.style.outlineColor = "lightblue";
-        span.style.outlineStyle = "solid";
-    });
-    let siblingIds = getChildren(cellCtx, parentId);
-    siblingIds.map(function (siblingId) {
-        traverseSpans(cellCtx, siblingId, function (span) {
-            span.style.backgroundColor = "yellow";
-    })})}
-
-function leaveSpan(event, cellCtx, srcId) {
-    event.stopPropagation();
-    let parentId = getParent(cellCtx, srcId);
-    traverseSpans(cellCtx, parentId, function (span) {
-        span.style.backgroundColor = null;
-        span.style.outlineColor = null;
-        span.style.outlineStyle = null;
-    });
-    let siblingIds = getChildren(cellCtx, parentId);
-    siblingIds.map(function (siblingId) {
-        traverseSpans(cellCtx, siblingId, function (span) {
-            span.style.backgroundColor = null;
-    })})}
 
 function setCellContents(cell, contents) {
     let source  = contents[0];
@@ -200,7 +203,8 @@ function processUpdate(msg) {
             var blockId    = source["jdBlockId"];
             var astInfo    = source["jdASTInfo"];
             var lexemeList = source["jdLexemeList"];
-            cellCtx = [cell, blockId, astInfo];
+            var astLims    = source["jdASTLims"];
+            cellCtx = [cell, blockId, astInfo, astLims];
             lexemeList.map(function (lexemeId) {attachHovertip(cellCtx, lexemeId)})
         }
     });

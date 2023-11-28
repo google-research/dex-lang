@@ -100,6 +100,14 @@ code {
   color: #E07000;
 }
 
+.highlighted {
+  background-color: yellow;
+}
+
+.highlighted-leaf {
+  background-color: lightblue;
+}
+
 .type-name {
   color: #A80000;
 }
