@@ -41,10 +41,67 @@ var RENDER_MODE = Object.freeze({
   DYNAMIC: "dynamic",
 })
 
-// mapping from server-provided NodeID to HTML id
-var cells = {};
-var body = document.getElementById("main-output");
+var body         = document.getElementById("main-output");
 var hoverInfoDiv = document.getElementById("hover-info");
+
+// State of the system beyond the HTML
+var cells = {}
+var frozenHover = false;
+var curHighlights = [];  // HTML elements currently highlighted
+var focusMap     = {}
+var highlightMap = {}
+var hoverInfoMap = {}
+
+function removeHover() {
+    if (frozenHover) return;
+    hoverInfoDiv.innerHTML = ""
+    curHighlights.map(function (element) {
+        element.classList.remove("highlighted", "highlighted-leaf")})
+    curHighlights = [];
+}
+function lookupSrcMap(m, cellId, srcId) {
+    let blockMap = m[cellId]
+    if (blockMap == null) {
+        return null
+    } else {
+        return blockMap[srcId]}
+}
+function applyHover(cellId, srcId) {
+    if (frozenHover) return;
+    applyHoverInfo(cellId, srcId)
+    applyHoverHighlights(cellId, srcId)
+}
+function applyHoverInfo(cellId, srcId) {
+    let hoverInfo = lookupSrcMap(hoverInfoMap, cellId, srcId)
+    hoverInfoDiv.innerHTML = srcId.toString() // hoverInfo
+}
+function applyHoverHighlights(cellId, srcId) {
+    let focus = lookupSrcMap(focusMap, cellId, srcId)
+    if (focus == null) return
+    let highlights = lookupSrcMap(highlightMap, cellId, focus)
+    highlights.map(function (highlight) {
+        let [highlightType, [l, r]] = highlight
+        let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
+        let highlightClass = getHighlightClass(highlightType)
+        spans.map(function (span) {
+            span.classList.add(highlightClass)
+            curHighlights.push(span)})})
+}
+function toggleFrozenHover() {
+    if (frozenHover) {
+        frozenHover = false
+        removeHover()
+    } else {
+        frozenHover = true}
+}
+function attachHovertip(cellId, srcId) {
+    let span = selectSpan(cellId, srcId)
+    span.addEventListener("mouseover", function (event) {
+        event.stopPropagation()
+        applyHover(cellId, srcId)})
+    span.addEventListener("mouseout" , function (event) {
+        event.stopPropagation()
+        removeHover()})}
 
 /**
  * Renders the webpage.
@@ -60,40 +117,23 @@ function render(renderMode) {
         source.onmessage = function(event) {
             var msg = JSON.parse(event.data);
             if (msg == "start") {
-                body.innerHTML = "";
+                body.innerHTML = ""
+                body.addEventListener("click", function (event) {
+                    event.stopPropagation()
+                    toggleFrozenHover()})
                 cells = {}
                 return
             } else {
-                processUpdate(msg);
-            }
-        };
-    }
+                processUpdate(msg)}};}
 }
 
-function attachHovertip(cellCtx, srcId) {
-    let span = selectSpan(cellCtx, srcId);
-    span.addEventListener("mouseover", function (event) {
-        addHoverInfo(cellCtx, srcId);
-        toggleSpan(event, cellCtx, srcId);})
-    span.addEventListener("mouseout" ,  function(event) {
-        removeHoverInfo();
-        toggleSpan(event, cellCtx, srcId)});
+
+function selectSpan(cellId, srcId) {
+    return cells[cellId].querySelector("#span_".concat(cellId, "_", srcId))
 }
-
-function addHoverInfo(cellCtx, srcId) {
-    let [ ,  ,  ,  , hoverInfoMap] = cellCtx
-    s = hoverInfoMap[srcId.toString()]
-    hoverInfoDiv.innerHTML = s;
+function selectCell(cellId) {
+    return cells[cellId]
 }
-
-function removeHoverInfo() {
-    hoverInfoDiv.innerHTML = "";
-}
-
-function selectSpan(cellCtx, srcId) {
-    let [cell, blockId,  ,  ] = cellCtx
-    return cell.querySelector("#span_".concat(blockId.toString(), "_", srcId.toString()));}
-
 function getHighlightClass(highlightType) {
     if (highlightType == "HighlightGroup") {
         return "highlighted";
@@ -103,21 +143,6 @@ function getHighlightClass(highlightType) {
         throw new Error("Unrecognized highlight type");
     }
 }
-
-function toggleSpan(event, cellCtx, srcId) {
-    event.stopPropagation();
-    let [ , , focusMap, highlightMap] = cellCtx;
-    let focus = focusMap[srcId.toString()];
-    if (focus == null) return;
-    let highlights = highlightMap[focus.toString()];
-    highlights.map(function (highlight) {
-        let [highlightType, [l, r]] = highlight;
-        let spans = spansBetween(selectSpan(cellCtx, l), selectSpan(cellCtx, r));
-        let highlightClass = getHighlightClass(highlightType);
-        spans.map(function (span) {
-            span.classList.toggle(highlightClass);
-    })})}
-
 function spansBetween(l, r) {
     let spans = []
     while (l !== null && !(Object.is(l, r))) {
@@ -125,8 +150,8 @@ function spansBetween(l, r) {
         l = l.nextSibling;
     }
     spans.push(r)
-    return spans;}
-
+    return spans
+}
 function setCellContents(cell, contents) {
     let source  = contents[0];
     let results = contents[1];
@@ -152,7 +177,6 @@ function setCellContents(cell, contents) {
     }
     renderLaTeX(cell);
 }
-
 function processUpdate(msg) {
     let cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
     let num_dropped  = msg["orderedNodesUpdate"]["numDropped"];
@@ -162,43 +186,37 @@ function processUpdate(msg) {
     for (i = 0; i < num_dropped; i++) {
         body.lastElementChild.remove();}
 
-    Object.keys(cell_updates).forEach(function (node_id) {
-        let update = cell_updates[node_id];
+    Object.keys(cell_updates).forEach(function (cellId) {
+        let update = cell_updates[cellId];
         let tag = update["tag"]
         let contents = update["contents"]
         if (tag == "Create") {
             var cell = document.createElement("div");
-            cells[node_id] = cell;
+            cells[cellId] = cell;
             setCellContents(cell, contents)
         } else if (tag == "Update") {
-            var cell = cells[node_id];
+            var cell = cells[cellId];
             setCellContents(cell, contents);
         } else if (tag == "Delete") {
-            delete cells[node_id]
+            delete cells[cellId]
         } else {
             console.error(tag);
-        }
-    });
+        }});
 
     // append_new_cells
-    new_tail.forEach(function (node_id) {
-        let cell = cells[node_id];
-        body.appendChild(cell);
-    })
+    new_tail.forEach(function (cellId) {
+        let cell = selectCell(cellId);
+        body.appendChild(cell);})
 
-    Object.keys(cell_updates).forEach(function (node_id) {
-        let update = cell_updates[node_id];
+    Object.keys(cell_updates).forEach(function (cellId) {
+        let update = cell_updates[cellId]
         let tag = update["tag"]
-        let cell = cells[node_id];
         if (tag == "Create" || tag == "Update") {
+            let update = cell_updates[cellId];
             let source = update["contents"][0];
-            let blockId      = source["jdBlockId"];
-            let lexemeList   = source["jdLexemeList"];
-            let focusMap     = source["jdFocusMap"];
-            let highlightMap = source["jdHighlightMap"];
-            let hoverInfoMap = source["jdHoverInfoMap"];
-            cellCtx = [cell, blockId, focusMap, highlightMap, hoverInfoMap];
-            lexemeList.map(function (lexemeId) {attachHovertip(cellCtx, lexemeId)})
-        }
-    });
+            focusMap[cellId]     = source["jdFocusMap"]
+            highlightMap[cellId] = source["jdHighlightMap"]
+            hoverInfoMap[cellId] = source["jsHoverInfoMap"]
+            let lexemeList = source["jdLexemeList"];
+            lexemeList.map(function (lexemeId) {attachHovertip(cellId, lexemeId.toString())})}});
 }
