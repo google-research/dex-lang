@@ -4,32 +4,34 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module SourceIdTraversal (getASTInfo) where
+module SourceIdTraversal (getGroupTree) where
 
-import qualified Data.Map.Strict as M
-import Control.Monad.Reader
 import Control.Monad.Writer.Strict
+import Data.Functor ((<&>))
 
 import Types.Source
 import Types.Primitives
 
-getASTInfo :: SourceBlock' -> ASTInfo
-getASTInfo b = runTreeM (SrcId 0) $ visit b
+getGroupTree :: SourceBlock' -> GroupTree
+getGroupTree b = mkGroupTree rootSrcId $ runTreeM $ visit b
 
-type TreeM = ReaderT SrcId (Writer ASTInfo)
+type TreeM = Writer [GroupTree]
 
-runTreeM :: SrcId -> TreeM () -> ASTInfo
-runTreeM root cont = snd $ runWriter $ runReaderT cont root
+mkGroupTree :: SrcId -> [GroupTree] -> GroupTree
+mkGroupTree sid = \case
+  [] -> GroupTree sid (sid,sid) [] -- no children - must be a lexeme
+  subtrees -> GroupTree sid (l,r) subtrees
+    where l = minimum $ subtrees <&> \(GroupTree _ (l',_) _) -> l'
+          r = maximum $ subtrees <&> \(GroupTree _ (_,r') _) -> r'
 
-enterNode :: SrcId -> TreeM a -> TreeM a
-enterNode sid cont = do
-  emitNode sid
-  local (const sid) cont
+runTreeM :: TreeM () -> [GroupTree]
+runTreeM cont = snd $ runWriter $ cont
 
-emitNode :: SrcId -> TreeM ()
-emitNode child = do
-  parent <- ask
-  tell $ ASTInfo (M.singleton child parent) (M.singleton parent [child])
+enterNode :: SrcId -> TreeM () -> TreeM ()
+enterNode sid cont = tell [mkGroupTree sid (runTreeM cont)]
+
+emitLexeme :: SrcId -> TreeM ()
+emitLexeme lexemeId = tell [mkGroupTree lexemeId []]
 
 class IsTree a where
   visit :: a -> TreeM ()
@@ -94,7 +96,7 @@ instance IsTree a => IsTree (WithSrc a) where
   visit (WithSrc sid x) = enterNode sid $ visit x
 
 instance IsTree a => IsTree (WithSrcs a) where
-  visit (WithSrcs sid sids x) = enterNode sid $ mapM_ emitNode sids >> visit x
+  visit (WithSrcs sid sids x) = enterNode sid $ mapM_ emitLexeme sids >> visit x
 
 instance IsTree a => IsTree [a] where
   visit xs = mapM_ visit xs

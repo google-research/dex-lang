@@ -13,12 +13,11 @@ module Live.Eval (
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.State.Strict
-import Control.Monad.Reader
+import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
 import Data.Aeson (ToJSON, ToJSONKey, toJSON, Value)
 import Data.Functor ((<&>))
-import Data.Foldable (fold)
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Prelude hiding (span)
 import GHC.Generics
@@ -311,7 +310,6 @@ instance ToJSON a => ToJSON (MapEltUpdate a)
 instance ToJSON o => ToJSON (NodeEvalStatus o)
 instance ToJSON SrcId
 deriving instance ToJSONKey SrcId
-instance ToJSON ASTInfo
 instance ToJSON LexemeType
 instance (ToJSON i, ToJSON o) => ToJSON (NodeState i o)
 
@@ -319,8 +317,8 @@ data SourceBlockJSONData = SourceBlockJSONData
   { jdLine        :: Int
   , jdBlockId     :: Int
   , jdLexemeList  :: [SrcId]
-  , jdASTInfo     :: ASTInfo
-  , jdASTLims     :: M.Map SrcId (SrcId, SrcId)   -- precomputed leftmost and rightmost spans associated with each node
+  , jdFocusMap     :: FocusMap
+  , jdHighlightMap :: HighlightMap
   , jdHTML        :: String }  deriving (Generic)
 
 instance ToJSON SourceBlockJSONData
@@ -330,69 +328,45 @@ instance ToJSON SourceBlockWithId where
     { jdLine       = sbLine b'
     , jdBlockId    = blockId
     , jdLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b'
-    , jdASTInfo    = sbASTInfo b'
-    , jdASTLims    = computeASTLims (sbASTInfo b') (sbLexemeInfo b')
+    , jdFocusMap     = computeFocus      b'
+    , jdHighlightMap = computeHighlights b'
     , jdHTML       = pprintHtml b
     }
 instance ToJSON Result      where toJSON = toJSONViaHtml
 
-
 toJSONViaHtml :: ToMarkup a => a -> Value
 toJSONViaHtml x = toJSON $ pprintHtml x
 
--- === computing the linear lexeme limits on each SrcId ===
+-- === highlighting on hover ===
+-- TODO: put this somewhere else, like RenderHtml or something
 
-data OrdSrcId = OrdSrcId Int SrcId
-newtype OrdSrcIdSpan = OrdSrcIdSpan (Maybe (OrdSrcId, OrdSrcId))
+newtype FocusMap = FocusMap (M.Map LexemeId SrcId)   deriving (ToJSON, Semigroup, Monoid)
+newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
+type Highlights = [(HighlightType, LexemeSpan)]
+data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
 
-type SpanMap = M.Map SrcId OrdSrcIdSpan
-type ComputeSpanM = ReaderT (ASTInfo, LexemeInfo) (State SpanMap)
+instance ToJSON HighlightType
 
-instance Eq OrdSrcId where
-  OrdSrcId x _ == OrdSrcId y _ = x == y
+computeFocus :: SourceBlock -> FocusMap
+computeFocus sb = execWriter $ mapM go $ sbGroupTree sb where
+  go :: GroupTree -> Writer FocusMap ()
+  go t = forM_ (gtChildren t) \child-> do
+    go child
+    tell $ FocusMap $ M.singleton (gtSrcId child) (gtSrcId t)
 
-instance Ord OrdSrcId where
-  compare (OrdSrcId x _) (OrdSrcId y _) = compare x y
+computeHighlights :: SourceBlock -> HighlightMap
+computeHighlights sb = execWriter $ mapM go $ sbGroupTree sb where
+  go :: GroupTree -> Writer HighlightMap ()
+  go t = do
+    spans <- forM (gtChildren t) \child -> do
+      go child
+      return (getHighlightType (gtSrcId child), gtSpan child)
+    tell $ HighlightMap $ M.singleton (gtSrcId t) spans
 
-instance Monoid OrdSrcIdSpan where
-  mempty = OrdSrcIdSpan Nothing
-
-instance Semigroup OrdSrcIdSpan where
-  OrdSrcIdSpan Nothing <> s = s
-  s <> OrdSrcIdSpan Nothing = s
-  OrdSrcIdSpan (Just (l, r)) <> OrdSrcIdSpan (Just (l', r')) =
-    OrdSrcIdSpan $ Just (min l l', max r r')
-
-computeASTLims :: ASTInfo -> LexemeInfo -> M.Map SrcId (SrcId, SrcId)
-computeASTLims astInfo lexemeInfo =
-  M.mapMaybe stripOrd $ flip execState mempty $ flip runReaderT (astInfo, lexemeInfo) $
-    visitSrcId rootSrcId
-  where stripOrd :: OrdSrcIdSpan -> Maybe (SrcId, SrcId)
-        stripOrd (OrdSrcIdSpan s) = case s of
-          Just (OrdSrcId _ l, OrdSrcId _ r) -> Just (l, r)
-          Nothing -> Nothing
-
-insertSpan :: SrcId -> OrdSrcIdSpan -> ComputeSpanM ()
-insertSpan sid span = modify \m -> M.insert sid span m
-
-getSelfSpans :: SrcId -> ComputeSpanM [OrdSrcIdSpan]
-getSelfSpans sid = do
-  lexemes <- asks $ lexemeInfo . snd
-  case M.lookup sid lexemes of
-    Nothing -> return []
-    Just (_, (low, _)) -> do
-      let sidOrd = OrdSrcId low sid
-      return [OrdSrcIdSpan $ Just $ (sidOrd, sidOrd)]
-
-getChildren :: SrcId -> ComputeSpanM [SrcId]
-getChildren sid = do
-  astInfo <- asks fst
-  return $ fromMaybe [] $ M.lookup sid $ astChildren astInfo
-
-visitSrcId :: SrcId -> ComputeSpanM OrdSrcIdSpan
-visitSrcId sid = do
-  childSpans <- mapM visitSrcId =<< getChildren sid
-  selfSpans <- getSelfSpans sid
-  let finalSpan = fold $ selfSpans ++ childSpans
-  insertSpan sid finalSpan
-  return finalSpan
+  getHighlightType :: SrcId -> HighlightType
+  getHighlightType sid = case M.lookup sid (lexemeInfo $ sbLexemeInfo sb) of
+    Nothing -> HighlightGroup  -- not a lexeme
+    Just (lexemeTy, _) -> case lexemeTy of
+      Symbol  -> HighlightLeaf
+      Keyword -> HighlightLeaf
+      _ -> HighlightGroup

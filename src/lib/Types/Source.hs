@@ -53,7 +53,8 @@ newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr 
 
 -- === Source Info ===
 
--- XXX: 0 is reserved for the root
+-- XXX: 0 is reserved for the root The IDs are generated from left to right in
+-- parsing order, so IDs for lexemes are guaranteed to be sorted correctly.
 newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
 rootSrcId :: SrcId
@@ -79,20 +80,18 @@ data LexemeInfo = LexemeInfo
   , lexemeInfo  :: M.Map SrcId (LexemeType, Span) }
   deriving (Show, Generic)
 
-data ASTInfo = ASTInfo
-  { astParent   :: M.Map SrcId SrcId
-  , astChildren :: M.Map SrcId [SrcId]}
-  deriving (Show, Generic)
+type LexemeId = SrcId
+type LexemeSpan = (LexemeId, LexemeId)
+data GroupTree = GroupTree
+  { gtSrcId :: SrcId
+  , gtSpan  :: LexemeSpan
+  , gtChildren :: [GroupTree] }
+     deriving (Show, Generic)
 
 instance Semigroup LexemeInfo where
   LexemeInfo a b <> LexemeInfo a' b' = LexemeInfo (a <> a') (b <> b')
 instance Monoid LexemeInfo where
   mempty = LexemeInfo mempty mempty
-
-instance Semigroup ASTInfo where
-  ASTInfo a b <> ASTInfo a' b' = ASTInfo (a <> a') (M.unionWith (<>) b b')
-instance Monoid ASTInfo where
-  mempty = ASTInfo mempty mempty
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -521,7 +520,7 @@ data SourceBlock = SourceBlock
   , sbLogLevel   :: LogLevel
   , sbText       :: Text
   , sbLexemeInfo :: LexemeInfo
-  , sbASTInfo    :: ASTInfo
+  , sbGroupTree  :: Maybe GroupTree
   , sbContents   :: SourceBlock' }
   deriving (Show, Generic)
 

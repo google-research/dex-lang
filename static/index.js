@@ -69,54 +69,38 @@ function render(renderMode) {
     }
 }
 
-function selectSpan(cellCtx, srcId) {
-    let [cell, blockId,  ,  ] = cellCtx
-    return cell.querySelector("#span_".concat(blockId.toString(), "_", srcId.toString()));}
-
 function attachHovertip(cellCtx, srcId) {
     let span = selectSpan(cellCtx, srcId);
     span.addEventListener("mouseover", (event) => toggleSpan(event, cellCtx, srcId));
     span.addEventListener("mouseout" , (event) => toggleSpan(event, cellCtx, srcId));}
 
-function getParent(cellCtx, srcId) {
-    let [ ,  , astInfo, ] = cellCtx;
-    let parent = astInfo["astParent"][srcId.toString()]
-    if (parent == undefined) {
-        console.error(srcId, astInfo);
-        throw new Error("Can't find parent");
-    } else {
-        return parent;
-    }}
+function selectSpan(cellCtx, srcId) {
+    let [cell, blockId,  ,  ] = cellCtx
+    return cell.querySelector("#span_".concat(blockId.toString(), "_", srcId.toString()));}
 
-function getChildren(cellCtx, srcId) {
-    let [ ,  , astInfo, ] = cellCtx;
-    let children = astInfo["astChildren"][srcId.toString()]
-    if (children == undefined) {
-        return [];
+function getHighlightClass(highlightType) {
+    if (highlightType == "HighlightGroup") {
+        return "highlighted";
+    } else if (highlightType == "HighlightLeaf") {
+        return "highlighted-leaf";
     } else {
-        return children;
-    }}
-
-function isLeafGroup(span) {
-    return span !== null && (span.classList.contains("keyword") || span.classList.contains("symbol"))
+        throw new Error("Unrecognized highlight type");
+    }
 }
 
-function toggleSrcIdHighlighting(cellCtx, srcId) {
-    let maybeLeaf = selectSpan(cellCtx, srcId)
-    // XXX: this is a bit of a hack. We should probably collect information
-    // about node types on the Haskell side
-    if (isLeafGroup(maybeLeaf)) {
-        maybeLeaf.classList.toggle("highlighted-leaf");
-    } else {
-        getSrcIdSpans(cellCtx, srcId).map(function (span) {
-          span.classList.toggle("highlighted");
-    })}}
-
-// All HTML spans associated with the srcId (these should be contiguous)
-function getSrcIdSpans(cellCtx, srcId) {
-    let [ , , , nodeSpans] = cellCtx;
-    let [leftSrcId, rightSrcId] = nodeSpans[srcId];
-    return spansBetween(selectSpan(cellCtx, leftSrcId), selectSpan(cellCtx, rightSrcId));}
+function toggleSpan(event, cellCtx, srcId) {
+    event.stopPropagation();
+    let [ , , focusMap, highlightMap] = cellCtx;
+    let focus = focusMap[srcId.toString()];
+    if (focus == null) return;
+    let highlights = highlightMap[focus.toString()];
+    highlights.map(function (highlight) {
+        let [highlightType, [l, r]] = highlight;
+        let spans = spansBetween(selectSpan(cellCtx, l), selectSpan(cellCtx, r));
+        let highlightClass = getHighlightClass(highlightType);
+        spans.map(function (span) {
+            span.classList.toggle(highlightClass);
+    })})}
 
 function spansBetween(l, r) {
     let spans = []
@@ -126,14 +110,6 @@ function spansBetween(l, r) {
     }
     spans.push(r)
     return spans;}
-
-function toggleSpan(event, cellCtx, srcId) {
-    event.stopPropagation();
-    let parentId = getParent(cellCtx, srcId);
-    let siblingIds = getChildren(cellCtx, parentId);
-    siblingIds.map(function (siblingId) {
-        toggleSrcIdHighlighting(cellCtx, siblingId)
-    })}
 
 function setCellContents(cell, contents) {
     let source  = contents[0];
@@ -162,18 +138,18 @@ function setCellContents(cell, contents) {
 }
 
 function processUpdate(msg) {
-    var cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
-    var num_dropped  = msg["orderedNodesUpdate"]["numDropped"];
-    var new_tail     = msg["orderedNodesUpdate"]["newTail"];
+    let cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
+    let num_dropped  = msg["orderedNodesUpdate"]["numDropped"];
+    let new_tail     = msg["orderedNodesUpdate"]["newTail"];
 
     // drop_dead_cells
     for (i = 0; i < num_dropped; i++) {
         body.lastElementChild.remove();}
 
     Object.keys(cell_updates).forEach(function (node_id) {
-        var update = cell_updates[node_id];
-        var tag = update["tag"]
-        var contents = update["contents"]
+        let update = cell_updates[node_id];
+        let tag = update["tag"]
+        let contents = update["contents"]
         if (tag == "Create") {
             var cell = document.createElement("div");
             cells[node_id] = cell;
@@ -190,23 +166,22 @@ function processUpdate(msg) {
 
     // append_new_cells
     new_tail.forEach(function (node_id) {
-        cell = cells[node_id];
+        let cell = cells[node_id];
         body.appendChild(cell);
     })
 
-    // add hovertips
-    new_tail.forEach(function (node_id) {
-        cell = cells[node_id];
-        var update = cell_updates[node_id];
-        if (update["tag"] == "Create") {
-            var source = update["contents"][0];
-            var blockId    = source["jdBlockId"];
-            var astInfo    = source["jdASTInfo"];
-            var lexemeList = source["jdLexemeList"];
-            var astLims    = source["jdASTLims"];
-            cellCtx = [cell, blockId, astInfo, astLims];
+    Object.keys(cell_updates).forEach(function (node_id) {
+        let update = cell_updates[node_id];
+        let tag = update["tag"]
+        let cell = cells[node_id];
+        if (tag == "Create" || tag == "Update") {
+            let source = update["contents"][0];
+            let blockId      = source["jdBlockId"];
+            let lexemeList   = source["jdLexemeList"];
+            let focusMap     = source["jdFocusMap"];
+            let highlightMap = source["jdHighlightMap"];
+            cellCtx = [cell, blockId, focusMap, highlightMap];
             lexemeList.map(function (lexemeId) {attachHovertip(cellCtx, lexemeId)})
         }
     });
 }
-
