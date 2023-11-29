@@ -44,6 +44,7 @@ var RENDER_MODE = Object.freeze({
 // mapping from server-provided NodeID to HTML id
 var cells = {};
 var body = document.getElementById("main-output");
+var hoverInfoDiv = document.getElementById("hover-info");
 
 /**
  * Renders the webpage.
@@ -71,8 +72,23 @@ function render(renderMode) {
 
 function attachHovertip(cellCtx, srcId) {
     let span = selectSpan(cellCtx, srcId);
-    span.addEventListener("mouseover", (event) => toggleSpan(event, cellCtx, srcId));
-    span.addEventListener("mouseout" , (event) => toggleSpan(event, cellCtx, srcId));}
+    span.addEventListener("mouseover", function (event) {
+        addHoverInfo(cellCtx, srcId);
+        toggleSpan(event, cellCtx, srcId);})
+    span.addEventListener("mouseout" ,  function(event) {
+        removeHoverInfo();
+        toggleSpan(event, cellCtx, srcId)});
+}
+
+function addHoverInfo(cellCtx, srcId) {
+    let [ ,  ,  ,  , hoverInfoMap] = cellCtx
+    s = hoverInfoMap[srcId.toString()]
+    hoverInfoDiv.innerHTML = s;
+}
+
+function removeHoverInfo() {
+    hoverInfoDiv.innerHTML = "";
+}
 
 function selectSpan(cellCtx, srcId) {
     let [cell, blockId,  ,  ] = cellCtx
@@ -180,7 +196,8 @@ function processUpdate(msg) {
             let lexemeList   = source["jdLexemeList"];
             let focusMap     = source["jdFocusMap"];
             let highlightMap = source["jdHighlightMap"];
-            cellCtx = [cell, blockId, focusMap, highlightMap];
+            let hoverInfoMap = source["jdHoverInfoMap"];
+            cellCtx = [cell, blockId, focusMap, highlightMap, hoverInfoMap];
             lexemeList.map(function (lexemeId) {attachHovertip(cellCtx, lexemeId)})
         }
     });

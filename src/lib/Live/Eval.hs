@@ -17,6 +17,7 @@ import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
 import Data.Aeson (ToJSON, ToJSONKey, toJSON, Value)
 import Data.Functor ((<&>))
+import Data.Foldable (toList)
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Prelude hiding (span)
@@ -319,6 +320,7 @@ data SourceBlockJSONData = SourceBlockJSONData
   , jdLexemeList  :: [SrcId]
   , jdFocusMap     :: FocusMap
   , jdHighlightMap :: HighlightMap
+  , jdHoverInfoMap :: HoverInfoMap
   , jdHTML        :: String }  deriving (Generic)
 
 instance ToJSON SourceBlockJSONData
@@ -330,12 +332,22 @@ instance ToJSON SourceBlockWithId where
     , jdLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b'
     , jdFocusMap     = computeFocus      b'
     , jdHighlightMap = computeHighlights b'
+    , jdHoverInfoMap = computeHoverInfo b'
     , jdHTML       = pprintHtml b
     }
 instance ToJSON Result      where toJSON = toJSONViaHtml
 
 toJSONViaHtml :: ToMarkup a => a -> Value
 toJSONViaHtml x = toJSON $ pprintHtml x
+
+-- === textual information on hover ===
+
+type HoverInfo = String
+newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
+
+computeHoverInfo :: SourceBlock -> HoverInfoMap
+computeHoverInfo sb = HoverInfoMap $
+  M.fromList $ toList (lexemeList (sbLexemeInfo sb)) <&> \srcId -> (srcId, show srcId)
 
 -- === highlighting on hover ===
 -- TODO: put this somewhere else, like RenderHtml or something

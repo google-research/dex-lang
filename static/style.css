@@ -11,41 +11,24 @@ body {
   display: flex;
   justify-content: space-between;
   overflow-x: hidden;
-  --main-width: 50rem;
-  --nav-width: 20rem;
+  padding-bottom:50vw;
 }
 
-@media (max-width: 70rem) {
-    /*For narrow screens hide nav and enable horizontal scrolling */
-    nav {display: none;}
-    body {overflow-x: auto;}
-}
-
-nav {/* this actually just holds space for #navbar, which is fixed */
-  min-width: var(--nav-width);
-  max-width: var(--nav-width);
-}
-#navbar {
+#hover-info {
   position: fixed;
-  height: 100vh;
-  width: var(--nav-width);
-  overflow-y: scroll;
-  border-right: 1px solid firebrick;
-}
-#navbar:before {
-  content: "Contents";
-  font-weight: bold;
-}
-nav ol {
-  list-style-type:none;
-  padding-left: 1rem;
+  height: 10rem;
+  bottom: 0em;
+  width: 100vw;
+  overflow: hidden;
+  background-color: white;
+  border-top: 1px solid firebrick;
+  font-family: monospace;
+  white-space: pre;
 }
 
 #main-output {
-  max-width: var(--main-width);
   margin: auto;
 }
-
 
 .code-block {
 }
@@ -127,7 +110,6 @@ code {
   float: left;
   text-align: right;
 }
-
 
 .waiting-cell {
   border-left: 6px solid #AAAAFF;
