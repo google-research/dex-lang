@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Live.Eval (
-  watchAndEvalFile, ResultsServer, ResultsUpdate, subscribeIO, dagAsUpdate, addSourceBlockIds) where
+  watchAndEvalFile, ResultsServer, ResultsUpdate, subscribeIO, nodeListAsUpdate, addSourceBlockIds) where
 
 import Control.Concurrent
 import Control.Monad
@@ -41,14 +41,24 @@ watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO ResultsServer
 watchAndEvalFile fname opts env = do
   watcher <- launchFileWatcher fname
   parser <- launchCellParser watcher \source -> uModuleSourceBlocks $ parseUModule Main source
-  launchDagEvaluator parser env (evalSourceBlockIO opts)
+  launchDagEvaluator parser env (evalSourceBlockIO' opts)
 
-addSourceBlockIds :: NodeListUpdate (NodeState SourceBlock o) -> NodeListUpdate (NodeState SourceBlockWithId o)
+addSourceBlockIds :: CellsUpdate SourceBlock o -> CellsUpdate SourceBlockWithId o
 addSourceBlockIds (NodeListUpdate listUpdate mapUpdate) = NodeListUpdate listUpdate mapUpdate'
-   where mapUpdate' = mapUpdateMapWithKey mapUpdate \k (NodeState i o) -> NodeState (SourceBlockWithId k i) o
+   where mapUpdate' = mapUpdateMapWithKey mapUpdate
+                        (\k (CellState b s o) -> CellState (SourceBlockWithId k b) s o)
+                        (\_ d -> d)
+
+-- shim to pretend that evalSourceBlockIO streams its results. TODO: make it actually do that.
+evalSourceBlockIO'
+  :: EvalConfig -> Mailbox Result -> TopStateEx -> SourceBlock -> IO TopStateEx
+evalSourceBlockIO' cfg resultChan env block = do
+  (result, env') <- evalSourceBlockIO cfg env block
+  send resultChan result
+  return env'
 
 type ResultsServer = Evaluator        SourceBlock Result
-type ResultsUpdate = EvalStatusUpdate SourceBlock Result
+type ResultsUpdate = CellsUpdate SourceBlock Result
 
 -- === DAG diff state ===
 
@@ -63,26 +73,26 @@ data NodeList a = NodeList
   , nodeMap      :: M.Map NodeId a }
   deriving (Show, Generic)
 
-data NodeListUpdate a = NodeListUpdate
+data NodeListUpdate s d = NodeListUpdate
   { orderedNodesUpdate :: TailUpdate NodeId
-  , nodeMapUpdate      :: MapUpdate NodeId a }
-  deriving (Show, Functor, Generic)
+  , nodeMapUpdate      :: MapUpdate NodeId s d }
+  deriving (Show, Generic)
 
-instance Semigroup (NodeListUpdate a) where
+instance IncState s d => Semigroup (NodeListUpdate s d) where
   NodeListUpdate x1 y1 <> NodeListUpdate x2 y2 = NodeListUpdate (x1<>x2) (y1<>y2)
 
-instance Monoid (NodeListUpdate a) where
+instance IncState s d => Monoid (NodeListUpdate s d) where
   mempty = NodeListUpdate mempty mempty
 
-instance IncState (NodeList a) (NodeListUpdate a) where
+instance IncState s d => IncState (NodeList s) (NodeListUpdate s d) where
   applyDiff (NodeList m xs) (NodeListUpdate dm dxs) =
     NodeList (applyDiff m dm) (applyDiff xs dxs)
 
-type Dag       = NodeList
-type DagUpdate = NodeListUpdate
+type Dag       a = NodeList (Unchanging a)
+type DagUpdate a = NodeListUpdate (Unchanging a) ()
 
-dagAsUpdate :: Dag a -> DagUpdate a
-dagAsUpdate (NodeList xs m)= NodeListUpdate (TailUpdate 0 xs) (MapUpdate $ fmap Create m)
+nodeListAsUpdate :: NodeList s -> NodeListUpdate s d
+nodeListAsUpdate (NodeList xs m)= NodeListUpdate (TailUpdate 0 xs) (MapUpdate $ fmap Create m)
 
 emptyNodeList :: NodeList a
 emptyNodeList = NodeList [] mempty
@@ -101,7 +111,7 @@ commonPrefixLength _ _ = 0
 nodeListVals :: NodeList a -> [a]
 nodeListVals nodes = orderedNodes nodes <&> \k -> fromJust $ M.lookup k (nodeMap nodes)
 
-computeNodeListUpdate :: (Eq a, FreshNames NodeId m) => NodeList a -> [a] -> m (NodeListUpdate a)
+computeNodeListUpdate :: (Eq s, FreshNames NodeId m) => NodeList s -> [s] -> m (NodeListUpdate s d)
 computeNodeListUpdate nodes newVals = do
   let prefixLength = commonPrefixLength (nodeListVals nodes) newVals
   let oldTail = drop prefixLength $ orderedNodes nodes
@@ -127,13 +137,13 @@ launchCellParser fileWatcher parseCells =
 
 cellParserImpl :: Eq a => FileWatcher -> (Text -> [a]) -> ActorM (CellParserMsg a) ()
 cellParserImpl fileWatcher parseCells = runFreshNameT do
-  initContents <- subscribe Update_CP fileWatcher
-  initNodeList <- buildNodeList $ parseCells initContents
+  Overwritable initContents <- subscribe Update_CP fileWatcher
+  initNodeList <- buildNodeList $ fmap Unchanging $ parseCells initContents
   runIncServerT initNodeList $ messageLoop \case
     Subscribe_CP msg -> handleSubscribeMsg msg
     Update_CP NoChange -> return ()
     Update_CP (OverwriteWith newContents) -> do
-      let newCells = parseCells newContents
+      let newCells = fmap Unchanging $ parseCells newContents
       curNodeList <- getl It
       update =<< computeNodeListUpdate curNodeList newCells
       flushDiffs
@@ -143,17 +153,27 @@ cellParserImpl fileWatcher parseCells = runFreshNameT do
 -- This is where we track the state of evaluation and decide what we needs to be
 -- run and what needs to be killed.
 
-type Evaluator i o = StateServer (EvalStatus i o) (EvalStatusUpdate i o)
+type Evaluator i o = StateServer (CellsState i o) (CellsUpdate i o)
 newtype EvaluatorM s i o a =
   EvaluatorM { runEvaluatorM' ::
-                 IncServerT (EvalStatus i o) (EvalStatusUpdate i o)
+                 IncServerT (CellsState i o) (CellsUpdate i o)
                    (StateT (EvaluatorState s i o)
                       (ActorM (EvaluatorMsg s i o))) a }
   deriving (Functor, Applicative, Monad, MonadIO,
-            Actor (EvaluatorMsg s i o),
-            IncServer (EvalStatus i o) (EvalStatusUpdate i o))
+            Actor (EvaluatorMsg s i o))
+deriving instance Monoid o => IncServer (CellsState i o) (CellsUpdate i o) (EvaluatorM s i o)
 
-instance DefuncState (EvaluatorMUpdate s i o) (EvaluatorM s i o) where
+instance Monoid o => Semigroup (CellUpdate o) where
+  CellUpdate s o <> CellUpdate s' o' = CellUpdate (s<>s') (o<>o')
+
+instance Monoid o => Monoid (CellUpdate o) where
+  mempty = CellUpdate mempty mempty
+
+instance Monoid o => IncState (CellState i o) (CellUpdate o) where
+  applyDiff (CellState source status result) (CellUpdate status' result') =
+    CellState source (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')
+
+instance Monoid o => DefuncState (EvaluatorMUpdate s i o) (EvaluatorM s i o) where
   update = \case
     UpdateDagEU dag     -> EvaluatorM $ update dag
     UpdateCurJob status -> EvaluatorM $ lift $ modify \s -> s { curRunningJob = status }
@@ -161,12 +181,10 @@ instance DefuncState (EvaluatorMUpdate s i o) (EvaluatorM s i o) where
     AppendEnv env -> do
       envs <- getl PrevEnvs
       update $ UpdateEnvs $ envs ++ [env]
-    UpdateJobStatus nodeId status -> do
-      NodeState i _ <- fromJust <$> getl (NodeInfo nodeId)
-      let newState = NodeState i status
-      update $ UpdateDagEU $ NodeListUpdate mempty $ MapUpdate $ M.singleton nodeId (Update newState)
+    UpdateCellState nodeId cellUpdate -> update $ UpdateDagEU $ NodeListUpdate mempty $
+      MapUpdate $ M.singleton nodeId $ Update cellUpdate
 
-instance LabelReader (EvaluatorMLabel s i o) (EvaluatorM s i o) where
+instance Monoid o => LabelReader (EvaluatorMLabel s i o) (EvaluatorM s i o) where
   getl l = case l of
     NodeListEM      -> EvaluatorM $ orderedNodes                <$> getl It
     NodeInfo nodeId -> EvaluatorM $ M.lookup nodeId <$> nodeMap <$> getl It
@@ -175,53 +193,57 @@ instance LabelReader (EvaluatorMLabel s i o) (EvaluatorM s i o) where
     EvalFun         -> EvaluatorM $ lift $ evalFun       <$> get
 
 data EvaluatorMUpdate s i o =
-   UpdateDagEU  (NodeListUpdate (NodeState i o))
- | UpdateJobStatus NodeId (NodeEvalStatus o)
+   UpdateDagEU (NodeListUpdate (CellState i o) (CellUpdate o))
+ | UpdateCellState NodeId (CellUpdate o)
  | UpdateCurJob CurJobStatus
  | UpdateEnvs [s]
  | AppendEnv s
 
 data EvaluatorMLabel s i o a where
   NodeListEM    ::           EvaluatorMLabel s i o [NodeId]
-  NodeInfo      :: NodeId -> EvaluatorMLabel s i o (Maybe (NodeState i o))
+  NodeInfo      :: NodeId -> EvaluatorMLabel s i o (Maybe (CellState i o))
   PrevEnvs      ::           EvaluatorMLabel s i o [s]
   CurRunningJob ::           EvaluatorMLabel s i o (CurJobStatus)
   EvalFun       ::           EvaluatorMLabel s i o (EvalFun s i o)
 
--- The envs after each cell evaluated so far
-type EvalFun s i o = s -> i -> IO (o, s)
-type CurJobStatus = Maybe (ThreadId, NodeId, CellIndex)
+-- `s` is the persistent state (i.e. TopEnvEx the environment)
+-- `i` is the type of input cell (e.g. SourceBlock)
+-- `o` is the (monoidal) type of updates, e.g. `Result`
+type EvalFun s i o = Mailbox o -> s -> i -> IO s
+-- It's redundant to have both NodeId and TheadId but it defends against
+-- possible GHC reuse of ThreadId (I don't know if that can actually happen)
+type JobId = (ThreadId, NodeId)
+type CurJobStatus = Maybe (JobId, CellIndex)
 
 data EvaluatorState s i o = EvaluatorState
   { prevEnvs      :: [s]
   , evalFun       :: EvalFun s i o
   , curRunningJob :: CurJobStatus }
 
-data NodeEvalStatus o =
-   Waiting
- | Running
- | Complete o
-   deriving (Show, Generic)
+data CellStatus = Waiting | Running | Complete deriving (Show, Generic)
 
-data NodeState i o = NodeState i (NodeEvalStatus o) deriving (Show, Generic)
+data CellState i o = CellState i CellStatus o             deriving (Show, Generic)
+data CellUpdate o  = CellUpdate (Overwrite CellStatus) o  deriving (Show, Generic)
 
 type Show3 s i o = (Show s, Show i, Show o)
 
-type EvalStatus       i o = NodeList       (NodeState i o)
-type EvalStatusUpdate i o = NodeListUpdate (NodeState i o)
+type CellsState  i o = NodeList       (CellState i o)
+type CellsUpdate i o = NodeListUpdate (CellState i o) (CellUpdate o)
 
 type CellIndex = Int -- index in the list of cells, not the NodeId
 
+data JobUpdate o s = PartialJobUpdate o | JobComplete s deriving (Show)
+
 data EvaluatorMsg s i o =
    SourceUpdate (DagUpdate i)
- | JobComplete ThreadId s o
- | Subscribe_E (SubscribeMsg (EvalStatus i o) (EvalStatusUpdate i o))
+ | JobUpdate JobId (JobUpdate o s)
+ | Subscribe_E (SubscribeMsg (CellsState i o) (CellsUpdate i o))
    deriving (Show)
 
 initEvaluatorState :: s -> EvalFun s i o -> EvaluatorState s i o
 initEvaluatorState s evalCell = EvaluatorState [s] evalCell Nothing
 
-launchDagEvaluator :: (Show3 s i o, MonadIO m) => CellParser i -> s -> EvalFun s i o -> m (Evaluator i o)
+launchDagEvaluator :: (Show3 s i o, Monoid o, MonadIO m) => CellParser i -> s -> EvalFun s i o -> m (Evaluator i o)
 launchDagEvaluator cellParser env evalCell = do
   mailbox <- launchActor do
     let s = initEvaluatorState env evalCell
@@ -229,73 +251,82 @@ launchDagEvaluator cellParser env evalCell = do
       dagEvaluatorImpl cellParser
   return $ sliceMailbox Subscribe_E mailbox
 
-dagEvaluatorImpl :: (Show3 s i o) => CellParser i -> EvaluatorM s i o ()
+dagEvaluatorImpl :: (Show3 s i o, Monoid o) => CellParser i -> EvaluatorM s i o ()
 dagEvaluatorImpl cellParser = do
   initDag <- subscribe SourceUpdate cellParser
-  processDagUpdate (dagAsUpdate initDag) >> flushDiffs
+  processDagUpdate (nodeListAsUpdate initDag) >> flushDiffs
   launchNextJob
   messageLoop \case
     Subscribe_E msg        -> handleSubscribeMsg msg
     SourceUpdate dagUpdate -> do
       processDagUpdate dagUpdate
       flushDiffs
-    JobComplete threadId env result -> do
-      processJobComplete threadId env result
+    JobUpdate jobId jobUpdate -> do
+      processJobUpdate jobId jobUpdate
       flushDiffs
 
-processJobComplete :: (Show3 s i o) => ThreadId -> s -> o -> EvaluatorM s i o ()
-processJobComplete threadId newEnv result = do
+processJobUpdate :: (Show3 s i o, Monoid o) => JobId -> JobUpdate o s -> EvaluatorM s i o ()
+processJobUpdate jobId jobUpdate = do
   getl CurRunningJob >>= \case
-    Just (expectedThreadId, nodeId, _) -> do
-      when (threadId == expectedThreadId) do -- otherwise it's a zombie
-        update $ UpdateJobStatus nodeId (Complete result)
-        update $ UpdateCurJob Nothing
-        update $ AppendEnv newEnv
-        launchNextJob
+    Just (jobId', _) -> when (jobId == jobId') do
+      let nodeId = snd jobId
+      case jobUpdate of
+        JobComplete newEnv -> do
+          update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith Complete) mempty
+          update $ UpdateCurJob Nothing
+          update $ AppendEnv newEnv
+          launchNextJob
+          flushDiffs
+        PartialJobUpdate result -> update $ UpdateCellState nodeId $ CellUpdate NoChange result
     Nothing -> return () -- this job is a zombie
 
-nextJobIndex :: EvaluatorM s i o Int
-nextJobIndex = do
+nextCellIndex :: Monoid o => EvaluatorM s i o Int
+nextCellIndex = do
   envs <- getl PrevEnvs
   return $ length envs - 1
 
-launchNextJob :: (Show3 s i o) => EvaluatorM s i o ()
+launchNextJob :: (Show3 s i o, Monoid o) => EvaluatorM s i o ()
 launchNextJob = do
-  jobIndex <- nextJobIndex
+  cellIndex <- nextCellIndex
   nodeList <- getl NodeListEM
-  when (jobIndex < length nodeList) do -- otherwise we're all done
-    curEnv <- (!! jobIndex) <$> getl PrevEnvs
-    let nodeId = nodeList !! jobIndex
-    launchJob jobIndex nodeId curEnv
+  when (cellIndex < length nodeList) do -- otherwise we're all done
+    curEnv <- (!! cellIndex) <$> getl PrevEnvs
+    let nodeId = nodeList !! cellIndex
+    launchJob cellIndex nodeId curEnv
 
-launchJob :: (Show3 s i o) => CellIndex -> NodeId -> s -> EvaluatorM s i o ()
-launchJob jobIndex nodeId env = do
+launchJob :: (Show3 s i o, Monoid o) => CellIndex -> NodeId -> s -> EvaluatorM s i o ()
+launchJob cellIndex nodeId env = do
   jobAction <- getl EvalFun
-  NodeState source _ <- fromJust <$> getl (NodeInfo nodeId)
-  resultMailbox <- selfMailbox id
+  CellState source _ _ <- fromJust <$> getl (NodeInfo nodeId)
+  mailbox <- selfMailbox id
+  update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith Running) mempty
   threadId <- liftIO $ forkIO do
     threadId <- myThreadId
-    (result, finalEnv) <- jobAction env source
-    send resultMailbox $ JobComplete threadId finalEnv result
-  update $ UpdateJobStatus nodeId Running
-  update $ UpdateCurJob (Just (threadId, nodeId, jobIndex))
+    let jobId = (threadId, nodeId)
+    let resultsMailbox = sliceMailbox (JobUpdate jobId . PartialJobUpdate) mailbox
+    finalEnv <- jobAction resultsMailbox env source
+    send mailbox $ JobUpdate jobId $ JobComplete finalEnv
+  let jobId = (threadId, nodeId)
+  update $ UpdateCurJob (Just (jobId, cellIndex))
 
-computeNumValidCells :: DagUpdate i -> EvaluatorM s i o Int
-computeNumValidCells dagUpdate = do
-  let nDropped = numDropped $ orderedNodesUpdate dagUpdate
+computeNumValidCells :: Monoid o => TailUpdate NodeId -> EvaluatorM s i o Int
+computeNumValidCells tailUpdate = do
+  let nDropped = numDropped tailUpdate
   nTotal <- length <$> getl NodeListEM
   return $ nTotal - nDropped
 
-processDagUpdate :: (Show3 s i o) => DagUpdate i -> EvaluatorM s i o ()
-processDagUpdate dagUpdate = do
-  nValid <- computeNumValidCells dagUpdate
+processDagUpdate :: (Show3 s i o, Monoid o) => DagUpdate i -> EvaluatorM s i o ()
+processDagUpdate (NodeListUpdate tailUpdate mapUpdate) = do
+  nValid <- computeNumValidCells tailUpdate
   envs <- getl PrevEnvs
   update $ UpdateEnvs $ take (nValid + 1) envs
-  update $ UpdateDagEU $ fmap (\i -> NodeState i Waiting) dagUpdate
+  update $ UpdateDagEU $ NodeListUpdate tailUpdate $ mapUpdateMapWithKey mapUpdate
+    (\_ (Unchanging i) -> CellState i Waiting mempty)
+    (\_ () -> mempty)
   getl CurRunningJob >>= \case
     Nothing -> launchNextJob
-    Just (threadId, _, jobIndex)
-      | (jobIndex >= nValid) -> do
+    Just ((threadId, _), cellIndex)
+      | (cellIndex >= nValid) -> do
           -- Current job is no longer valid. Kill it and restart.
           liftIO $ killThread threadId
           update $ UpdateCurJob Nothing
@@ -304,15 +335,18 @@ processDagUpdate dagUpdate = do
 
 -- === instances ===
 
-instance (ToJSON i, ToJSON o) => ToJSON (NodeListUpdate (NodeState i o)) where
-instance (ToJSON a, ToJSONKey k) => ToJSON (MapUpdate k a)
+instance (ToJSON i, ToJSON o) => ToJSON (NodeListUpdate (CellState i o) o) where
+instance (ToJSON s, ToJSON d, ToJSONKey k) => ToJSON (MapUpdate k s d)
 instance ToJSON a => ToJSON (TailUpdate a)
-instance ToJSON a => ToJSON (MapEltUpdate a)
-instance ToJSON o => ToJSON (NodeEvalStatus o)
+instance (ToJSON s, ToJSON d) => ToJSON (MapEltUpdate s d)
 instance ToJSON SrcId
 deriving instance ToJSONKey SrcId
 instance ToJSON LexemeType
-instance (ToJSON i, ToJSON o) => ToJSON (NodeState i o)
+instance (ToJSON i, ToJSON o) => ToJSON (CellState i o)
+instance (ToJSON i, ToJSON o) => ToJSON (CellsUpdate i o)
+instance            ToJSON o  => ToJSON (CellUpdate o)
+instance            ToJSON a  => ToJSON (Overwrite a)
+instance ToJSON CellStatus
 
 data SourceBlockJSONData = SourceBlockJSONData
   { jdLine        :: Int

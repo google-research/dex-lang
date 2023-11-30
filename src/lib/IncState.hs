@@ -8,7 +8,8 @@
 
 module IncState (
   IncState (..), MapEltUpdate (..), MapUpdate (..),
-  Overwrite (..), TailUpdate (..), mapUpdateMapWithKey) where
+  Overwrite (..), TailUpdate (..), Unchanging (..), Overwritable (..),
+  mapUpdateMapWithKey) where
 
 import qualified Data.Map.Strict as M
 import GHC.Generics
@@ -20,53 +21,69 @@ class Monoid d => IncState s d where
 
 -- === Diff utils ===
 
-data MapEltUpdate v =
-   Create v
- | Update v
+data MapEltUpdate s d =
+   Create s
+ | Replace s  -- TODO: should we merge Create/Replace?
+ | Update d
  | Delete
  deriving (Functor, Show, Generic)
 
-data MapUpdate k v = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate v) }
+data MapUpdate k s d = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s d) }
      deriving (Functor, Show, Generic)
 
-mapUpdateMapWithKey :: MapUpdate k v -> (k -> v -> v') -> MapUpdate k v'
-mapUpdateMapWithKey (MapUpdate m) f = MapUpdate $ M.mapWithKey (\k v -> fmap (f k) v) m
+mapUpdateMapWithKey :: MapUpdate k s d -> (k -> s -> s') -> (k -> d -> d') -> MapUpdate k s' d'
+mapUpdateMapWithKey (MapUpdate m) fs fd =
+  MapUpdate $ flip M.mapWithKey m \k v -> case v of
+    Create  s -> Create $ fs k s
+    Replace s -> Replace $ fs k s
+    Update d  -> Update $ fd k d
+    Delete    -> Delete
 
-instance Ord k => Monoid (MapUpdate k v) where
+instance (IncState s d, Ord k) => Monoid (MapUpdate k s d) where
   mempty = MapUpdate mempty
 
-instance Ord k => Semigroup (MapUpdate k v) where
+instance (IncState s d, Ord k) => Semigroup (MapUpdate k s d) where
   MapUpdate m1 <> MapUpdate m2 = MapUpdate $
     M.mapMaybe id (M.intersectionWith combineElts m1 m2)
       <> M.difference m1 m2
       <> M.difference m2 m1
     where combineElts e1 e2 = case e1 of
-            Create _ -> case e2 of
+            Create s -> case e2 of
               Create _ -> error "shouldn't be creating a node that already exists"
-              Update v -> Just $ Create v
+              Replace s' -> Just $ Create s'
+              Update d -> Just $ Create (applyDiff s d)
               Delete   -> Nothing
-            Update _ -> case e2 of
+            Replace s -> case e2 of
               Create _ -> error "shouldn't be creating a node that already exists"
-              Update v -> Just $ Update v
+              Replace s' -> Just $ Replace s'
+              Update d -> Just $ Replace (applyDiff s d)
+              Delete   -> Nothing
+            Update d -> case e2 of
+              Create _ -> error "shouldn't be creating a node that already exists"
+              Replace s -> Just $ Replace s
+              Update d' -> Just $ Update (d <> d')
               Delete   -> Just $ Delete
             Delete -> case e2 of
-              Create v -> Just $ Update v
-              Update _ -> error "shouldn't be updating a node that doesn't exist"
-              Delete   -> error "shouldn't be deleting a node that doesn't exist"
+              Create s -> Just $ Replace s
+              Replace _ -> error "shouldn't be replacing a node that doesn't exist"
+              Update _  -> error "shouldn't be updating a node that doesn't exist"
+              Delete    -> error "shouldn't be deleting a node that doesn't exist"
 
-instance Ord k => IncState (M.Map k v) (MapUpdate k v) where
+instance (IncState s d, Ord k) => IncState (M.Map k s) (MapUpdate k s d) where
   applyDiff m (MapUpdate updates) =
           M.mapMaybe id (M.intersectionWith applyEltUpdate m updates)
        <> M.difference m updates
        <> M.mapMaybe applyEltCreation (M.difference updates m)
-    where applyEltUpdate _ = \case
+    where applyEltUpdate s = \case
             Create _ -> error "key already exists"
-            Update v -> Just v
+            Replace s' -> Just s'
+            Update d -> Just $ applyDiff s d
             Delete   -> Nothing
           applyEltCreation = \case
-            Create v -> Just v
-            Update _ -> error "key doesn't exist yet"
-            Delete   -> error "key doesn't exist yet"
+            Create s -> Just s
+            Replace _ -> error "key doesn't exist yet"
+            Update _  -> error "key doesn't exist yet"
+            Delete    -> error "key doesn't exist yet"
 
 data TailUpdate a = TailUpdate
   { numDropped :: Int
@@ -87,7 +104,8 @@ instance IncState [a] (TailUpdate a) where
   applyDiff xs (TailUpdate numDrop ys) = take (length xs - numDrop) xs <> ys
 
 -- Trivial diff that works for any type - just replace the old value with a completely new one.
-data Overwrite a = NoChange | OverwriteWith a  deriving (Show)
+data Overwrite a = NoChange | OverwriteWith a  deriving (Show, Generic)
+newtype Overwritable a = Overwritable { fromOverwritable :: a } deriving (Show, Eq, Ord)
 
 instance Semigroup (Overwrite a) where
   l <> r = case r of
@@ -97,8 +115,14 @@ instance Semigroup (Overwrite a) where
 instance Monoid (Overwrite a) where
   mempty = NoChange
 
-instance IncState a (Overwrite a) where
+instance IncState (Overwritable a) (Overwrite a) where
   applyDiff s = \case
     NoChange         -> s
-    OverwriteWith s' -> s'
+    OverwriteWith s' -> Overwritable s'
 
+
+-- Trivial diff that works for any type - just replace the old value with a completely new one.
+newtype Unchanging a = Unchanging { fromUnchanging :: a } deriving (Show, Eq, Ord)
+
+instance IncState (Unchanging a) () where
+  applyDiff s () = s

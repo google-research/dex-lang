@@ -34,3 +34,12 @@ data Output =
 type PassLogger = FilteredLogger PassName [Output]
 
 data OptLevel = NoOptimize | Optimize
+
+instance Semigroup Result where
+  Result outs err <> Result outs' err' = Result (outs <> outs') err''
+    where err'' = case err' of
+            Success () -> err
+            Failure _  -> err'
+
+instance Monoid Result where
+  mempty = Result mempty (Success ())

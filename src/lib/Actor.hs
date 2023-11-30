@@ -10,7 +10,7 @@ module Actor (
   ActorM, Actor (..), launchActor, send, selfMailbox, messageLoop,
   sliceMailbox, SubscribeMsg (..), IncServer, IncServerT, FileWatcher,
   StateServer, flushDiffs, handleSubscribeMsg, subscribe, subscribeIO, sendSync,
-  runIncServerT, launchFileWatcher
+  runIncServerT, launchFileWatcher, Mailbox
   ) where
 
 import Control.Concurrent
@@ -188,14 +188,14 @@ launchClock intervalMicroseconds mailbox =
 -- === File watcher ===
 
 type SourceFileContents = Text
-type FileWatcher = StateServer SourceFileContents (Overwrite SourceFileContents)
+type FileWatcher = StateServer (Overwritable SourceFileContents) (Overwrite SourceFileContents)
 
 readFileContents :: MonadIO m => FilePath -> m Text
 readFileContents path = liftIO $ T.decodeUtf8 <$> BS.readFile path
 
 data FileWatcherMsg =
    ClockSignal_FW ()
- | Subscribe_FW (SubscribeMsg Text (Overwrite Text))
+ | Subscribe_FW (SubscribeMsg (Overwritable Text) (Overwrite Text))
    deriving (Show)
 
 launchFileWatcher :: MonadIO m => FilePath -> m FileWatcher
@@ -207,7 +207,7 @@ fileWatcherImpl path = do
   t0 <- liftIO $ getModificationTime path
   launchClock 100000 =<< selfMailbox ClockSignal_FW
   modTimeRef <- newRef t0
-  runIncServerT initContents $ messageLoop \case
+  runIncServerT (Overwritable initContents) $ messageLoop \case
     Subscribe_FW msg -> handleSubscribeMsg msg
     ClockSignal_FW () -> do
       tOld <- readRef modTimeRef

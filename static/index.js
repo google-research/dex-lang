@@ -143,6 +143,17 @@ function getHighlightClass(highlightType) {
         throw new Error("Unrecognized highlight type");
     }
 }
+function getStatusClass(status) {
+    if (status == "Waiting") {
+        return "waiting-cell";
+    } else if (status == "Running") {
+        return "running-cell";
+    } else if (status == "Complete") {
+        return "complete-cell";
+    } else {
+        throw new Error("Unrecognized status type");
+    }
+}
 function spansBetween(l, r) {
     let spans = []
     while (l !== null && !(Object.is(l, r))) {
@@ -152,30 +163,31 @@ function spansBetween(l, r) {
     spans.push(r)
     return spans
 }
+function setCellStatus(cell, status) {
+    cell.className = "class"
+    cell.classList.add(getStatusClass(status))
+}
+
 function setCellContents(cell, contents) {
-    let source  = contents[0];
-    let results = contents[1];
+    let [source, status, result]  = contents;
     let lineNum    = source["jdLine"];
     let sourceText = source["jdHTML"];
     let lineNumDiv = document.createElement("div");
     lineNumDiv.innerHTML = lineNum.toString();
     lineNumDiv.className = "line-num";
     cell.innerHTML = ""
-    cell.appendChild(lineNumDiv);
+    cell.appendChild(lineNumDiv)
+    setCellStatus(cell, status)
     cell.innerHTML += sourceText
-
-    tag = results["tag"]
-    if (tag == "Waiting") {
-        cell.className = "cell waiting-cell";
-    } else if (tag == "Running") {
-        cell.className = "cell running-cell";
-    } else if (tag == "Complete") {
-        cell.className = "cell complete-cell";
-        cell.innerHTML += results["contents"]
-    } else {
-        console.error(tag);
-    }
+    cell.innerHTML += result
     renderLaTeX(cell);
+}
+function updateCellContents(cell, contents) {
+    let [statusUpdate, resultsUpdate] = contents;
+    if (statusUpdate["tag"] == "OverwriteWith") {
+        setCellStatus(cell, statusUpdate["contents"])}
+    if (resultsUpdate !== "") {
+        cell.innerHTML += resultsUpdate}
 }
 function processUpdate(msg) {
     let cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
@@ -190,13 +202,13 @@ function processUpdate(msg) {
         let update = cell_updates[cellId];
         let tag = update["tag"]
         let contents = update["contents"]
-        if (tag == "Create") {
-            var cell = document.createElement("div");
+        if (tag == "Create" || tag == "Replace") {
+            let cell = document.createElement("div");
             cells[cellId] = cell;
             setCellContents(cell, contents)
         } else if (tag == "Update") {
-            var cell = cells[cellId];
-            setCellContents(cell, contents);
+            let cell = cells[cellId];
+            updateCellContents(cell, contents);
         } else if (tag == "Delete") {
             delete cells[cellId]
         } else {
@@ -211,7 +223,7 @@ function processUpdate(msg) {
     Object.keys(cell_updates).forEach(function (cellId) {
         let update = cell_updates[cellId]
         let tag = update["tag"]
-        if (tag == "Create" || tag == "Update") {
+        if (tag == "Create" || tag == "Replace") {
             let update = cell_updates[cellId];
             let source = update["contents"][0];
             focusMap[cellId]     = source["jdFocusMap"]

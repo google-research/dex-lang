@@ -52,7 +52,7 @@ resultStream :: ResultsServer -> StreamingBody
 resultStream resultsServer write flush = do
   write (fromByteString $ encodeResults ("start"::String)) >> flush
   (initResult, resultsChan) <- subscribeIO resultsServer
-  sendUpdate $ dagAsUpdate initResult
+  sendUpdate $ nodeListAsUpdate initResult
   forever $ readChan resultsChan >>= sendUpdate
   where
     sendUpdate :: ResultsUpdate -> IO ()
