@@ -98,6 +98,11 @@ instance Semigroup LexemeInfo where
 instance Monoid LexemeInfo where
   mempty = LexemeInfo mempty mempty
 
+-- === Type Info ===
+
+newtype TypeInfo = TypeInfo { fromTypeInfo :: M.Map SrcId String }
+        deriving (Semigroup, Monoid, ToJSON, Show, Eq)
+
 -- === Results ===
 
 type LitProg = [(SourceBlock, Result)]
@@ -111,6 +116,7 @@ type BenchStats = (Int, Double) -- number of runs, total benchmarking time
 
 data SourceInfo =
    SIGroupTree (Overwrite GroupTree)
+ | SITypeInfo  TypeInfo
      deriving (Show, Eq, Generic)
 
 data Output =

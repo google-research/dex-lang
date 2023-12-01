@@ -91,7 +91,11 @@ type HoverInfo = String
 newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
 
 computeHoverInfo :: Result -> HoverInfoMap
-computeHoverInfo _ = mempty
+computeHoverInfo result = do
+  let typeInfo = foldJusts (resultOutputs result) \case
+        SourceInfo (SITypeInfo m) -> Just m
+        _ -> Nothing
+  HoverInfoMap $ fromTypeInfo typeInfo
 
 -- === highlighting on hover ===
 
