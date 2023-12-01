@@ -5,19 +5,18 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Live.Eval (
-  watchAndEvalFile, ResultsServer, ResultsUpdate, subscribeIO, nodeListAsUpdate, addSourceBlockIds) where
+  watchAndEvalFile, EvalServer, EvalUpdate, CellsUpdate, fmapCellsUpdate,
+  NodeList (..), NodeListUpdate (..), subscribeIO, nodeListAsUpdate) where
 
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict
 import qualified Data.Map.Strict as M
-import Data.Aeson (ToJSON, ToJSONKey, toJSON, Value)
+import Data.Aeson (ToJSON)
 import Data.Functor ((<&>))
-import Data.Foldable (toList)
 import Data.Maybe (fromJust)
 import Data.Text (Text)
 import Prelude hiding (span)
@@ -25,29 +24,24 @@ import GHC.Generics
 
 import Actor
 import IncState
-import Types.Misc
 import Types.Source
 import TopLevel
 import ConcreteSyntax
-import RenderHtml (ToMarkup, pprintHtml)
 import MonadUtil
-import Util (unsnoc)
 
 -- === Top-level interface ===
 
+type EvalServer = StateServer EvalState EvalUpdate
+type EvalState  = CellsState  SourceBlock Result
+type EvalUpdate = CellsUpdate SourceBlock Result
+
 -- `watchAndEvalFile` returns the channel by which a client may
 -- subscribe by sending a write-only view of its input channel.
-watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO ResultsServer
+watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO EvalServer
 watchAndEvalFile fname opts env = do
   watcher <- launchFileWatcher fname
   parser <- launchCellParser watcher \source -> uModuleSourceBlocks $ parseUModule Main source
   launchDagEvaluator parser env (evalSourceBlockIO' opts)
-
-addSourceBlockIds :: CellsUpdate SourceBlock o -> CellsUpdate SourceBlockWithId o
-addSourceBlockIds (NodeListUpdate listUpdate mapUpdate) = NodeListUpdate listUpdate mapUpdate'
-   where mapUpdate' = mapUpdateMapWithKey mapUpdate
-                        (\k (CellState b s o) -> CellState (SourceBlockWithId k b) s o)
-                        (\_ d -> d)
 
 -- shim to pretend that evalSourceBlockIO streams its results. TODO: make it actually do that.
 evalSourceBlockIO'
@@ -57,8 +51,11 @@ evalSourceBlockIO' cfg resultChan env block = do
   send resultChan result
   return env'
 
-type ResultsServer = Evaluator        SourceBlock Result
-type ResultsUpdate = CellsUpdate SourceBlock Result
+fmapCellsUpdate :: CellsUpdate i o -> (NodeId -> i -> i') -> (NodeId -> o -> o') -> CellsUpdate i' o'
+fmapCellsUpdate (NodeListUpdate t m) fi fo = NodeListUpdate t m' where
+  m' = mapUpdateMapWithKey m
+         (\k (CellState i s o) -> CellState (fi k i) s (fo k o))
+         (\k (CellUpdate  s o) -> CellUpdate         s (fo k o))
 
 -- === DAG diff state ===
 
@@ -335,84 +332,7 @@ processDagUpdate (NodeListUpdate tailUpdate mapUpdate) = do
 
 -- === instances ===
 
-instance (ToJSON i, ToJSON o) => ToJSON (NodeListUpdate (CellState i o) o) where
-instance (ToJSON s, ToJSON d, ToJSONKey k) => ToJSON (MapUpdate k s d)
-instance ToJSON a => ToJSON (TailUpdate a)
-instance (ToJSON s, ToJSON d) => ToJSON (MapEltUpdate s d)
-instance ToJSON SrcId
-deriving instance ToJSONKey SrcId
-instance ToJSON LexemeType
+instance                         ToJSON CellStatus
 instance (ToJSON i, ToJSON o) => ToJSON (CellState i o)
-instance (ToJSON i, ToJSON o) => ToJSON (CellsUpdate i o)
 instance            ToJSON o  => ToJSON (CellUpdate o)
-instance            ToJSON a  => ToJSON (Overwrite a)
-instance ToJSON CellStatus
-
-data SourceBlockJSONData = SourceBlockJSONData
-  { jdLine        :: Int
-  , jdBlockId     :: Int
-  , jdLexemeList  :: [SrcId]
-  , jdFocusMap     :: FocusMap
-  , jdHighlightMap :: HighlightMap
-  , jdHoverInfoMap :: HoverInfoMap
-  , jdHTML        :: String }  deriving (Generic)
-
-instance ToJSON SourceBlockJSONData
-
-instance ToJSON SourceBlockWithId where
-  toJSON b@(SourceBlockWithId blockId b') = toJSON $ SourceBlockJSONData
-    { jdLine       = sbLine b'
-    , jdBlockId    = blockId
-    , jdLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b'
-    , jdFocusMap     = computeFocus      b'
-    , jdHighlightMap = computeHighlights b'
-    , jdHoverInfoMap = computeHoverInfo b'
-    , jdHTML       = pprintHtml b
-    }
-instance ToJSON Result      where toJSON = toJSONViaHtml
-
-toJSONViaHtml :: ToMarkup a => a -> Value
-toJSONViaHtml x = toJSON $ pprintHtml x
-
--- === textual information on hover ===
-
-type HoverInfo = String
-newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
-
-computeHoverInfo :: SourceBlock -> HoverInfoMap
-computeHoverInfo sb = HoverInfoMap $
-  M.fromList $ toList (lexemeList (sbLexemeInfo sb)) <&> \srcId -> (srcId, show srcId)
-
--- === highlighting on hover ===
--- TODO: put this somewhere else, like RenderHtml or something
-
-newtype FocusMap = FocusMap (M.Map LexemeId SrcId)   deriving (ToJSON, Semigroup, Monoid)
-newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
-type Highlights = [(HighlightType, LexemeSpan)]
-data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
-
-instance ToJSON HighlightType
-
-computeFocus :: SourceBlock -> FocusMap
-computeFocus sb = execWriter $ mapM go $ sbGroupTree sb where
-  go :: GroupTree -> Writer FocusMap ()
-  go t = forM_ (gtChildren t) \child-> do
-    go child
-    tell $ FocusMap $ M.singleton (gtSrcId child) (gtSrcId t)
-
-computeHighlights :: SourceBlock -> HighlightMap
-computeHighlights sb = execWriter $ mapM go $ sbGroupTree sb where
-  go :: GroupTree -> Writer HighlightMap ()
-  go t = do
-    spans <- forM (gtChildren t) \child -> do
-      go child
-      return (getHighlightType (gtSrcId child), gtSpan child)
-    tell $ HighlightMap $ M.singleton (gtSrcId t) spans
-
-  getHighlightType :: SrcId -> HighlightType
-  getHighlightType sid = case M.lookup sid (lexemeInfo $ sbLexemeInfo sb) of
-    Nothing -> HighlightGroup  -- not a lexeme
-    Just (lexemeTy, _) -> case lexemeTy of
-      Symbol  -> HighlightLeaf
-      Keyword -> HighlightLeaf
-      _ -> HighlightGroup
+instance (ToJSON s, ToJSON d) => ToJSON (NodeListUpdate s d)

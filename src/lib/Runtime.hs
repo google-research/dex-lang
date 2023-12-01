@@ -33,8 +33,8 @@ import PPrint ()
 import CUDA (synchronizeCUDA)
 
 import Types.Core hiding (DexDestructor)
+import Types.Source  hiding (CInt)
 import Types.Primitives
-import Types.Misc
 
 -- === One-shot evaluation ===
 

@@ -13,25 +13,25 @@ import Types.Source
 import Types.Primitives
 
 getGroupTree :: SourceBlock' -> GroupTree
-getGroupTree b = mkGroupTree rootSrcId $ runTreeM $ visit b
+getGroupTree b = mkGroupTree False rootSrcId $ runTreeM $ visit b
 
 type TreeM = Writer [GroupTree]
 
-mkGroupTree :: SrcId -> [GroupTree] -> GroupTree
-mkGroupTree sid = \case
-  [] -> GroupTree sid (sid,sid) [] -- no children - must be a lexeme
-  subtrees -> GroupTree sid (l,r) subtrees
-    where l = minimum $ subtrees <&> \(GroupTree _ (l',_) _) -> l'
-          r = maximum $ subtrees <&> \(GroupTree _ (_,r') _) -> r'
+mkGroupTree :: Bool -> SrcId -> [GroupTree] -> GroupTree
+mkGroupTree isAtomic sid = \case
+  [] -> GroupTree sid (sid,sid) [] isAtomic -- no children - must be a lexeme
+  subtrees -> GroupTree sid (l,r) subtrees isAtomic
+    where l = minimum $ subtrees <&> (fst . gtSpan)
+          r = maximum $ subtrees <&> (snd . gtSpan)
 
 runTreeM :: TreeM () -> [GroupTree]
 runTreeM cont = snd $ runWriter $ cont
 
 enterNode :: SrcId -> TreeM () -> TreeM ()
-enterNode sid cont = tell [mkGroupTree sid (runTreeM cont)]
+enterNode sid cont = tell [mkGroupTree False sid (runTreeM cont)]
 
 emitLexeme :: SrcId -> TreeM ()
-emitLexeme lexemeId = tell [mkGroupTree lexemeId []]
+emitLexeme lexemeId = tell [mkGroupTree True lexemeId []]
 
 class IsTree a where
   visit :: a -> TreeM ()

@@ -20,6 +20,7 @@
 
 module Types.Source where
 
+import Data.Aeson (ToJSON, ToJSONKey)
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
@@ -31,10 +32,13 @@ import Data.Word
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
+import Err
+import Logging
 import Name
 import qualified Types.OpNames as P
 import IRVariants
 import Util (File (..), SnocList)
+import IncState
 
 import Types.Primitives
 
@@ -85,13 +89,54 @@ type LexemeSpan = (LexemeId, LexemeId)
 data GroupTree = GroupTree
   { gtSrcId :: SrcId
   , gtSpan  :: LexemeSpan
-  , gtChildren :: [GroupTree] }
-     deriving (Show, Generic)
+  , gtChildren :: [GroupTree]
+  , gtIsAtomicLexeme :: Bool }
+    deriving (Show, Eq, Generic)
 
 instance Semigroup LexemeInfo where
   LexemeInfo a b <> LexemeInfo a' b' = LexemeInfo (a <> a') (b <> b')
 instance Monoid LexemeInfo where
   mempty = LexemeInfo mempty mempty
+
+-- === Results ===
+
+type LitProg = [(SourceBlock, Result)]
+
+data Result = Result
+                { resultOutputs :: [Output]
+                , resultErrs    :: Except () }
+              deriving (Show, Eq)
+
+type BenchStats = (Int, Double) -- number of runs, total benchmarking time
+
+data SourceInfo =
+   SIGroupTree (Overwrite GroupTree)
+     deriving (Show, Eq, Generic)
+
+data Output =
+    TextOut String
+  | HtmlOut String
+  | SourceInfo SourceInfo  -- for hovertips etc
+  | PassInfo PassName String
+  | EvalTime  Double (Maybe BenchStats)
+  | TotalTime Double
+  | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
+  | MiscLog String
+  -- Used to have | ExportedFun String Atom
+    deriving (Show, Eq, Generic)
+
+type PassLogger = FilteredLogger PassName [Output]
+
+data OptLevel = NoOptimize | Optimize
+
+instance Semigroup Result where
+  Result outs err <> Result outs' err' = Result (outs <> outs') err''
+    where err'' = case err' of
+            Success () -> err
+            Failure _  -> err'
+
+instance Monoid Result where
+  mempty = Result mempty (Success ())
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -512,15 +557,12 @@ data UModule = UModule
 
 -- === top-level blocks ===
 
-data SourceBlockWithId = SourceBlockWithId Int SourceBlock
-
 data SourceBlock = SourceBlock
   { sbLine       :: Int
   , sbOffset     :: Int
   , sbLogLevel   :: LogLevel
   , sbText       :: Text
   , sbLexemeInfo :: LexemeInfo
-  , sbGroupTree  :: Maybe GroupTree
   , sbContents   :: SourceBlock' }
   deriving (Show, Generic)
 
@@ -817,3 +859,7 @@ deriving instance Ord  (UEffect n)
 deriving instance Show (UEffectRow n)
 deriving instance Eq   (UEffectRow n)
 deriving instance Ord  (UEffectRow n)
+
+instance ToJSON SrcId
+deriving instance ToJSONKey SrcId
+instance ToJSON LexemeType

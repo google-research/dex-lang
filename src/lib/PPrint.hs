@@ -39,7 +39,6 @@ import Occurrence (Count (Bounded), UsageInfo (..))
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Primitives
 import Types.Source
 import QueryTypePure
@@ -484,6 +483,7 @@ prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
 
 instance Pretty Output where
   pretty (TextOut s) = pretty s
+  pretty (SourceInfo _) = "hello"
   pretty (HtmlOut _) = "<html output>"
   -- pretty (ExportedFun _ _) = ""
   pretty (BenchResult name compileTime runTime stats) =

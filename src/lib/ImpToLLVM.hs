@@ -55,7 +55,6 @@ import PPrint
 import RawName qualified as R
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Primitives
 import Types.Source
 import Util (IsBool (..), bindM2, enumerate)

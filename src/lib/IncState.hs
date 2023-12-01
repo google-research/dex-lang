@@ -11,6 +11,7 @@ module IncState (
   Overwrite (..), TailUpdate (..), Unchanging (..), Overwritable (..),
   mapUpdateMapWithKey) where
 
+import Data.Aeson (ToJSON, ToJSONKey)
 import qualified Data.Map.Strict as M
 import GHC.Generics
 
@@ -104,7 +105,8 @@ instance IncState [a] (TailUpdate a) where
   applyDiff xs (TailUpdate numDrop ys) = take (length xs - numDrop) xs <> ys
 
 -- Trivial diff that works for any type - just replace the old value with a completely new one.
-data Overwrite a = NoChange | OverwriteWith a  deriving (Show, Generic)
+data Overwrite a = NoChange | OverwriteWith a
+  deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 newtype Overwritable a = Overwritable { fromOverwritable :: a } deriving (Show, Eq, Ord)
 
 instance Semigroup (Overwrite a) where
@@ -126,3 +128,8 @@ newtype Unchanging a = Unchanging { fromUnchanging :: a } deriving (Show, Eq, Or
 
 instance IncState (Unchanging a) () where
   applyDiff s () = s
+
+instance            ToJSON a  => ToJSON (Overwrite a)
+instance (ToJSON s, ToJSON d, ToJSONKey k) => ToJSON (MapUpdate k s d)
+instance ToJSON a => ToJSON (TailUpdate a)
+instance (ToJSON s, ToJSON d) => ToJSON (MapEltUpdate s d)

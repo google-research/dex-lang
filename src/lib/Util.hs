@@ -19,7 +19,7 @@ import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, mapMaybe)
 import Data.List (sort)
 import Data.Hashable (Hashable)
 import Data.Store (Store)
@@ -134,12 +134,8 @@ mapFst f zs = [(f x, y) | (x, y) <- zs]
 mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
 mapSnd f zs = [(x, f y) | (x, y) <- zs]
 
-mapMaybe :: (a -> Maybe b) -> [a] -> [b]
-mapMaybe _ [] = []
-mapMaybe f (x:xs) = let rest = mapMaybe f xs
-                    in case f x of
-                        Just y  -> y : rest
-                        Nothing -> rest
+foldJusts :: Monoid b => [a] -> (a -> Maybe b) -> b
+foldJusts xs f = fold $ mapMaybe f xs
 
 forMFilter :: Monad m => [a] -> (a -> m (Maybe b)) -> m [b]
 forMFilter xs f = catMaybes <$> mapM f xs

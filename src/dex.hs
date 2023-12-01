@@ -36,7 +36,6 @@ import Live.Web (runWeb)
 import Core
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Source
 
 data ErrorHandling = HaltOnErr | ContinueOnErr

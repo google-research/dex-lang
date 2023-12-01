@@ -7,27 +7,121 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
-module RenderHtml (pprintHtml, progHtml, ToMarkup) where
+module RenderHtml (
+  progHtml, ToMarkup, renderSourceBlock, renderResult,
+  RenderedSourceBlock, RenderedResult) where
 
 import Text.Blaze.Internal (MarkupM)
-import Text.Blaze.Html5 as H hiding (map)
+import Text.Blaze.Html5 as H hiding (map, b)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
+import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
+import Data.Functor ((<&>))
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
 import System.IO.Unsafe
-
+import GHC.Generics
 
 import Err
 import Paths_dex (getDataFileName)
 import PPrint ()
-import Types.Misc
 import Types.Source
+import Util (unsnoc, foldJusts)
+
+-- === rendering results ===
+
+-- RenderedResult, RenderedSourceBlock aren't 100% HTML themselves but the idea
+-- is that they should be trivially convertable to JSON and sent over to the
+-- client which can do the final rendering without much code or runtime work.
+
+type BlockId = Int
+data RenderedSourceBlock = RenderedSourceBlock
+  { rsbLine      :: Int
+  , rsbBlockId   :: BlockId
+  , rsbLexemeList :: [SrcId]
+  , rsbHtml       :: String }
+  deriving (Generic)
+
+data RenderedResult = RenderedResult
+  { rrHtml         :: String
+  , rrHighlightMap :: HighlightMap
+  , rrHoverInfoMap :: HoverInfoMap }
+  deriving (Generic)
+
+renderResult :: Result -> RenderedResult
+renderResult r = RenderedResult
+  { rrHtml         = pprintHtml r
+  , rrHighlightMap = computeHighlights r
+  , rrHoverInfoMap = computeHoverInfo r }
+
+renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
+renderSourceBlock n b = RenderedSourceBlock
+  { rsbLine    = sbLine b
+  , rsbBlockId = n
+  , rsbLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b
+  , rsbHtml = renderHtml case sbContents b of
+      Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
+      _ -> renderSpans n (sbLexemeInfo b) (sbText b)
+  }
+
+instance ToMarkup Result where
+  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
+    where err' = case err of
+                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
+                   Success () -> mempty
+
+instance ToMarkup Output where
+  toMarkup out = case out of
+    HtmlOut s -> preEscapedString s
+    SourceInfo _ -> mempty
+    _ -> cdiv "result-block" $ toHtml $ pprint out
+
+instance ToJSON RenderedResult
+instance ToJSON RenderedSourceBlock
+
+-- === textual information on hover ===
+
+type HoverInfo = String
+newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
+
+computeHoverInfo :: Result -> HoverInfoMap
+computeHoverInfo _ = mempty
+
+-- === highlighting on hover ===
+
+newtype FocusMap = FocusMap (M.Map LexemeId SrcId)   deriving (ToJSON, Semigroup, Monoid)
+newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
+type Highlights = [(HighlightType, LexemeSpan)]
+data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
+
+instance ToJSON HighlightType
+
+computeHighlights :: Result -> HighlightMap
+computeHighlights result = do
+  execWriter $ mapM go $ foldJusts (resultOutputs result) \case
+    SourceInfo (SIGroupTree t) -> Just t
+    _ -> Nothing
+ where
+  go :: GroupTree -> Writer HighlightMap ()
+  go t = do
+    let children = gtChildren t
+    let highlights = children <&> \child ->
+          (getHighlightType (gtIsAtomicLexeme child), gtSpan child)
+    forM_ children \child-> do
+      tell $ HighlightMap $ M.singleton (gtSrcId child) highlights
+      go child
+
+  getHighlightType :: Bool -> HighlightType
+  getHighlightType True  = HighlightLeaf
+  getHighlightType False = HighlightGroup
+
+-- -----------------
 
 cssSource :: T.Text
 cssSource = unsafePerformIO $
@@ -62,29 +156,11 @@ wrapBody blocks = docTypeHtml $ do
     inner = foldMap (cdiv "cell") blocks
     jsSource = textValue $ javascriptSource <> "render(RENDER_MODE.STATIC);"
 
-instance ToMarkup Result where
-  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
-    where err' = case err of
-                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
-                   Success () -> mempty
-
-instance ToMarkup Output where
-  toMarkup out = case out of
-    HtmlOut s -> preEscapedString s
-    _ -> cdiv "result-block" $ toHtml $ pprint out
-
-instance ToMarkup SourceBlockWithId where
-  toMarkup (SourceBlockWithId blockId block) = case sbContents block of
-    Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
-    _ -> renderSpans blockId (sbLexemeInfo block) (sbText block)
-
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
-
-type BlockId = Int
 
 renderSpans :: BlockId -> LexemeInfo -> T.Text -> Markup
 renderSpans blockId lexInfo sourceText = cdiv "code-block" do

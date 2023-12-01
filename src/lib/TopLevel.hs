@@ -54,6 +54,7 @@ import Err
 import IRVariants
 import Imp
 import ImpToLLVM
+import IncState
 import Inference
 import Inline
 import Logging
@@ -70,9 +71,9 @@ import Runtime
 import Serialize (takePtrSnapshot, restorePtrSnapshot)
 import Simplify
 import SourceRename
+import SourceIdTraversal
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Primitives
 import Types.Source
 import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
@@ -229,6 +230,7 @@ evalSourceBlock
 evalSourceBlock mname block = do
   result <- withCompileTime do
      (maybeErr, logs) <- catchLogsAndErrs do
+       logTop $ SourceInfo $ SIGroupTree $ OverwriteWith $ getGroupTree $ sbContents block
        benchReq <- getBenchRequirement block
        withPassCtx (PassCtx benchReq (passLogFilter $ sbLogLevel block)) $
          evalSourceBlock' mname block

@@ -21,7 +21,9 @@ import qualified Data.ByteString as BS
 -- import Paths_dex (getDataFileName)
 
 import Live.Eval
+import RenderHtml
 import TopLevel
+import Types.Source
 
 runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
@@ -29,7 +31,7 @@ runWeb fname opts env = do
   putStrLn "Streaming output to http://localhost:8000/"
   run 8000 $ serveResults resultsChan
 
-serveResults :: ResultsServer -> Application
+serveResults :: EvalServer -> Application
 serveResults resultsSubscribe request respond = do
   print (pathInfo request)
   case pathInfo request of
@@ -48,18 +50,23 @@ serveResults resultsSubscribe request respond = do
       -- fname <- getDataFileName dataFname
       respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
-resultStream :: ResultsServer -> StreamingBody
+resultStream :: EvalServer -> StreamingBody
 resultStream resultsServer write flush = do
-  write (fromByteString $ encodeResults ("start"::String)) >> flush
+  sendUpdate ("start"::String)
   (initResult, resultsChan) <- subscribeIO resultsServer
-  sendUpdate $ nodeListAsUpdate initResult
-  forever $ readChan resultsChan >>= sendUpdate
+  sendUpdate $ renderEvalUpdate $ nodeListAsUpdate initResult
+  forever do
+    nextUpdate <- readChan resultsChan
+    sendUpdate $ renderEvalUpdate nextUpdate
   where
-    sendUpdate :: ResultsUpdate -> IO ()
-    sendUpdate update = do
-      let s = encodeResults $ addSourceBlockIds update
-      write (fromByteString s) >> flush
+    sendUpdate :: ToJSON a => a -> IO ()
+    sendUpdate x = write (fromByteString $ encodePacket x) >> flush
 
-    encodeResults :: ToJSON a => a -> BS.ByteString
-    encodeResults = toStrict . wrap . encode
-      where wrap s = "data:" <> s <> "\n\n"
+encodePacket :: ToJSON a => a -> BS.ByteString
+encodePacket = toStrict . wrap . encode
+  where wrap s = "data:" <> s <> "\n\n"
+
+renderEvalUpdate :: CellsUpdate SourceBlock Result -> CellsUpdate RenderedSourceBlock RenderedResult
+renderEvalUpdate cellsUpdate = fmapCellsUpdate cellsUpdate
+  (\k b -> renderSourceBlock k b)
+  (\_ r -> renderResult r)

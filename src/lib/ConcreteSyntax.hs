@@ -31,7 +31,6 @@ import Lexing
 import Types.Core
 import Types.Source
 import Types.Primitives
-import SourceIdTraversal
 import qualified Types.OpNames as P
 import Util
 
@@ -60,7 +59,7 @@ parseUModule name s = do
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty Nothing (Misc $ ImportModule Prelude)
+preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty (Misc $ ImportModule Prelude)
 
 sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
@@ -99,8 +98,7 @@ sourceBlock = do
     b <- sourceBlock'
     return (level, b)
   let lexInfo' = lexInfo { lexemeInfo = lexemeInfo lexInfo <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
-  let groupTree = getGroupTree b
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src lexInfo' (Just groupTree) b
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src lexInfo' b
 
 recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
 recover e = do

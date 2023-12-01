@@ -76,9 +76,8 @@ function applyHoverInfo(cellId, srcId) {
     hoverInfoDiv.innerHTML = srcId.toString() // hoverInfo
 }
 function applyHoverHighlights(cellId, srcId) {
-    let focus = lookupSrcMap(focusMap, cellId, srcId)
-    if (focus == null) return
-    let highlights = lookupSrcMap(highlightMap, cellId, focus)
+    let highlights = lookupSrcMap(highlightMap, cellId, srcId)
+    if (highlights == null) return
     highlights.map(function (highlight) {
         let [highlightType, [l, r]] = highlight
         let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
@@ -126,8 +125,6 @@ function render(renderMode) {
             } else {
                 processUpdate(msg)}};}
 }
-
-
 function selectSpan(cellId, srcId) {
     return cells[cellId].querySelector("#span_".concat(cellId, "_", srcId))
 }
@@ -158,8 +155,7 @@ function spansBetween(l, r) {
     let spans = []
     while (l !== null && !(Object.is(l, r))) {
         spans.push(l);
-        l = l.nextSibling;
-    }
+        l = l.nextSibling;}
     spans.push(r)
     return spans
 }
@@ -168,10 +164,10 @@ function setCellStatus(cell, status) {
     cell.classList.add(getStatusClass(status))
 }
 
-function setCellContents(cell, contents) {
+function setCellContents(cellId, cell, contents) {
     let [source, status, result]  = contents;
-    let lineNum    = source["jdLine"];
-    let sourceText = source["jdHTML"];
+    let lineNum    = source["rsbLine"];
+    let sourceText = source["rsbHtml"];
     let lineNumDiv = document.createElement("div");
     lineNumDiv.innerHTML = lineNum.toString();
     lineNumDiv.className = "line-num";
@@ -179,36 +175,43 @@ function setCellContents(cell, contents) {
     cell.appendChild(lineNumDiv)
     setCellStatus(cell, status)
     cell.innerHTML += sourceText
-    cell.innerHTML += result
-    renderLaTeX(cell);
+    renderLaTeX(cell)
+    extendCellResult(cellId, cell, result)
 }
-function updateCellContents(cell, contents) {
-    let [statusUpdate, resultsUpdate] = contents;
+function extendCellResult(cellId, cell, result) {
+    let resultText = result["rrHtml"]
+    if (resultText !== "") {
+        cell.innerHTML += resultText
+    }
+    highlightMap[cellId] = result["rrHighlightMap"]
+    hoverInfoMap[cellId] = result["rrHoverInfoMap"]
+}
+function updateCellContents(cellId, cell, contents) {
+    let [statusUpdate, result] = contents;
     if (statusUpdate["tag"] == "OverwriteWith") {
         setCellStatus(cell, statusUpdate["contents"])}
-    if (resultsUpdate !== "") {
-        cell.innerHTML += resultsUpdate}
+    extendCellResult(cellId, cell, result)
 }
 function processUpdate(msg) {
-    let cell_updates = msg["nodeMapUpdate"]["mapUpdates"];
-    let num_dropped  = msg["orderedNodesUpdate"]["numDropped"];
-    let new_tail     = msg["orderedNodesUpdate"]["newTail"];
+    let cellUpdates = msg["nodeMapUpdate"]["mapUpdates"];
+    let numDropped  = msg["orderedNodesUpdate"]["numDropped"];
+    let newTail     = msg["orderedNodesUpdate"]["newTail"];
 
     // drop_dead_cells
-    for (i = 0; i < num_dropped; i++) {
+    for (i = 0; i < numDropped; i++) {
         body.lastElementChild.remove();}
 
-    Object.keys(cell_updates).forEach(function (cellId) {
-        let update = cell_updates[cellId];
+    Object.keys(cellUpdates).forEach(function (cellId) {
+        let update = cellUpdates[cellId];
         let tag = update["tag"]
         let contents = update["contents"]
         if (tag == "Create" || tag == "Replace") {
             let cell = document.createElement("div");
             cells[cellId] = cell;
-            setCellContents(cell, contents)
+            setCellContents(cellId, cell, contents)
         } else if (tag == "Update") {
             let cell = cells[cellId];
-            updateCellContents(cell, contents);
+            updateCellContents(cellId, cell, contents);
         } else if (tag == "Delete") {
             delete cells[cellId]
         } else {
@@ -216,19 +219,16 @@ function processUpdate(msg) {
         }});
 
     // append_new_cells
-    new_tail.forEach(function (cellId) {
+    newTail.forEach(function (cellId) {
         let cell = selectCell(cellId);
         body.appendChild(cell);})
 
-    Object.keys(cell_updates).forEach(function (cellId) {
-        let update = cell_updates[cellId]
+    Object.keys(cellUpdates).forEach(function (cellId) {
+        let update = cellUpdates[cellId]
         let tag = update["tag"]
         if (tag == "Create" || tag == "Replace") {
-            let update = cell_updates[cellId];
+            let update = cellUpdates[cellId];
             let source = update["contents"][0];
-            focusMap[cellId]     = source["jdFocusMap"]
-            highlightMap[cellId] = source["jdHighlightMap"]
-            hoverInfoMap[cellId] = source["jsHoverInfoMap"]
-            let lexemeList = source["jdLexemeList"];
+            let lexemeList = source["rsbLexemeList"];
             lexemeList.map(function (lexemeId) {attachHovertip(cellId, lexemeId.toString())})}});
 }
