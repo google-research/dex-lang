@@ -33,10 +33,10 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Err
-import Logging
 import Name
 import qualified Types.OpNames as P
 import IRVariants
+import MonadUtil
 import Util (File (..), SnocList)
 import IncState
 
@@ -108,7 +108,7 @@ newtype TypeInfo = TypeInfo { fromTypeInfo :: M.Map SrcId String }
 type LitProg = [(SourceBlock, Result)]
 
 data Result = Result
-                { resultOutputs :: [Output]
+                { resultOutputs :: Outputs
                 , resultErrs    :: Except () }
               deriving (Show, Eq)
 
@@ -124,14 +124,13 @@ data Output =
   | HtmlOut String
   | SourceInfo SourceInfo  -- for hovertips etc
   | PassInfo PassName String
-  | EvalTime  Double (Maybe BenchStats)
-  | TotalTime Double
-  | BenchResult String Double Double (Maybe BenchStats) -- name, compile time, eval time
   | MiscLog String
-  -- Used to have | ExportedFun String Atom
+  | Error Err
     deriving (Show, Eq, Generic)
+newtype Outputs = Outputs { fromOutputs :: [Output] }
+  deriving (Show, Eq, Generic, Semigroup, Monoid)
 
-type PassLogger = FilteredLogger PassName [Output]
+type PassLogger = IOLogger Outputs
 
 data OptLevel = NoOptimize | Optimize
 
@@ -566,7 +565,6 @@ data UModule = UModule
 data SourceBlock = SourceBlock
   { sbLine       :: Int
   , sbOffset     :: Int
-  , sbLogLevel   :: LogLevel
   , sbText       :: Text
   , sbLexemeInfo :: LexemeInfo
   , sbContents   :: SourceBlock' }
@@ -597,10 +595,6 @@ data SourceBlockMisc
 
 data CmdName = GetType | EvalExpr OutFormat | ExportFun String
                deriving  (Show, Generic)
-
-data LogLevel = LogNothing | PrintEvalTime | PrintBench String
-              | LogPasses [PassName] | LogAll
-                deriving  (Show, Generic)
 
 data PrintBackend =
    PrintCodegen  -- Soon-to-be default path based on `PrintAny`
@@ -836,7 +830,6 @@ instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
 
 instance Store SymbolicZeros
-instance Store LogLevel
 instance Store PassName
 instance Store ModuleSourceName
 instance Store (UVar n)

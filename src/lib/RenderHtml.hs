@@ -8,8 +8,8 @@
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 module RenderHtml (
-  progHtml, ToMarkup, renderSourceBlock, renderResult,
-  RenderedSourceBlock, RenderedResult) where
+  progHtml, ToMarkup, renderSourceBlock, renderOutputs,
+  RenderedSourceBlock, RenderedOutputs) where
 
 import Text.Blaze.Internal (MarkupM)
 import Text.Blaze.Html5 as H hiding (map, b)
@@ -36,7 +36,7 @@ import Util (unsnoc, foldJusts)
 
 -- === rendering results ===
 
--- RenderedResult, RenderedSourceBlock aren't 100% HTML themselves but the idea
+-- RenderedOutputs, RenderedSourceBlock aren't 100% HTML themselves but the idea
 -- is that they should be trivially convertable to JSON and sent over to the
 -- client which can do the final rendering without much code or runtime work.
 
@@ -48,14 +48,14 @@ data RenderedSourceBlock = RenderedSourceBlock
   , rsbHtml       :: String }
   deriving (Generic)
 
-data RenderedResult = RenderedResult
+data RenderedOutputs = RenderedOutputs
   { rrHtml         :: String
   , rrHighlightMap :: HighlightMap
   , rrHoverInfoMap :: HoverInfoMap }
   deriving (Generic)
 
-renderResult :: Result -> RenderedResult
-renderResult r = RenderedResult
+renderOutputs :: Outputs -> RenderedOutputs
+renderOutputs r = RenderedOutputs
   { rrHtml         = pprintHtml r
   , rrHighlightMap = computeHighlights r
   , rrHoverInfoMap = computeHoverInfo r }
@@ -70,19 +70,17 @@ renderSourceBlock n b = RenderedSourceBlock
       _ -> renderSpans n (sbLexemeInfo b) (sbText b)
   }
 
-instance ToMarkup Result where
-  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
-    where err' = case err of
-                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
-                   Success () -> mempty
+instance ToMarkup Outputs where
+  toMarkup (Outputs outs) = foldMap toMarkup outs
 
 instance ToMarkup Output where
   toMarkup out = case out of
     HtmlOut s -> preEscapedString s
     SourceInfo _ -> mempty
+    Error _ -> cdiv "err-block" $ toHtml $ pprint out
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
-instance ToJSON RenderedResult
+instance ToJSON RenderedOutputs
 instance ToJSON RenderedSourceBlock
 
 -- === textual information on hover ===
@@ -90,9 +88,9 @@ instance ToJSON RenderedSourceBlock
 type HoverInfo = String
 newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
 
-computeHoverInfo :: Result -> HoverInfoMap
-computeHoverInfo result = do
-  let typeInfo = foldJusts (resultOutputs result) \case
+computeHoverInfo :: Outputs -> HoverInfoMap
+computeHoverInfo (Outputs outputs) = do
+  let typeInfo = foldJusts outputs \case
         SourceInfo (SITypeInfo m) -> Just m
         _ -> Nothing
   HoverInfoMap $ fromTypeInfo typeInfo
@@ -106,9 +104,9 @@ data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
 
 instance ToJSON HighlightType
 
-computeHighlights :: Result -> HighlightMap
-computeHighlights result = do
-  execWriter $ mapM go $ foldJusts (resultOutputs result) \case
+computeHighlights :: Outputs -> HighlightMap
+computeHighlights (Outputs outputs) = do
+  execWriter $ mapM go $ foldJusts outputs \case
     SourceInfo (SIGroupTree t) -> Just t
     _ -> Nothing
  where
@@ -142,7 +140,7 @@ pprintHtml x = renderHtml $ toMarkup x
 
 progHtml :: (ToMarkup a, ToMarkup b) => [(a, b)] -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
-  where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
+  where toHtmlBlock (block,outputs) = toMarkup block <> toMarkup outputs
 
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do

@@ -48,7 +48,6 @@ import Core
 import Err
 import Imp
 import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
-import Logging
 import Subst
 import Name
 import PPrint
@@ -109,7 +108,7 @@ instance Compiler CompileM
 -- === Imp to LLVM ===
 
 impToLLVM :: (EnvReader m, MonadIO1 m)
-          => FilteredLogger PassName [Output] -> NameHint
+          => PassLogger -> NameHint
           -> ClosedImpFunction n
           -> m n (WithCNameInterface L.Module)
 impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
@@ -185,7 +184,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
 
 compileFunction
   :: (EnvReader m, MonadIO1 m)
-  => FilteredLogger PassName [Output] -> L.Name
+  => PassLogger -> L.Name
   -> OperandEnv i o -> ImpFunction i
   -> m o ([L.Definition], S.Set ExternFunSpec, [L.Name])
 compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)

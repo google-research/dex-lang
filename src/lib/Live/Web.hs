@@ -66,7 +66,7 @@ encodePacket :: ToJSON a => a -> BS.ByteString
 encodePacket = toStrict . wrap . encode
   where wrap s = "data:" <> s <> "\n\n"
 
-renderEvalUpdate :: CellsUpdate SourceBlock Result -> CellsUpdate RenderedSourceBlock RenderedResult
+renderEvalUpdate :: CellsUpdate SourceBlock Outputs -> CellsUpdate RenderedSourceBlock RenderedOutputs
 renderEvalUpdate cellsUpdate = fmapCellsUpdate cellsUpdate
   (\k b -> renderSourceBlock k b)
-  (\_ r -> renderResult r)
+  (\_ r -> renderOutputs r)

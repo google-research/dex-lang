@@ -8,10 +8,14 @@
 
 module MonadUtil (
   DefuncState (..), LabelReader (..), SingletonLabel (..), FreshNames (..),
-  runFreshNameT, FreshNameT (..)) where
+  runFreshNameT, FreshNameT (..), Logger (..), LogLevel (..), getIOLogger,
+  IOLoggerT (..), runIOLoggerT, LoggerT (..), runLoggerT, IOLogger (..), HasIOLogger (..)) where
 
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
+
+import Err
 
 -- === Defunctionalized state ===
 -- Interface for state whose allowable updates are specified by a data type.
@@ -49,3 +53,44 @@ instance FreshNames a m => FreshNames a (ReaderT r m) where
 
 runFreshNameT :: MonadIO m => FreshNameT m a -> m a
 runFreshNameT cont = evalStateT (runFreshNameT' cont) 0
+
+-- === Logging monad ===
+
+data IOLogger w = IOLogger { ioLogLevel  :: LogLevel
+                           , ioLogAction :: w -> IO () }
+data LogLevel = NormalLogLevel | DebugLogLevel
+
+class (Monoid w, Monad m) => Logger w m | m -> w where
+  emitLog :: w -> m ()
+  getLogLevel :: m LogLevel
+
+newtype IOLoggerT w m a = IOLoggerT { runIOLoggerT' :: ReaderT (IOLogger w) m a }
+        deriving (Functor, Applicative, Monad, MonadIO, Fallible, MonadFail, Catchable)
+
+class Monad m => HasIOLogger w m | m -> w where
+  getIOLogAction :: Monad m => m (w -> IO ())
+
+instance (Monoid w, MonadIO m) => HasIOLogger w (IOLoggerT w m) where
+  getIOLogAction = IOLoggerT $ asks ioLogAction
+
+instance (Monoid w, MonadIO m) => Logger w (IOLoggerT w m) where
+  emitLog w = do
+    logger <- getIOLogAction
+    liftIO $ logger w
+  getLogLevel = IOLoggerT $ asks ioLogLevel
+
+getIOLogger :: (HasIOLogger w m, Logger w m) => m (IOLogger w)
+getIOLogger = IOLogger <$> getLogLevel <*> getIOLogAction
+
+runIOLoggerT :: (Monoid w, MonadIO m) => LogLevel -> (w -> IO ()) -> IOLoggerT w m a -> m a
+runIOLoggerT logLevel write cont = runReaderT (runIOLoggerT' cont) (IOLogger logLevel write)
+
+newtype LoggerT w m a = LoggerT { runLoggerT' :: WriterT w m a }
+        deriving (Functor, Applicative, Monad, MonadIO)
+
+instance (Monoid w, Monad m) => Logger w (LoggerT w m) where
+  emitLog w = LoggerT $ tell w
+  getLogLevel = return NormalLogLevel
+
+runLoggerT :: (Monoid w, Monad m) => LoggerT w m a -> m (a, w)
+runLoggerT cont = runWriterT (runLoggerT' cont)

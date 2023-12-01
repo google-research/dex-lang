@@ -9,16 +9,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (
-  pprint, pprintCanonicalized, pprintList, asStr , atPrec, resultAsJSON,
-  PrettyPrec(..), PrecedenceLevel (..), prettyBlock, printLitBlock,
-  printResult, prettyFromPrettyPrec) where
+  pprint, pprintCanonicalized, pprintList, asStr , atPrec,
+  PrettyPrec(..), PrecedenceLevel (..), prettyBlock,
+  printOutput, prettyFromPrettyPrec) where
 
-import Data.Aeson hiding (Result, Null, Value, Success)
-import Data.Aeson.Encoding (encodingToLazyByteString, value)
 import GHC.Exts (Constraint)
 import GHC.Float
 import Data.Foldable (toList, fold)
-import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -474,39 +471,20 @@ instance Pretty SourceBlock where
       Just (_, '\n') -> t
       _ -> t `snoc` '\n'
 
-prettyDuration :: Double -> Doc ann
-prettyDuration d = p (showFFloat (Just 3) (d * mult) "") <+> unit
-  where (mult, unit) =      if d >= 1    then (1  , "s")
-                       else if d >= 1e-3 then (1e3, "ms")
-                       else if d >= 1e-6 then (1e6, "us")
-                       else                   (1e9, "ns")
-
 instance Pretty Output where
-  pretty (TextOut s) = pretty s
-  pretty (SourceInfo _) = "hello"
-  pretty (HtmlOut _) = "<html output>"
-  -- pretty (ExportedFun _ _) = ""
-  pretty (BenchResult name compileTime runTime stats) =
-    benchName <> hardline <>
-    "Compile time: " <> prettyDuration compileTime <> hardline <>
-    "Run time:     " <> prettyDuration runTime <+>
-    (case stats of
-       Just (runs, _) ->
-         "\t" <> parens ("based on" <+> p runs <+> plural "run" "runs" runs)
-       Nothing        -> "")
-    where benchName = case name of "" -> ""
-                                   _  -> "\n" <> p name
-  pretty (PassInfo _ s) = p s
-  pretty (EvalTime  t _) = "Eval (s):  " <+> p t
-  pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
-  pretty (MiscLog s) = p s
-
+  pretty = \case
+    TextOut s -> pretty s
+    HtmlOut _ -> "<html output>"
+    SourceInfo _ -> ""
+    PassInfo _ s -> p s
+    MiscLog s -> p s
+    Error e -> p e
 
 instance Pretty PassName where
   pretty x = p $ show x
 
 instance Pretty Result where
-  pretty (Result outs r) = vcat (map pretty outs) <> maybeErr
+  pretty (Result (Outputs outs) r) = vcat (map pretty outs) <> maybeErr
     where maybeErr = case r of Failure err -> p err
                                Success () -> mempty
 
@@ -992,17 +970,10 @@ instance Pretty RWS where
     Writer -> "Accum"
     State  -> "State"
 
-printLitBlock :: Pretty block => Bool -> block -> Result -> String
-printLitBlock isatty block result = pprint block ++ printResult isatty result
-
-printResult :: Bool -> Result -> String
-printResult isatty (Result outs errs) =
-  concat (map printOutput outs) ++ case errs of
-    Success ()  -> ""
-    Failure err -> addColor isatty Red $ addPrefix ">" $ pprint err
-  where
-    printOutput :: Output -> String
-    printOutput out = addPrefix (addColor isatty Cyan ">") $ pprint $ out
+printOutput :: Bool -> Output -> String
+printOutput isatty out = case out of
+  Error _ -> addColor isatty Red $ addPrefix ">" $ pprint out
+  _       -> addPrefix (addColor isatty Cyan ">") $ pprint $ out
 
 addPrefix :: String -> String -> String
 addPrefix prefix str = unlines $ map prefixLine $ lines str
@@ -1015,20 +986,6 @@ addColor False _ s = s
 addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
   ++ s ++ setSGRCode [Reset]
-
-resultAsJSON :: Result -> String
-resultAsJSON (Result outs err) =
-  B.unpack $ encodingToLazyByteString $ value $ object (outMaps <> errMaps)
-  where
-    errMaps = case err of
-      Failure e   -> ["error" .= String (fromString $ pprint e)]
-      Success () -> []
-    outMaps = flip foldMap outs $ \case
-      BenchResult name compileTime runTime _ ->
-        [ "bench_name"   .= toJSON name
-        , "compile_time" .= toJSON compileTime
-        , "run_time"     .= toJSON runTime ]
-      out -> ["result" .= String (fromString $ pprint out)]
 
 -- === Concrete syntax rendering ===
 

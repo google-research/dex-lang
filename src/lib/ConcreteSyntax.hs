@@ -59,7 +59,7 @@ parseUModule name s = do
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 LogNothing "" mempty (Misc $ ImportModule Prelude)
+preludeImportBlock = SourceBlock 0 0 "" mempty (Misc $ ImportModule Prelude)
 
 sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
@@ -93,21 +93,18 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
-  (src, (lexInfo, (level, b))) <- withSource $ withLexemeInfo $ withRecovery recover do
-    level <- logLevel <|> logTime <|> logBench <|> return LogNothing
-    b <- sourceBlock'
-    return (level, b)
+  (src, (lexInfo, b)) <- withSource $ withLexemeInfo $ withRecovery recover $ sourceBlock'
   let lexInfo' = lexInfo { lexemeInfo = lexemeInfo lexInfo <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
-  return $ SourceBlock (unPos (sourceLine pos)) offset level src lexInfo' b
+  return $ SourceBlock (unPos (sourceLine pos)) offset src lexInfo' b
 
-recover :: ParseError Text Void -> Parser (LogLevel, SourceBlock')
+recover :: ParseError Text Void -> Parser SourceBlock'
 recover e = do
   pos <- liftM statePosState getParserState
   reachedEOF <-  try (mayBreak sc >> eof >> return True)
              <|> return False
   consumeTillBreak
   let errmsg = errorBundlePretty (ParseErrorBundle (e :| []) pos)
-  return (LogNothing, UnParseable reachedEOF errmsg)
+  return $ UnParseable reachedEOF errmsg
 
 importModule :: Parser SourceBlock'
 importModule = Misc . ImportModule . OrdinaryModule <$> do
@@ -137,34 +134,6 @@ declareCustomLinearization = do
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
-
-logLevel :: Parser LogLevel
-logLevel = do
-  void $ try $ lexeme MiscLexeme $ char '%' >> string "passes"
-  passes <- many passName
-  eol
-  case passes of
-    [] -> return LogAll
-    _ -> return $ LogPasses passes
-
-logTime :: Parser LogLevel
-logTime = do
-  void $ try $ lexeme MiscLexeme $ char '%' >> string "time"
-  eol
-  return PrintEvalTime
-
-logBench :: Parser LogLevel
-logBench = do
-  void $ try $ lexeme MiscLexeme $ char '%' >> string "bench"
-  WithSrc _ benchName <- strLit
-  eol
-  return $ PrintBench benchName
-
-passName :: Parser PassName
-passName = choice [thisNameString s $> x | (s, x) <- passNames]
-
-passNames :: [(Text, PassName)]
-passNames = [(T.pack $ show x, x) | x <- [minBound..maxBound]]
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =

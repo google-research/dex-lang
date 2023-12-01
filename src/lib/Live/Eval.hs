@@ -32,8 +32,8 @@ import MonadUtil
 -- === Top-level interface ===
 
 type EvalServer = StateServer EvalState EvalUpdate
-type EvalState  = CellsState  SourceBlock Result
-type EvalUpdate = CellsUpdate SourceBlock Result
+type EvalState  = CellsState  SourceBlock Outputs
+type EvalUpdate = CellsUpdate SourceBlock Outputs
 
 -- `watchAndEvalFile` returns the channel by which a client may
 -- subscribe by sending a write-only view of its input channel.
@@ -41,15 +41,12 @@ watchAndEvalFile :: FilePath -> EvalConfig -> TopStateEx -> IO EvalServer
 watchAndEvalFile fname opts env = do
   watcher <- launchFileWatcher fname
   parser <- launchCellParser watcher \source -> uModuleSourceBlocks $ parseUModule Main source
-  launchDagEvaluator parser env (evalSourceBlockIO' opts)
+  launchDagEvaluator parser env (sourceBlockEvalFun opts)
 
--- shim to pretend that evalSourceBlockIO streams its results. TODO: make it actually do that.
-evalSourceBlockIO'
-  :: EvalConfig -> Mailbox Result -> TopStateEx -> SourceBlock -> IO TopStateEx
-evalSourceBlockIO' cfg resultChan env block = do
-  (result, env') <- evalSourceBlockIO cfg env block
-  send resultChan result
-  return env'
+sourceBlockEvalFun :: EvalConfig -> Mailbox Outputs -> TopStateEx -> SourceBlock -> IO TopStateEx
+sourceBlockEvalFun cfg resultChan env block = do
+  let cfg' = cfg { cfgLogAction = send resultChan }
+  evalSourceBlockIO cfg' env block
 
 fmapCellsUpdate :: CellsUpdate i o -> (NodeId -> i -> i') -> (NodeId -> o -> o') -> CellsUpdate i' o'
 fmapCellsUpdate (NodeListUpdate t m) fi fo = NodeListUpdate t m' where

@@ -8,12 +8,12 @@
 
 module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
-  evalSourceBlock, evalSourceBlockRepl, OptLevel (..),
+  evalSourceBlockRepl, OptLevel (..),
   evalSourceText, TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, packageLLVMCallable,
-  simpOptimizations, loweredOptimizations, compileTopLevelFun) where
+  simpOptimizations, loweredOptimizations, compileTopLevelFun, ErrorHandling (..)) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -26,7 +26,6 @@ import Data.Text (Text)
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.String (fromString)
-import Data.List (partition)
 import qualified Data.Map.Strict as M
 import qualified Data.Set        as S
 import Foreign.Ptr
@@ -34,7 +33,7 @@ import Foreign.C.String
 import GHC.Generics (Generic (..))
 import System.FilePath
 import System.Directory
-import System.IO (stderr, hPutStrLn, Handle)
+import System.IO (stderr, hPutStrLn)
 import System.IO.Error (isDoesNotExistError)
 
 import LLVM.Link
@@ -57,8 +56,8 @@ import ImpToLLVM
 import IncState
 import Inference
 import Inline
-import Logging
 import Lower
+import MonadUtil
 import MTL1
 import Subst
 import Name
@@ -76,60 +75,49 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
-import Util ( Tree (..), measureSeconds, File (..), readFileWithHash)
+import Util ( Tree (..), File (..), readFileWithHash)
 import Vectorize
 
 -- === top-level monad ===
 
 data LibPath = LibDirectory FilePath | LibBuiltinPath
+data ErrorHandling = HaltOnErr | ContinueOnErr
 
 data EvalConfig = EvalConfig
   { backendName   :: Backend
   , libPaths      :: [LibPath]
   , preludeFile   :: Maybe FilePath
-  , logFileName   :: Maybe FilePath
-  , logFile       :: Maybe Handle
   , optLevel      :: OptLevel
-  , printBackend  :: PrintBackend }
+  , printBackend  :: PrintBackend
+  , errorHandling :: ErrorHandling
+  , cfgLogLevel   :: LogLevel
+  , cfgLogAction  :: Outputs -> IO ()}
 
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
-data PassCtx = PassCtx
-  { requiresBench :: BenchRequirement
-  , shouldLogPass :: PassName -> Bool
-  }
-
-initPassCtx :: PassCtx
-initPassCtx = PassCtx NoBench (const True)
-
-class Monad m => PassCtxReader m where
-  getPassCtx :: m PassCtx
-  withPassCtx :: PassCtx -> m a -> m a
-
 class Monad m => RuntimeEnvReader m where
   getRuntimeEnv :: m RuntimeEnv
 
-type TopLogger m = (MonadIO m, MonadLogger [Output] m)
+type TopLogger m = (MonadIO m, Logger Outputs m)
 
 class ( forall n. Fallible (m n)
-      , forall n. MonadLogger [Output] (m n)
+      , forall n. Logger Outputs (m n)
+      , forall n. HasIOLogger Outputs (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
-      , forall n. PassCtxReader (m n)
       , forall n. RuntimeEnvReader (m n)
       , forall n. MonadIO (m n)  -- TODO: something more restricted here
       , TopBuilder m )
       => Topper m
 
 data TopperReaderData = TopperReaderData
-  { topperPassCtx    :: PassCtx
-  , topperEvalConfig :: EvalConfig
+  { topperEvalConfig :: EvalConfig
   , topperRuntimeEnv :: RuntimeEnv }
 
 newtype TopperM (n::S) a = TopperM
   { runTopperM'
-    :: TopBuilderT (ReaderT TopperReaderData (LoggerT [Output] IO)) n a }
+    :: TopBuilderT (ReaderT TopperReaderData IO) n a }
     deriving ( Functor, Applicative, Monad, MonadIO, MonadFail
              , Fallible, EnvReader, ScopeReader, Catchable)
 
@@ -147,9 +135,8 @@ runTopperM
   -> (forall n. Mut n => TopperM n a)
   -> IO (a, TopStateEx)
 runTopperM opts (TopStateEx env rtEnv) cont = do
-  let maybeLogFile = logFile opts
-  (Abs frag (LiftE result), _) <- runLogger maybeLogFile \l -> runLoggerT l $
-    flip runReaderT (TopperReaderData initPassCtx opts rtEnv) $
+  Abs frag (LiftE result) <-
+    flip runReaderT (TopperReaderData opts rtEnv) $
       runTopBuilderT env $ runTopperM' do
         localTopBuilder $ LiftE <$> cont
   return (result, extendTopEnv env rtEnv frag)
@@ -172,45 +159,42 @@ allocateDynamicVarKeyPtrs = do
 -- ======
 
 evalSourceBlockIO
-  :: EvalConfig -> TopStateEx -> SourceBlock -> IO (Result, TopStateEx)
+  :: EvalConfig -> TopStateEx -> SourceBlock -> IO TopStateEx
 evalSourceBlockIO opts env block =
-  runTopperM opts env $ evalSourceBlockRepl block
+  liftM snd $ runTopperM opts env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
-evalSourceText
-  :: (Topper m, Mut n)
-  => Text -> (SourceBlock -> IO ()) -> (Result -> IO Bool)
-  -> m n [(SourceBlock, Result)]
-evalSourceText source beginCallback endCallback = do
-  let (UModule mname deps sbs) = parseUModule Main source
+evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> m n ()
+evalSourceText source logSourceBlock = do
+  let UModule mname deps sbs = parseUModule Main source
   mapM_ ensureModuleLoaded deps
   evalSourceBlocks mname sbs
   where
     evalSourceBlocks mname = \case
-      [] -> return []
-      (sb:rest) -> do
-        liftIO $ beginCallback sb
-        result <- evalSourceBlock mname sb
-        liftIO (endCallback result) >>= \case
-          False -> return [(sb, result)]
-          True  -> ((sb, result):) <$> evalSourceBlocks mname rest
-
-catchLogsAndErrs :: (Topper m, Mut n) => m n a -> m n (Except a, [Output])
-catchLogsAndErrs m = do
-  maybeLogFile <- logFile <$> getConfig
-  runLogger maybeLogFile \l -> withLogger l $
-    catchErrExcept m
+      [] -> return ()
+      sb:rest -> do
+        liftIO $ logSourceBlock sb
+        evalSourceBlock mname sb >>= \case
+          Success () -> return ()
+          Failure e -> do
+            logTop $ Error e
+            (errorHandling <$> getConfig) >>= \case
+              HaltOnErr -> return ()
+              ContinueOnErr -> evalSourceBlocks mname rest
 
 -- Module imports have to be handled differently in the repl because we don't
 -- know ahead of time which modules will be needed.
-evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n Result
+evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
 evalSourceBlockRepl block = do
   case sbContents block of
     Misc (ImportModule name) -> do
       -- TODO: clear source map and synth candidates before calling this
       ensureModuleLoaded name
     _ -> return ()
-  evalSourceBlock Main block
+  maybeErr <- evalSourceBlock Main block
+  case maybeErr of
+    Success () -> return ()
+    Failure e -> logTop $ Error e
 
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
 -- (which will require evaluating them if they're not in the cache) but it
@@ -226,24 +210,18 @@ ensureModuleLoaded moduleSourceName = do
 {-# SCC ensureModuleLoaded #-}
 
 evalSourceBlock
-  :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n Result
+  :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n (Except ())
 evalSourceBlock mname block = do
-  result <- withCompileTime do
-     (maybeErr, logs) <- catchLogsAndErrs do
-       logTop $ SourceInfo $ SIGroupTree $ OverwriteWith $ getGroupTree $ sbContents block
-       benchReq <- getBenchRequirement block
-       withPassCtx (PassCtx benchReq (passLogFilter $ sbLogLevel block)) $
-         evalSourceBlock' mname block
-     return $ Result logs maybeErr
-  case resultErrs result of
-    Failure _ -> case sbContents block of
-      TopDecl decl -> do
-        case parseDecl decl of
-          Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
-          Failure _ -> return ()
-      _ -> return ()
+  maybeErr <- catchErrExcept do
+    logTop $ SourceInfo $ SIGroupTree $ OverwriteWith $ getGroupTree $ sbContents block
+    evalSourceBlock' mname block
+  case (maybeErr, sbContents block) of
+    (Failure _, TopDecl decl) -> do
+      case parseDecl decl of
+        Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
+        Failure _ -> return ()
     _ -> return ()
-  return $ filterLogs block result
+  return maybeErr
 
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
@@ -367,12 +345,6 @@ runEnvQuery query = do
               return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
           logTop $ TextOut $ "Binding:\n" ++ info
 
-filterLogs :: SourceBlock -> Result -> Result
-filterLogs block (Result outs err) = let
-  (logOuts, requiredOuts) = partition isLogInfo outs
-  outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
-  in Result outs' err
-
 -- returns a toposorted list of the module's transitive dependencies (including
 -- the module itself) excluding those provided in the set of already known
 -- modules.
@@ -470,58 +442,15 @@ importModule name = do
       emitLocalModuleEnv $ mempty { envImportStatus = importStatus }
 {-# SCC importModule #-}
 
-passLogFilter :: LogLevel -> PassName -> Bool
-passLogFilter = \case
-  LogAll           -> const True
-  LogNothing       -> const False
-  LogPasses passes -> (`elem` passes)
-  PrintEvalTime    -> const False
-  PrintBench _     -> const False
-
-processLogs :: LogLevel -> [Output] -> [Output]
-processLogs logLevel logs = case logLevel of
-  LogAll -> logs
-  LogNothing -> []
-  LogPasses passes -> flip filter logs \case
-                        PassInfo pass _ | pass `elem` passes -> True
-                                        | otherwise          -> False
-                        _ -> False
-  PrintEvalTime -> [BenchResult "" compileTime runTime benchStats]
-    where (compileTime, runTime, benchStats) = timesFromLogs logs
-  PrintBench benchName -> [BenchResult benchName compileTime runTime benchStats]
-    where (compileTime, runTime, benchStats) = timesFromLogs logs
-
-timesFromLogs :: [Output] -> (Double, Double, Maybe BenchStats)
-timesFromLogs logs = (totalTime - totalEvalTime, singleEvalTime, benchStats)
-  where
-    (totalEvalTime, singleEvalTime, benchStats) =
-      case [(t, stats) | EvalTime t stats <- logs] of
-        []           -> (0.0  , 0.0, Nothing)
-        [(t, stats)] -> (total, t  , stats)
-          where total = maybe t snd stats
-        _            -> error "Expect at most one result"
-    totalTime = case [tTotal | TotalTime tTotal <- logs] of
-        []  -> 0.0
-        [t] -> t
-        _   -> error "Expect at most one result"
-
-isLogInfo :: Output -> Bool
-isLogInfo out = case out of
-  PassInfo _ _ -> True
-  MiscLog  _   -> True
-  EvalTime _ _ -> True
-  TotalTime _  -> True
-  _ -> False
-
 evalUType :: (Topper m, Mut n) => UType VoidS -> m n (CType n)
 evalUType ty = do
-  logTop $ PassInfo Parse $ pprint ty
+  logDebug $ return $ PassInfo Parse $ pprint ty
   renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
   checkPass TypePass $ checkTopUType renamed
 
 evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
 evalUExpr expr = do
-  logTop $ PassInfo Parse $ pprint expr
+  logDebug $ return $ PassInfo Parse $ pprint expr
   renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
   typed <- checkPass TypePass $ inferTopUExpr renamed
   evalBlock typed
@@ -564,8 +493,7 @@ loweredOptimizations lowered = do
     (dceTop >=> hoistLoopInvariant)
   whenOpt lopt \lo -> do
     (vo, errs) <- vectorizeLoops 64 lo
-    l <- getFilteredLogger
-    logFiltered l VectPass $ return [TextOut $ pprint errs]
+    logTop $ TextOut $ pprint errs
     checkPass VectPass $ return vo
 
 loweredOptimizationsNoDest :: Topper m => STopLam n -> m n (STopLam n)
@@ -607,7 +535,7 @@ evalDictSpecializations ds = do
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
-  logTop $ PassInfo Parse $ pprint decl
+  logDebug $ return $ PassInfo Parse $ pprint decl
   Abs renamedDecl sourceMap <-
     logPass RenamePass $ renameSourceNamesTopUDecl mname decl
   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
@@ -679,7 +607,7 @@ linkFunObjCode objCode dyvarStores (LinktimeVals funVals ptrVals) = do
 
 toCFunction :: (Topper m, Mut n) => NameHint -> ImpFunction n -> m n (CFunction n)
 toCFunction nameHint impFun = do
-  logger <- getFilteredLogger
+  logger <- getIOLogger
   (closedImpFun, reqFuns, reqPtrNames) <- abstractLinktimeObjects impFun
   obj <- impToLLVM logger nameHint closedImpFun >>= compileToObjCode
   reqObjNames <- mapM funNameToObj reqFuns
@@ -699,14 +627,13 @@ packageLLVMCallable :: forall n m. (Topper m, Mut n)
   => ImpFunction n -> m n LLVMCallable
 packageLLVMCallable impFun = do
   nativeFun <- toCFunction "main" impFun >>= loadObjectContent
-  benchRequired <- requiresBench <$> getPassCtx
-  logger <- getFilteredLogger
+  logger <- getIOLogger
   let IFunType _ _ resultTypes = impFunType impFun
   return LLVMCallable{..}
 
 compileToObjCode :: Topper m => WithCNameInterface LLVM.AST.Module -> m n FunObjCode
 compileToObjCode astWithNames = forM astWithNames \ast -> do
-  logger  <- getFilteredLogger
+  logger <- getIOLogger
   opt <- getLLVMOptLevel <$> getConfig
   liftIO $ compileLLVM logger opt ast (cniMainFunName astWithNames)
 
@@ -717,11 +644,6 @@ funNameToObj v = do
     TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
     b -> error $ "couldn't find object cache entry for " ++ pprint v ++ "\ngot:\n" ++ pprint b
 
-withCompileTime :: MonadIO m => m Result -> m Result
-withCompileTime m = do
-  (Result outs err, t) <- measureSeconds m
-  return $ Result (outs ++ [TotalTime t]) err
-
 checkPass :: (Topper m, Pretty (e n), CheckableE r e)
           => PassName -> m n (e n) -> m n (e n)
 checkPass name cont = do
@@ -729,24 +651,30 @@ checkPass name cont = do
     result <- cont
     return result
 #ifdef DEX_DEBUG
-  logTop $ MiscLog $ "Running checks"
+  logDebug $ return $ MiscLog $ "Running checks"
   checkTypes result
-  logTop $ MiscLog $ "Checks passed"
+  logDebug $ return $ MiscLog $ "Checks passed"
 #else
-  logTop $ MiscLog $ "Checks skipped (not a debug build)"
+  logDebug $ return $ MiscLog $ "Checks skipped (not a debug build)"
 #endif
   return result
 
 logTop :: TopLogger m => Output -> m ()
-logTop x = logIO [x]
+logTop x = emitLog $ Outputs [x]
+
+logDebug :: TopLogger m => m Output -> m ()
+logDebug m = getLogLevel >>= \case
+  NormalLogLevel -> return ()
+  DebugLogLevel -> do
+    x <- m
+    emitLog $ Outputs [x]
 
 logPass :: Topper m => Pretty a => PassName -> m n a -> m n a
 logPass passName cont = do
-  logTop $ PassInfo passName $ "=== " <> pprint passName <> " ==="
-  logTop $ MiscLog $ "Starting "++ pprint passName
+  logDebug $ return $ PassInfo passName $ "=== " <> pprint passName <> " ==="
+  logDebug $ return $ MiscLog $ "Starting "++ pprint passName
   result <- cont
-  {-# SCC logPassPrinting #-} logTop $ PassInfo passName
-    $ "=== Result ===\n" <> pprint result
+  logDebug $ return $ PassInfo passName $ "=== Result ===\n" <> pprint result
   return result
 
 loadModuleSource
@@ -776,15 +704,6 @@ loadModuleSource config moduleName = do
       LibBuiltinPath   -> liftIO $ getDataFileName "lib"
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
-
-getBenchRequirement :: Topper m => SourceBlock -> m n BenchRequirement
-getBenchRequirement block = case sbLogLevel block of
-  PrintBench _ -> do
-    backend <- backendName <$> getConfig
-    let needsSync = case backend of LLVMCUDA -> True
-                                    _        -> False
-    return $ DoBench needsSync
-  _ -> return NoBench
 
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString val = do
@@ -868,19 +787,7 @@ restorePtrSnapshots s = traverseBindingsTopStateEx s \case
   PtrBinding ty p  -> liftIO $ PtrBinding ty <$> restorePtrSnapshot p
   b -> return b
 
-getFilteredLogger :: Topper m => m n PassLogger
-getFilteredLogger = do
-  shouldLog <- shouldLogPass <$> getPassCtx
-  logger  <- getLogger
-  return $ FilteredLogger shouldLog logger
-
 -- === instances ===
-
-instance PassCtxReader (TopperM n) where
-  getPassCtx = TopperM $ asks topperPassCtx
-  withPassCtx ctx cont = TopperM $
-    liftTopBuilderTWith (local \r -> r {topperPassCtx = ctx}) $
-      runTopperM' cont
 
 instance RuntimeEnvReader (TopperM n) where
   getRuntimeEnv = TopperM $ asks topperRuntimeEnv
@@ -904,10 +811,14 @@ instance TopBuilder TopperM where
   emitNamelessEnv env = TopperM $ emitNamelessEnv env
   localTopBuilder cont = TopperM $ localTopBuilder $ runTopperM' cont
 
-instance MonadLogger [Output] (TopperM n) where
-  getLogger = TopperM $ lift1 $ lift $ getLogger
-  withLogger l cont =
-    TopperM $ liftTopBuilderTWith (withLogger l) (runTopperM' cont)
+instance Logger Outputs (TopperM n) where
+  emitLog x = do
+    logger <- getIOLogAction
+    liftIO $ logger x
+  getLogLevel = cfgLogLevel <$> getConfig
+
+instance HasIOLogger Outputs (TopperM n) where
+  getIOLogAction = cfgLogAction <$> getConfig
 
 instance Generic TopStateEx where
   type Rep TopStateEx = Rep (Env UnsafeS, RuntimeEnv)
