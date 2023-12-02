@@ -34,6 +34,7 @@ import CheckType
 import Core
 import Err
 import IRVariants
+import MonadUtil
 import MTL1
 import Name
 import Subst
@@ -47,11 +48,11 @@ import Util hiding (group)
 
 -- === Top-level interface ===
 
-checkTopUType :: (Fallible1 m, EnvReader m) => UType n -> m n (CType n)
+checkTopUType :: (Fallible1 m, TopLogger m, EnvReader m) => UType n -> m n (CType n)
 checkTopUType ty = liftInfererM $ checkUType ty
 {-# SCC checkTopUType #-}
 
-inferTopUExpr :: (Fallible1 m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
+inferTopUExpr :: (Fallible1 m, TopLogger m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
 inferTopUExpr e = fst <$> (asTopBlock =<< liftInfererM (buildBlock $ bottomUp e))
 {-# SCC inferTopUExpr #-}
 
@@ -60,7 +61,9 @@ data UDeclInferenceResult e n =
  | UDeclResultBindName LetAnn (TopBlock CoreIR n) (Abs (UBinder (AtomNameC CoreIR)) e n)
  | UDeclResultBindPattern NameHint (TopBlock CoreIR n) (ReconAbs CoreIR e n)
 
-inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, HasNamesE e)
+type TopLogger (m::MonadKind1) = forall n. Logger Outputs (m n)
+
+inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, HasNamesE e, TopLogger m)
               => UTopDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UStructDecl tc def) result = do
   tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
@@ -153,7 +156,7 @@ data InfState (n::S) = InfState
   , infEffects     :: EffectRow CoreIR n }
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
-  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT CoreIR Except)) i o a }
+  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT CoreIR (ExceptT (State TypeInfo)))) i o a }
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Builder CoreIR,
             EnvExtender, ScopableBuilder CoreIR,
             ScopeReader, EnvReader, Fallible, Catchable, SubstReader Name)
@@ -161,14 +164,21 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
 type InfererCPSB  b i    o a = (forall o'. DExt o o' => b o o' -> InfererM i  o' a) -> InfererM i o a
 type InfererCPSB2 b i i' o a = (forall o'. DExt o o' => b o o' -> InfererM i' o' a) -> InfererM i o a
 
-liftInfererM :: (EnvReader m, Fallible1 m) => InfererM n n a -> m n a
+liftInfererM :: (EnvReader m, TopLogger m, Fallible1 m) => InfererM n n a -> m n a
 liftInfererM cont = do
+  (ansExcept, typeInfo) <- liftInfererMPure cont
+  emitLog $ Outputs [SourceInfo $ SITypeInfo typeInfo]
+  liftExcept ansExcept
+{-# INLINE liftInfererM #-}
+
+liftInfererMPure :: EnvReader m => InfererM n n a -> m n (Except a, TypeInfo)
+liftInfererMPure cont = do
   ansM <- liftBuilderT $ runReaderT1 emptyInfState $ runSubstReaderT idSubst $ runInfererM' cont
-  liftExcept ansM
+  return $ runState (runExceptT ansM) mempty
  where
   emptyInfState :: InfState n
   emptyInfState = InfState (Givens HM.empty) Pure
-{-# INLINE liftInfererM #-}
+{-# INLINE liftInfererMPure #-}
 
 -- === Solver monad ===
 
@@ -346,6 +356,11 @@ withAllowedEffects :: EffectRow CoreIR o -> InfererM i o a -> InfererM i o a
 withAllowedEffects effs cont = withInfState (\(InfState g _) -> InfState g effs) cont
 {-# INLINE withAllowedEffects #-}
 
+emitTypeInfo :: SrcId -> String -> InfererM i o ()
+emitTypeInfo sid ty = do
+  InfererM $ liftSubstReaderT $ lift11 $ lift1 $ lift do
+    modify \(TypeInfo m) -> TypeInfo $ M.insert sid ty m
+
 -- === actual inference pass ===
 
 data RequiredTy (n::S) =
@@ -461,10 +476,11 @@ bottomUp expr = bottomUpExplicit expr >>= instantiateSigma Infer
 
 -- Doesn't instantiate implicit args
 bottomUpExplicit :: Emits o => UExpr i -> InfererM i o (SigmaAtom o)
-bottomUpExplicit (WithSrcE _ expr) = case expr of
+bottomUpExplicit (WithSrcE sid expr) = case expr of
   UVar ~(InternalName _ sn v) ->  do
     v' <- renameM v
     ty <- getUVarType v'
+    emitTypeInfo sid $ pprint sn ++ " : " ++ pprint ty
     return $ SigmaUVar sn ty v'
   ULit l -> return $ SigmaAtom Nothing $ Con $ Lit l
   UFieldAccess x (WithSrc _ field) -> do
@@ -2012,7 +2028,7 @@ makeStructRepVal tyConName args = do
 -- shortcut of just generalizing the data parameters.
 generalizeDict :: EnvReader m => CType n -> CDict n -> m n (CDict n)
 generalizeDict ty dict = do
-  result <- liftEnvReaderT $ liftInfererM $ generalizeDictRec ty dict
+  result <- liftEnvReaderM $ liftM fst $ liftInfererMPure $ generalizeDictRec ty dict
   case result of
     Failure e -> error $ "Failed to generalize " ++ pprint dict
       ++ " to " ++ show ty ++ " because " ++ pprint e
@@ -2349,10 +2365,10 @@ checkScalarOrPairType ty = throw TypeErr $ pprint ty
 
 instance DiffStateE SolverSubst SolverDiff where
   updateDiffStateE :: forall n. Distinct n => Env n -> SolverSubst n -> SolverDiff n -> SolverSubst n
-  updateDiffStateE _ initState (SolverDiff (RListE diffs)) = foldl update initState (unsnoc diffs)
+  updateDiffStateE _ initState (SolverDiff (RListE diffs)) = foldl update' initState (unsnoc diffs)
     where
-     update :: Distinct n => SolverSubst n -> Solution n -> SolverSubst n
-     update (SolverSubst subst) (PairE v x) = SolverSubst $ M.insert v x subst
+     update' :: Distinct n => SolverSubst n -> Solution n -> SolverSubst n
+     update' (SolverSubst subst) (PairE v x) = SolverSubst $ M.insert v x subst
 
 instance SinkableE InfState where sinkingProofE _ = todoSinkableProof
 

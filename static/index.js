@@ -73,7 +73,9 @@ function applyHover(cellId, srcId) {
 }
 function applyHoverInfo(cellId, srcId) {
     let hoverInfo = lookupSrcMap(hoverInfoMap, cellId, srcId)
-    hoverInfoDiv.innerHTML = srcId.toString() // hoverInfo
+    if (hoverInfo !== undefined) {
+        hoverInfoDiv.innerHTML = hoverInfo
+    }
 }
 function applyHoverHighlights(cellId, srcId) {
     let highlights = lookupSrcMap(highlightMap, cellId, srcId)
