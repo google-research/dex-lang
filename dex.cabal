@@ -48,7 +48,6 @@ library
                      , Algebra
                      , Builder
                      , CUDA
-                     , Cat
                      , CheapReduction
                      , CheckType
                      , ConcreteSyntax

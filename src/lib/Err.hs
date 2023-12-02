@@ -4,12 +4,15 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE UndecidableInstances #-}
+
 module Err (Err (..), ErrType (..), Except (..),
             Fallible (..), Catchable (..), catchErrExcept,
             HardFailM (..), runHardFail, throw,
             catchIOExcept, liftExcept, liftExceptAlt,
             assertEq, ignoreExcept,
-            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack
+            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack,
+            ExceptT (..)
             ) where
 
 import Control.Exception hiding (throw)
@@ -79,6 +82,61 @@ instance Catchable IO where
     catchIOExcept cont >>= \case
       Success result -> return result
       Failure errs -> handler errs
+
+-- === ExceptT type ===
+
+newtype ExceptT m a = ExceptT { runExceptT :: m (Except a) }
+
+instance Monad m => Functor (ExceptT m) where
+  fmap = liftM
+  {-# INLINE fmap #-}
+
+instance Monad m => Applicative (ExceptT m) where
+  pure = return
+  {-# INLINE pure #-}
+  liftA2 = liftM2
+  {-# INLINE liftA2 #-}
+
+instance Monad m => Monad (ExceptT m) where
+  return x = ExceptT $ return (Success x)
+  {-# INLINE return #-}
+  m >>= f = ExceptT $ runExceptT m >>= \case
+    Failure errs -> return $ Failure errs
+    Success x    -> runExceptT $ f x
+  {-# INLINE (>>=) #-}
+
+instance Monad m => MonadFail (ExceptT m) where
+  fail s = ExceptT $ return $ Failure $ Err SearchFailure s
+  {-# INLINE fail #-}
+
+instance Monad m => Fallible (ExceptT m) where
+  throwErr errs = ExceptT $ return $ Failure errs
+  {-# INLINE throwErr #-}
+
+instance Monad m => Alternative (ExceptT m) where
+  empty = throw SearchFailure ""
+  {-# INLINE empty #-}
+  m1 <|> m2 = do
+    catchSearchFailure m1 >>= \case
+      Nothing -> m2
+      Just x -> return x
+  {-# INLINE (<|>) #-}
+
+instance Monad m => Catchable (ExceptT m) where
+  m `catchErr` f = ExceptT $ runExceptT m >>= \case
+    Failure errs -> runExceptT $ f errs
+    Success x    -> return $ Success x
+  {-# INLINE catchErr #-}
+
+instance MonadState s m => MonadState s (ExceptT m) where
+  get = lift get
+  {-# INLINE get #-}
+  put x = lift $ put x
+  {-# INLINE put #-}
+
+instance MonadTrans ExceptT where
+  lift m = ExceptT $ Success <$> m
+  {-# INLINE lift #-}
 
 -- === Except type ===
 
