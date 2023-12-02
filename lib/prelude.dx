@@ -333,17 +333,13 @@ def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   y' = nat_to_rep y
   rep_to_nat %isub(x', y')
 
--- `(i..)` parses as `RangeFrom(i)`
 -- TODO: need to a way to indicate constructor as private
 struct RangeFrom(i:q) given (q:Type) = val : Nat
 
--- `(i<..)` parses as `RangeFromExc i`
 struct RangeFromExc(i:q) given (q:Type) = val : Nat
 
--- `(..i)` parses as `RangeTo i`
 struct RangeTo(i:q) given (q:Type) = val : Nat
 
--- `(..<i)` parses as `RangeToExc i`
 struct RangeToExc(i:q) given (q:Type) = val : Nat
 
 instance Ix(RangeFrom i) given (q|Ix, i:q)
@@ -381,28 +377,28 @@ instance Add(n=>a) given (a|Add, n|Ix)
 instance Sub(n=>a) given (a|Sub, n|Ix)
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => (i..) => a) given (a|Add, n|Ix) -- Upper triangular tables
+instance Add((i:n) => RangeFrom i => a) given (a|Add, n|Ix) -- Upper triangular tables
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => (i..) => a) given (a|Sub, n|Ix)  -- Upper triangular tables
+instance Sub((i:n) => RangeFrom i => a) given (a|Sub, n|Ix)  -- Upper triangular tables
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => (..i) => a) given (a|Add, n|Ix)  -- Lower triangular tables
+instance Add((i:n) => RangeTo i => a) given (a|Add, n|Ix)  -- Lower triangular tables
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => (..i) => a) given (a|Sub, n|Ix)  -- Lower triangular tables
+instance Sub((i:n) => RangeTo i => a) given (a|Sub, n|Ix)  -- Lower triangular tables
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => (..<i) => a) given (a|Add, n|Ix)
+instance Add((i:n) => RangeToExc i => a) given (a|Add, n|Ix)
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => (..<i) => a) given (a|Sub, n|Ix)
+instance Sub((i:n) => RangeToExc i => a) given (a|Sub, n|Ix)
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => (i<..) => a) given (a|Add, n|Ix)
+instance Add((i:n) => RangeFromExc i => a) given (a|Add, n|Ix)
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => (i<..) => a) given (a|Sub, n|Ix)
+instance Sub((i:n) => RangeFromExc i => a) given (a|Sub, n|Ix)
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
 instance Mul(n=>a) given (a|Mul, n|Ix)
@@ -478,16 +474,16 @@ instance VSpace((a, b)) given (a|VSpace, b|VSpace)
     (x, y) = pair
     (s .* x, s .* y)
 
-instance VSpace((i:n) => (..i) => a) given (n|Ix, a|VSpace)
+instance VSpace((i:n) => RangeTo i => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
 
-instance VSpace((i:n) => (i..) => a) given (n|Ix, a|VSpace)
+instance VSpace((i:n) => RangeFrom i => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
 
-instance VSpace((i:n) => (..<i) => a) given (n|Ix, a|VSpace)
+instance VSpace((i:n) => RangeToExc i => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
 
-instance VSpace((i:n) => (i<..) => a) given (n|Ix, a|VSpace)
+instance VSpace((i:n) => RangeFromExc i => a) given (n|Ix, a|VSpace)
   def (.*)(s, xs) = for i. s .* xs[i]
 
 instance VSpace(())
@@ -1840,16 +1836,16 @@ instance Arbitrary(Nat)
 instance Arbitrary(n=>a) given (n|Ix, a|Arbitrary)
   def arb(key) = for i. arb $ ixkey(key, i)
 
-instance Arbitrary((i:n)=>(..<i) => a) given (n|Ix, a|Arbitrary)
+instance Arbitrary((i:n)=> RangeToExc i => a) given (n|Ix, a|Arbitrary)
   def arb(key) = for i. arb $ ixkey(key, i)
 
-instance Arbitrary((i:n)=>(..i) => a) given (n|Ix, a|Arbitrary)
+instance Arbitrary((i:n)=> RangeTo i => a) given (n|Ix, a|Arbitrary)
   def arb(key) = for i. arb $ ixkey(key, i)
 
-instance Arbitrary((i:n)=>(i..) => a) given (n|Ix, a|Arbitrary)
+instance Arbitrary((i:n)=> RangeFrom i => a) given (n|Ix, a|Arbitrary)
   def arb(key) = for i. arb $ ixkey(key, i)
 
-instance Arbitrary((i:n)=>(i<..) => a) given (n|Ix, a|Arbitrary)
+instance Arbitrary((i:n)=> RangeFromExc i => a) given (n|Ix, a|Arbitrary)
   def arb(key) = for i. arb $ ixkey(key, i)
 
 instance Arbitrary((a, b)) given (a|Arbitrary, b|Arbitrary)
