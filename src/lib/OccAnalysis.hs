@@ -20,6 +20,7 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
+import Types.Top
 import QueryType
 
 -- === External API ===
@@ -28,7 +29,7 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-analyzeOccurrences :: EnvReader m => STopLam n -> m n (STopLam n)
+analyzeOccurrences :: EnvReader m => TopLam SimpIR n -> m n (TopLam SimpIR n)
 analyzeOccurrences lam = liftLamExpr lam \e -> liftOCCM $ occ accessOnce e
 {-# INLINE analyzeOccurrences #-}
 

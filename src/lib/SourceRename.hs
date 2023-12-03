@@ -23,7 +23,7 @@ import PPrint ()
 import IRVariants
 import Types.Source
 import Types.Primitives
-import Types.Core (Env (..), ModuleEnv (..))
+import Types.Top (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
   :: (Fallible1 m, EnvReader m)

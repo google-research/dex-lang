@@ -43,6 +43,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import Types.Top
 import qualified Types.OpNames as P
 import Util hiding (group)
 

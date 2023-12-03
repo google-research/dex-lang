@@ -63,7 +63,6 @@ import Subst
 import Name
 import OccAnalysis
 import Optimize
-import PPrint (pprintCanonicalized)
 import Paths_dex  (getDataFileName)
 import QueryType
 import Runtime
@@ -75,6 +74,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import Types.Top
 import Util ( Tree (..), File (..), readFileWithHash)
 import Vectorize
 

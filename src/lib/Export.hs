@@ -29,6 +29,7 @@ import Subst hiding (Rename)
 import TopLevel
 import Types.Core
 import Types.Imp
+import Types.Top
 import Types.Primitives hiding (sizeOf)
 
 type ExportAtomNameC = AtomNameC CoreIR

@@ -37,6 +37,7 @@ import Err
 import IRVariants
 
 import Types.Core
+import Types.Top
 import Types.Imp
 import Types.Primitives
 import Types.Source

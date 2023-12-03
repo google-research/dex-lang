@@ -17,6 +17,7 @@ import JAX.Concrete
 import Subst
 import QueryType
 import Types.Core
+import Types.Top
 import Types.Primitives qualified as P
 
 newtype JaxSimpM (i::S) (o::S) a = JaxSimpM

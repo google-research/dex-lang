@@ -31,6 +31,7 @@ import RuntimePrint
 import Transpose
 import Types.Core
 import Types.Source
+import Types.Top
 import Types.Primitives
 import Util (enumerate)
 

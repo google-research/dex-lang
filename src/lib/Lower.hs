@@ -26,6 +26,7 @@ import Name
 import Subst
 import QueryType
 import Types.Core
+import Types.Top
 import Types.Primitives
 import Util (enumerate)
 

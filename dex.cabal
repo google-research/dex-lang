@@ -94,6 +94,7 @@ library
                      , Types.Primitives
                      , Types.OpNames
                      , Types.Source
+                     , Types.Top
                      , QueryType
                      , QueryTypePure
                      , Util
@@ -124,7 +125,6 @@ library
                      , prettyprinter
                      , text
                        -- Portable system utilities
-                     , ansi-terminal
                      , directory
                      , filepath
                      , haskeline
@@ -234,6 +234,7 @@ executable dex
   main-is:             dex.hs
   build-depends:       dex
                      , ansi-wl-pprint
+                     , ansi-terminal
                      , base
                      , bytestring
                      , containers

@@ -17,7 +17,7 @@ import Data.Foldable (toList)
 
 import Name
 import Err
-import Types.Core (Env)
+import Types.Top (Env)
 import Core (EnvReader (..), EnvExtender (..))
 import Util (SnocList (..), snoc, emptySnocList)
 

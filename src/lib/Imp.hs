@@ -42,10 +42,10 @@ import QueryType
 import Types.Core
 import Types.Imp
 import Types.Primitives
+import Types.Top
 import Util (forMFilter, Tree (..), zipTrees, enumerate)
 
-toImpFunction :: EnvReader m
-  => CallingConvention -> STopLam n -> m n (ImpFunction n)
+toImpFunction :: EnvReader m => CallingConvention -> STopLam n -> m n (ImpFunction n)
 toImpFunction cc (TopLam True destTy lam) = do
   LamExpr bsAndRefB body <- return lam
   PairB bs destB <- case popNest bsAndRefB of

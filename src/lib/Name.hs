@@ -44,6 +44,7 @@ import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
                , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
 import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
+import PPrint
 import Err
 import IRVariants
 
@@ -444,6 +445,9 @@ type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
 type OrdV v = (forall (c::C) (n::S). Ord (v c n)) :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
+
+type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
+type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
 
 type HashableE (e::E) = forall n. Hashable (e n)
 
@@ -2164,6 +2168,8 @@ instance PrettyE e => Pretty (ListE e n) where
 instance PrettyE e => Pretty (RListE e n) where
   pretty (RListE e) = pretty $ unsnoc e
 
+deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
+
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )
          => Generic (Abs b body n) where
@@ -2746,6 +2752,9 @@ canonicalizeForPrinting e cont = do
     ClosedWithScope scope e' ->
       cont $ renameE (scope, newSubst id) e'
 
+pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> String
+pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
+
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
 liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
@@ -2886,6 +2895,10 @@ abstractFreeVarsNoAnn vs e =
   case abstractFreeVars (zip vs (repeat UnitE)) e of
     Abs bs e' -> Abs bs' e'
       where bs' = fmapNest (\(b:>UnitE) -> b) bs
+
+unsafeFromNest :: Nest b n l -> [b UnsafeS UnsafeS]
+unsafeFromNest Empty = []
+unsafeFromNest (Nest b rest) = unsafeCoerceB b : unsafeFromNest rest
 
 instance Color c => HoistableB (NameBinder c) where
   freeVarsB _ = mempty
@@ -3388,6 +3401,13 @@ hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
 -- XXX: the intention is that we won't have to use this much
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
 unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
+
+-- === Pretty instances ===
+
+instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance PrettyE ann => Pretty (BinderP c ann n l)
+  where pretty (b:>ty) = pretty b <> ":" <> pretty ty
 
 -- === notes ===
 

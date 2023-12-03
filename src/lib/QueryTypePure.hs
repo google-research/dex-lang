@@ -8,6 +8,7 @@ module QueryTypePure where
 
 import Types.Primitives
 import Types.Core
+import Types.Top
 import IRVariants
 import Name
 

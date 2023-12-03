@@ -26,13 +26,17 @@ import Data.Foldable
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import Data.Text (Text)
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline, (<+>))
 import Data.Word
+import Data.Text.Prettyprint.Doc (vcat, line, group, parens, nest, align, punctuate, hsep)
+import Data.Text (snoc, unsnoc)
+import Data.Tuple (swap)
 
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
+import Data.String (fromString)
 
 import Err
+import PPrint
 import Name
 import qualified Types.OpNames as P
 import IRVariants
@@ -650,6 +654,102 @@ data PrimName =
  | UTuple -- overloaded for type constructor and data constructor, resolved in inference
    deriving (Show, Eq, Generic)
 
+-- === primitive constructors and operators ===
+
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s primNames
+
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
+  Just s  -> s
+  Nothing -> show prim
+
+showPrimName :: PrimName -> String
+showPrimName prim = primNameToStr prim
+{-# NOINLINE showPrimName #-}
+
+primNames :: M.Map String PrimName
+primNames = M.fromList
+  [ ("ask"      , UMAsk), ("mextend", UMExtend)
+  , ("get"      , UMGet), ("put"    , UMPut)
+  , ("while"    , UWhile)
+  , ("linearize", ULinearize), ("linearTranspose", UTranspose)
+  , ("runReader", URunReader), ("runWriter"      , URunWriter), ("runState", URunState)
+  , ("runIO"    , URunIO    ), ("catchException" , UCatchException)
+  , ("iadd" , binary IAdd),  ("isub"  , binary ISub)
+  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
+  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
+  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
+  , ("irem" , binary IRem)
+  , ("fpow" , binary FPow)
+  , ("and"  , binary BAnd),  ("or"    , binary BOr )
+  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
+  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
+  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
+  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
+  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
+  , ("fneg" , unary  FNeg)
+  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
+  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
+  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
+  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
+  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
+  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
+  , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
+  , ("TyKind"    , UPrimTC $ P.TypeKind)
+  , ("Float64"   , baseTy $ Scalar Float64Type)
+  , ("Float32"   , baseTy $ Scalar Float32Type)
+  , ("Int64"     , baseTy $ Scalar Int64Type)
+  , ("Int32"     , baseTy $ Scalar Int32Type)
+  , ("Word8"     , baseTy $ Scalar Word8Type)
+  , ("Word32"    , baseTy $ Scalar Word32Type)
+  , ("Word64"    , baseTy $ Scalar Word64Type)
+  , ("Int32Ptr"  , baseTy $ ptrTy $ Scalar Int32Type)
+  , ("Word8Ptr"  , baseTy $ ptrTy $ Scalar Word8Type)
+  , ("Word32Ptr" , baseTy $ ptrTy $ Scalar Word32Type)
+  , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
+  , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
+  , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
+  , ("Nat"           , UNat)
+  , ("Fin"           , UFin)
+  , ("EffKind"       , UEffectRowKind)
+  , ("NatCon"        , UNatCon)
+  , ("Ref"       , UPrimTC $ P.RefType)
+  , ("HeapType"  , UPrimTC $ P.HeapType)
+  , ("indexRef"   , UIndexRef)
+  , ("alloc"    , memOp $ P.IOAlloc)
+  , ("free"     , memOp $ P.IOFree)
+  , ("ptrOffset", memOp $ P.PtrOffset)
+  , ("ptrLoad"  , memOp $ P.PtrLoad)
+  , ("ptrStore" , memOp $ P.PtrStore)
+  , ("throwError"    , miscOp $ P.ThrowError)
+  , ("throwException", miscOp $ P.ThrowException)
+  , ("dataConTag"    , miscOp $ P.SumTag)
+  , ("toEnum"        , miscOp $ P.ToEnum)
+  , ("outputStream"  , miscOp $ P.OutputStream)
+  , ("cast"          , miscOp $ P.CastOp)
+  , ("bitcast"       , miscOp $ P.BitcastOp)
+  , ("unsafeCoerce"  , miscOp $ P.UnsafeCoerce)
+  , ("garbageVal"    , miscOp $ P.GarbageVal)
+  , ("select"        , miscOp $ P.Select)
+  , ("showAny"       , miscOp $ P.ShowAny)
+  , ("showScalar"    , miscOp $ P.ShowScalar)
+  , ("projNewtype" , UProjNewtype)
+  , ("applyMethod0" , UApplyMethod 0)
+  , ("applyMethod1" , UApplyMethod 1)
+  , ("applyMethod2" , UApplyMethod 2)
+  , ("explicitApply", UExplicitApply)
+  , ("monoLit", UMonoLiteral)
+  ]
+  where
+    binary op = UBinOp op
+    baseTy b  = UBaseType b
+    memOp op  = UMemOp op
+    unary  op = UUnOp  op
+    ptrTy  ty = PtrType (CPU, ty)
+    miscOp op = UMiscOp op
+
+
 -- === instances ===
 
 instance Semigroup (SourceMap n) where
@@ -862,3 +962,265 @@ deriving instance Ord  (UEffectRow n)
 instance ToJSON SrcId
 deriving instance ToJSONKey SrcId
 instance ToJSON LexemeType
+
+-- === Pretty instances ===
+
+
+
+instance Pretty CSBlock where
+  pretty (IndentedBlock _ decls) = nest 2 $ prettyLines decls
+  pretty (ExprBlock g) = pArg g
+
+instance Pretty Group where pretty = prettyFromPrettyPrec
+instance PrettyPrec Group where
+  prettyPrec = undefined
+  -- prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
+  -- prettyPrec (CPrim prim args) = prettyOpDefault prim args
+  -- prettyPrec (CParens blk)  =
+  --   atPrec ArgPrec $ "(" <> p blk <> ")"
+  -- prettyPrec (CBrackets g) = atPrec ArgPrec $ pretty g
+  -- prettyPrec (CBin op lhs rhs) =
+  --   atPrec LowestPrec $ pArg lhs <+> p op <+> pArg rhs
+  -- prettyPrec (CLambda args body) =
+  --   atPrec LowestPrec $ "\\" <> spaced args <> "." <> p body
+  -- prettyPrec (CCase scrut alts) =
+  --   atPrec LowestPrec $ "case " <> p scrut <> " of " <> prettyLines alts
+  -- prettyPrec g = atPrec ArgPrec $ fromString $ show g
+
+instance Pretty Bin where
+  pretty = \case
+    EvalBinOp name -> pretty name
+    DepAmpersand -> "&>"
+    Dot -> "."
+    DepComma -> ",>"
+    Colon -> ":"
+    DoubleColon -> "::"
+    Dollar -> "$"
+    ImplicitArrow -> "->>"
+    FatArrow -> "->>"
+    Pipe -> "|"
+    CSEqual -> "="
+
+instance Pretty SourceBlock' where
+  pretty (TopDecl decl) = pretty decl
+  pretty d = fromString $ show d
+
+instance Pretty CTopDecl where
+  pretty (CSDecl ann decl) = annDoc <> pretty decl
+    where annDoc = case ann of
+            PlainLet -> mempty
+            _ -> pretty ann <> " "
+  pretty d = fromString $ show d
+
+instance Pretty CSDecl where
+  pretty = undefined
+  -- pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
+  -- pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
+  -- pretty (CDefDecl (CDef name args maybeAnn blk)) =
+  --   "def " <> fromString name <> " " <> prettyParamGroups args <+> annDoc
+  --     <> nest 2 (hardline <> p blk)
+  --   where annDoc = case maybeAnn of Just (expl, ty) -> p expl <+> pArg ty
+  --                                   Nothing -> mempty
+  -- pretty (CInstance header givens methods name) =
+  --   name' <> p header <> p givens <> nest 2 (hardline <> p methods) where
+  --   name' = case name of
+  --     Nothing  -> "instance "
+  --     (Just n) -> "named-instance " <> p n <> " "
+  -- pretty (CExpr e) = p e
+
+instance Pretty PrimName where
+   pretty primName = pretty $ "%" ++ showPrimName primName
+
+instance Pretty (UDataDefTrail n) where
+  pretty (UDataDefTrail bs) = pretty $ unsafeFromNest bs
+
+instance Pretty (UAnnBinder n l) where
+  pretty (UAnnBinder _ b ty _) = pretty b <> ":" <> pretty ty
+
+instance Pretty (UAnn n) where
+  pretty (UAnn ty) = ":" <> pretty ty
+  pretty UNoAnn = mempty
+
+instance Pretty (UMethodDef' n) where
+  pretty (UMethodDef b rhs) = pretty b <+> "=" <+> pretty rhs
+
+instance Pretty (UPat' n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UPat' n l) where
+  prettyPrec pat = case pat of
+    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatProd xs -> atPrec ArgPrec $ parens $ commaSep (unsafeFromNest xs)
+    UPatDepPair (PairB x y) -> atPrec ArgPrec $ parens $ p x <> ",> " <> p y
+    UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced (unsafeFromNest pats)
+    UPatTable pats -> atPrec ArgPrec $ p pats
+    where
+      p :: Pretty a => a -> Doc ann
+      p = pretty
+
+instance Pretty (UAlt n) where
+  pretty (UAlt pat body) = pretty pat <+> "->" <+> pretty body
+
+instance Pretty (UTopDecl n l) where
+  pretty = \case
+    UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
+      "data" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
+         (prettyLines (zip (toList $ unsafeFromNest bDataCons) dataCons))
+    UStructDecl bTyCon (UStructDef nm bs fields defs) ->
+      "struct" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
+        (prettyLines fields <> prettyLines defs)
+    UInterface params methodTys interfaceName methodNames ->
+      "interface" <+> p params <+> p interfaceName
+         <> hardline <> foldMap (<>hardline) methods
+      where
+        methods = [ p b <> ":" <> p (unsafeCoerceE ty)
+                  | (b, ty) <- zip (toList $ unsafeFromNest methodNames) methodTys]
+    UInstance className bs params methods (RightB UnitB) _ ->
+      "instance" <+> p bs <+> p className <+> spaced params <+>
+         prettyLines methods
+    UInstance className bs params methods (LeftB v) _ ->
+      "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
+        <> prettyLines methods
+    ULocalDecl decl -> p decl
+    where
+      p :: Pretty a => a -> Doc ann
+      p = pretty
+
+instance Pretty (UDecl' n l) where
+  pretty = \case
+    ULet ann b _ rhs -> align $ pretty ann <+> pretty b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    UExprDecl expr -> pretty expr
+    UPass -> "pass"
+
+instance Pretty (UEffectRow n) where
+  pretty (UEffectRow x Nothing) = encloseSep "<" ">" "," $ (pretty <$> toList x)
+  pretty (UEffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (pretty <$> toList x)) <+> "|" <+> pretty y <> "}"
+
+instance Pretty e => Pretty (WithSrcs e) where pretty (WithSrcs _ _ x) = pretty x
+instance PrettyPrec e => PrettyPrec (WithSrcs e) where prettyPrec (WithSrcs _ _ x) = prettyPrec x
+
+instance Pretty e => Pretty (WithSrc e) where pretty (WithSrc _ x) = pretty x
+instance PrettyPrec e => PrettyPrec (WithSrc e) where prettyPrec (WithSrc _ x) = prettyPrec x
+
+instance PrettyE e => Pretty (WithSrcE e n) where pretty (WithSrcE _ x) = pretty x
+instance PrettyPrecE e => PrettyPrec (WithSrcE e n) where prettyPrec (WithSrcE _ x) = prettyPrec x
+
+instance PrettyB b => Pretty (WithSrcB b n l) where pretty (WithSrcB _ x) = pretty x
+instance PrettyPrecB b => PrettyPrec (WithSrcB b n l) where prettyPrec (WithSrcB _ x) = prettyPrec x
+
+instance PrettyE e => Pretty (SourceNameOr e n) where
+  pretty (SourceName _ v) = pretty v
+  pretty (InternalName _ v _) = pretty v
+
+instance Pretty (SourceOrInternalName c n) where
+  pretty (SourceOrInternalName sn) = pretty sn
+
+instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (ULamExpr n) where
+  prettyPrec (ULamExpr bs _ _ _ body) = atPrec LowestPrec $
+    "\\" <> pretty bs <+> "." <+> indented (pretty body)
+
+instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UPiExpr n) where
+  prettyPrec (UPiExpr pats appExpl UPure ty) = atPrec LowestPrec $ align $
+    pretty pats <+> pretty appExpl <+> pLowest ty
+  prettyPrec (UPiExpr pats appExpl eff ty) = atPrec LowestPrec $ align $
+    pretty pats <+> pretty appExpl <+> pretty eff <+> pLowest ty
+
+instance Pretty (UTabPiExpr n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UTabPiExpr n) where
+  prettyPrec (UTabPiExpr pat ty) = atPrec LowestPrec $ align $
+    pretty pat <+> "=>" <+> pLowest ty
+
+instance Pretty (UDepPairType n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UDepPairType n) where
+  -- TODO: print explicitness info
+  prettyPrec (UDepPairType _ pat ty) = atPrec LowestPrec $ align $
+    pretty pat <+> "&>" <+> pLowest ty
+
+instance Pretty (UBlock' n) where
+  pretty (UBlock decls result) =
+    prettyLines (unsafeFromNest decls) <> hardline <> pLowest result
+
+instance Pretty (UExpr' n) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UExpr' n) where
+  prettyPrec expr = case expr of
+    ULit l -> prettyPrec l
+    UVar v -> atPrec ArgPrec $ p v
+    ULam lam -> prettyPrec lam
+    UApp    f xs named -> atPrec AppPrec $ pAppArg (pApp f) xs <+> p named
+    UTabApp f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
+    UFor dir (UForExpr binder body) ->
+      atPrec LowestPrec $ kw <+> p binder <> "."
+                             <+> nest 2 (p body)
+      where kw = case dir of Fwd -> "for"
+                             Rev -> "rof"
+    UPi piType -> prettyPrec piType
+    UTabPi piType -> prettyPrec piType
+    UDepPairTy depPairType -> prettyPrec depPairType
+    UDepPair lhs rhs -> atPrec ArgPrec $ parens $
+      p lhs <+> ",>" <+> p rhs
+    UHole -> atPrec ArgPrec "_"
+    UTypeAnn v ty -> atPrec LowestPrec $
+      group $ pApp v <> line <> ":" <+> pApp ty
+    UTabCon xs -> atPrec ArgPrec $ p xs
+    UPrim prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
+    UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
+      nest 2 (prettyLines alts)
+    UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f
+    UNatLit   v -> atPrec ArgPrec $ p v
+    UIntLit   v -> atPrec ArgPrec $ p v
+    UFloatLit v -> atPrec ArgPrec $ p v
+    UDo block -> atPrec LowestPrec $ p block
+    where
+      p :: Pretty a => a -> Doc ann
+      p = pretty
+
+instance Pretty SourceBlock where
+  pretty block = pretty $ ensureNewline (sbText block) where
+    -- Force the SourceBlock to end in a newline for echoing, even if
+    -- it was terminated with EOF in the original program.
+    ensureNewline t = case unsnoc t of
+      Nothing -> t
+      Just (_, '\n') -> t
+      _ -> t `snoc` '\n'
+
+instance Pretty Output where
+  pretty = \case
+    TextOut s -> pretty s
+    HtmlOut _ -> "<html output>"
+    SourceInfo _ -> ""
+    PassInfo _ s -> pretty s
+    MiscLog s -> pretty s
+    Error e -> pretty e
+
+instance Pretty PassName where
+  pretty x = pretty $ show x
+
+instance Pretty Result where
+  pretty (Result (Outputs outs) r) = vcat (map pretty outs) <> maybeErr
+    where maybeErr = case r of Failure err -> pretty err
+                               Success () -> mempty
+
+instance Pretty (UBinder' c n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UBinder' c n l) where
+  prettyPrec b = atPrec ArgPrec case b of
+    UBindSource v -> pretty v
+    UIgnore       -> "_"
+    UBind v _     -> pretty v
+
+instance Pretty FieldName' where
+  pretty = \case
+    FieldName s -> pretty s
+    FieldNum n  -> pretty n
+
+instance Pretty (UEffect n) where
+  pretty eff = case eff of
+    URWSEffect rws h -> pretty rws <+> pretty h
+    UExceptionEffect -> "Except"
+    UIOEffect        -> "IO"
+
+prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
+prettyOpDefault name args =
+  case length args of
+    0 -> atPrec ArgPrec primName
+    _ -> atPrec AppPrec $ pAppArg primName args
+  where primName = pretty name

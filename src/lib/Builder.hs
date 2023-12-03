@@ -35,6 +35,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import Types.Top
 import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
 
 -- === Ordinary (local) builder class ===
@@ -281,7 +282,7 @@ emitTopLet hint letAnn expr = do
   v <- emitBinding hint $ AtomNameBinding $ LetBound (DeclBinding letAnn expr)
   return $ AtomVar v ty
 
-emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> STopLam n -> m n (TopFunName n)
+emitTopFunBinding :: (Mut n, TopBuilder m) => NameHint -> TopFunDef n -> TopLam SimpIR n -> m n (TopFunName n)
 emitTopFunBinding hint def f = do
   emitBinding hint $ TopFunBinding $ DexTopFun def f Waiting
 

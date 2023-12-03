@@ -18,6 +18,7 @@ import QueryType
 import Name
 import Subst
 import Types.Primitives
+import Types.Top
 
 type RolePiBinder = WithAttrB RoleExpl CBinder
 type RolePiBinders = Nest RolePiBinder

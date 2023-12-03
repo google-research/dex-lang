@@ -32,6 +32,7 @@ import Name
 import PPrint ()
 import QueryTypePure
 import Types.Core
+import Types.Top
 import Types.Imp
 import Types.Primitives
 import Util

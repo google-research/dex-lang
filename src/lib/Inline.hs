@@ -17,6 +17,7 @@ import Occurrence hiding (Var)
 import PeepholeOptimize
 import Types.Core
 import Types.Primitives
+import Types.Top
 
 -- === External API ===
 

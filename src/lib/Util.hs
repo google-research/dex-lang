@@ -26,6 +26,7 @@ import Data.Store (Store)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
+import Data.Text.Prettyprint.Doc (Pretty (..), pretty)
 import Data.List.NonEmpty (NonEmpty (..))
 import GHC.Generics (Generic)
 
@@ -353,6 +354,11 @@ zipTrees :: Tree a -> Tree b -> Tree (a, b)
 zipTrees (Leaf x) (Leaf y) = Leaf (x, y)
 zipTrees (Branch xs) (Branch ys) | length xs == length ys = Branch $ zipWith zipTrees xs ys
 zipTrees _ _ = error "zip error"
+
+instance Pretty a => Pretty (Tree a) where
+  pretty = \case
+    Leaf x -> pretty x
+    Branch xs -> pretty xs
 
 -- === bytestrings paired with their hash digest ===
 

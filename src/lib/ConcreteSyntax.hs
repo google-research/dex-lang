@@ -17,12 +17,10 @@ import Data.Char
 import Data.Either
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Map qualified as M
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text          qualified as T
 import Data.Text.Encoding qualified as T
-import Data.Tuple
 import Data.Void
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
@@ -31,7 +29,6 @@ import Lexing
 import Types.Core
 import Types.Source
 import Types.Primitives
-import qualified Types.OpNames as P
 import Util
 
 -- TODO: implement this more efficiently rather than just parsing the whole
@@ -696,101 +693,6 @@ withSrcs p = do
   sid <- freshSrcId
   (sids, result) <- collectAtomicLexemeIds p
   return $ WithSrcs sid sids result
-
--- === primitive constructors and operators ===
-
-strToPrimName :: String -> Maybe PrimName
-strToPrimName s = M.lookup s primNames
-
-primNameToStr :: PrimName -> String
-primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
-  Just s  -> s
-  Nothing -> show prim
-
-showPrimName :: PrimName -> String
-showPrimName prim = primNameToStr prim
-{-# NOINLINE showPrimName #-}
-
-primNames :: M.Map String PrimName
-primNames = M.fromList
-  [ ("ask"      , UMAsk), ("mextend", UMExtend)
-  , ("get"      , UMGet), ("put"    , UMPut)
-  , ("while"    , UWhile)
-  , ("linearize", ULinearize), ("linearTranspose", UTranspose)
-  , ("runReader", URunReader), ("runWriter"      , URunWriter), ("runState", URunState)
-  , ("runIO"    , URunIO    ), ("catchException" , UCatchException)
-  , ("iadd" , binary IAdd),  ("isub"  , binary ISub)
-  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
-  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
-  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
-  , ("irem" , binary IRem)
-  , ("fpow" , binary FPow)
-  , ("and"  , binary BAnd),  ("or"    , binary BOr )
-  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
-  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
-  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
-  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
-  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
-  , ("fneg" , unary  FNeg)
-  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
-  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
-  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
-  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
-  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
-  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
-  , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  , ("TyKind"    , UPrimTC $ P.TypeKind)
-  , ("Float64"   , baseTy $ Scalar Float64Type)
-  , ("Float32"   , baseTy $ Scalar Float32Type)
-  , ("Int64"     , baseTy $ Scalar Int64Type)
-  , ("Int32"     , baseTy $ Scalar Int32Type)
-  , ("Word8"     , baseTy $ Scalar Word8Type)
-  , ("Word32"    , baseTy $ Scalar Word32Type)
-  , ("Word64"    , baseTy $ Scalar Word64Type)
-  , ("Int32Ptr"  , baseTy $ ptrTy $ Scalar Int32Type)
-  , ("Word8Ptr"  , baseTy $ ptrTy $ Scalar Word8Type)
-  , ("Word32Ptr" , baseTy $ ptrTy $ Scalar Word32Type)
-  , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
-  , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
-  , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
-  , ("Nat"           , UNat)
-  , ("Fin"           , UFin)
-  , ("EffKind"       , UEffectRowKind)
-  , ("NatCon"        , UNatCon)
-  , ("Ref"       , UPrimTC $ P.RefType)
-  , ("HeapType"  , UPrimTC $ P.HeapType)
-  , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ P.IOAlloc)
-  , ("free"     , memOp $ P.IOFree)
-  , ("ptrOffset", memOp $ P.PtrOffset)
-  , ("ptrLoad"  , memOp $ P.PtrLoad)
-  , ("ptrStore" , memOp $ P.PtrStore)
-  , ("throwError"    , miscOp $ P.ThrowError)
-  , ("throwException", miscOp $ P.ThrowException)
-  , ("dataConTag"    , miscOp $ P.SumTag)
-  , ("toEnum"        , miscOp $ P.ToEnum)
-  , ("outputStream"  , miscOp $ P.OutputStream)
-  , ("cast"          , miscOp $ P.CastOp)
-  , ("bitcast"       , miscOp $ P.BitcastOp)
-  , ("unsafeCoerce"  , miscOp $ P.UnsafeCoerce)
-  , ("garbageVal"    , miscOp $ P.GarbageVal)
-  , ("select"        , miscOp $ P.Select)
-  , ("showAny"       , miscOp $ P.ShowAny)
-  , ("showScalar"    , miscOp $ P.ShowScalar)
-  , ("projNewtype" , UProjNewtype)
-  , ("applyMethod0" , UApplyMethod 0)
-  , ("applyMethod1" , UApplyMethod 1)
-  , ("applyMethod2" , UApplyMethod 2)
-  , ("explicitApply", UExplicitApply)
-  , ("monoLit", UMonoLiteral)
-  ]
-  where
-    binary op = UBinOp op
-    baseTy b  = UBaseType b
-    memOp op  = UMemOp op
-    unary  op = UUnOp  op
-    ptrTy  ty = PtrType (CPU, ty)
-    miscOp op = UMiscOp op
 
 -- === notes ===
 

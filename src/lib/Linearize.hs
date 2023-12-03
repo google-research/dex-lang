@@ -27,6 +27,7 @@ import PPrint
 import QueryType
 import Types.Core
 import Types.Primitives
+import Types.Top
 import Util (enumerate)
 
 -- === linearization monad ===

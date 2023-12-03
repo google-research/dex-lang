@@ -28,12 +28,14 @@ import Data.String (IsString (..))
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Text.Prettyprint.Doc (Pretty (..))
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
+import Numeric
 
+import GHC.Float
 import GHC.Generics (Generic (..))
 
+import PPrint
 import Occurrence
 import Types.OpNames (UnOp (..), BinOp (..), CmpOp (..), Projection (..))
 import Name
@@ -222,3 +224,75 @@ instance Hashable AppExplicitness
 instance Hashable DepPairExplicitness
 instance Hashable InferenceMechanism
 instance Hashable RequiredMethodAccess
+
+-- === Pretty instances ===
+
+instance Pretty AppExplicitness where
+  pretty ExplicitApp = "->"
+  pretty ImplicitApp = "->>"
+
+instance Pretty RWS where
+  pretty eff = case eff of
+    Reader -> "Read"
+    Writer -> "Accum"
+    State  -> "State"
+
+instance Pretty LetAnn where
+  pretty ann = case ann of
+    PlainLet        -> ""
+    InlineLet       -> "%inline"
+    NoInlineLet     -> "%noinline"
+    LinearLet       -> "%linear"
+    OccInfoPure   u -> pretty u <> hardline
+    OccInfoImpure u -> pretty u <> ", impure" <> hardline
+
+instance PrettyPrec Direction where
+  prettyPrec d = atPrec ArgPrec $ case d of
+    Fwd -> "fwd"
+    Rev -> "rev"
+
+printDouble :: Double -> Doc ann
+printDouble x = pretty (double2Float x)
+
+printFloat :: Float -> Doc ann
+printFloat x = pretty $ reverse $ dropWhile (=='0') $ reverse $
+  showFFloat (Just 6) x ""
+
+instance Pretty LitVal where pretty = prettyFromPrettyPrec
+instance PrettyPrec LitVal where
+  prettyPrec = \case
+    Int64Lit   x -> atPrec ArgPrec $ p x
+    Int32Lit   x -> atPrec ArgPrec $ p x
+    Float64Lit x -> atPrec ArgPrec $ printDouble x
+    Float32Lit x -> atPrec ArgPrec $ printFloat  x
+    Word8Lit   x -> atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
+    Word32Lit  x -> atPrec ArgPrec $ p $ "0x" ++ showHex x ""
+    Word64Lit  x -> atPrec ArgPrec $ p $ "0x" ++ showHex x ""
+    PtrLit ty (PtrLitVal x) -> atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
+    PtrLit _ NullPtr -> atPrec ArgPrec $ "NullPtr"
+    PtrLit _ (PtrSnapshot _) -> atPrec ArgPrec "<ptr snapshot>"
+    where p :: Pretty a => a -> Doc ann
+          p = pretty
+
+instance Pretty Device where pretty = fromString . show
+
+instance Pretty BaseType where pretty = prettyFromPrettyPrec
+instance PrettyPrec BaseType where
+  prettyPrec b = case b of
+    Scalar sb -> prettyPrec sb
+    Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (pretty <$> shape) ++ [pretty sb]
+    PtrType ty -> atPrec AppPrec $ "Ptr" <+> pretty ty
+
+instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
+instance PrettyPrec ScalarBaseType where
+  prettyPrec sb = atPrec ArgPrec $ case sb of
+    Int64Type   -> "Int64"
+    Int32Type   -> "Int32"
+    Float64Type -> "Float64"
+    Float32Type -> "Float32"
+    Word8Type   -> "Word8"
+    Word32Type  -> "Word32"
+    Word64Type  -> "Word64"
+
+instance Pretty Explicitness where
+  pretty expl = pretty (show expl)

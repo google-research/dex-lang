@@ -56,6 +56,7 @@ import Types.Core
 import Types.Imp
 import Types.Primitives
 import Types.Source
+import Types.Top
 import Util (IsBool (..), bindM2, enumerate)
 
 -- === Compile monad ===

@@ -27,11 +27,16 @@ import qualified Data.ByteString       as BS
 
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
+import Data.String (fromString)
+import Data.Text.Prettyprint.Doc (line', nest, group)
 
 import Name
+import PPrint
 import Util (IsBool (..))
-
 import Types.Primitives
+import Types.Source
+
+-- === data types ===
 
 type ImpName = Name ImpNameC
 
@@ -480,3 +485,91 @@ instance Store LinktimeVals
 instance Hashable IsCUDARequired
 instance Hashable CallingConvention
 instance Hashable IFunType
+
+instance Pretty CallingConvention where pretty = fromString . show
+
+instance Pretty (ImpFunction n) where
+  pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
+    "impfun" <+> pretty cc <+> prettyBinderNest bs
+    <> nest 2 (hardline <> pretty body) <> hardline
+
+instance Pretty (ImpBlock n)  where
+  pretty = \case
+    ImpBlock Empty [] -> mempty
+    ImpBlock Empty expr -> group $ hardline <> pLowest expr
+    ImpBlock decls [] -> prettyLines $ fromNest decls
+    ImpBlock decls expr -> prettyLines decls' <> hardline <> pLowest expr
+      where decls' = fromNest decls
+
+instance Pretty (IBinder n l)  where
+  pretty (IBinder b ty) = pretty b <+> ":" <+> pretty ty
+
+instance Pretty (ImpInstr n)  where
+  pretty = \case
+    IFor a n (Abs i block) -> forStr a <+> p i <+> "<" <+> p n <>
+                                      nest 4 (p block)
+    IWhile body -> "while" <+> nest 2 (p body)
+    ICond predicate cons alt ->
+       "if" <+> p predicate <+> "then" <> nest 2 (p cons) <>
+       hardline <> "else" <> nest 2 (p alt)
+    IQueryParallelism f s -> "queryParallelism" <+> p f <+> p s
+    ILaunch f s args -> "launch" <+> p f <+> p s <+> spaced args
+    ICastOp t x    -> "cast"  <+> p x <+> "to" <+> p t
+    IBitcastOp t x -> "bitcast"  <+> p x <+> "to" <+> p t
+    Store dest val -> "store" <+> p dest <+> p val
+    Alloc _ t s    -> "alloc" <+> p t <> "[" <> sizeStr s <> "]"
+    StackAlloc t s -> "alloca" <+> p t <> "[" <> sizeStr s <> "]"
+    MemCopy dest src numel -> "memcopy" <+> p dest <+> p src <+> p numel
+    InitializeZeros ptr numel -> "initializeZeros" <+> p ptr <+> p numel
+    GetAllocSize ptr -> "getAllocSize" <+> p ptr
+    Free ptr       -> "free"  <+> p ptr
+    ISyncWorkgroup   -> "syncWorkgroup"
+    IThrowError      -> "throwError"
+    ICall f args   -> "call" <+> p f <+> p args
+    IVectorBroadcast v _ -> "vbroadcast" <+> p v
+    IVectorIota _ -> "viota"
+    DebugPrint s x -> "debug_print" <+> p (show s) <+> p x
+    IPtrLoad ptr   -> "load" <+> p ptr
+    IPtrOffset ptr idx -> p ptr <+> "+>" <+> p idx
+    IBinOp op x y -> opDefault (UBinOp op) [x, y]
+    IUnOp  op x   -> opDefault (UUnOp  op) [x]
+    ISelect x y z -> "select" <+> p x <+> p y <+> p z
+    IOutputStream -> "outputStream"
+    IShowScalar ptr x -> "show_scalar" <+> p ptr <+> p x
+    where opDefault name xs = prettyOpDefault name xs $ AppPrec
+          p :: Pretty a => a -> Doc ann
+          p = pretty
+          forStr :: ForAnn -> Doc ann
+          forStr = \case
+            Fwd -> "for"
+            Rev -> "rof"
+
+sizeStr :: IExpr n -> Doc ann
+sizeStr s = case s of
+  ILit (Word32Lit x) -> pretty x  -- print in decimal because it's more readable
+  _ -> pretty s
+
+instance Pretty (IExpr n) where
+  pretty = \case
+    ILit v -> pretty v
+    IVar v _ -> pretty v
+    IPtrVar v _ -> pretty v
+
+instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance Pretty (ImpDecl n l) where
+  pretty = \case
+    ImpLet Empty instr -> pretty instr
+    ImpLet (Nest b Empty) instr -> pretty b <+> "=" <+> pretty instr
+    ImpLet bs instr -> pretty bs <+> "=" <+> pretty instr
+
+instance Pretty IFunType where
+  pretty (IFunType cc argTys retTys) =
+    "Fun" <+> pretty cc <+> pretty argTys <+> "->" <+> pretty retTys
+
+prettyBinderNest :: PrettyB b => Nest b n l -> Doc ann
+prettyBinderNest bs = nest 6 $ line' <> (sep $ map pretty $ fromNest bs)
+
+fromNest :: Nest b n l -> [b UnsafeS UnsafeS]
+fromNest Empty = []
+fromNest (Nest b rest) = unsafeCoerceB b : fromNest rest

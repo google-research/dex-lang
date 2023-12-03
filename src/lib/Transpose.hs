@@ -20,6 +20,7 @@ import Name
 import Subst
 import QueryType
 import Types.Core
+import Types.Top
 import Types.Primitives
 import Util (enumerate)
 
@@ -36,9 +37,7 @@ transpose lam ct = liftEmitBuilder $ runTransposeM do
 runTransposeM :: TransposeM n n a -> BuilderM SimpIR n a
 runTransposeM cont = runSubstReaderT idSubst $ cont
 
-transposeTopFun
-  :: (MonadFail1 m, EnvReader m)
-  => STopLam n -> m n (STopLam n)
+transposeTopFun :: (MonadFail1 m, EnvReader m) => STopLam n -> m n (STopLam n)
 transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
   (Abs bsNonlin (Abs bLin body), Abs bsNonlin'' outTy)  <- unpackLinearLamExpr lam
   refreshBinders bsNonlin \bsNonlin' substFrag -> extendRenamer substFrag do

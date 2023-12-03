@@ -24,12 +24,10 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Coerce
 import Data.Foldable (fold)
-import Data.Text qualified as T
-import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
-import System.Environment
-import System.IO.Unsafe
+
+import PPrint
 
 -- === core API ===
 
@@ -284,20 +282,6 @@ instance Fallible [] where
 instance Fallible Maybe where
   throwErr _ = Nothing
   {-# INLINE throwErr #-}
-
--- === small pretty-printing utils ===
--- These are here instead of in PPrint.hs for import cycle reasons
-
-pprint :: Pretty a => a -> String
-pprint x = docAsStr $ pretty x
-{-# SCC pprint #-}
-
-docAsStr :: Doc ann -> String
-docAsStr doc = T.unpack $ renderStrict $ layoutPretty layout $ doc
-
-layout :: LayoutOptions
-layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
-  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
 
 -- === instances ===
 

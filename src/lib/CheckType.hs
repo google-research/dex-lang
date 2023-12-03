@@ -27,6 +27,7 @@ import QueryType
 import Types.Core
 import Types.Primitives
 import Types.Source
+import Types.Top
 
 -- === top-level API ===
 

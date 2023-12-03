@@ -21,8 +21,9 @@ import Data.List
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Map.Strict as M
+import qualified System.Console.ANSI as ANSI
+import System.Console.ANSI hiding (Color)
 
-import PPrint (printOutput)
 import TopLevel
 import Err
 import Name
@@ -35,6 +36,7 @@ import Core
 import Types.Core
 import Types.Imp
 import Types.Source
+import Types.Top
 import MonadUtil
 
 data DocFmt = ResultOnly
@@ -192,6 +194,24 @@ stdOutLogger :: Outputs -> IO ()
 stdOutLogger (Outputs outs) = do
   isatty <- queryTerminal stdOutput
   forM_ outs \out -> putStr $ printOutput isatty out
+
+printOutput :: Bool -> Output -> String
+printOutput isatty out = case out of
+  Error _ -> addColor isatty Red $ addPrefix ">" $ pprint out
+  _       -> addPrefix (addColor isatty Cyan ">") $ pprint $ out
+
+addPrefix :: String -> String -> String
+addPrefix prefix str = unlines $ map prefixLine $ lines str
+  where prefixLine :: String -> String
+        prefixLine s = case s of "" -> prefix
+                                 _  -> prefix ++ " " ++ s
+
+addColor :: Bool -> ANSI.Color -> String -> String
+addColor False _ s = s
+addColor True c s =
+  setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
+  ++ s ++ setSGRCode [Reset]
+
 
 pathOption :: ReadM [LibPath]
 pathOption = splitPaths [] <$> str

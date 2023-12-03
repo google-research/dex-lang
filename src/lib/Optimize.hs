@@ -15,6 +15,7 @@ import Control.Monad.State.Strict
 
 import Types.Core
 import Types.Primitives
+import Types.Top
 import MTL1
 import Name
 import Subst

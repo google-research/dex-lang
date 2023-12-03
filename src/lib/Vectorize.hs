@@ -9,7 +9,7 @@ module Vectorize (vectorizeLoops) where
 import Prelude hiding ((.))
 import Data.Word
 import Data.Functor
-import Data.Text.Prettyprint.Doc (Pretty, pretty, viaShow, (<+>))
+import Data.Text.Prettyprint.Doc (viaShow)
 import Control.Category
 import Control.Monad.Reader
 import Control.Monad.State.Strict
@@ -26,6 +26,7 @@ import Subst
 import PPrint
 import QueryType
 import Types.Core
+import Types.Top
 import Types.OpNames qualified as P
 import Types.Primitives
 import Util (allM, zipWithZ)

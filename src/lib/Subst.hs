@@ -19,6 +19,7 @@ import Name
 import MTL1
 import IRVariants
 import Types.Core
+import Types.Top
 import Core
 import qualified RawName as R
 import QueryTypePure
