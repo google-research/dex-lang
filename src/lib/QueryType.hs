@@ -8,6 +8,7 @@ module QueryType (module QueryType, module QueryTypePure, toAtomVar) where
 
 import Control.Category ((>>>))
 import Control.Monad
+import Control.Applicative
 import Data.List (elemIndex)
 import Data.Maybe (fromJust)
 import Data.Functor ((<&>))
@@ -23,14 +24,14 @@ import Err
 import Name hiding (withFreshM)
 import Subst
 import Util
-import PPrint ()
+import PPrint
 import QueryTypePure
 import CheapReduction
 
 sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
 sourceNameType v = do
   lookupSourceMap v >>= \case
-    Nothing -> throw UnboundVarErr $ pprint v
+    Nothing -> throw $ UnboundVarErr $ pprint v
     Just uvar -> getUVarType uvar
 
 -- === Exposed helpers for querying types and effects ===
@@ -347,35 +348,29 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
 
 isData :: EnvReader m => Type CoreIR n -> m n Bool
 isData ty = do
-  result <- liftEnvReaderT $ withSubstReaderT $ checkDataLike ty
+  result <- liftEnvReaderT $ withSubstReaderT $ go ty
   case result of
-    Success () -> return True
-    Failure _  -> return False
-
-checkDataLike :: Type CoreIR i -> SubstReaderT Name (EnvReaderT Except) i o ()
-checkDataLike ty = case ty of
-  StuckTy _ _ -> notData
-  TyCon con -> case con of
-    TabPi (TabPiType _ b eltTy) -> do
-      renameBinders b \_ ->
-        checkDataLike eltTy
-    DepPairTy (DepPairType _ b@(_:>l) r) -> do
-      recur l
-      renameBinders b \_ -> checkDataLike r
-    NewtypeTyCon nt -> do
-      (_, ty') <- unwrapNewtypeType =<< renameM nt
-      dropSubst $ recur ty'
-    BaseType _       -> return ()
-    ProdType as      -> mapM_ recur as
-    SumType  cs      -> mapM_ recur cs
-    RefType _ _      -> return ()
-    HeapType         -> return ()
-    TypeKind -> notData
-    DictTy _ -> notData
-    Pi _     -> notData
+    Just () -> return True
+    Nothing -> return False
   where
-    recur = checkDataLike
-    notData = throw TypeErr $ pprint ty
+    go :: Type CoreIR i -> SubstReaderT Name (EnvReaderT Maybe) i o ()
+    go = \case
+      StuckTy _ _ -> notData
+      TyCon con -> case con of
+        TabPi (TabPiType _ b eltTy) -> renameBinders b \_ -> go eltTy
+        DepPairTy (DepPairType _ b@(_:>l) r) -> go l >> renameBinders b \_ -> go r
+        NewtypeTyCon nt -> do
+          (_, ty') <- unwrapNewtypeType =<< renameM nt
+          dropSubst $ go ty'
+        BaseType _  -> return ()
+        ProdType as -> mapM_ go as
+        SumType  cs -> mapM_ go cs
+        RefType _ _ -> return ()
+        HeapType    -> return ()
+        TypeKind -> notData
+        DictTy _ -> notData
+        Pi _     -> notData
+      where notData = empty
 
 checkExtends :: (Fallible m, IRRep r) => EffectRow r n -> EffectRow r n -> m ()
 checkExtends allowed (EffectRow effs effTail) = do
@@ -384,6 +379,6 @@ checkExtends allowed (EffectRow effs effTail) = do
     EffectRowTail _ -> assertEq allowedEffTail effTail ""
     NoTail -> return ()
   forM_ (eSetToList effs) \eff -> unless (eff `eSetMember` allowedEffs) $
-    throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
-                      "\nAllowed: " ++ pprint allowed
+    throwInternal $ "Unexpected effect: " ++ pprint eff ++
+                       "\nAllowed: " ++ pprint allowed
 {-# INLINE checkExtends #-}

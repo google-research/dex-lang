@@ -24,6 +24,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Text.Megaparsec.Debug
 
 import Err
+import PPrint
 import Types.Primitives
 import Types.Source
 import Util (toSnocList)
@@ -43,7 +44,7 @@ type Parser = StateT ParseCtx (Parsec Void Text)
 
 parseit :: Text -> Parser a -> Except a
 parseit s p = case parse (fst <$> runStateT p initParseCtx) "" s of
-  Left e  -> throw ParseErr $ errorBundlePretty e
+  Left e  -> throw $ MiscParseErr $ errorBundlePretty e
   Right x -> return x
 
 mustParseit :: Text -> Parser a -> a

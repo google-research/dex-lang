@@ -11,6 +11,7 @@ import Data.Functor ((<&>))
 
 import Types.Source
 import Types.Primitives
+import Err
 
 getGroupTree :: SourceBlock' -> GroupTree
 getGroupTree b = mkGroupTree False rootSrcId $ runTreeM $ visit b

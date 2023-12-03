@@ -17,7 +17,6 @@ import Control.Monad.State.Strict (MonadState (..), StateT (..), runStateT)
 import qualified Data.Map.Strict as M
 import Data.Foldable (fold)
 import Data.Graph (graphFromEdges, topSort)
-import Data.Text.Prettyprint.Doc (Pretty (..))
 import Foreign.Ptr
 
 import qualified Unsafe.Coerce as TrulyUnsafe
@@ -30,6 +29,7 @@ import MTL1
 import Subst
 import Name
 import PeepholeOptimize
+import PPrint
 import QueryType
 import Types.Core
 import Types.Imp
@@ -102,18 +102,6 @@ buildScopedAssumeNoDecls cont = do
     (Abs Empty e) -> return e
     _ -> error "Expected no decl emissions"
 {-# INLINE buildScopedAssumeNoDecls #-}
-
-withReducibleEmissions
-  :: (ScopableBuilder r m, Builder r m, HasNamesE e, SubstE AtomSubstVal e)
-  => String
-  -> (forall o' . (Emits o', DExt o o') => m o' (e o'))
-  -> m o (e o)
-withReducibleEmissions msg cont = do
-  withDecls <- buildScoped cont
-  reduceWithDecls withDecls >>= \case
-    Just t -> return t
-    _ -> throw TypeErr msg
-{-# INLINE withReducibleEmissions #-}
 
 -- === "Hoisting" top-level builder class ===
 
@@ -926,10 +914,10 @@ symbolicTangentTy elTy = lookupSourceMap "SymbolicTangent" >>= \case
   Just (UTyConVar symTanName) -> do
     return $ toType $ UserADTType "SymbolicTangent" symTanName $
       TyConParams [Explicit] [toAtom elTy]
-  Nothing -> throw UnboundVarErr $
+  Nothing -> throwInternal $
     "Can't define a custom linearization with symbolic zeros: " ++
     "the SymbolicTangent type is not in scope."
-  Just _ -> throw TypeErr "SymbolicTangent should name a `data` type"
+  Just _ -> throwInternal $ "SymbolicTangent should name a `data` type"
 
 symbolicTangentZero :: EnvReader m => SType n -> m n (SAtom n)
 symbolicTangentZero argTy = return $ toAtom $ SumCon [UnitTy, argTy] 0 UnitVal

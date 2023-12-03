@@ -16,6 +16,7 @@ import IRVariants
 import MTL1
 import Name
 import CheapReduction
+import PPrint
 import Types.Core
 import Types.Source
 import Types.Primitives

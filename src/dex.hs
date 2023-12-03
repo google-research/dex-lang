@@ -32,6 +32,7 @@ import ConcreteSyntax (keyWordStrs, preludeImportBlock)
 import RenderHtml
 -- import Live.Terminal (runTerminal)
 import Live.Web (runWeb)
+import PPrint  hiding (hardline)
 import Core
 import Types.Core
 import Types.Imp

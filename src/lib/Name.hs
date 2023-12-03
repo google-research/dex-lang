@@ -2757,12 +2757,7 @@ pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
 liftHoistExcept :: Fallible m => HoistExcept a -> m a
 liftHoistExcept (HoistSuccess x) = return x
-liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
-
-liftHoistExcept' :: Fallible m => String -> HoistExcept a -> m a
-liftHoistExcept' _ (HoistSuccess x) = return x
-liftHoistExcept' msg (HoistFailure vs) =
-  throw EscapedNameErr $ (pprint vs) ++ "\n" ++ msg
+liftHoistExcept (HoistFailure vs) = throw $ EscapedNameErr $ map pprint vs
 
 ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
@@ -2864,7 +2859,7 @@ partitionBinders bs assignBinder = go bs where
         RightB b2 -> withSubscopeDistinct bs2
           case exchangeBs (PairB b2 bs1) of
             HoistSuccess (PairB bs1' b2') -> return $ PairB bs1' (Nest b2' bs2)
-            HoistFailure vs -> throw EscapedNameErr $ (pprint vs)
+            HoistFailure vs -> throw $ EscapedNameErr $ map pprint vs
 
 -- NameBinder has no free vars, so there's no risk associated with hoisting.
 -- The scope is completely distinct, so their exchange doesn't create any accidental

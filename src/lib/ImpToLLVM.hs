@@ -45,7 +45,6 @@ import qualified Data.Set as S
 import CUDA (getCudaArchitecture)
 
 import Core
-import Err
 import Imp
 import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
 import Subst

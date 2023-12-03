@@ -11,6 +11,7 @@ import Data.Maybe (fromJust)
 
 import Core
 import Err
+import PPrint
 import Types.Core
 import Inference
 import IRVariants

@@ -37,6 +37,7 @@ import Err
 import IRVariants
 import MTL1
 import Name
+import PPrint
 import Subst
 import QueryType
 import Types.Core

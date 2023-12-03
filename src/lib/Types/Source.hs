@@ -20,7 +20,7 @@
 
 module Types.Source where
 
-import Data.Aeson (ToJSON, ToJSONKey)
+import Data.Aeson (ToJSON)
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
@@ -60,13 +60,6 @@ newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr 
   deriving (Eq, Ord, Show, Generic)
 
 -- === Source Info ===
-
--- XXX: 0 is reserved for the root The IDs are generated from left to right in
--- parsing order, so IDs for lexemes are guaranteed to be sorted correctly.
-newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
-
-rootSrcId :: SrcId
-rootSrcId = SrcId 0
 
 -- This is just for syntax highlighting. It won't be needed if we have
 -- a separate lexing pass where we have a complete lossless data type for
@@ -959,13 +952,9 @@ deriving instance Show (UEffectRow n)
 deriving instance Eq   (UEffectRow n)
 deriving instance Ord  (UEffectRow n)
 
-instance ToJSON SrcId
-deriving instance ToJSONKey SrcId
 instance ToJSON LexemeType
 
 -- === Pretty instances ===
-
-
 
 instance Pretty CSBlock where
   pretty (IndentedBlock _ decls) = nest 2 $ prettyLines decls

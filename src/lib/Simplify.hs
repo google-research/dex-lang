@@ -14,7 +14,6 @@ import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Reader
 import Data.Maybe
-import Data.Text.Prettyprint.Doc (Pretty (..), hardline)
 
 import Builder
 import CheapReduction
@@ -26,6 +25,7 @@ import IRVariants
 import Linearize
 import Name
 import Subst
+import PPrint
 import QueryType
 import RuntimePrint
 import Transpose

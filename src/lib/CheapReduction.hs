@@ -29,7 +29,7 @@ import Core
 import Err
 import IRVariants
 import Name
-import PPrint ()
+import PPrint
 import QueryTypePure
 import Types.Core
 import Types.Top

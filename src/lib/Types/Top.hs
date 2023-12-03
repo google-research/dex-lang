@@ -71,15 +71,6 @@ data AtomBinding (r::IR) (n::S) where
 deriving instance IRRep r => Show (AtomBinding r n)
 deriving via WrapE (AtomBinding r) n instance IRRep r => Generic (AtomBinding r n)
 
--- name of function, name of arg
-type InferenceArgDesc = (String, String)
-data InfVarDesc =
-   ImplicitArgInfVar InferenceArgDesc
- | AnnotationInfVar String -- name of binder
- | TypeInstantiationInfVar String -- name of type
- | MiscInfVar
-   deriving (Show, Generic, Eq, Ord)
-
 data SolverBinding (n::S) =
    InfVarBound (CType n)
  | SkolemBound (CType n)
@@ -1023,7 +1014,6 @@ instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
     "Specialization" <+> pretty f <+> pretty bs <+> pretty args
 
-instance Hashable InfVarDesc
 instance Hashable a => Hashable (EvalStatus a)
 
 instance Store (SolverBinding n)
@@ -1039,7 +1029,6 @@ instance Store (TopFunDef n)
 instance Color c => Store (Binding c n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
-instance Store InfVarDesc
 instance Store (AtomRules n)
 instance Store (LinearizationSpec n)
 instance Store (SpecializedDictDef n)

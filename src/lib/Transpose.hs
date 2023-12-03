@@ -13,10 +13,10 @@ import GHC.Stack
 
 import Builder
 import Core
-import Err
 import Imp
 import IRVariants
 import Name
+import PPrint
 import Subst
 import QueryType
 import Types.Core

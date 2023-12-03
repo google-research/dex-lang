@@ -58,7 +58,7 @@ import Data.Text (Text)
 import ConcreteSyntax
 import Err
 import Name
-import PPrint ()
+import PPrint
 import Types.Primitives
 import Types.Source
 import qualified Types.OpNames as P
@@ -139,7 +139,7 @@ decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
   CLet binder rhs -> do
     (p, ty) <- patOptAnn binder
     ULet ann p ty <$> asExpr <$> block rhs
-  CBind _ _ -> throw SyntaxErr "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
+  CBind _ _ -> throw TopLevelArrowBinder
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ ULet ann (fromSourceNameW name) Nothing (WithSrcE sid (ULam lam))
@@ -199,7 +199,7 @@ withTrailingConstraints g cont = case g of
     Nest (UAnnBinder expl (WithSrcB sid b) ann cs) bs <- withTrailingConstraints lhs cont
     s <- case b of
       UBindSource s -> return s
-      UIgnore       -> throw SyntaxErr "Can't constrain anonymous binders"
+      UIgnore       -> throw CantConstrainAnonBinders
       UBind _ _     -> error "Shouldn't have internal names until renaming pass"
     c' <- expr c
     return $   UnaryNest (UAnnBinder expl (WithSrcB sid b) ann (cs ++ [c']))
@@ -261,7 +261,7 @@ uBinder :: GroupW -> SyntaxM (UBinder c VoidS VoidS)
 uBinder (WithSrcs sid _ b) = case b of
   CLeaf (CIdentifier name) -> return $ fromSourceNameW $ WithSrc sid name
   CLeaf CHole -> return $ WithSrcB sid UIgnore
-  _ -> throw SyntaxErr "Binder must be an identifier or `_`"
+  _ -> throw UnexpectedBinder
 
 -- Type annotation with an optional binder pattern
 tyOptPat :: GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
@@ -300,8 +300,7 @@ pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
   CLeaf (CIdentifier name) -> return $ UPatBinder $ fromSourceNameW $ WithSrc sid name
   CJuxtapose True lhs rhs -> do
     case lhs of
-      WithSrcs _ _ (CJuxtapose True _ _) ->
-        throw SyntaxErr "Only unary constructors can form patterns without parens"
+      WithSrcs _ _ (CJuxtapose True _ _) -> throw OnlyUnaryWithoutParens
       _ -> return ()
     name <- identifier "pattern constructor name" lhs
     arg <- pat rhs
@@ -313,11 +312,11 @@ pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
         gs' <- mapM pat gs
         return $ UPatCon (fromSourceNameW name) (toNest gs')
       _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
-  _ -> throw SyntaxErr "Illegal pattern"
+  _ -> throw IllegalPattern
 
 tyOptBinder :: Explicitness -> GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
 tyOptBinder expl (WithSrcs sid sids grp) = case grp of
-  CBin (WithSrc _ Pipe)  _ _     -> throw SyntaxErr "Unexpected constraint"
+  CBin (WithSrc _ Pipe)  _ _     -> throw UnexpectedConstraint
   CBin (WithSrc _ Colon) name ty -> do
     b <- uBinder name
     ann <- UAnn <$> expr ty
@@ -341,7 +340,7 @@ binderReqTy expl (WithSrcs _ _ (CBin (WithSrc _ Colon) name ty)) = do
   b <- uBinder name
   ann <- UAnn <$> expr ty
   return $ UAnnBinder expl b ann []
-binderReqTy _ _ = throw SyntaxErr $ "Expected an annotated binder"
+binderReqTy _ _ = throw ExpectedAnnBinder
 
 argList :: [GroupW] -> SyntaxM ([UExpr VoidS], [UNamedArg VoidS])
 argList gs = partitionEithers <$> mapM singleArg gs
@@ -355,7 +354,7 @@ singleArg = \case
 identifier :: String -> GroupW -> SyntaxM SourceNameW
 identifier ctx (WithSrcs sid _ g) = case g of
   CLeaf (CIdentifier name) -> return $ WithSrc sid name
-  _ -> throw SyntaxErr $ "Expected " ++ ctx ++ " to be an identifier"
+  _ -> throw $ ExpectedIdentifier ctx
 
 aEffects :: WithSrcs ([GroupW], Maybe GroupW) -> SyntaxM (UEffectRow VoidS)
 aEffects (WithSrcs _ _ (effs, optEffTail)) = do
@@ -375,7 +374,7 @@ effect (WithSrcs _ _ grp) = case grp of
     return $ URWSEffect State $ fromSourceNameW (WithSrc sid h)
   CLeaf (CIdentifier "Except") -> return UExceptionEffect
   CLeaf (CIdentifier "IO"    ) -> return UIOEffect
-  _ -> throw SyntaxErr "Unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, or the name of a user-defined effect."
+  _ -> throw UnexpectedEffectForm
 
 aMethod :: CSDeclW -> SyntaxM (Maybe (UMethodDef VoidS))
 aMethod (WithSrcs _ _ CPass) = return Nothing
@@ -386,7 +385,7 @@ aMethod (WithSrcs src _ d) = Just . WithSrcE src <$> case d of
   CLet (WithSrcs sid _ (CLeaf (CIdentifier name))) rhs -> do
     rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
     return $ UMethodDef (fromSourceNameW (WithSrc sid name)) rhs'
-  _ -> throw SyntaxErr "Unexpected method definition. Expected `def` or `x = ...`."
+  _ -> throw UnexpectedMethodDef
 
 asExpr :: UBlock VoidS -> UExpr VoidS
 asExpr (WithSrcE src b) = case b of
@@ -403,7 +402,7 @@ blockDecls :: [CSDeclW] -> SyntaxM (Nest UDecl VoidS VoidS, UExpr VoidS)
 blockDecls [] = error "shouldn't have empty list of decls"
 blockDecls [WithSrcs _ _ d] = case d of
   CExpr g -> (Empty,) <$> expr g
-  _ -> throw SyntaxErr "Block must end in expression"
+  _ -> throw BlockWithoutFinalExpr
 blockDecls (WithSrcs sid _ (CBind b rhs):ds) = do
   b' <- binderOptTy Explicit b
   rhs' <- asExpr <$> block rhs
@@ -428,7 +427,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   CBrackets gs -> UTabCon <$> mapM expr gs
-  CGivens _ -> throw SyntaxErr $ "Unexpected `given` clause"
+  CGivens _ -> throw UnexpectedGivenClause
   CArrow lhs effs rhs -> do
     case lhs of
       WithSrcs _ _ (CParens gs) -> do
@@ -436,7 +435,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
         effs' <- fromMaybeM effs UPure aEffects
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
-      _ -> throw SyntaxErr "Argument types should be in parentheses"
+      _ -> throw ArgsShouldHaveParens
   CDo b -> UDo <$> block b
   CJuxtapose hasSpace lhs rhs -> case hasSpace of
     True -> extendAppRight <$> expr lhs <*> expr rhs
@@ -459,7 +458,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
       name <- case rhs' of
         CLeaf (CIdentifier name) -> return $ FieldName name
         CLeaf (CNat i          ) -> return $ FieldNum $ fromIntegral i
-        _ -> throw SyntaxErr "Field must be a name or an integer"
+        _ -> throw BadField
       return $ UFieldAccess lhs' (WithSrc src name)
     DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
     EvalBinOp s -> evalOp s
@@ -467,14 +466,14 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
       lhs' <- tyOptPat lhs
       UDepPairTy . (UDepPairType ExplicitDepPair lhs') <$> expr rhs
     DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
-    CSEqual       -> throw SyntaxErr "Equal sign must be used as a separator for labels or binders, not a standalone operator"
-    Colon         -> throw SyntaxErr "Colon separates binders from their type annotations, is not a standalone operator.\nIf you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
+    CSEqual       -> throw BadEqualSign
+    Colon         -> throw BadColon
     ImplicitArrow -> case lhs of
       WithSrcs _ _ (CParens gs) -> do
         bs <- aPiBinders gs
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ImplicitApp UPure resultTy
-      _ -> throw SyntaxErr "Argument types should be in parentheses"
+      _ -> throw ArgsShouldHaveParens
     FatArrow      -> do
       lhs' <- tyOptPat lhs
       UTabPi . (UTabPiExpr lhs') <$> expr rhs
@@ -496,7 +495,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
         WithSrcE _ (UIntLit   i) -> UIntLit   (-i)
         WithSrcE _ (UFloatLit i) -> UFloatLit (-i)
         e -> unaryApp (mkUVar sid "neg") e
-      _ -> throw SyntaxErr $ "Prefix (" ++ pprint name ++ ") not legal as a bare expression"
+      _ -> throw $ BadPrefix $ pprint name
   CLambda params body -> do
     params' <- explicitBindersOptAnn $ WithSrcs sid [] $ map stripParens params
     body' <- block body

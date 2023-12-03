@@ -22,7 +22,7 @@ import IRVariants
 import MTL1
 import Name
 import Subst
-import PPrint ()
+import PPrint
 import QueryType
 import Types.Core
 import Types.Primitives
@@ -56,7 +56,7 @@ affineUsed name = TyperM $ do
   case lookupNameMapE name affines of
     Just (LiftE n) ->
         if n > 0 then
-          throw TypeErr $ "Affine name " ++ pprint name ++ " used " ++ show (n + 1) ++ " times."
+          throwInternal $ "Affine name " ++ pprint name ++ " used " ++ show (n + 1) ++ " times."
         else
           put $ insertNameMapE name (LiftE $ n + 1) affines
     Nothing -> put $ insertNameMapE name (LiftE 1) affines
@@ -90,7 +90,7 @@ checkTypesEq reqTy ty = alphaEq reqTy ty >>= \case
   False -> {-# SCC typeNormalization #-} do
     alphaEq reqTy ty >>= \case
       True  -> return ()
-      False -> throw TypeErr $ pprint reqTy ++ " != " ++ pprint ty
+      False -> throwInternal $ pprint reqTy ++ " != " ++ pprint ty
 {-# INLINE checkTypesEq #-}
 
 class SinkableE e => CheckableE (r::IR) (e::E) | e -> r where
@@ -407,7 +407,7 @@ instance IRRep r => CheckableE r (Con r) where
     ProdCon xs -> ProdCon <$> mapM checkE xs
     SumCon tys tag payload -> do
       tys' <- mapM checkE tys
-      unless (0 <= tag && tag < length tys') $ throw TypeErr "Invalid SumType tag"
+      unless (0 <= tag && tag < length tys') $ throwInternal "Invalid SumType tag"
       payload' <- payload |: (tys' !! tag)
       return $ SumCon tys' tag payload'
     HeapVal -> return HeapVal
@@ -570,7 +570,7 @@ instance IRRep r => CheckableWithEffects r (MiscOp r) where
       case (destTy', sourceTy) of
         (BaseTy dbt@(Scalar _), BaseTy sbt@(Scalar _)) | sizeOf sbt == sizeOf dbt ->
           return $ BitcastOp destTy' e'
-        _ -> throw TypeErr $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
+        _ -> throwInternal $ "Invalid bitcast: " ++ pprint sourceTy ++ " -> " ++ pprint destTy
     UnsafeCoerce t e -> UnsafeCoerce <$> checkE t <*> renameM e
     GarbageVal t -> GarbageVal <$> checkE t
     SumTag x -> do
@@ -616,14 +616,14 @@ instance IRRep r => CheckableE r (VectorOp r) where
       TabTy _ b (BaseTy (Scalar sbt)) <- return $ getType tbl'
       i' <- i |: binderType b
       ty'@(BaseTy (Vector _ sbt')) <- checkE ty
-      unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
+      unless (sbt == sbt') $ throwInternal "Scalar type mismatch"
       return $ VectorIdx tbl' i' ty'
     VectorSubref ref i ty -> do
       ref' <- checkE ref
       RefTy _ (TabTy _ b (BaseTy (Scalar sbt))) <- return $ getType ref'
       i' <- i |: binderType b
       ty'@(BaseTy (Vector _ sbt')) <- checkE ty
-      unless (sbt == sbt') $ throw TypeErr "Scalar type mismatch"
+      unless (sbt == sbt') $ throwInternal "Scalar type mismatch"
       return $ VectorSubref ref' i' ty'
 
 checkHof :: IRRep r => EffTy r o -> Hof r i -> TyperM r i o (Hof r o)
@@ -706,7 +706,7 @@ instance IRRep r => CheckableWithEffects r (DAMOp r) where
       checkExtends effs effAnn'
       ixTy' <- checkE ixTy
       (carry', carryTy') <- checkAndGetType carry
-      let badCarry = throw TypeErr $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
+      let badCarry = throwInternal $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
       case carryTy' of
         TyCon (ProdType refTys) -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
         _ -> badCarry
@@ -773,7 +773,7 @@ checkProject i x = case getType x of
   TyCon (DepPairTy t) | i == 1 -> do
     xFst <- reduceProj 0 x
     checkInstantiation t [xFst]
-  xTy -> throw TypeErr $ "Not a product type:" ++ pprint xTy
+  xTy -> throwInternal $ "Not a product type:" ++ pprint xTy
 
 checkTabApp :: (IRRep r) => Type r o -> Atom r o -> TyperM r i o (Type r o)
 checkTabApp ty i = do
@@ -794,7 +794,7 @@ checkInstantiation abTop xsTop = do
     checkTypesEq (getType x) (binderType b)
     rest <- applySubst (b@>SubstVal x) (Abs bs body)
     go rest xs
-  go _ _ = throw ZipErr "Wrong number of args"
+  go _ _ = throwInternal "Wrong number of args"
 
 checkIntBaseType :: Fallible m => BaseType -> m ()
 checkIntBaseType t = case t of
@@ -809,7 +809,7 @@ checkIntBaseType t = case t of
       Word32Type -> return ()
       Word64Type -> return ()
       _          -> notInt
-    notInt = throw TypeErr $
+    notInt = throwInternal $
       "Expected a fixed-width scalar integer type, but found: " ++ pprint t
 
 checkFloatBaseType :: Fallible m => BaseType -> m ()
@@ -822,13 +822,13 @@ checkFloatBaseType t = case t of
       Float64Type -> return ()
       Float32Type -> return ()
       _           -> notFloat
-    notFloat = throw TypeErr $
+    notFloat = throwInternal $
       "Expected a fixed-width scalar floating-point type, but found: " ++ pprint t
 
 checkValidCast :: (Fallible1 m, IRRep r) => Type r n -> Type r n -> m n ()
 checkValidCast (TyCon (BaseType l)) (TyCon (BaseType r)) = checkValidBaseCast l r
 checkValidCast sourceTy destTy =
-  throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
+  throwInternal $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 checkValidBaseCast :: Fallible m => BaseType -> BaseType -> m ()
 checkValidBaseCast (PtrType _) (PtrType _) = return ()
@@ -838,13 +838,13 @@ checkValidBaseCast (Scalar _) (Scalar _) = return ()
 checkValidBaseCast sourceTy@(Vector sourceSizes _) destTy@(Vector destSizes _) =
   assertEq sourceSizes destSizes $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 checkValidBaseCast sourceTy destTy =
-  throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
+  throwInternal $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 scalarOrVectorLike :: Fallible m => BaseType -> ScalarBaseType -> m BaseType
 scalarOrVectorLike x sbt = case x of
   Scalar _ -> return $ Scalar sbt
   Vector sizes _ -> return $ Vector sizes sbt
-  _ -> throw CompilerErr "only scalar or vector base types should occur here"
+  _ -> throwInternal $ "only scalar or vector base types should occur here"
 
 data ArgumentType = SomeFloatArg | SomeIntArg | SomeUIntArg
 

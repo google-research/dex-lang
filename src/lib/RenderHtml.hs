@@ -30,7 +30,7 @@ import GHC.Generics
 
 import Err
 import Paths_dex (getDataFileName)
-import PPrint ()
+import PPrint
 import Types.Source
 import Util (unsnoc, foldJusts)
 

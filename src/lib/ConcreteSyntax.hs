@@ -25,6 +25,7 @@ import Data.Void
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space, eol)
 
+import Err
 import Lexing
 import Types.Core
 import Types.Source

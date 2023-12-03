@@ -117,7 +117,7 @@ liftTopVectorizeM vectorByteWidth action = do
     Success (a, (LiftE errs)) -> return $ (a, errs)
 
 throwVectErr :: Fallible m => String -> m a
-throwVectErr msg = throw MiscErr msg
+throwVectErr msg = throwInternal msg
 
 askVectorByteWidth :: TopVectorizeM i o Word32
 askVectorByteWidth = TopVectorizeM $ liftSubstReaderT $ lift11 (fromLiftE <$> ask)
@@ -581,7 +581,7 @@ promoteTypeByStability ty = \case
   Varying -> getVectorType ty
   ProdStability stabs -> case ty of
     TyCon (ProdType elts) -> TyCon <$> ProdType <$> zipWithZ promoteTypeByStability elts stabs
-    _ -> throw ZipErr "Type and stability"
+    _ -> throwInternal "Zip error"
 
 -- === computing byte widths ===
 

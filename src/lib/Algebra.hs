@@ -27,6 +27,7 @@ import MTL1
 import Name
 import Subst
 import QueryType
+import PPrint
 import Types.Core
 import Types.Imp
 import Types.Primitives
@@ -55,7 +56,7 @@ sumUsingPolys lim (Abs i body) = do
   sumAbs <- refreshAbs (Abs i body) \(i':>_) body' -> do
     exprAsPoly body' >>= \case
       Just poly' -> return $ Abs i' poly'
-      Nothing -> throw NotImplementedErr $
+      Nothing -> throwInternal $
         "Algebraic simplification failed to model index computations:\n"
         ++ "Trying to sum from 0 to " ++ pprint lim ++ " - 1, \\"
         ++ pprint i' ++ "." ++ pprint body'
