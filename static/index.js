@@ -29,18 +29,10 @@ function renderLaTeX(root) {
     );
 }
 
-/**
- * HTML rendering mode.
- * Static rendering is used for static HTML pages.
- * Dynamic rendering is used for dynamic HTML pages via `dex web`.
- *
- * @enum {string}
- */
 var RENDER_MODE = Object.freeze({
   STATIC: "static",
   DYNAMIC: "dynamic",
 })
-
 var body         = document.getElementById("main-output");
 var hoverInfoDiv = document.getElementById("hover-info");
 
@@ -48,8 +40,8 @@ var hoverInfoDiv = document.getElementById("hover-info");
 var cells = {}
 var frozenHover = false;
 var curHighlights = [];  // HTML elements currently highlighted
-var focusMap     = {}
 var highlightMap = {}
+var spanMap      = {}
 var hoverInfoMap = {}
 
 function removeHover() {
@@ -77,16 +69,25 @@ function applyHoverInfo(cellId, srcId) {
         hoverInfoDiv.innerHTML = hoverInfo
     }
 }
+function getSpan(cellId, srcId) {
+    return lookupSrcMap(spanMap, cellId, srcId)
+}
 function applyHoverHighlights(cellId, srcId) {
     let highlights = lookupSrcMap(highlightMap, cellId, srcId)
     if (highlights == null) return
     highlights.map(function (highlight) {
-        let [highlightType, [l, r]] = highlight
-        let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
+        let [highlightType, highlightSrcId] = highlight
         let highlightClass = getHighlightClass(highlightType)
+        addClass(cellId, highlightSrcId, highlightClass)})
+}
+function addClass(cellId, srcId, className) {
+    let span = getSpan(cellId, srcId)
+    if (span !== undefined) {
+        let [l, r] = span
+        let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
         spans.map(function (span) {
-            span.classList.add(highlightClass)
-            curHighlights.push(span)})})
+            span.classList.add(className)
+            curHighlights.push(span)})}
 }
 function toggleFrozenHover() {
     if (frozenHover) {
@@ -103,30 +104,6 @@ function attachHovertip(cellId, srcId) {
     span.addEventListener("mouseout" , function (event) {
         event.stopPropagation()
         removeHover()})}
-
-/**
- * Renders the webpage.
- * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
- */
-function render(renderMode) {
-    if (renderMode == RENDER_MODE.STATIC) {
-        // For static pages, simply call rendering functions once.
-        renderLaTeX(document);
-    } else {
-        // For dynamic pages (via `dex web`), listen to update events.
-        var source = new EventSource("/getnext");
-        source.onmessage = function(event) {
-            var msg = JSON.parse(event.data);
-            if (msg == "start") {
-                body.innerHTML = ""
-                body.addEventListener("click", function (event) {
-                    event.stopPropagation()
-                    toggleFrozenHover()})
-                cells = {}
-                return
-            } else {
-                processUpdate(msg)}};}
-}
 function selectSpan(cellId, srcId) {
     return cells[cellId].querySelector("#span_".concat(cellId, "_", srcId))
 }
@@ -177,6 +154,7 @@ function initializeCellContents(cellId, cell, contents) {
     let sourceText = source["rsbHtml"];
     highlightMap[cellId] = {};
     hoverInfoMap[cellId] = {};
+    spanMap[cellId]      = {};
     addChild(cell, "line-num"    , lineNum.toString())
     addChild(cell, "code-block"  , sourceText)
     addChild(cell, "cell-results", "")
@@ -192,6 +170,11 @@ function extendCellResult(cellId, cell, result) {
     }
     Object.assign(highlightMap[cellId], result["rrHighlightMap"])
     Object.assign(hoverInfoMap[cellId], result["rrHoverInfoMap"])
+    Object.assign(spanMap[cellId]     , result["rrLexemeSpans"])
+
+    let errSrcIds = result["rrErrorSrcIds"]
+    errSrcIds.map(function (srcId) {
+        addClass(cellId, srcId, "err-span")})
 }
 function updateCellContents(cellId, cell, contents) {
     let [statusUpdate, result] = contents;
@@ -237,4 +220,28 @@ function processUpdate(msg) {
             let source = update["contents"][0];
             let lexemeList = source["rsbLexemeList"];
             lexemeList.map(function (lexemeId) {attachHovertip(cellId, lexemeId.toString())})}});
+}
+
+/**
+ * Renders the webpage.
+ * @param {RENDER_MODE} renderMode The render mode, either static or dynamic.
+ */
+function render(renderMode) {
+    if (renderMode == RENDER_MODE.STATIC) {
+        // For static pages, simply call rendering functions once.
+        renderLaTeX(document);
+    } else {
+        // For dynamic pages (via `dex web`), listen to update events.
+        var source = new EventSource("/getnext");
+        source.onmessage = function(event) {
+            var msg = JSON.parse(event.data);
+            if (msg == "start") {
+                body.innerHTML = ""
+                body.addEventListener("click", function (event) {
+                    event.stopPropagation()
+                    toggleFrozenHover()})
+                cells = {}
+                return
+            } else {
+                processUpdate(msg)}};}
 }

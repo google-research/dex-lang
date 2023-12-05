@@ -22,16 +22,18 @@ import qualified Data.ByteString as BS
 
 import Live.Eval
 import RenderHtml
+import IncState
+import Actor
 import TopLevel
 import Types.Source
 
 runWeb :: FilePath -> EvalConfig -> TopStateEx -> IO ()
 runWeb fname opts env = do
-  resultsChan <- watchAndEvalFile fname opts env
+  resultsChan <- watchAndEvalFile fname opts env >>= renderResults
   putStrLn "Streaming output to http://localhost:8000/"
   run 8000 $ serveResults resultsChan
 
-serveResults :: EvalServer -> Application
+serveResults :: RenderedResultsServer -> Application
 serveResults resultsSubscribe request respond = do
   print (pathInfo request)
   case pathInfo request of
@@ -50,14 +52,15 @@ serveResults resultsSubscribe request respond = do
       -- fname <- getDataFileName dataFname
       respond $ responseFile status200 [("Content-Type", ctype)] fname Nothing
 
-resultStream :: EvalServer -> StreamingBody
+type RenderedResultsServer = StateServer (MonoidState RenderedResults) RenderedResults
+type RenderedResults = CellsUpdate RenderedSourceBlock RenderedOutputs
+
+resultStream :: RenderedResultsServer -> StreamingBody
 resultStream resultsServer write flush = do
   sendUpdate ("start"::String)
-  (initResult, resultsChan) <- subscribeIO resultsServer
-  sendUpdate $ renderEvalUpdate $ nodeListAsUpdate initResult
-  forever do
-    nextUpdate <- readChan resultsChan
-    sendUpdate $ renderEvalUpdate nextUpdate
+  (MonoidState initResult, resultsChan) <- subscribeIO resultsServer
+  sendUpdate initResult
+  forever $ readChan resultsChan >>= sendUpdate
   where
     sendUpdate :: ToJSON a => a -> IO ()
     sendUpdate x = write (fromByteString $ encodePacket x) >> flush
@@ -65,6 +68,11 @@ resultStream resultsServer write flush = do
 encodePacket :: ToJSON a => a -> BS.ByteString
 encodePacket = toStrict . wrap . encode
   where wrap s = "data:" <> s <> "\n\n"
+
+renderResults :: EvalServer -> IO RenderedResultsServer
+renderResults evalServer = launchIncFunctionEvaluator evalServer
+   (\x -> (MonoidState $ renderEvalUpdate $ nodeListAsUpdate x, ()))
+   (\_ () dx -> (renderEvalUpdate dx, ()))
 
 renderEvalUpdate :: CellsUpdate SourceBlock Outputs -> CellsUpdate RenderedSourceBlock RenderedOutputs
 renderEvalUpdate cellsUpdate = fmapCellsUpdate cellsUpdate

@@ -9,7 +9,7 @@
 module IncState (
   IncState (..), MapEltUpdate (..), MapUpdate (..),
   Overwrite (..), TailUpdate (..), Unchanging (..), Overwritable (..),
-  mapUpdateMapWithKey) where
+  mapUpdateMapWithKey, MonoidState (..)) where
 
 import Data.Aeson (ToJSON, ToJSONKey)
 import qualified Data.Map.Strict as M
@@ -121,6 +121,12 @@ instance IncState (Overwritable a) (Overwrite a) where
   applyDiff s = \case
     NoChange         -> s
     OverwriteWith s' -> Overwritable s'
+
+-- Case when the diff and the state are the same
+newtype MonoidState a = MonoidState a
+
+instance Monoid a => IncState (MonoidState a) a where
+  applyDiff (MonoidState d) d' = MonoidState $ d <> d'
 
 
 -- Trivial diff that works for any type - just replace the old value with a completely new one.

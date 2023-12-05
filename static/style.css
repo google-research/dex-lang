@@ -40,7 +40,10 @@ body {
   font-family: monospace;
   white-space: pre;
 }
-
+.err-span {
+  text-decoration: red wavy underline;
+  text-decoration-skip-ink: none;
+}
 code {
   background-color: #F0F0F0;
 }

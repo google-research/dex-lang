@@ -19,6 +19,7 @@ import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict
+import Data.Foldable (fold)
 import Data.Functor ((<&>))
 import Data.Maybe (fromJust)
 import Data.String (fromString)
@@ -29,10 +30,11 @@ import System.IO.Unsafe
 import GHC.Generics
 
 import Err
+import IncState
 import Paths_dex (getDataFileName)
 import PPrint
 import Types.Source
-import Util (unsnoc, foldJusts)
+import Util (unsnoc)
 
 -- === rendering results ===
 
@@ -50,15 +52,22 @@ data RenderedSourceBlock = RenderedSourceBlock
 
 data RenderedOutputs = RenderedOutputs
   { rrHtml         :: String
+  , rrLexemeSpans  :: SpanMap
   , rrHighlightMap :: HighlightMap
-  , rrHoverInfoMap :: HoverInfoMap }
+  , rrHoverInfoMap :: HoverInfoMap
+  , rrErrorSrcIds  :: [SrcId] }
   deriving (Generic)
 
 renderOutputs :: Outputs -> RenderedOutputs
-renderOutputs r = RenderedOutputs
-  { rrHtml         = pprintHtml r
+renderOutputs (Outputs outputs) = fold $ map renderOutput outputs
+
+renderOutput :: Output -> RenderedOutputs
+renderOutput r = RenderedOutputs
+  { rrHtml         = pprintHtml        r
+  , rrLexemeSpans  = computeSpanMap    r
   , rrHighlightMap = computeHighlights r
-  , rrHoverInfoMap = computeHoverInfo r }
+  , rrHoverInfoMap = computeHoverInfo  r
+  , rrErrorSrcIds  = computeErrSrcIds  r}
 
 renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
 renderSourceBlock n b = RenderedSourceBlock
@@ -83,38 +92,60 @@ instance ToMarkup Output where
 instance ToJSON RenderedOutputs
 instance ToJSON RenderedSourceBlock
 
+instance Semigroup RenderedOutputs where
+  RenderedOutputs x1 y1 z1 w1 v1 <> RenderedOutputs x2 y2 z2 w2 v2 =
+    RenderedOutputs (x1<>x2) (y1<>y2) (z1<>z2) (w1<>w2) (v1<>v2)
+
+instance Monoid RenderedOutputs where
+  mempty = RenderedOutputs mempty mempty mempty mempty mempty
+
 -- === textual information on hover ===
 
 type HoverInfo = String
 newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
 
-computeHoverInfo :: Outputs -> HoverInfoMap
-computeHoverInfo (Outputs outputs) = do
-  let typeInfo = foldJusts outputs \case
-        SourceInfo (SITypeInfo m) -> Just m
-        _ -> Nothing
-  HoverInfoMap $ fromTypeInfo typeInfo
+computeHoverInfo :: Output -> HoverInfoMap
+computeHoverInfo (SourceInfo (SITypeInfo m)) = HoverInfoMap $ fromTypeInfo m
+computeHoverInfo _ = mempty
 
 -- === highlighting on hover ===
 
-newtype FocusMap = FocusMap (M.Map LexemeId SrcId)   deriving (ToJSON, Semigroup, Monoid)
+newtype SpanMap      = SpanMap (M.Map SrcId LexemeSpan)       deriving (ToJSON, Semigroup, Monoid)
 newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
-type Highlights = [(HighlightType, LexemeSpan)]
+type Highlights = [(HighlightType, SrcId)]
 data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
 
 instance ToJSON HighlightType
 
-computeHighlights :: Outputs -> HighlightMap
-computeHighlights (Outputs outputs) = do
-  execWriter $ mapM go $ foldJusts outputs \case
-    SourceInfo (SIGroupTree t) -> Just t
-    _ -> Nothing
- where
+computeErrSrcIds :: Output -> [SrcId]
+computeErrSrcIds (Error err) = case err of
+  SearchFailure _ -> []
+  InternalErr   _ -> []
+  ParseErr      _ -> []
+  SyntaxErr sid _ -> [sid]
+  NameErr   sid _ -> [sid]
+  TypeErr   sid _ -> [sid]
+  RuntimeErr -> []
+  MiscErr _  -> []
+computeErrSrcIds _ = []
+
+computeSpanMap :: Output -> SpanMap
+computeSpanMap (SourceInfo (SIGroupTree (OverwriteWith tree))) =
+  execWriter $ go tree where
+  go :: GroupTree -> Writer SpanMap ()
+  go t = do
+    tell $ SpanMap $ M.singleton (gtSrcId t) (gtSpan t)
+    mapM_ go $ gtChildren t
+computeSpanMap _ = mempty
+
+computeHighlights :: Output -> HighlightMap
+computeHighlights (SourceInfo (SIGroupTree (OverwriteWith tree))) =
+  execWriter $ go tree where
   go :: GroupTree -> Writer HighlightMap ()
   go t = do
     let children = gtChildren t
     let highlights = children <&> \child ->
-          (getHighlightType (gtIsAtomicLexeme child), gtSpan child)
+          (getHighlightType (gtIsAtomicLexeme child), gtSrcId child)
     forM_ children \child-> do
       tell $ HighlightMap $ M.singleton (gtSrcId child) highlights
       go child
@@ -122,6 +153,7 @@ computeHighlights (Outputs outputs) = do
   getHighlightType :: Bool -> HighlightType
   getHighlightType True  = HighlightLeaf
   getHighlightType False = HighlightGroup
+computeHighlights _ = mempty
 
 -- -----------------
 

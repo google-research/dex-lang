@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Live.Eval (
-  watchAndEvalFile, EvalServer, EvalUpdate, CellsUpdate, fmapCellsUpdate,
+  watchAndEvalFile, EvalServer, EvalUpdate, CellsState, CellsUpdate, fmapCellsUpdate,
   NodeList (..), NodeListUpdate (..), subscribeIO, nodeListAsUpdate) where
 
 import Control.Concurrent

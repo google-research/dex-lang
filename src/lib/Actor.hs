@@ -10,12 +10,12 @@ module Actor (
   ActorM, Actor (..), launchActor, send, selfMailbox, messageLoop,
   sliceMailbox, SubscribeMsg (..), IncServer, IncServerT, FileWatcher,
   StateServer, flushDiffs, handleSubscribeMsg, subscribe, subscribeIO, sendSync,
-  runIncServerT, launchFileWatcher, Mailbox
+  runIncServerT, launchFileWatcher, Mailbox, launchIncFunctionEvaluator
   ) where
 
 import Control.Concurrent
 import Control.Monad
-import Control.Monad.State.Strict hiding (get)
+import Control.Monad.State.Strict
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
 import Data.IORef
@@ -161,6 +161,36 @@ runIncServerT :: (MonadIO m, IncState s d) => s -> IncServerT s d m a -> m a
 runIncServerT s cont = do
   ref <- newRef $ IncServerState [] mempty s
   runReaderT (runIncServerT' cont) ref
+
+-- === Incremental function server ===
+
+-- If you just need something that computes a function incrementally and doesn't
+-- need to maintain any other state then this will do.
+
+data IncFunctionEvaluatorMsg da b db =
+   Subscribe_IFEM (SubscribeMsg b db)
+ | Update_IFEM da
+   deriving (Show)
+
+launchIncFunctionEvaluator
+  :: (IncState b db, Show da, MonadIO m)
+  => StateServer a da
+  -> (a -> (b,s))
+  -> (b -> s -> da -> (db, s))
+  -> m (StateServer b db)
+launchIncFunctionEvaluator server fInit fUpdate =
+  sliceMailbox Subscribe_IFEM <$> launchActor do
+    x0 <- subscribe Update_IFEM server
+    let (y0, s0) = fInit x0
+    flip evalStateT s0 $ runIncServerT y0 $ messageLoop \case
+      Subscribe_IFEM msg -> handleSubscribeMsg msg
+      Update_IFEM dx -> do
+        y <- getl It
+        s <- lift get
+        let (dy, s') = fUpdate y s dx
+        lift $ put s'
+        update dy
+        flushDiffs
 
 -- === Refs ===
 -- Just a wrapper around IORef lifted to `MonadIO`

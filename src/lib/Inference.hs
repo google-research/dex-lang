@@ -2087,7 +2087,7 @@ trySynthTerm sid ty reqMethodAccess = do
   hasInferenceVars ty >>= \case
     True -> throw sid $ CantSynthInfVars $ pprint ty
     False -> withVoidSubst do
-      synthTy <- liftExcept $ typeAsSynthType ty
+      synthTy <- liftExcept $ typeAsSynthType sid ty
       synthTerm sid synthTy reqMethodAccess
         <|> (throw sid $ CantSynthDict $ pprint ty)
 {-# SCC trySynthTerm #-}
@@ -2126,15 +2126,15 @@ extendGivens newGivens cont = do
 {-# INLINE extendGivens #-}
 
 getSynthType :: SynthAtom n -> SynthType n
-getSynthType x = ignoreExcept $ typeAsSynthType (getType x)
+getSynthType x = ignoreExcept $ typeAsSynthType rootSrcId (getType x)
 {-# INLINE getSynthType #-}
 
-typeAsSynthType :: CType n -> Except (SynthType n)
-typeAsSynthType = \case
+typeAsSynthType :: SrcId -> CType n -> Except (SynthType n)
+typeAsSynthType sid = \case
   TyCon (DictTy dictTy) -> return $ SynthDictType dictTy
   TyCon (Pi (CorePiType ImplicitApp expls bs (EffTy Pure (TyCon (DictTy d))))) ->
     return $ SynthPiType (expls, Abs bs d)
-  ty -> Failure $ toErr $ NotASynthType $ pprint ty
+  ty -> Failure $ toErr sid $ NotASynthType $ pprint ty
 {-# SCC typeAsSynthType #-}
 
 getSuperclassClosure :: EnvReader m => Givens n -> [SynthAtom n] -> m n (Givens n)
@@ -2259,7 +2259,7 @@ emptyMixedArgs = ([], [])
 
 typeErrAsSearchFailure :: InfererM i n a -> InfererM i n a
 typeErrAsSearchFailure cont = cont `catchErr` \case
-  TypeErr _ -> empty
+  TypeErr _ _ -> empty
   e -> throwErr e
 
 synthDictForData :: forall i n. SrcId -> DictType n -> InfererM i n (SynthAtom n)

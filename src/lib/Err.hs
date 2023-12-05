@@ -52,11 +52,11 @@ data Err =
    SearchFailure String      -- used as the identity for `Alternative` instances and for MonadFail.
  | InternalErr String
  | ParseErr  ParseErr
- | SyntaxErr SyntaxErr
- | NameErr   NameErr
- | TypeErr   TypeErr
+ | SyntaxErr SrcId SyntaxErr
+ | NameErr   SrcId NameErr
+ | TypeErr   SrcId TypeErr
  | RuntimeErr
- | MiscErr   MiscErr
+ | MiscErr MiscErr
    deriving (Show, Eq)
 
 type MsgStr  = String
@@ -161,14 +161,11 @@ data InfVarDesc =
 -- === ToErr class ===
 
 class ToErr a where
-  toErr :: a -> Err
+  toErr :: SrcId -> a -> Err
 
-instance ToErr Err where toErr = id
-instance ToErr ParseErr  where toErr = ParseErr
 instance ToErr SyntaxErr where toErr = SyntaxErr
 instance ToErr NameErr   where toErr = NameErr
 instance ToErr TypeErr   where toErr = TypeErr
-instance ToErr MiscErr   where toErr = MiscErr
 
 -- === Error messages ===
 
@@ -180,12 +177,12 @@ instance PrintableErr Err where
     SearchFailure s -> "Internal search failure: " ++ s
     InternalErr s -> "Internal compiler error: " ++ s ++ "\n" ++
       "Please report this at github.com/google-research/dex-lang/issues\n"
-    ParseErr   e -> "Parse error: "  ++ printErr e
-    SyntaxErr  e -> "Syntax error: " ++ printErr e
-    NameErr    e -> "Name error: "   ++ printErr e
-    TypeErr    e -> "Type error: "   ++ printErr e
-    MiscErr    e -> "Error: "        ++ printErr e
-    RuntimeErr   -> "Runtime error"
+    ParseErr    e -> "Parse error: "  ++ printErr e
+    SyntaxErr _ e -> "Syntax error: " ++ printErr e
+    NameErr   _ e -> "Name error: "   ++ printErr e
+    TypeErr   _ e -> "Type error: "   ++ printErr e
+    MiscErr     e -> "Error: "        ++ printErr e
+    RuntimeErr    -> "Runtime error"
 
 instance PrintableErr ParseErr where
   printErr = \case
@@ -257,7 +254,7 @@ instance PrintableErr TypeErr where
     PatternArityErr n1 n2 -> "unexpected number of pattern binders. Expected "   ++ show n1 ++ " but got " ++ show n2
     SumTypeCantFail               -> "sum type constructor in can't-fail pattern"
     PatTypeErr patTy rhsTy        -> "pattern is for a " ++ patTy ++ "but we're matching against a " ++ rhsTy
-    EliminationErr expected ty    -> "expected a " ++ expected ++ ". Got a: " ++ ty
+    EliminationErr expected ty    -> "expected a " ++ expected ++ ". Got: " ++ ty
     IllFormedCasePattern          -> "case patterns must start with a data constructor or variant pattern"
     NotAMethod method className   -> "unexpected method: " ++ method ++ " is not a method of " ++ className
     DuplicateMethod method        -> "duplicate method: " ++ method
@@ -468,7 +465,7 @@ instance Fallible HardFailM where
 -- === convenience layer ===
 
 throw :: (ToErr e, Fallible m) => SrcId -> e -> m a
-throw _ e = throwErr $ toErr e
+throw sid e = throwErr $ toErr sid e
 {-# INLINE throw #-}
 
 getCurrentCallStack :: () -> Maybe [String]

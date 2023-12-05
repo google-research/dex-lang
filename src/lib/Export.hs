@@ -48,11 +48,11 @@ prepareFunctionForExport :: (Mut n, Topper m)
 prepareFunctionForExport cc f = do
   naryPi <- case getType f of
     TyCon (Pi piTy) -> return piTy
-    _ -> throw rootSrcId $ MiscMiscErr "Only first-order functions can be exported"
+    _ -> throwErr $ MiscErr $ MiscMiscErr "Only first-order functions can be exported"
   sig <- liftExportSigM $ corePiToExportSig cc naryPi
   closedSig <- case hoistToTop sig of
     HoistFailure _ ->
-      throw rootSrcId $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
+      throwErr $ MiscErr $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess s -> return s
   f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (toAtom <$> xs)
   fSimp <- simplifyTopFunction $ coreLamToTopLam f'
@@ -68,7 +68,7 @@ prepareSLamForExport cc f@(TopLam _ naryPi _) = do
   sig <- liftExportSigM $ simpPiToExportSig cc naryPi
   closedSig <- case hoistToTop sig of
     HoistFailure _ ->
-      throw rootSrcId $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
+      throwErr $ MiscErr $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess s -> return s
   fImp <- compileTopLevelFun cc f
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
@@ -105,7 +105,7 @@ corePiToExportSig :: CallingConvention
 corePiToExportSig cc (CorePiType _ expls tbs (EffTy effs resultTy)) = do
     case effs of
       Pure -> return ()
-      _    -> throw rootSrcId $ MiscMiscErr "Only pure functions can be exported"
+      _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
     goArgs cc Empty [] (zipAttrs expls tbs) resultTy
 
 simpPiToExportSig :: CallingConvention
@@ -113,7 +113,7 @@ simpPiToExportSig :: CallingConvention
 simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
   case effs of
     Pure -> return ()
-    _    -> throw rootSrcId $ MiscMiscErr "Only pure functions can be exported"
+    _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
   bs' <- return $ fmapNest (\b -> WithAttrB Explicit b) bs
   goArgs cc Empty [] bs' resultTy
 
@@ -164,7 +164,7 @@ toExportType ty = case ty of
     Nothing  -> unsupported
     Just ety -> return ety
   _ -> unsupported
-  where unsupported = throw rootSrcId $ MiscMiscErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+  where unsupported = throwErr $ MiscErr $ MiscMiscErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 {-# INLINE toExportType #-}
 
 parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
