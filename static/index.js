@@ -162,31 +162,36 @@ function spansBetween(l, r) {
     return spans
 }
 function setCellStatus(cell, status) {
-    cell.className = "class"
+    cell.className = "cell"
     cell.classList.add(getStatusClass(status))
 }
-
-function setCellContents(cellId, cell, contents) {
+function addChild(cell, className, innerHTML) {
+    let child = document.createElement("div")
+    child.innerHTML = innerHTML
+    child.className = className
+    cell.appendChild(child)
+}
+function initializeCellContents(cellId, cell, contents) {
     let [source, status, result]  = contents;
     let lineNum    = source["rsbLine"];
     let sourceText = source["rsbHtml"];
-    let lineNumDiv = document.createElement("div");
-    lineNumDiv.innerHTML = lineNum.toString();
-    lineNumDiv.className = "line-num";
-    cell.innerHTML = ""
-    cell.appendChild(lineNumDiv)
+    highlightMap[cellId] = {};
+    hoverInfoMap[cellId] = {};
+    addChild(cell, "line-num"    , lineNum.toString())
+    addChild(cell, "code-block"  , sourceText)
+    addChild(cell, "cell-results", "")
     setCellStatus(cell, status)
-    cell.innerHTML += sourceText
     renderLaTeX(cell)
     extendCellResult(cellId, cell, result)
 }
 function extendCellResult(cellId, cell, result) {
     let resultText = result["rrHtml"]
     if (resultText !== "") {
-        cell.innerHTML += resultText
+        let bodyDiv = cell.querySelector(".cell-results")
+        bodyDiv.innerHTML += resultText
     }
-    highlightMap[cellId] = result["rrHighlightMap"]
-    hoverInfoMap[cellId] = result["rrHoverInfoMap"]
+    Object.assign(highlightMap[cellId], result["rrHighlightMap"])
+    Object.assign(hoverInfoMap[cellId], result["rrHoverInfoMap"])
 }
 function updateCellContents(cellId, cell, contents) {
     let [statusUpdate, result] = contents;
@@ -198,7 +203,6 @@ function processUpdate(msg) {
     let cellUpdates = msg["nodeMapUpdate"]["mapUpdates"];
     let numDropped  = msg["orderedNodesUpdate"]["numDropped"];
     let newTail     = msg["orderedNodesUpdate"]["newTail"];
-
     // drop_dead_cells
     for (i = 0; i < numDropped; i++) {
         body.lastElementChild.remove();}
@@ -210,7 +214,7 @@ function processUpdate(msg) {
         if (tag == "Create" || tag == "Replace") {
             let cell = document.createElement("div");
             cells[cellId] = cell;
-            setCellContents(cellId, cell, contents)
+            initializeCellContents(cellId, cell, contents)
         } else if (tag == "Update") {
             let cell = cells[cellId];
             updateCellContents(cellId, cell, contents);
