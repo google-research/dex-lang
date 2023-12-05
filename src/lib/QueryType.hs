@@ -28,11 +28,6 @@ import PPrint
 import QueryTypePure
 import CheapReduction
 
-sourceNameType :: (EnvReader m, Fallible1 m) => SourceName -> m n (Type CoreIR n)
-sourceNameType v = do
-  lookupSourceMap v >>= \case
-    Nothing -> throw $ UnboundVarErr $ pprint v
-    Just uvar -> getUVarType uvar
 
 -- === Exposed helpers for querying types and effects ===
 

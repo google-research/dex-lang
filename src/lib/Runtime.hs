@@ -72,7 +72,7 @@ checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO ()
 checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   let (CInt fd') = fdFD fd
   exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-  unless (exitCode == 0) $ throw RuntimeErr
+  unless (exitCode == 0) $ throw rootSrcId RuntimeErr
 
 withPipeToLogger :: PassLogger -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do

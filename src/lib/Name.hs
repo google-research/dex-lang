@@ -2755,9 +2755,9 @@ canonicalizeForPrinting e cont = do
 pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> String
 pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
-liftHoistExcept :: Fallible m => HoistExcept a -> m a
-liftHoistExcept (HoistSuccess x) = return x
-liftHoistExcept (HoistFailure vs) = throw $ EscapedNameErr $ map pprint vs
+liftHoistExcept :: Fallible m => SrcId -> HoistExcept a -> m a
+liftHoistExcept _ (HoistSuccess x) = return x
+liftHoistExcept sid (HoistFailure vs) = throw sid $ EscapedNameErr $ map pprint vs
 
 ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
@@ -2845,10 +2845,11 @@ exchangeBs (PairB b1 b2) =
 
 partitionBinders
   :: forall b b1 b2 m n l
-  . (SinkableB b2, HoistableB b1, BindsNames b2, Fallible m, Distinct l) => Nest b n l
+  . (SinkableB b2, HoistableB b1, BindsNames b2, Fallible m, Distinct l)
+  => SrcId -> Nest b n l
   -> (forall n' l'. b n' l' -> m (EitherB b1 b2 n' l'))
   -> m (PairB (Nest b1) (Nest b2) n l)
-partitionBinders bs assignBinder = go bs where
+partitionBinders sid bs assignBinder = go bs where
   go :: Distinct l' => Nest b n' l' -> m (PairB (Nest b1) (Nest b2) n' l')
   go = \case
     Empty -> return $ PairB Empty Empty
@@ -2859,7 +2860,7 @@ partitionBinders bs assignBinder = go bs where
         RightB b2 -> withSubscopeDistinct bs2
           case exchangeBs (PairB b2 bs1) of
             HoistSuccess (PairB bs1' b2') -> return $ PairB bs1' (Nest b2' bs2)
-            HoistFailure vs -> throw $ EscapedNameErr $ map pprint vs
+            HoistFailure vs -> throw sid $ EscapedNameErr $ map pprint vs
 
 -- NameBinder has no free vars, so there's no risk associated with hoisting.
 -- The scope is completely distinct, so their exchange doesn't create any accidental

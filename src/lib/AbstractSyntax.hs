@@ -139,7 +139,7 @@ decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
   CLet binder rhs -> do
     (p, ty) <- patOptAnn binder
     ULet ann p ty <$> asExpr <$> block rhs
-  CBind _ _ -> throw TopLevelArrowBinder
+  CBind _ _ -> throw sid TopLevelArrowBinder
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ ULet ann (fromSourceNameW name) Nothing (WithSrcE sid (ULam lam))
@@ -199,7 +199,7 @@ withTrailingConstraints g cont = case g of
     Nest (UAnnBinder expl (WithSrcB sid b) ann cs) bs <- withTrailingConstraints lhs cont
     s <- case b of
       UBindSource s -> return s
-      UIgnore       -> throw CantConstrainAnonBinders
+      UIgnore       -> throw sid CantConstrainAnonBinders
       UBind _ _     -> error "Shouldn't have internal names until renaming pass"
     c' <- expr c
     return $   UnaryNest (UAnnBinder expl (WithSrcB sid b) ann (cs ++ [c']))
@@ -261,7 +261,7 @@ uBinder :: GroupW -> SyntaxM (UBinder c VoidS VoidS)
 uBinder (WithSrcs sid _ b) = case b of
   CLeaf (CIdentifier name) -> return $ fromSourceNameW $ WithSrc sid name
   CLeaf CHole -> return $ WithSrcB sid UIgnore
-  _ -> throw UnexpectedBinder
+  _ -> throw sid UnexpectedBinder
 
 -- Type annotation with an optional binder pattern
 tyOptPat :: GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
@@ -300,7 +300,7 @@ pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
   CLeaf (CIdentifier name) -> return $ UPatBinder $ fromSourceNameW $ WithSrc sid name
   CJuxtapose True lhs rhs -> do
     case lhs of
-      WithSrcs _ _ (CJuxtapose True _ _) -> throw OnlyUnaryWithoutParens
+      WithSrcs lhsId _ (CJuxtapose True _ _) -> throw lhsId OnlyUnaryWithoutParens
       _ -> return ()
     name <- identifier "pattern constructor name" lhs
     arg <- pat rhs
@@ -312,11 +312,11 @@ pat (WithSrcs sid _ grp) = WithSrcB sid <$> case grp of
         gs' <- mapM pat gs
         return $ UPatCon (fromSourceNameW name) (toNest gs')
       _ -> error "unexpected postfix group (should be ruled out at grouping stage)"
-  _ -> throw IllegalPattern
+  _ -> throw sid IllegalPattern
 
 tyOptBinder :: Explicitness -> GroupW -> SyntaxM (UAnnBinder VoidS VoidS)
 tyOptBinder expl (WithSrcs sid sids grp) = case grp of
-  CBin (WithSrc _ Pipe)  _ _     -> throw UnexpectedConstraint
+  CBin (WithSrc _ Pipe)  _ rhs     -> throw (getSrcId rhs) UnexpectedConstraint
   CBin (WithSrc _ Colon) name ty -> do
     b <- uBinder name
     ann <- UAnn <$> expr ty
@@ -340,7 +340,7 @@ binderReqTy expl (WithSrcs _ _ (CBin (WithSrc _ Colon) name ty)) = do
   b <- uBinder name
   ann <- UAnn <$> expr ty
   return $ UAnnBinder expl b ann []
-binderReqTy _ _ = throw ExpectedAnnBinder
+binderReqTy _ g = throw (getSrcId g) ExpectedAnnBinder
 
 argList :: [GroupW] -> SyntaxM ([UExpr VoidS], [UNamedArg VoidS])
 argList gs = partitionEithers <$> mapM singleArg gs
@@ -354,7 +354,7 @@ singleArg = \case
 identifier :: String -> GroupW -> SyntaxM SourceNameW
 identifier ctx (WithSrcs sid _ g) = case g of
   CLeaf (CIdentifier name) -> return $ WithSrc sid name
-  _ -> throw $ ExpectedIdentifier ctx
+  _ -> throw sid $ ExpectedIdentifier ctx
 
 aEffects :: WithSrcs ([GroupW], Maybe GroupW) -> SyntaxM (UEffectRow VoidS)
 aEffects (WithSrcs _ _ (effs, optEffTail)) = do
@@ -364,7 +364,7 @@ aEffects (WithSrcs _ _ (effs, optEffTail)) = do
   return $ UEffectRow (S.fromList lhs) rhs
 
 effect :: GroupW -> SyntaxM (UEffect VoidS)
-effect (WithSrcs _ _ grp) = case grp of
+effect (WithSrcs grpSid _ grp) = case grp of
   CParens [g] -> effect g
   CJuxtapose True (Identifier "Read" ) (WithSrcs sid _ (CLeaf (CIdentifier h))) ->
     return $ URWSEffect Reader $ fromSourceNameW (WithSrc sid h)
@@ -374,18 +374,18 @@ effect (WithSrcs _ _ grp) = case grp of
     return $ URWSEffect State $ fromSourceNameW (WithSrc sid h)
   CLeaf (CIdentifier "Except") -> return UExceptionEffect
   CLeaf (CIdentifier "IO"    ) -> return UIOEffect
-  _ -> throw UnexpectedEffectForm
+  _ -> throw grpSid UnexpectedEffectForm
 
 aMethod :: CSDeclW -> SyntaxM (Maybe (UMethodDef VoidS))
 aMethod (WithSrcs _ _ CPass) = return Nothing
-aMethod (WithSrcs src _ d) = Just . WithSrcE src <$> case d of
+aMethod (WithSrcs sid _ d) = Just . WithSrcE sid <$> case d of
   CDefDecl def -> do
-    (WithSrc sid name, lam) <- aDef def
-    return $ UMethodDef (SourceName sid name) lam
-  CLet (WithSrcs sid _ (CLeaf (CIdentifier name))) rhs -> do
+    (WithSrc nameSid name, lam) <- aDef def
+    return $ UMethodDef (SourceName nameSid name) lam
+  CLet (WithSrcs lhsSid _ (CLeaf (CIdentifier name))) rhs -> do
     rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
-    return $ UMethodDef (fromSourceNameW (WithSrc sid name)) rhs'
-  _ -> throw UnexpectedMethodDef
+    return $ UMethodDef (fromSourceNameW (WithSrc lhsSid name)) rhs'
+  _ -> throw sid UnexpectedMethodDef
 
 asExpr :: UBlock VoidS -> UExpr VoidS
 asExpr (WithSrcE src b) = case b of
@@ -400,9 +400,9 @@ block (IndentedBlock sid decls) = do
 
 blockDecls :: [CSDeclW] -> SyntaxM (Nest UDecl VoidS VoidS, UExpr VoidS)
 blockDecls [] = error "shouldn't have empty list of decls"
-blockDecls [WithSrcs _ _ d] = case d of
+blockDecls [WithSrcs sid _ d] = case d of
   CExpr g -> (Empty,) <$> expr g
-  _ -> throw BlockWithoutFinalExpr
+  _ -> throw sid BlockWithoutFinalExpr
 blockDecls (WithSrcs sid _ (CBind b rhs):ds) = do
   b' <- binderOptTy Explicit b
   rhs' <- asExpr <$> block rhs
@@ -427,7 +427,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   CBrackets gs -> UTabCon <$> mapM expr gs
-  CGivens _ -> throw UnexpectedGivenClause
+  CGivens _ -> throw sid UnexpectedGivenClause
   CArrow lhs effs rhs -> do
     case lhs of
       WithSrcs _ _ (CParens gs) -> do
@@ -435,7 +435,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
         effs' <- fromMaybeM effs UPure aEffects
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
-      _ -> throw ArgsShouldHaveParens
+      WithSrcs lhsSid _ _ -> throw lhsSid ArgsShouldHaveParens
   CDo b -> UDo <$> block b
   CJuxtapose hasSpace lhs rhs -> case hasSpace of
     True -> extendAppRight <$> expr lhs <*> expr rhs
@@ -454,26 +454,26 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
     Pipe               -> extendAppLeft  <$> expr lhs <*> expr rhs
     Dot -> do
       lhs' <- expr lhs
-      WithSrcs src _ rhs' <- return rhs
+      WithSrcs rhsSid _ rhs' <- return rhs
       name <- case rhs' of
         CLeaf (CIdentifier name) -> return $ FieldName name
         CLeaf (CNat i          ) -> return $ FieldNum $ fromIntegral i
-        _ -> throw BadField
-      return $ UFieldAccess lhs' (WithSrc src name)
+        _ -> throw rhsSid BadField
+      return $ UFieldAccess lhs' (WithSrc rhsSid name)
     DoubleColon   -> UTypeAnn <$> (expr lhs) <*> expr rhs
     EvalBinOp s -> evalOp s
     DepAmpersand  -> do
       lhs' <- tyOptPat lhs
       UDepPairTy . (UDepPairType ExplicitDepPair lhs') <$> expr rhs
     DepComma      -> UDepPair <$> (expr lhs) <*> expr rhs
-    CSEqual       -> throw BadEqualSign
-    Colon         -> throw BadColon
+    CSEqual       -> throw opSid BadEqualSign
+    Colon         -> throw opSid BadColon
     ImplicitArrow -> case lhs of
       WithSrcs _ _ (CParens gs) -> do
         bs <- aPiBinders gs
         resultTy <- expr rhs
         return $ UPi $ UPiExpr bs ImplicitApp UPure resultTy
-      _ -> throw ArgsShouldHaveParens
+      WithSrcs lhsSid _ _ -> throw lhsSid ArgsShouldHaveParens
     FatArrow      -> do
       lhs' <- tyOptPat lhs
       UTabPi . (UTabPiExpr lhs') <$> expr rhs
@@ -483,7 +483,7 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
       lhs' <- expr lhs
       rhs' <- expr rhs
       return $ explicitApp f [lhs', rhs']
-  CPrefix (WithSrc _ name) g -> do
+  CPrefix (WithSrc prefixSid name) g -> do
     case name of
       "+" -> (withoutSrc <$> expr g) <&> \case
         UNatLit   i -> UIntLit   (fromIntegral i)
@@ -494,8 +494,8 @@ expr (WithSrcs sid _ grp) = WithSrcE sid <$> case grp of
         WithSrcE _ (UNatLit   i) -> UIntLit   (-(fromIntegral i))
         WithSrcE _ (UIntLit   i) -> UIntLit   (-i)
         WithSrcE _ (UFloatLit i) -> UFloatLit (-i)
-        e -> unaryApp (mkUVar sid "neg") e
-      _ -> throw $ BadPrefix $ pprint name
+        e -> unaryApp (mkUVar prefixSid "neg") e
+      _ -> throw prefixSid $ BadPrefix $ pprint name
   CLambda params body -> do
     params' <- explicitBindersOptAnn $ WithSrcs sid [] $ map stripParens params
     body' <- block body

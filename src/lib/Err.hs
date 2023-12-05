@@ -14,7 +14,7 @@ module Err (
   catchIOExcept, liftExcept, liftExceptAlt,
   ignoreExcept, getCurrentCallStack, printCurrentCallStack,
   ExceptT (..), rootSrcId, SrcId (..), assertEq, throwInternal,
-  InferenceArgDesc, InfVarDesc (..)) where
+  InferenceArgDesc, InfVarDesc (..), HasSrcId (..)) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
@@ -42,6 +42,9 @@ newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
 rootSrcId :: SrcId
 rootSrcId = SrcId 0
+
+class HasSrcId a where
+  getSrcId :: a -> SrcId
 
 -- === core errro type ===
 
@@ -464,8 +467,8 @@ instance Fallible HardFailM where
 
 -- === convenience layer ===
 
-throw :: (ToErr e, Fallible m) => e -> m a
-throw e = throwErr $ toErr e
+throw :: (ToErr e, Fallible m) => SrcId -> e -> m a
+throw _ e = throwErr $ toErr e
 {-# INLINE throw #-}
 
 getCurrentCallStack :: () -> Maybe [String]

@@ -263,7 +263,7 @@ evalSourceBlock' mname block = case sbContents block of
   DeclareForeign fname (WithSrc _ dexName) cTy -> do
     ty <- evalUType =<< parseExpr cTy
     asFFIFunType ty >>= \case
-      Nothing -> throw $ MiscMiscErr
+      Nothing -> throw rootSrcId $ MiscMiscErr
         "FFI functions must be n-ary first order functions with the IO effect"
       Just (impFunTy, naryPiTy) -> do
         -- TODO: query linking stuff and check the function is actually available
@@ -275,15 +275,15 @@ evalSourceBlock' mname block = case sbContents block of
   DeclareCustomLinearization fname zeros g -> do
     expr <- parseExpr g
     lookupSourceMap (withoutSrc fname) >>= \case
-      Nothing -> throw $ UnboundVarErr $ pprint fname
+      Nothing -> throw rootSrcId $ UnboundVarErr $ pprint fname
       Just (UAtomVar fname') -> do
         lookupCustomRules fname' >>= \case
           Nothing -> return ()
-          Just _  -> throw $ MiscMiscErr
+          Just _  -> throw rootSrcId $ MiscMiscErr
             $ pprint fname ++ " already has a custom linearization"
         lookupAtomName fname' >>= \case
           NoinlineFun _ _ -> return ()
-          _ -> throw $ MiscMiscErr "Custom linearizations only apply to @noinline functions"
+          _ -> throw rootSrcId $ MiscMiscErr "Custom linearizations only apply to @noinline functions"
         -- We do some special casing to avoid instantiating polymorphic functions.
         impl <- case expr of
           WithSrcE _ (UVar _) ->
@@ -296,17 +296,20 @@ evalSourceBlock' mname block = case sbContents block of
         liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
           Failure _ -> do
             let implTy = getType impl
-            throw $ MiscMiscErr $ unlines
+            throw rootSrcId $ MiscMiscErr $ unlines
               [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
               , "but it has type:" , "" , pprint implTy]
           Success () -> return ()
         updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
-      Just _ -> throw $ MiscMiscErr $ "Custom linearization can only be defined for functions"
-  UnParseable _ s -> throw $ MiscParseErr s
+      Just _ -> throw rootSrcId $ MiscMiscErr $ "Custom linearization can only be defined for functions"
+  UnParseable _ s -> throw rootSrcId $ MiscParseErr s
   Misc m -> case m of
     GetNameType v -> do
-      ty <- sourceNameType (withoutSrc v)
-      logTop $ TextOut $ pprintCanonicalized ty
+      lookupSourceMap (withoutSrc v) >>= \case
+        Nothing -> throw rootSrcId $ UnboundVarErr $ pprint v
+        Just uvar -> do
+          ty <- getUVarType uvar
+          logTop $ TextOut $ pprintCanonicalized ty
     ImportModule moduleName -> importModule moduleName
     QueryEnv query -> void $ runEnvQuery query $> UnitE
     ProseBlock _ -> return ()
@@ -327,11 +330,11 @@ runEnvQuery query = do
     DumpSubst -> logTop $ TextOut $ pprint $ env
     InternalNameInfo name ->
       case lookupSubstFragRaw (fromRecSubst $ envDefs $ topEnv env) name of
-        Nothing      -> throw $ UnboundVarErr $ pprint name
+        Nothing      -> throw rootSrcId $ UnboundVarErr $ pprint name
         Just binding -> logTop $ TextOut $ pprint binding
     SourceNameInfo name -> do
       lookupSourceMap name >>= \case
-        Nothing -> throw $ UnboundVarErr $ pprint name
+        Nothing -> throw rootSrcId $ UnboundVarErr $ pprint name
         Just uvar -> do
           logTop $ TextOut $ pprint uvar
           info <- case uvar of
@@ -434,7 +437,7 @@ evalUModule (UModule name _ blocks) = do
 importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
 importModule name = do
   lookupLoadedModule name >>= \case
-    Nothing -> throw $ ModuleImportErr $ pprint name
+    Nothing -> throw rootSrcId $ ModuleImportErr $ pprint name
     Just name' -> do
       Module _ _ transImports' _ _ <- lookupModule name'
       let importStatus = ImportStatus (S.singleton name')
@@ -693,7 +696,7 @@ loadModuleSource config moduleName = do
       fsPaths <- liftIO $ traverse resolveBuiltinPath $ libPaths config
       liftIO (findFile fsPaths fname) >>= \case
         Just fpath -> return fpath
-        Nothing    -> throw $ CantFindModuleSource $ pprint moduleName
+        Nothing    -> throw rootSrcId $ CantFindModuleSource $ pprint moduleName
     resolveBuiltinPath = \case
       LibBuiltinPath   -> liftIO $ getDataFileName "lib"
       LibDirectory dir -> return dir
@@ -832,14 +835,14 @@ getLinearizationType zeros = \case
         Just tty -> case zeros of
           InstantiateZeros -> return tty
           SymbolicZeros    -> symbolicTangentTy tty
-        Nothing  -> throw $ MiscMiscErr $ "No tangent type for: " ++ pprint t
+        Nothing  -> throw rootSrcId $ MiscMiscErr $ "No tangent type for: " ++ pprint t
       resultTanTy <- maybeTangentType resultTy' >>= \case
         Just rtt -> return rtt
-        Nothing  -> throw $ MiscMiscErr $ "No tangent type for: " ++ pprint resultTy'
+        Nothing  -> throw rootSrcId $ MiscMiscErr $ "No tangent type for: " ++ pprint resultTy'
       let tanFunTy = toType $ Pi $ nonDepPiType argTanTys Pure resultTanTy
       let fullTy = CorePiType ExplicitApp expls bs' $ EffTy Pure (PairTy resultTy' tanFunTy)
       return (numIs, numEs, toType $ Pi fullTy)
-  _ -> throw $ MiscMiscErr $ "Can't define a custom linearization for implicit or impure functions"
+  _ -> throw rootSrcId $ MiscMiscErr $ "Can't define a custom linearization for implicit or impure functions"
   where
     getNumImplicits :: Fallible m => [Explicitness] -> m (Int, Int)
     getNumImplicits = \case
@@ -850,4 +853,4 @@ getLinearizationType zeros = \case
           Inferred _ _ -> return (ni + 1, ne)
           Explicit -> case ni of
             0 -> return (0, ne + 1)
-            _ -> throw $ MiscMiscErr "All implicit args must precede implicit args"
+            _ -> throw rootSrcId $ MiscMiscErr "All implicit args must precede implicit args"

@@ -480,6 +480,14 @@ data WithSrcE (a::E) (n::S) = WithSrcE SrcId (a n)
 data WithSrcB (binder::B) (n::S) (l::S) = WithSrcB SrcId (binder n l)
   deriving (Show, Generic)
 
+instance HasSrcId (WithSrc  a    ) where getSrcId (WithSrc  sid _  ) = sid
+instance HasSrcId (WithSrcs a    ) where getSrcId (WithSrcs sid _ _) = sid
+instance HasSrcId (WithSrcE e n  ) where getSrcId (WithSrcE sid _  ) = sid
+instance HasSrcId (WithSrcB b n l) where getSrcId (WithSrcB sid _  ) = sid
+
+instance HasSrcId (UAnnBinder n l) where
+  getSrcId (UAnnBinder _ b _ _) = getSrcId b
+
 class HasSrcPos withSrc a | withSrc -> a where
   srcPos :: withSrc -> SrcId
   withoutSrc :: withSrc -> a

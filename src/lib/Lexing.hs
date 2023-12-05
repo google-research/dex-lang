@@ -44,7 +44,7 @@ type Parser = StateT ParseCtx (Parsec Void Text)
 
 parseit :: Text -> Parser a -> Except a
 parseit s p = case parse (fst <$> runStateT p initParseCtx) "" s of
-  Left e  -> throw $ MiscParseErr $ errorBundlePretty e
+  Left e  -> throw rootSrcId $ MiscParseErr $ errorBundlePretty e
   Right x -> return x
 
 mustParseit :: Text -> Parser a -> a
