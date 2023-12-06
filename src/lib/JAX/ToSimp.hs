@@ -17,6 +17,7 @@ import JAX.Concrete
 import Subst
 import QueryType
 import Types.Core
+import Types.Top
 import Types.Primitives qualified as P
 
 newtype JaxSimpM (i::S) (o::S) a = JaxSimpM
@@ -66,10 +67,10 @@ simplifyJTy JArrayName{shape, dtype} = go shape $ simplifyDType dtype where
 
 simplifyDType :: DType -> Type r n
 simplifyDType = \case
-  F64 -> BaseTy $ P.Scalar P.Float64Type
-  F32 -> BaseTy $ P.Scalar P.Float32Type
-  I64 -> BaseTy $ P.Scalar P.Int64Type
-  I32 -> BaseTy $ P.Scalar P.Int32Type
+  F64 -> TyCon $ BaseType $ P.Scalar P.Float64Type
+  F32 -> TyCon $ BaseType $ P.Scalar P.Float32Type
+  I64 -> TyCon $ BaseType $ P.Scalar P.Int64Type
+  I32 -> TyCon $ BaseType $ P.Scalar P.Int32Type
 
 simplifyEqns :: Emits o => Nest JEqn i i' -> JaxSimpM i' o a -> JaxSimpM i o a
 simplifyEqns eqn cont = do
@@ -104,7 +105,7 @@ simplifyAtom = \case
         SubstVal x -> return (x, ty)
         Rename nm' -> do
           nm'' <- toAtomVar nm'
-          return (Var nm'', ty)
+          return (toAtom nm'', ty)
   -- TODO In Jax, literals can presumably include (large) arrays.  How should we
   -- represent them here?
   JLiteral (JLit {..}) -> return (Con (Lit (P.Float32Lit 0.0)), ty)
@@ -122,7 +123,7 @@ unaryExpandRank :: forall i o. Emits o
 unaryExpandRank op arg JArrayName{shape} = go arg shape where
   go :: Emits l => SAtom l -> [DimSizeName] -> JaxSimpM i l (SAtom l)
   go arg' = \case
-    [] -> emitExprToAtom $ PrimOp (UnOp op arg')
+    [] -> emit $ PrimOp (UnOp op arg')
     (DimSize sz:rest) -> buildFor noHint P.Fwd (litFinIxTy sz) \i -> do
-      ixed <- mkTabApp (sink arg') [Var i] >>= emitExprToAtom
+      ixed <- mkTabApp (sink arg') (toAtom i) >>= emit
       go ixed rest

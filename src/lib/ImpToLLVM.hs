@@ -45,19 +45,17 @@ import qualified Data.Set as S
 import CUDA (getCudaArchitecture)
 
 import Core
-import Err
 import Imp
 import LLVM.CUDA (LLVMKernel (..), compileCUDAKernel, ptxDataLayout, ptxTargetTriple)
-import Logging
 import Subst
 import Name
 import PPrint
 import RawName qualified as R
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Primitives
 import Types.Source
+import Types.Top
 import Util (IsBool (..), bindM2, enumerate)
 
 -- === Compile monad ===
@@ -95,7 +93,7 @@ newtype CompileM i o a =
            , EnvReader, SubstReader OperandSubstVal )
 
 instance MonadState CompileState (CompileM i o) where
-  state f = CompileM $ SubstReaderT $ lift $ EnvReaderT $ lift $ state f
+  state f = CompileM $ liftSubstReaderT $ EnvReaderT $ lift $ state f
 
 class MonadState CompileState m => LLVMBuilder (m::MonadKind)
 
@@ -110,7 +108,7 @@ instance Compiler CompileM
 -- === Imp to LLVM ===
 
 impToLLVM :: (EnvReader m, MonadIO1 m)
-          => FilteredLogger PassName [Output] -> NameHint
+          => PassLogger -> NameHint
           -> ClosedImpFunction n
           -> m n (WithCNameInterface L.Module)
 impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
@@ -186,7 +184,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
 
 compileFunction
   :: (EnvReader m, MonadIO1 m)
-  => FilteredLogger PassName [Output] -> L.Name
+  => PassLogger -> L.Name
   -> OperandEnv i o -> ImpFunction i
   -> m o ([L.Definition], S.Set ExternFunSpec, [L.Name])
 compileFunction logger fName env fun@(ImpFunction (IFunType cc argTys retTys)
@@ -311,7 +309,7 @@ compileInstr instr = case instr of
     compileIf p' (compileVoidBlock cons) (compileVoidBlock alt)
   IQueryParallelism f s -> do
     let IFunType cc _ _ = snd f
-    let kernelFuncName = topLevelFunName $ fst f
+    let kernelFuncName = topLevelFunName $ fromString $ fst f
     n <- (`asIntWidth` i64) =<< compileExpr s
     case cc of
       MCThreadLaunch -> do
@@ -339,7 +337,7 @@ compileInstr instr = case instr of
   ILaunch (fname, IFunType cc _ _) size args -> [] <$ do
     size' <- (`asIntWidth` i64) =<< compileExpr size
     args' <- mapM compileExpr args
-    let kernelFuncName = topLevelFunName fname
+    let kernelFuncName = topLevelFunName (fromString fname)
     case cc of
       MCThreadLaunch -> do
         kernelParams <- packArgs args'
@@ -508,11 +506,11 @@ compileInstr instr = case instr of
             let resultTys = map scalarTy impResultTys
             case cc of
               FFICC -> do
-                ans <- emitExternCall (makeFunSpec fname ty) args'
+                ans <- emitExternCall (makeFunSpec (fromString fname) ty) args'
                 return [ans]
               FFIMultiResultCC -> do
                 resultPtr <- makeMultiResultAlloc resultTys
-                emitVoidExternCall (makeFunSpec fname ty) (resultPtr : args')
+                emitVoidExternCall (makeFunSpec (fromString fname) ty) (resultPtr : args')
                 loadMultiResultAlloc resultTys resultPtr
               _ -> error $ "Unsupported calling convention: " ++ show cc
   DebugPrint fmtStr x -> [] <$ do
@@ -539,11 +537,11 @@ compileInstr instr = case instr of
 -- TODO: use a careful naming discipline rather than strings
 -- (this is only used on the CUDA path which is currently broken anyway)
 topLevelFunName :: SourceName -> L.Name
-topLevelFunName name = fromString name
+topLevelFunName name = fromString $ pprint name
 
 makeFunSpec :: SourceName -> IFunType -> ExternFunSpec
 makeFunSpec name impFunTy =
-  ExternFunSpec (L.Name (fromString name)) retTy [] [] argTys
+  ExternFunSpec (L.Name (fromString $ pprint name)) retTy [] [] argTys
   where (retTy, argTys) = impFunTyToLLVMTy impFunTy
 
 impFunTyToLLVMTy :: IFunType -> LLVMFunType

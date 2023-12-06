@@ -7,30 +7,155 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
-module RenderHtml (pprintHtml, progHtml, ToMarkup, treeToHtml) where
+module RenderHtml (
+  progHtml, ToMarkup, renderSourceBlock, renderOutputs,
+  RenderedSourceBlock, RenderedOutputs) where
 
-import Text.Blaze.Html5 as H hiding (map)
+import Text.Blaze.Internal (MarkupM)
+import Text.Blaze.Html5 as H hiding (map, b)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.List    qualified as L
+import Data.Aeson (ToJSON)
+import qualified Data.Map.Strict as M
+import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
+import Data.Foldable (fold)
+import Data.Functor ((<&>))
+import Data.Maybe (fromJust)
+import Data.String (fromString)
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
 import System.IO.Unsafe
-
-import Control.Monad
-import Text.Megaparsec hiding (chunk)
-import Text.Megaparsec.Char as C
+import GHC.Generics
 
 import Err
-import Lexing (Parser, symChar, keyWordStrs, symbol, parseit, withSource)
+import IncState
 import Paths_dex (getDataFileName)
-import PPrint ()
-import SourceInfo
-import TraverseSourceInfo
-import Types.Misc
+import PPrint
 import Types.Source
-import Util
+import Util (unsnoc)
+
+-- === rendering results ===
+
+-- RenderedOutputs, RenderedSourceBlock aren't 100% HTML themselves but the idea
+-- is that they should be trivially convertable to JSON and sent over to the
+-- client which can do the final rendering without much code or runtime work.
+
+type BlockId = Int
+data RenderedSourceBlock = RenderedSourceBlock
+  { rsbLine      :: Int
+  , rsbBlockId   :: BlockId
+  , rsbLexemeList :: [SrcId]
+  , rsbHtml       :: String }
+  deriving (Generic)
+
+data RenderedOutputs = RenderedOutputs
+  { rrHtml         :: String
+  , rrLexemeSpans  :: SpanMap
+  , rrHighlightMap :: HighlightMap
+  , rrHoverInfoMap :: HoverInfoMap
+  , rrErrorSrcIds  :: [SrcId] }
+  deriving (Generic)
+
+renderOutputs :: Outputs -> RenderedOutputs
+renderOutputs (Outputs outputs) = fold $ map renderOutput outputs
+
+renderOutput :: Output -> RenderedOutputs
+renderOutput r = RenderedOutputs
+  { rrHtml         = pprintHtml        r
+  , rrLexemeSpans  = computeSpanMap    r
+  , rrHighlightMap = computeHighlights r
+  , rrHoverInfoMap = computeHoverInfo  r
+  , rrErrorSrcIds  = computeErrSrcIds  r}
+
+renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
+renderSourceBlock n b = RenderedSourceBlock
+  { rsbLine    = sbLine b
+  , rsbBlockId = n
+  , rsbLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b
+  , rsbHtml = renderHtml case sbContents b of
+      Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
+      _ -> renderSpans n (sbLexemeInfo b) (sbText b)
+  }
+
+instance ToMarkup Outputs where
+  toMarkup (Outputs outs) = foldMap toMarkup outs
+
+instance ToMarkup Output where
+  toMarkup out = case out of
+    HtmlOut s -> preEscapedString s
+    SourceInfo _ -> mempty
+    Error _ -> cdiv "err-block" $ toHtml $ pprint out
+    _ -> cdiv "result-block" $ toHtml $ pprint out
+
+instance ToJSON RenderedOutputs
+instance ToJSON RenderedSourceBlock
+
+instance Semigroup RenderedOutputs where
+  RenderedOutputs x1 y1 z1 w1 v1 <> RenderedOutputs x2 y2 z2 w2 v2 =
+    RenderedOutputs (x1<>x2) (y1<>y2) (z1<>z2) (w1<>w2) (v1<>v2)
+
+instance Monoid RenderedOutputs where
+  mempty = RenderedOutputs mempty mempty mempty mempty mempty
+
+-- === textual information on hover ===
+
+type HoverInfo = String
+newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
+
+computeHoverInfo :: Output -> HoverInfoMap
+computeHoverInfo (SourceInfo (SITypeInfo m)) = HoverInfoMap $ fromTypeInfo m
+computeHoverInfo _ = mempty
+
+-- === highlighting on hover ===
+
+newtype SpanMap      = SpanMap (M.Map SrcId LexemeSpan)       deriving (ToJSON, Semigroup, Monoid)
+newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
+type Highlights = [(HighlightType, SrcId)]
+data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
+
+instance ToJSON HighlightType
+
+computeErrSrcIds :: Output -> [SrcId]
+computeErrSrcIds (Error err) = case err of
+  SearchFailure _ -> []
+  InternalErr   _ -> []
+  ParseErr      _ -> []
+  SyntaxErr sid _ -> [sid]
+  NameErr   sid _ -> [sid]
+  TypeErr   sid _ -> [sid]
+  RuntimeErr -> []
+  MiscErr _  -> []
+computeErrSrcIds _ = []
+
+computeSpanMap :: Output -> SpanMap
+computeSpanMap (SourceInfo (SIGroupTree (OverwriteWith tree))) =
+  execWriter $ go tree where
+  go :: GroupTree -> Writer SpanMap ()
+  go t = do
+    tell $ SpanMap $ M.singleton (gtSrcId t) (gtSpan t)
+    mapM_ go $ gtChildren t
+computeSpanMap _ = mempty
+
+computeHighlights :: Output -> HighlightMap
+computeHighlights (SourceInfo (SIGroupTree (OverwriteWith tree))) =
+  execWriter $ go tree where
+  go :: GroupTree -> Writer HighlightMap ()
+  go t = do
+    let children = gtChildren t
+    let highlights = children <&> \child ->
+          (getHighlightType (gtIsAtomicLexeme child), gtSrcId child)
+    forM_ children \child-> do
+      tell $ HighlightMap $ M.singleton (gtSrcId child) highlights
+      go child
+
+  getHighlightType :: Bool -> HighlightType
+  getHighlightType True  = HighlightLeaf
+  getHighlightType False = HighlightGroup
+computeHighlights _ = mempty
+
+-- -----------------
 
 cssSource :: T.Text
 cssSource = unsafePerformIO $
@@ -47,7 +172,7 @@ pprintHtml x = renderHtml $ toMarkup x
 
 progHtml :: (ToMarkup a, ToMarkup b) => [(a, b)] -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
-  where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
+  where toHtmlBlock (block,outputs) = toMarkup block <> toMarkup outputs
 
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
@@ -65,118 +190,57 @@ wrapBody blocks = docTypeHtml $ do
     inner = foldMap (cdiv "cell") blocks
     jsSource = textValue $ javascriptSource <> "render(RENDER_MODE.STATIC);"
 
-instance ToMarkup Result where
-  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
-    where err' = case err of
-                   Failure e  -> cdiv "err-block" $ toHtml $ pprint e
-                   Success () -> mempty
-
-instance ToMarkup Output where
-  toMarkup out = case out of
-    HtmlOut s -> preEscapedString s
-    _ -> cdiv "result-block" $ toHtml $ pprint out
-
-instance ToMarkup SourceBlock where
-  toMarkup block = case sbContents block of
-    (Misc (ProseBlock s)) -> cdiv "prose-block" $ mdToHtml s
-    TopDecl decl -> renderSpans decl block
-    Command _ g -> renderSpans g block
-    _ -> cdiv "code-block" $ highlightSyntax (sbText block)
-
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
--- === syntax highlighting ===
+renderSpans :: BlockId -> LexemeInfo -> T.Text -> Markup
+renderSpans blockId lexInfo sourceText = cdiv "code-block" do
+  runTextWalkerT sourceText do
+    forM_ (lexemeList lexInfo) \sourceId -> do
+      let (lexemeTy, (l, r)) = fromJust $ M.lookup sourceId (lexemeInfo lexInfo)
+      takeTo l >>= emitSpan Nothing (Just "comment")
+      takeTo r >>= emitSpan (Just (blockId, sourceId)) (lexemeClass lexemeTy)
+    takeRest >>= emitSpan Nothing (Just "comment")
 
-spanDelimitedCode :: SourceBlock -> [SrcPosCtx] -> Html
-spanDelimitedCode block ctxs =
-  let (Just tree) = srcCtxsToTree block ctxs in
-  spanDelimitedCode' block tree
+emitSpan :: Maybe (BlockId, SrcId) -> Maybe String -> T.Text -> TextWalker ()
+emitSpan maybeSrcId className t = lift do
+  let classAttr = case className of
+        Nothing -> mempty
+        Just c -> class_ (stringValue c)
+  let idAttr = case maybeSrcId of
+        Nothing -> mempty
+        Just (bid, SrcId sid) -> At.id (fromString $ "span_" ++ show bid ++ "_"++ show sid)
+  H.span (toHtml t) ! classAttr ! idAttr
 
-spanDelimitedCode' :: SourceBlock -> SpanTree -> Html
-spanDelimitedCode' block tree = treeToHtml (sbText block) tree
+lexemeClass :: LexemeType -> Maybe String
+lexemeClass = \case
+   Keyword             -> Just "keyword"
+   Symbol              -> Just "symbol"
+   TypeName            -> Just "type-name"
+   LowerName           -> Nothing
+   UpperName           -> Nothing
+   LiteralLexeme       -> Just "literal"
+   StringLiteralLexeme -> Nothing
+   MiscLexeme          -> Nothing
 
-treeToHtml :: T.Text -> SpanTree -> Html
-treeToHtml source' tree =
-  let tree' = fillTreeAndAddTrivialLeaves (T.unpack source') tree in
-  treeToHtml' source' tree'
+type TextWalker a = StateT (Int, T.Text) MarkupM a
 
-treeToHtml' :: T.Text -> SpanTree -> Html
-treeToHtml' source' tree = case tree of
-  Span (_, _, _) children ->
-    let body' = foldMap (treeToHtml' source') children in
-    H.span body' ! spanClass
-  LeafSpan (l, r, _) ->
-    let spanText = sliceText l r source' in
-    H.span (highlightSyntax spanText) ! spanLeaf
-  Trivia (l, r) ->
-    let spanText = sliceText l r source' in
-    highlightSyntax spanText
-  where
-    spanClass :: Attribute
-    spanClass = At.class_ "code-span"
+runTextWalkerT :: T.Text -> TextWalker a -> MarkupM a
+runTextWalkerT t cont = evalStateT cont (0, t)
 
-    spanLeaf :: Attribute
-    spanLeaf = At.class_ "code-span-leaf"
+-- index is the *absolute* index, from the very beginning
+takeTo :: Int -> TextWalker T.Text
+takeTo startPos = do
+  (curPos, curText) <- get
+  let (prefix, remText) = T.splitAt (startPos- curPos) curText
+  put (startPos, remText)
+  return prefix
 
-srcCtxsToSpanInfos :: SourceBlock -> [SrcPosCtx] -> [SpanPayload]
-srcCtxsToSpanInfos block ctxs =
-  let blockOffset = sbOffset block in
-  let ctxs' = L.sort ctxs in
-  (0, maxBound, 0) : mapMaybe (convert' blockOffset) ctxs'
-  where convert' :: Int -> SrcPosCtx -> Maybe SpanPayload
-        convert' offset (SrcPosCtx (Just (l, r)) (Just spanId)) = Just (l - offset, r - offset, spanId + 1)
-        convert' _ _ = Nothing
-
-srcCtxsToTree :: SourceBlock -> [SrcPosCtx] -> Maybe SpanTree
-srcCtxsToTree block ctxs = makeEmptySpanTree (srcCtxsToSpanInfos block ctxs)
-
-renderSpans :: HasSourceInfo a => a -> SourceBlock -> Html
-renderSpans x block =
-  let x' = addSpanIds x in
-  let ctxs = gatherSourceInfo x' in
-  toHtml $ cdiv "code-block" $ spanDelimitedCode block ctxs
-
-highlightSyntax :: T.Text -> Html
-highlightSyntax s = foldMap (uncurry syntaxSpan) classified
-  where classified = ignoreExcept $ parseit s (many (withSource classify) <* eof)
-
-syntaxSpan :: T.Text -> StrClass -> Html
-syntaxSpan s NormalStr = toHtml s
-syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
-  where
-    className = case c of
-      CommentStr  -> "comment"
-      KeywordStr  -> "keyword"
-      CommandStr  -> "command"
-      SymbolStr   -> "symbol"
-      TypeNameStr -> "type-name"
-      IsoSugarStr -> "iso-sugar"
-      WhitespaceStr -> "whitespace"
-      NormalStr -> error "Should have been matched already"
-
-data StrClass = NormalStr
-              | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
-              | IsoSugarStr | WhitespaceStr
-
-classify :: Parser StrClass
-classify =
-       (try (char ':' >> lowerWord) >> return CommandStr)
-   <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
-   <|> (do s <- lowerWord
-           return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
-   <|> (upperWord >> return TypeNameStr)
-   <|> try (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
-        >> lowerWord >> return IsoSugarStr)
-   <|> (some symChar >> return SymbolStr)
-   <|> (some space1 >> return WhitespaceStr)
-   <|> (anySingle >> return NormalStr)
-
-lowerWord :: Parser String
-lowerWord = (:) <$> lowerChar <*> many alphaNumChar
-
-upperWord :: Parser String
-upperWord = (:) <$> upperChar <*> many alphaNumChar
+takeRest :: TextWalker T.Text
+takeRest = do
+  (curPos, curText) <- get
+  put (curPos + T.length curText, mempty)
+  return curText

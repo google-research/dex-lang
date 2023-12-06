@@ -12,19 +12,21 @@ import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Applicative
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import System.CPUTime
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
 import Crypto.Hash
 import Data.Functor.Identity (Identity(..))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, mapMaybe)
 import Data.List (sort)
 import Data.Hashable (Hashable)
 import Data.Store (Store)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
+import Data.Text.Prettyprint.Doc (Pretty (..), pretty)
 import Data.List.NonEmpty (NonEmpty (..))
 import GHC.Generics (Generic)
 
@@ -133,12 +135,8 @@ mapFst f zs = [(f x, y) | (x, y) <- zs]
 mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
 mapSnd f zs = [(x, f y) | (x, y) <- zs]
 
-mapMaybe :: (a -> Maybe b) -> [a] -> [b]
-mapMaybe _ [] = []
-mapMaybe f (x:xs) = let rest = mapMaybe f xs
-                    in case f x of
-                        Just y  -> y : rest
-                        Nothing -> rest
+foldJusts :: Monoid b => [a] -> (a -> Maybe b) -> b
+foldJusts xs f = fold $ mapMaybe f xs
 
 forMFilter :: Monad m => [a] -> (a -> m (Maybe b)) -> m [b]
 forMFilter xs f = catMaybes <$> mapM f xs
@@ -306,7 +304,7 @@ getAlternative xs = asum $ map pure xs
 {-# INLINE getAlternative #-}
 
 newtype SnocList a = ReversedList { fromReversedList :: [a] }
-        deriving Functor -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
+        deriving (Show, Eq, Ord, Generic, Functor) -- XXX: NOT deriving order-sensitive things like Monoid, Applicative etc
 
 instance Semigroup (SnocList a) where
   (ReversedList x) <> (ReversedList y) = ReversedList $ y ++ x
@@ -319,6 +317,10 @@ instance Monoid (SnocList a) where
 instance Foldable SnocList where
   foldMap f (ReversedList xs) = foldMap f (reverse xs)
   {-# INLINE foldMap #-}
+
+instance Traversable SnocList where
+  traverse f (ReversedList xs) = ReversedList . reverse <$> traverse f (reverse xs)
+  {-# INLINE traverse #-}
 
 snoc :: SnocList a -> a -> SnocList a
 snoc (ReversedList xs) x = ReversedList (x:xs)
@@ -352,6 +354,11 @@ zipTrees :: Tree a -> Tree b -> Tree (a, b)
 zipTrees (Leaf x) (Leaf y) = Leaf (x, y)
 zipTrees (Branch xs) (Branch ys) | length xs == length ys = Branch $ zipWith zipTrees xs ys
 zipTrees _ _ = error "zip error"
+
+instance Pretty a => Pretty (Tree a) where
+  pretty = \case
+    Leaf x -> pretty x
+    Branch xs -> pretty xs
 
 -- === bytestrings paired with their hash digest ===
 

@@ -14,6 +14,8 @@ import Data.Hashable
 import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
+import PPrint
+
 data TC = ProdType | SumType | RefType | TypeKind | HeapType
 data Con = ProdCon | SumCon Int | HeapVal
 
@@ -117,3 +119,8 @@ deriving instance Eq (Hof r)
 deriving instance Eq DAMOp
 deriving instance Eq RefOp
 deriving instance Eq UserEffectOp
+
+instance Pretty Projection where
+  pretty = \case
+    UnwrapNewtype -> "u"
+    ProjectProduct i -> pretty i

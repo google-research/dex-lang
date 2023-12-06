@@ -40,7 +40,7 @@ import qualified Data.Set as S
 
 import LLVM.Compile
 import Types.Imp
-import Types.Misc
+import Types.Source
 
 
 data LLVMKernel = LLVMKernel L.Module

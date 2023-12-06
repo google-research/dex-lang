@@ -4,127 +4,322 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Err (Err (..), Errs (..), ErrType (..), Except (..),
-            ErrCtx (..), SrcTextCtx,
-            Fallible (..), Catchable (..), catchErrExcept,
-            FallibleM (..), HardFailM (..), CtxReader (..),
-            runFallibleM, runHardFail, throw, throwErr,
-            addContext, addSrcContext, addSrcTextContext,
-            catchIOExcept, liftExcept, liftExceptAlt,
-            assertEq, ignoreExcept,
-            pprint, docAsStr, getCurrentCallStack, printCurrentCallStack,
-            FallibleApplicativeWrapper, traverseMergingErrs,
-            SearcherM (..), Searcher (..), runSearcherM) where
+{-# LANGUAGE UndecidableInstances #-}
+
+module Err (
+  Err (..), Except (..), ToErr (..), PrintableErr (..),
+  ParseErr (..), SyntaxErr (..), NameErr (..), TypeErr (..), MiscErr (..),
+  Fallible (..), Catchable (..), catchErrExcept,
+  HardFailM (..), runHardFail, throw,
+  catchIOExcept, liftExcept, liftExceptAlt,
+  ignoreExcept, getCurrentCallStack, printCurrentCallStack,
+  ExceptT (..), rootSrcId, SrcId (..), assertEq, throwInternal,
+  InferenceArgDesc, InfVarDesc (..), HasSrcId (..)) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Trans.Maybe
 import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Data.Aeson (ToJSON, ToJSONKey)
 import Data.Coerce
+import Data.Hashable
+import Data.List (sort)
 import Data.Foldable (fold)
-import Data.Text (Text)
-import Data.Text qualified as T
-import Data.Text.Prettyprint.Doc.Render.Text
-import Data.Text.Prettyprint.Doc
-import GHC.Generics (Generic (..))
+import Data.Store (Store (..))
 import GHC.Stack
-import System.Environment
-import System.IO.Unsafe
-import SourceInfo
+import GHC.Generics
 
--- === core API ===
+import PPrint
 
-data Err = Err ErrType ErrCtx String  deriving (Show, Eq)
-newtype Errs = Errs [Err]  deriving (Eq, Semigroup, Monoid)
+-- === source info ===
 
-data ErrType = NoErr
-             | ParseErr
-             | SyntaxErr
-             | TypeErr
-             | KindErr
-             | LinErr
-             | VarDefErr
-             | UnboundVarErr
-             | AmbiguousVarErr
-             | RepeatedVarErr
-             | RepeatedPatVarErr
-             | InvalidPatternErr
-             | CompilerErr
-             | IRVariantErr
-             | NotImplementedErr
-             | DataIOErr
-             | MiscErr
-             | RuntimeErr
-             | ZipErr
-             | EscapedNameErr
-             | ModuleImportErr
-             | MonadFailErr
-               deriving (Show, Eq)
+-- XXX: 0 is reserved for the root The IDs are generated from left to right in
+-- parsing order, so IDs for lexemes are guaranteed to be sorted correctly.
+newtype SrcId = SrcId Int  deriving (Show, Eq, Ord, Generic)
 
-type SrcTextCtx = Maybe (Int, Text) -- Int is the offset in the source file
-data ErrCtx = ErrCtx
-  { srcTextCtx :: SrcTextCtx
-  , srcPosCtx  :: SrcPosCtx
-  , messageCtx :: [String]
-  , stackCtx   :: Maybe [String] }
-    deriving (Show, Eq, Generic)
+rootSrcId :: SrcId
+rootSrcId = SrcId 0
+
+class HasSrcId a where
+  getSrcId :: a -> SrcId
+
+-- === core errro type ===
+
+data Err =
+   SearchFailure String      -- used as the identity for `Alternative` instances and for MonadFail.
+ | InternalErr String
+ | ParseErr  ParseErr
+ | SyntaxErr SrcId SyntaxErr
+ | NameErr   SrcId NameErr
+ | TypeErr   SrcId TypeErr
+ | RuntimeErr
+ | MiscErr MiscErr
+   deriving (Show, Eq)
+
+type MsgStr  = String
+type VarStr  = String
+type TypeStr = String
+
+data ParseErr =
+  MiscParseErr MsgStr
+  deriving (Show, Eq)
+
+data SyntaxErr =
+   MiscSyntaxErr MsgStr
+ | TopLevelArrowBinder
+ | CantConstrainAnonBinders
+ | UnexpectedBinder
+ | OnlyUnaryWithoutParens
+ | IllegalPattern
+ | UnexpectedConstraint
+ | ExpectedIdentifier String
+ | UnexpectedEffectForm
+ | UnexpectedMethodDef
+ | BlockWithoutFinalExpr
+ | UnexpectedGivenClause
+ | ArgsShouldHaveParens
+ | BadEqualSign
+ | BadColon
+ | ExpectedAnnBinder
+ | BadField
+ | BadPrefix VarStr
+   deriving (Show, Eq)
+
+data NameErr =
+   MiscNameErr MsgStr
+ | UnboundVarErr VarStr    -- name of var
+ | EscapedNameErr [VarStr] -- names
+ | RepeatedPatVarErr VarStr
+ | RepeatedVarErr VarStr
+ | NotAnOrdinaryVar VarStr
+ | NotADataCon VarStr
+ | NotAClassName VarStr
+ | NotAMethodName VarStr
+ | AmbiguousVarErr VarStr [String]
+ | VarDefErr VarStr
+   deriving (Show, Eq)
+
+data TypeErr =
+   MiscTypeErr MsgStr
+ | CantSynthDict     TypeStr
+ | CantSynthInfVars  TypeStr
+ | NotASynthType     TypeStr
+ | CantUnifySkolem
+ | OccursCheckFailure VarStr TypeStr
+ | UnificationFailure TypeStr TypeStr [VarStr]  -- expected, actual, inference vars
+ | DisallowedEffects  String String  -- allowed, actual
+ | InferEmptyTable
+ | ArityErr        Int Int  -- expected, actual
+ | PatternArityErr Int Int  -- expected, actual
+ | SumTypeCantFail
+ | PatTypeErr String String  -- expected type constructor (from pattern), actual type (from rhs)
+ | EliminationErr String String  -- expected type constructor, actual type
+ | IllFormedCasePattern
+ | NotAMethod VarStr VarStr
+ | DuplicateMethod VarStr
+ | MissingMethod   VarStr
+ | WrongArrowErr String String
+ | AnnotationRequired
+ | NotAUnaryConstraint TypeStr
+ | InterfacesNoImplicitParams
+ | RepeatedOptionalArgs [VarStr]
+ | UnrecognizedOptionalArgs [VarStr] [VarStr]
+ | NoFields TypeStr
+ | TypeMismatch TypeStr TypeStr  -- TODO: should we merege this with UnificationFailure
+ | InferHoleErr
+ | InferDepPairErr
+ | InferEmptyCaseEff
+ | UnexpectedTerm String TypeStr
+ | CantFindField VarStr TypeStr [VarStr]  -- field name, field type, known fields
+ | TupleLengthMismatch Int Int
+ | CantReduceType TypeStr
+ | CantReduceDict
+ | CantReduceDependentArg
+ | AmbiguousInferenceVar VarStr TypeStr InfVarDesc
+ | FFIResultTyErr    TypeStr
+ | FFIArgTyNotScalar TypeStr
+   deriving (Show, Eq)
+
+data MiscErr =
+   MiscMiscErr MsgStr
+ | ModuleImportErr VarStr
+ | CantFindModuleSource VarStr
+   deriving (Show, Eq)
+
+-- name of function, name of arg
+type InferenceArgDesc = (String, String)
+data InfVarDesc =
+   ImplicitArgInfVar InferenceArgDesc
+ | AnnotationInfVar String -- name of binder
+ | TypeInstantiationInfVar String -- name of type
+ | MiscInfVar
+   deriving (Show, Generic, Eq, Ord)
+
+-- === ToErr class ===
+
+class ToErr a where
+  toErr :: SrcId -> a -> Err
+
+instance ToErr SyntaxErr where toErr = SyntaxErr
+instance ToErr NameErr   where toErr = NameErr
+instance ToErr TypeErr   where toErr = TypeErr
+
+-- === Error messages ===
+
+class PrintableErr a where
+  printErr :: a -> String
+
+instance PrintableErr Err where
+  printErr = \case
+    SearchFailure s -> "Internal search failure: " ++ s
+    InternalErr s -> "Internal compiler error: " ++ s ++ "\n" ++
+      "Please report this at github.com/google-research/dex-lang/issues\n"
+    ParseErr    e -> "Parse error: "  ++ printErr e
+    SyntaxErr _ e -> "Syntax error: " ++ printErr e
+    NameErr   _ e -> "Name error: "   ++ printErr e
+    TypeErr   _ e -> "Type error: "   ++ printErr e
+    MiscErr     e -> "Error: "        ++ printErr e
+    RuntimeErr    -> "Runtime error"
+
+instance PrintableErr ParseErr where
+  printErr = \case
+    MiscParseErr s -> s
+
+instance PrintableErr SyntaxErr where
+  printErr = \case
+    MiscSyntaxErr s -> s
+    TopLevelArrowBinder ->
+      "Arrow binder syntax <- not permitted at the top level, because the binding would have unbounded scope."
+    CantConstrainAnonBinders -> "can't constrain anonymous binders"
+    UnexpectedBinder -> "binder must be an identifier or `_`"
+    OnlyUnaryWithoutParens ->"only unary constructors can form patterns without parens"
+    IllegalPattern -> "illegal pattern"
+    UnexpectedConstraint -> "unexpected constraint"
+    ExpectedIdentifier ctx -> "expected " ++ ctx ++ " to be an identifier"
+    UnexpectedEffectForm ->
+      "unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, "
+       ++ "or the name of a user-defined effect."
+    UnexpectedMethodDef -> "unexpected method definition. Expected `def` or `x = ...`."
+    BlockWithoutFinalExpr -> "block must end in expression"
+    UnexpectedGivenClause -> "unexpected `given` clause"
+    ArgsShouldHaveParens -> "argument types should be in parentheses"
+    BadEqualSign -> "equal sign must be used as a separator for labels or binders, not a standalone operator"
+    BadColon ->
+      "colon separates binders from their type annotations, is not a standalone operator.\n"
+      ++ " If you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
+    ExpectedAnnBinder -> "expected an annotated binder"
+    BadField -> "field must be a name or an integer"
+    BadPrefix name -> "prefix (" ++ name ++ ") not legal as a bare expression"
+
+instance PrintableErr NameErr where
+  printErr = \case
+    MiscNameErr s -> s
+    UnboundVarErr v     -> "variable not in scope: " ++ v
+    EscapedNameErr vs   -> "leaked local variables: " ++ unwords vs
+    RepeatedPatVarErr v -> "variable already defined within pattern: " ++ v
+    RepeatedVarErr    v -> "variable already defined : " ++ v
+    NotAnOrdinaryVar v -> "not an ordinary variable: " ++ v
+    NotADataCon      v -> "not a data constructor: "   ++ v
+    NotAClassName    v -> "not a class name: "         ++ v
+    NotAMethodName   v -> "not a method name: "        ++ v
+    -- we sort the lines to make the result a bit more deterministic for quine tests
+    AmbiguousVarErr v defs ->
+      "ambiguous occurrence: " ++ v ++ " is defined:\n"
+      ++ unlines (sort defs)
+    -- TODO: we see this message a lot. We should improve it by including more information.
+    -- Ideally we'd provide a link to where the original error happened."
+    VarDefErr v -> "error in (earlier) definition of variable: " ++ v
+
+instance PrintableErr TypeErr where
+  printErr = \case
+    MiscTypeErr s -> s
+    FFIResultTyErr t    -> "FFI result type should be scalar or pair. Got: " ++ t
+    FFIArgTyNotScalar t -> "FFI function arguments should be scalar. Got: " ++ t
+    CantSynthDict t     -> "can't synthesize a class dictionary for: " ++ t
+    CantSynthInfVars t  -> "can't synthesize a class dictionary for a type with inference vars: " ++ t
+    NotASynthType t     -> "can't synthesize terms of type: " ++ t
+    CantUnifySkolem     -> "can't unify with skolem vars"
+    OccursCheckFailure v t -> "occurs check failure: " ++ v ++ " occurs in " ++ t
+    DisallowedEffects r1 r2 -> "\nAllowed:   " ++ pprint r1 ++
+                               "\nRequested: " ++ pprint r2
+    UnificationFailure t1 t2 vs -> "\nExpected: " ++ t1
+                                ++ "\nActual: " ++ t2 ++ case vs of
+                                                          [] -> ""
+                                                          _  -> "\n(Solving for: " ++ unwords vs ++ ")"
+    InferEmptyTable       -> "can't infer type of empty table"
+    ArityErr n1 n2 -> "wrong number of positional arguments provided. Expected " ++ show n1 ++ " but got " ++ show n2
+    PatternArityErr n1 n2 -> "unexpected number of pattern binders. Expected "   ++ show n1 ++ " but got " ++ show n2
+    SumTypeCantFail               -> "sum type constructor in can't-fail pattern"
+    PatTypeErr patTy rhsTy        -> "pattern is for a " ++ patTy ++ "but we're matching against a " ++ rhsTy
+    EliminationErr expected ty    -> "expected a " ++ expected ++ ". Got: " ++ ty
+    IllFormedCasePattern          -> "case patterns must start with a data constructor or variant pattern"
+    NotAMethod method className   -> "unexpected method: " ++ method ++ " is not a method of " ++ className
+    DuplicateMethod method        -> "duplicate method: " ++ method
+    MissingMethod   method        -> "missing method: "   ++ method
+    WrongArrowErr expected actual -> "wrong arrow. Expected " ++ expected ++ " got " ++ actual
+    AnnotationRequired            -> "type annotation or constraint required"
+    NotAUnaryConstraint ty        -> "constraint should be a unary function. Got: " ++ ty
+    InterfacesNoImplicitParams    -> "interfaces can't have implicit parameters"
+    RepeatedOptionalArgs vs       -> "repeated names offered:" ++ unwords vs
+    UnrecognizedOptionalArgs vs accepted -> "unrecognized named arguments: " ++ unwords vs
+                                       ++ ". Should be one of: " ++ pprint accepted
+    NoFields ty -> "can't get fields for type " ++ pprint ty
+    TypeMismatch expected actual -> "\nExpected: " ++ expected ++
+                                    "\nActual:   " ++ actual
+    InferHoleErr -> "can't infer value of hole"
+    InferDepPairErr -> "can't infer the type of a dependent pair; please annotate its type"
+    InferEmptyCaseEff -> "can't infer empty case expressions"
+    UnexpectedTerm term ty -> "unexpected " ++ term ++ ". Expected: " ++ ty
+    CantFindField field fieldTy knownFields ->
+      "can't resolve field " ++ field ++ " of type " ++ fieldTy ++
+      "\nKnown fields are: " ++ unwords knownFields
+    TupleLengthMismatch req actual -> do
+        "tuple length mismatch. Expected: " ++ show req ++ " but got " ++ show actual
+    CantReduceType  ty -> "Can't reduce type expression: " ++ ty
+    CantReduceDict -> "Can't reduce dict"
+    CantReduceDependentArg ->
+      "dependent functions can only be applied to fully evaluated expressions. " ++
+      "Bind the argument to a name before you apply the function."
+    AmbiguousInferenceVar infVar ty desc -> case desc of
+       AnnotationInfVar v ->
+         "couldn't infer type of unannotated binder " <> v
+       ImplicitArgInfVar (f, argName) ->
+         "couldn't infer implicit argument `" <> argName <> "` of " <> f
+       TypeInstantiationInfVar t ->
+         "couldn't infer instantiation of type " <> t
+       MiscInfVar ->
+         "ambiguous type variable: " ++ infVar ++ ": " ++ ty
+
+instance PrintableErr MiscErr where
+  printErr = \case
+    MiscMiscErr s -> s
+    ModuleImportErr v -> "couldn't import " ++ v
+    CantFindModuleSource v ->
+      "couldn't find a source file for module " ++ v ++
+      "\nHint: Consider extending --lib-path"
+
+-- === monads and helpers ===
 
 class MonadFail m => Fallible m where
-  throwErrs :: Errs -> m a
-  addErrCtx :: ErrCtx -> m a -> m a
+  throwErr :: Err -> m a
 
 class Fallible m => Catchable m where
-  catchErr :: m a -> (Errs -> m a) -> m a
+  catchErr :: m a -> (Err -> m a) -> m a
 
 catchErrExcept :: Catchable m => m a -> m (Except a)
 catchErrExcept m = catchErr (Success <$> m) (\e -> return $ Failure e)
 
--- We have this in its own class because IO and `Except` can't implement it
--- (but FallibleM can)
-class Fallible m => CtxReader m where
-  getErrCtx :: m ErrCtx
-
--- We have this in its own class because StateT can't implement it
--- (but FallibleM, Except and IO all can)
-class Fallible m => FallibleApplicative m where
-  mergeErrs :: m a -> m b -> m (a, b)
-
-newtype FallibleM a =
-  FallibleM { fromFallibleM :: ReaderT ErrCtx Except a }
-  deriving (Functor, Applicative, Monad)
-
-instance Fallible FallibleM where
-  throwErrs (Errs errs) = FallibleM $ ReaderT \ambientCtx ->
-    throwErrs $ Errs [Err errTy (ambientCtx <> ctx) s | Err errTy ctx s <- errs]
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (FallibleM m) = FallibleM $ local (<> ctx) m
-  {-# INLINE addErrCtx #-}
-
-instance Catchable FallibleM where
-  FallibleM m `catchErr` handler = FallibleM $ ReaderT \ctx ->
-    case runReaderT m ctx of
-      Failure errs -> runReaderT (fromFallibleM $ handler errs) ctx
-      Success ans  -> return ans
-
-instance FallibleApplicative FallibleM where
-  mergeErrs (FallibleM (ReaderT f1)) (FallibleM (ReaderT f2)) =
-    FallibleM $ ReaderT \ctx -> mergeErrs (f1 ctx) (f2 ctx)
-
-instance CtxReader FallibleM where
-  getErrCtx = FallibleM ask
-  {-# INLINE getErrCtx #-}
+catchSearchFailure :: Catchable m => m a -> m (Maybe a)
+catchSearchFailure m = (Just <$> m) `catchErr` \case
+  SearchFailure _ -> return Nothing
+  err -> throwErr err
 
 instance Fallible IO where
-  throwErrs errs = throwIO errs
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx m = do
-    result <- catchIOExcept m
-    liftExcept $ addErrCtx ctx result
-  {-# INLINE addErrCtx #-}
+  throwErr errs = throwIO errs
+  {-# INLINE throwErr #-}
 
 instance Catchable IO where
   catchErr cont handler =
@@ -132,23 +327,68 @@ instance Catchable IO where
       Success result -> return result
       Failure errs -> handler errs
 
-instance FallibleApplicative IO where
-  mergeErrs m1 m2 = do
-    result1 <- catchIOExcept m1
-    result2 <- catchIOExcept m2
-    liftExcept $ mergeErrs result1 result2
+-- === ExceptT type ===
 
-runFallibleM :: FallibleM a -> Except a
-runFallibleM m = runReaderT (fromFallibleM m) mempty
-{-# INLINE runFallibleM #-}
+newtype ExceptT m a = ExceptT { runExceptT :: m (Except a) }
+
+instance Monad m => Functor (ExceptT m) where
+  fmap = liftM
+  {-# INLINE fmap #-}
+
+instance Monad m => Applicative (ExceptT m) where
+  pure = return
+  {-# INLINE pure #-}
+  liftA2 = liftM2
+  {-# INLINE liftA2 #-}
+
+instance Monad m => Monad (ExceptT m) where
+  return x = ExceptT $ return (Success x)
+  {-# INLINE return #-}
+  m >>= f = ExceptT $ runExceptT m >>= \case
+    Failure errs -> return $ Failure errs
+    Success x    -> runExceptT $ f x
+  {-# INLINE (>>=) #-}
+
+instance Monad m => MonadFail (ExceptT m) where
+  fail s = ExceptT $ return $ Failure $ SearchFailure s
+  {-# INLINE fail #-}
+
+instance Monad m => Fallible (ExceptT m) where
+  throwErr errs = ExceptT $ return $ Failure errs
+  {-# INLINE throwErr #-}
+
+instance Monad m => Alternative (ExceptT m) where
+  empty = throwErr $ SearchFailure ""
+  {-# INLINE empty #-}
+  m1 <|> m2 = do
+    catchSearchFailure m1 >>= \case
+      Nothing -> m2
+      Just x -> return x
+  {-# INLINE (<|>) #-}
+
+instance Monad m => Catchable (ExceptT m) where
+  m `catchErr` f = ExceptT $ runExceptT m >>= \case
+    Failure errs -> runExceptT $ f errs
+    Success x    -> return $ Success x
+  {-# INLINE catchErr #-}
+
+instance MonadState s m => MonadState s (ExceptT m) where
+  get = lift get
+  {-# INLINE get #-}
+  put x = lift $ put x
+  {-# INLINE put #-}
+
+instance MonadTrans ExceptT where
+  lift m = ExceptT $ Success <$> m
+  {-# INLINE lift #-}
 
 -- === Except type ===
 
--- Except is isomorphic to `Either Errs` but having a distinct type makes it
+-- Except is isomorphic to `Either Err` but having a distinct type makes it
 -- easier to debug type errors.
 
 data Except a =
-   Failure Errs
+   Failure Err
  | Success a
    deriving (Show, Eq)
 
@@ -169,22 +409,19 @@ instance Monad Except where
   Success x >>= f = f x
   {-# INLINE (>>=) #-}
 
--- === FallibleApplicativeWrapper ===
+instance Alternative Except where
+  empty = throwErr $ SearchFailure ""
+  {-# INLINE empty #-}
+  m1 <|> m2 = do
+    catchSearchFailure m1 >>= \case
+      Nothing -> m2
+      Just x -> return x
+  {-# INLINE (<|>) #-}
 
--- Wraps a Fallible monad, presenting an applicative interface that sequences
--- actions using the error-concatenating `mergeErrs` instead of the default
--- abort-on-failure sequencing.
-
-newtype FallibleApplicativeWrapper m a =
-  FallibleApplicativeWrapper { fromFallibleApplicativeWrapper :: m a }
-  deriving (Functor)
-
-instance FallibleApplicative m => Applicative (FallibleApplicativeWrapper m) where
-  pure x = FallibleApplicativeWrapper $ pure x
-  {-# INLINE pure #-}
-  liftA2 f (FallibleApplicativeWrapper m1) (FallibleApplicativeWrapper m2) =
-    FallibleApplicativeWrapper $ fmap (uncurry f) (mergeErrs m1 m2)
-  {-# INLINE liftA2 #-}
+instance Catchable Except where
+  Success ans `catchErr` _ = Success ans
+  Failure errs `catchErr` f = f errs
+  {-# INLINE catchErr #-}
 
 -- === HardFail ===
 
@@ -222,32 +459,14 @@ instance MonadFail HardFailM where
   {-# INLINE fail #-}
 
 instance Fallible HardFailM where
-  throwErrs errs = error $ pprint errs
-  {-# INLINE throwErrs #-}
-  addErrCtx _ cont = cont
-  {-# INLINE addErrCtx #-}
-
-instance FallibleApplicative HardFailM where
-  mergeErrs cont1 cont2 = (,) <$> cont1 <*> cont2
+  throwErr errs = error $ pprint errs
+  {-# INLINE throwErr #-}
 
 -- === convenience layer ===
 
-throw :: Fallible m => ErrType -> String -> m a
-throw errTy s = throwErrs $ Errs [addCompilerStackCtx $ Err errTy mempty s]
+throw :: (ToErr e, Fallible m) => SrcId -> e -> m a
+throw sid e = throwErr $ toErr sid e
 {-# INLINE throw #-}
-
-throwErr :: Fallible m => Err -> m a
-throwErr err = throwErrs $ Errs [addCompilerStackCtx err]
-{-# INLINE throwErr #-}
-
-addCompilerStackCtx :: Err -> Err
-addCompilerStackCtx (Err ty ctx msg) = Err ty ctx{stackCtx = compilerStack} msg
-  where
-#ifdef DEX_DEBUG
-    compilerStack = getCurrentCallStack ()
-#else
-    compilerStack = stackCtx ctx
-#endif
 
 getCurrentCallStack :: () -> Maybe [String]
 getCurrentCallStack () =
@@ -264,31 +483,19 @@ printCurrentCallStack :: Maybe [String] -> String
 printCurrentCallStack Nothing = "<no call stack available>"
 printCurrentCallStack (Just frames) = fold frames
 
-addContext :: Fallible m => String -> m a -> m a
-addContext s m = addErrCtx (mempty {messageCtx = [s]}) m
-{-# INLINE addContext #-}
-
-addSrcContext :: Fallible m => SrcPosCtx -> m a -> m a
-addSrcContext ctx m = addErrCtx (mempty {srcPosCtx = ctx}) m
-{-# INLINE addSrcContext #-}
-
-addSrcTextContext :: Fallible m => Int -> Text -> m a -> m a
-addSrcTextContext offset text m =
-  addErrCtx (mempty {srcTextCtx = Just (offset, text)}) m
-
 catchIOExcept :: MonadIO m => IO a -> m (Except a)
 catchIOExcept m = liftIO $ (liftM Success m) `catches`
-  [ Handler \(e::Errs)           -> return $ Failure e
-  , Handler \(e::IOError)        -> return $ Failure $ Errs [Err DataIOErr   mempty $ show e]
+  [ Handler \(e::Err)           -> return $ Failure e
+  , Handler \(e::IOError)        -> return $ Failure $ MiscErr $ MiscMiscErr $ show e
   -- Propagate asynchronous exceptions like ThreadKilled; they are
   -- part of normal operation (of the live evaluation modes), not
   -- compiler bugs.
   , Handler \(e::AsyncException) -> liftIO $ throwIO e
-  , Handler \(e::SomeException)  -> return $ Failure $ Errs [Err CompilerErr mempty $ show e]
+  , Handler \(e::SomeException)  -> return $ Failure $ InternalErr $ show e
   ]
 
 liftExcept :: Fallible m => Except a -> m a
-liftExcept (Failure errs) = throwErrs errs
+liftExcept (Failure errs) = throwErr errs
 liftExcept (Success ans) = return ans
 {-# INLINE liftExcept #-}
 
@@ -305,279 +512,58 @@ ignoreExcept (Success x) = x
 
 assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
-                           else throw CompilerErr msg
+                           else throwInternal msg
   where msg = "assertion failure (" ++ s ++ "):\n"
-              ++ pprint x ++ " != " ++ pprint y ++ "\n\n"
-              ++ prettyCallStack callStack ++ "\n"
+              ++ pprint x ++ " != " ++ pprint y
 
--- === search monad ===
-
-infix 0 <!>
-class (Monad m, Alternative m) => Searcher m where
-  -- Runs the second computation when the first yields an empty set of results.
-  -- This is just `<|>` for greedy searchers like `Maybe`, but in other cases,
-  -- like the list monad, it matters that the second computation isn't run if
-  -- the first succeeds.
-  (<!>) :: m a -> m a -> m a
-
--- Adds an extra error case to `FallibleM` so we can give it an Alternative
--- instance with an identity element.
-newtype SearcherM a = SearcherM { runSearcherM' :: MaybeT FallibleM a }
-  deriving (Functor, Applicative, Monad)
-
-runSearcherM :: SearcherM a -> Except (Maybe a)
-runSearcherM m = runFallibleM $ runMaybeT (runSearcherM' m)
-{-# INLINE runSearcherM #-}
-
-instance MonadFail SearcherM where
-  fail _ = SearcherM $ MaybeT $ return Nothing
-  {-# INLINE fail #-}
-
-instance Fallible SearcherM where
-  throwErrs e = SearcherM $ lift $ throwErrs e
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (SearcherM (MaybeT m)) = SearcherM $ MaybeT $
-    addErrCtx ctx $ m
-  {-# INLINE addErrCtx #-}
-
-instance Alternative SearcherM where
-  empty = SearcherM $ MaybeT $ return Nothing
-  SearcherM (MaybeT m1) <|> SearcherM (MaybeT m2) = SearcherM $ MaybeT do
-    m1 >>= \case
-      Just ans -> return $ Just ans
-      Nothing -> m2
-
-instance Searcher SearcherM where
-  (<!>) = (<|>)
-  {-# INLINE (<!>) #-}
-
-instance CtxReader SearcherM where
-  getErrCtx = SearcherM $ lift getErrCtx
-  {-# INLINE getErrCtx #-}
-
-instance Searcher [] where
-  [] <!> m = m
-  m  <!> _ = m
-  {-# INLINE (<!>) #-}
-
-instance (Monoid w, Searcher m) => Searcher (WriterT w m) where
-  WriterT m1 <!> WriterT m2 = WriterT (m1 <!> m2)
-  {-# INLINE (<!>) #-}
+throwInternal :: (HasCallStack, Fallible m) => String -> m a
+throwInternal s = throwErr $ InternalErr $ s ++ "\n" ++ prettyCallStack callStack ++ "\n"
 
 instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (WriterT m) = WriterT $ addErrCtx ctx m
-  {-# INLINE addErrCtx #-}
-
-instance Searcher m => Searcher (ReaderT r m) where
-  ReaderT f1 <!> ReaderT f2 = ReaderT \r -> f1 r <!> f2 r
-  {-# INLINE (<!>) #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
 
 instance Fallible [] where
-  throwErrs _ = []
-  {-# INLINE throwErrs #-}
-  addErrCtx _ m = m
-  {-# INLINE addErrCtx #-}
+  throwErr _ = []
+  {-# INLINE throwErr #-}
 
 instance Fallible Maybe where
-  throwErrs _ = Nothing
-  {-# INLINE throwErrs #-}
-  addErrCtx _ m = m
-  {-# INLINE addErrCtx #-}
-
--- === small pretty-printing utils ===
--- These are here instead of in PPrint.hs for import cycle reasons
-
-pprint :: Pretty a => a -> String
-pprint x = docAsStr $ pretty x
-{-# SCC pprint #-}
-
-docAsStr :: Doc ann -> String
-docAsStr doc = T.unpack $ renderStrict $ layoutPretty layout $ doc
-
-layout :: LayoutOptions
-layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
-  where unbounded = unsafePerformIO $ (Just "1"==) <$> lookupEnv "DEX_PPRINT_UNBOUNDED"
-
-traverseMergingErrs :: (Traversable f, FallibleApplicative m)
-                    => (a -> m b) -> f a -> m (f b)
-traverseMergingErrs f xs =
-  fromFallibleApplicativeWrapper $ traverse (\x -> FallibleApplicativeWrapper $ f x) xs
+  throwErr _ = Nothing
+  {-# INLINE throwErr #-}
 
 -- === instances ===
 
-instance MonadFail FallibleM where
-  fail s = throw MonadFailErr s
-  {-# INLINE fail #-}
-
 instance Fallible Except where
-  throwErrs errs = Failure errs
-  {-# INLINE throwErrs #-}
-
-  addErrCtx _ (Success ans) = Success ans
-  addErrCtx ctx (Failure (Errs errs)) =
-    Failure $ Errs [Err errTy (ctx <> ctx') s | Err errTy ctx' s <- errs]
-  {-# INLINE addErrCtx #-}
-
-instance FallibleApplicative Except where
-  mergeErrs (Success x) (Success y) = Success (x, y)
-  mergeErrs x y = Failure (getErrs x <> getErrs y)
-    where getErrs :: Except a -> Errs
-          getErrs = \case Failure e  -> e
-                          Success _ -> mempty
+  throwErr errs = Failure errs
+  {-# INLINE throwErr #-}
 
 instance MonadFail Except where
-  fail s = Failure $ Errs [Err CompilerErr mempty s]
+  fail s = Failure $ SearchFailure s
   {-# INLINE fail #-}
 
-instance Exception Errs
-
-instance Show Errs where
-  show errs = pprint errs
-
-instance Pretty Err where
-  pretty (Err e ctx s) = pretty e <> pretty s <> prettyCtx
-    -- TODO: figure out a more uniform way to newlines
-    where prettyCtx = case ctx of
-            ErrCtx _ (SrcPosCtx Nothing _) [] Nothing -> mempty
-            _ -> hardline <> pretty ctx
-
-instance Pretty ErrCtx where
-  pretty (ErrCtx maybeTextCtx maybePosCtx messages stack) =
-    -- The order of messages is outer-scope-to-inner-scope, but we want to print
-    -- them starting the other way around (Not for a good reason. It's just what
-    -- we've always done.)
-    prettyLines (reverse messages) <> highlightedSource <> prettyStack
-    where
-      highlightedSource = case (maybeTextCtx, maybePosCtx) of
-        (Just (offset, text), SrcPosCtx (Just (start, stop)) _) ->
-           hardline <> pretty (highlightRegion (start - offset, stop - offset) text)
-        _ -> mempty
-      prettyStack = case stack of
-        Nothing -> mempty
-        Just s  -> hardline <> "Compiler stack trace:" <> nest 2 (hardline <> prettyLines s)
-
-instance Pretty a => Pretty (Except a) where
-  pretty (Success x) = "Success:" <+> pretty x
-  pretty (Failure e) = "Failure:" <+> pretty e
-
-instance Pretty ErrType where
-  pretty e = case e of
-    -- NoErr tags a chunk of output that was promoted into the Err ADT
-    -- by appending Results.
-    NoErr             -> ""
-    ParseErr          -> "Parse error:"
-    SyntaxErr         -> "Syntax error: "
-    TypeErr           -> "Type error:"
-    KindErr           -> "Kind error:"
-    LinErr            -> "Linearity error: "
-    IRVariantErr      -> "Internal IR validation error: "
-    VarDefErr         -> "Error in (earlier) definition of variable: "
-    UnboundVarErr     -> "Error: variable not in scope: "
-    AmbiguousVarErr   -> "Error: ambiguous variable: "
-    RepeatedVarErr    -> "Error: variable already defined: "
-    RepeatedPatVarErr -> "Error: variable already defined within pattern: "
-    InvalidPatternErr -> "Error: not a valid pattern: "
-    NotImplementedErr ->
-      "Not implemented:" <> line <>
-      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
-    CompilerErr       ->
-      "Compiler bug!" <> line <>
-      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
-    DataIOErr         -> "IO error: "
-    MiscErr           -> "Error:"
-    RuntimeErr        -> "Runtime error"
-    ZipErr            -> "Zipping error"
-    EscapedNameErr    -> "Leaked local variables:"
-    ModuleImportErr   -> "Module import error: "
-    MonadFailErr      -> "MonadFail error (internal error)"
+instance Exception Err
 
 instance Fallible m => Fallible (ReaderT r m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (ReaderT f) = ReaderT \r -> addErrCtx ctx $ f r
-  {-# INLINE addErrCtx #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
 
 instance Catchable m => Catchable (ReaderT r m) where
   ReaderT f `catchErr` handler = ReaderT \r ->
     f r `catchErr` \e -> runReaderT (handler e) r
 
-instance FallibleApplicative m => FallibleApplicative (ReaderT r m) where
-  mergeErrs (ReaderT f1) (ReaderT f2) =
-    ReaderT \r -> mergeErrs (f1 r) (f2 r)
-
-instance CtxReader m => CtxReader (ReaderT r m) where
-  getErrCtx = lift getErrCtx
-  {-# INLINE getErrCtx #-}
-
-instance Pretty Errs where
-  pretty (Errs [err]) = pretty err
-  pretty (Errs errs) = prettyLines errs
-
 instance Fallible m => Fallible (StateT s m) where
-  throwErrs errs = lift $ throwErrs errs
-  {-# INLINE throwErrs #-}
-  addErrCtx ctx (StateT f) = StateT \s -> addErrCtx ctx $ f s
-  {-# INLINE addErrCtx #-}
+  throwErr errs = lift $ throwErr errs
+  {-# INLINE throwErr #-}
 
 instance Catchable m => Catchable (StateT s m) where
   StateT f `catchErr` handler = StateT \s ->
     f s `catchErr` \e -> runStateT (handler e) s
 
-instance CtxReader m => CtxReader (StateT s m) where
-  getErrCtx = lift getErrCtx
-  {-# INLINE getErrCtx #-}
+instance Pretty Err where
+  pretty e = pretty $ printErr e
 
-instance Semigroup ErrCtx where
-  ErrCtx text (SrcPosCtx p spanId) ctxStrs stk <> ErrCtx text' (SrcPosCtx p' spanId') ctxStrs' stk' =
-    ErrCtx (leftmostJust  text text')
-           (SrcPosCtx (rightmostJust p p') (rightmostJust spanId spanId'))
-           (ctxStrs <> ctxStrs')
-           (leftmostJust stk stk')  -- We usually extend errors form the right
+instance ToJSON SrcId
+deriving instance ToJSONKey SrcId
 
-instance Monoid ErrCtx where
-  mempty = ErrCtx Nothing emptySrcPosCtx [] Nothing
-
--- === misc util stuff ===
-
-leftmostJust :: Maybe a -> Maybe a -> Maybe a
-leftmostJust (Just x) _ = Just x
-leftmostJust Nothing y  = y
-
-rightmostJust :: Maybe a -> Maybe a -> Maybe a
-rightmostJust = flip leftmostJust
-
-prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
-prettyLines xs = foldMap (\d -> pretty d <> hardline) xs
-
-highlightRegion :: (Int, Int) -> Text -> Text
-highlightRegion pos@(low, high) s
-  | low > high || high > T.length s =
-      error $ "Bad region: \n" ++ show pos ++ "\n" ++ T.unpack s
-  | otherwise =
-    -- TODO: flag to control line numbers
-    -- (disabling for now because it makes quine tests tricky)
-    -- "Line " ++ show (1 + lineNum) ++ "\n"
-    allLines !! lineNum <> "\n" <>
-    T.replicate start " " <> T.replicate (stop - start) "^" <> "\n"
-  where
-    allLines = T.lines s
-    (lineNum, start, stop) = getPosTriple pos allLines
-
-getPosTriple :: (Int, Int) -> [Text] -> (Int, Int, Int)
-getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
-  where
-    lineLengths = map ((+1) . T.length) lines_
-    lineOffsets = cumsum lineLengths
-    lineNum = maxLT lineOffsets start
-    offset = lineOffsets  !! lineNum
-    stop' = min (stop - offset) (lineLengths !! lineNum)
-
-cumsum :: [Int] -> [Int]
-cumsum xs = scanl (+) 0 xs
-
-maxLT :: Ord a => [a] -> a -> Int
-maxLT [] _ = 0
-maxLT (x:xs) n = if n < x then -1
-                          else 1 + maxLT xs n
+instance Hashable InfVarDesc
+instance Store InfVarDesc

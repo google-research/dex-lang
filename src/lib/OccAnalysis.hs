@@ -20,6 +20,7 @@ import Occurrence hiding (Var)
 import Occurrence qualified as Occ
 import Types.Core
 import Types.Primitives
+import Types.Top
 import QueryType
 
 -- === External API ===
@@ -28,13 +29,9 @@ import QueryType
 -- annotation holding a summary of how that binding is used.  It also eliminates
 -- unused pure bindings as it goes, since it has all the needed information.
 
-analyzeOccurrences :: EnvReader m => STopLam n -> m n (STopLam n)
-analyzeOccurrences = liftLamExpr analyzeOccurrencesBlock
+analyzeOccurrences :: EnvReader m => TopLam SimpIR n -> m n (TopLam SimpIR n)
+analyzeOccurrences lam = liftLamExpr lam \e -> liftOCCM $ occ accessOnce e
 {-# INLINE analyzeOccurrences #-}
-
-analyzeOccurrencesBlock :: EnvReader m => SBlock n -> m n (SBlock n)
-analyzeOccurrencesBlock = liftOCCM . occNest accessOnce
-{-# SCC analyzeOccurrencesBlock #-}
 
 -- === Overview ===
 
@@ -198,17 +195,18 @@ summaryExpr = \case
 
 summary :: SAtom n -> OCCM n (IxExpr n)
 summary atom = case atom of
-  Var v -> ixExpr $ atomVarName v
-  Con c -> constructor c
-  _ -> unknown atom
+  Stuck _ stuck -> case stuck of
+    Var v -> ixExpr $ atomVarName v
+    _ -> unknown atom
+  Con c -> case c of
+    -- TODO Represent the actual literal value?
+    Lit _ -> return $ Deterministic []
+    ProdCon elts -> Product <$> mapM summary elts
+    SumCon _ tag payload -> Inject tag <$> summary payload
+    HeapVal -> invalid "HeapVal"
+    DepPair _ _ _ -> error "not implemented"
   where
     invalid tag = error $ "Unexpected indexing by " ++ tag
-    constructor = \case
-      -- TODO Represent the actual literal value?
-      Lit _ -> return $ Deterministic []
-      ProdCon elts -> Product <$> mapM summary elts
-      SumCon _ tag payload -> Inject tag <$> summary payload
-      HeapVal -> invalid "HeapVal"
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll
@@ -249,15 +247,25 @@ class HasOCC (e::E) where
 
 instance HasOCC SAtom where
   occ a = \case
+    Stuck t e -> Stuck <$> occ a t <*> occ a e
+    Con con -> liftM Con $ runOCCMVisitor a $ visitGeneric con
+
+instance HasOCC SStuck where
+  occ a = \case
     Var (AtomVar n ty) -> do
       modify (<> FV (singletonNameMapE n $ AccessInfo One a))
       ty' <- occTy ty
       return $ Var (AtomVar n ty')
-    ProjectElt t i x -> ProjectElt <$> occ a t <*> pure i <*> occ a x
-    atom -> runOCCMVisitor a $ visitAtomPartial atom
+    StuckProject i x -> StuckProject <$> pure i <*> occ a x
+    StuckTabApp array ixs -> do
+      (a', ixs') <- occIdx a ixs
+      array' <- occ a' array
+      return $ StuckTabApp array' ixs'
+    PtrVar t p -> return $ PtrVar t p
+    RepValAtom x -> return $ RepValAtom x
 
 instance HasOCC SType where
-  occ a ty = runOCCMVisitor a $ visitTypePartial ty
+  occ a (TyCon con) = liftM TyCon $ runOCCMVisitor a $ visitGeneric con
 
 -- TODO What, actually, is the right thing to do for type annotations?  Do we
 -- want a rule like "we never inline into type annotations", or such?  For
@@ -268,7 +276,7 @@ occTy ty = occ accessOnce ty
 instance HasOCC SLam where
   occ a (LamExpr bs body) = do
     lam@(LamExpr bs' _) <- refreshAbs (Abs bs body) \bs' body' ->
-      LamExpr bs' <$> occNest (sink a) body'
+      LamExpr bs' <$> occ (sink a) body'
     countFreeVarsAsOccurrencesB bs'
     return lam
 
@@ -290,11 +298,11 @@ instance HasOCC (EffTy SimpIR) where
     return $ EffTy effs ty'
 
 data ElimResult (n::S) where
-  ElimSuccess :: Abs (Nest SDecl) SAtom n -> ElimResult n
-  ElimFailure :: SDecl n l -> UsageInfo -> Abs (Nest SDecl) SAtom l -> ElimResult n
+  ElimSuccess :: Abs (Nest SDecl) SExpr n -> ElimResult n
+  ElimFailure :: SDecl n l -> UsageInfo -> Abs (Nest SDecl) SExpr l -> ElimResult n
 
-occNest :: Access n -> Abs (Nest SDecl) SAtom n
-        -> OCCM n (Abs (Nest SDecl) SAtom n)
+occNest :: Access n -> Abs (Nest SDecl) SExpr n
+        -> OCCM n (Abs (Nest SDecl) SExpr n)
 occNest a (Abs decls ans) = case decls of
   Empty -> Abs Empty <$> occ a ans
   Nest d@(Let _ binding) ds -> do
@@ -354,11 +362,15 @@ instance HasOCC (DeclBinding SimpIR) where
 
 instance HasOCC SExpr where
   occ a = \case
-    TabApp t array ixs -> do
+    Block effTy (Abs decls ans) -> do
+      effTy' <- occ a effTy
+      Abs decls' ans' <- occNest a (Abs decls ans)
+      return $ Block effTy' (Abs decls' ans')
+    TabApp t array ix -> do
       t' <- occTy t
-      (a', ixs') <- go a ixs
+      (a', ix') <- occIdx a ix
       array' <- occ a' array
-      return $ TabApp t' array' ixs'
+      return $ TabApp t' array' ix'
     Case scrut alts (EffTy effs ty) -> do
       scrut' <- occ accessOnce scrut
       scrutIx <- summary scrut
@@ -372,12 +384,11 @@ instance HasOCC SExpr where
       ref' <- occ a ref
       PrimOp . RefOp ref' <$> occ a op
     expr -> occGeneric a expr
-    where
-      go acc [] = return (acc, [])
-      go acc (ix:ixs) = do
-        (acc', ixs') <- go acc ixs
-        (summ, ix') <- occurrenceAndSummary ix
-        return (location summ acc', ix':ixs')
+
+occIdx :: Access n -> SAtom n -> OCCM n (Access n, SAtom n)
+occIdx acc ix = do
+  (summ, ix') <- occurrenceAndSummary ix
+  return (location summ acc, ix')
 
 -- Arguments: Usage of the return value, summary of the scrutinee, the
 -- alternative itself.
@@ -391,7 +402,7 @@ occAlt acc scrut alt = do
     -- case statement in that event.
     scrutIx <- unknown $ sink scrut
     extend nb scrutIx do
-      body' <- occNest (sink acc) body
+      body' <- occ (sink acc) body
       return $ Abs b body'
   ty' <- occTy ty
   return $ Abs (b':>ty') body'
@@ -411,10 +422,10 @@ instance HasOCC (Hof SimpIR) where
       ixDict' <- inlinedLater ixDict
       occWithBinder (Abs b body) \b' body' -> do
         extend b' (Occ.Var $ binderName b') do
-          body'' <- censored (abstractFor b') (occNest accessOnce body')
+          body'' <- censored (abstractFor b') (occ accessOnce body')
           return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
-    While body -> While <$> censored useManyTimes (occNest accessOnce body)
+    While body -> While <$> censored useManyTimes (occ accessOnce body)
     RunReader ini bd -> do
       iniIx <- summary ini
       bd' <- oneShot a [Deterministic [], iniIx] bd
@@ -451,7 +462,7 @@ instance HasOCC (Hof SimpIR) where
       return $ RunState Nothing ini' bd'
     RunState (Just _) _ _ ->
       error "Expecting to do occurrence analysis before destination passing."
-    RunIO bd -> RunIO <$> occNest a bd
+    RunIO bd -> RunIO <$> occ a bd
     RunInit _ ->
       -- Though this is probably not too hard to implement.  Presumably
       -- the lambda is one-shot.
@@ -459,7 +470,7 @@ instance HasOCC (Hof SimpIR) where
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) =
-  LamExpr Empty <$> occNest acc body
+  LamExpr Empty <$> occ acc body
 oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
     extend b' (sink ix) do

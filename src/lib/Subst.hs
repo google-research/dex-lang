@@ -16,10 +16,13 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 
 import Name
+import MTL1
 import IRVariants
 import Types.Core
+import Types.Top
 import Core
 import qualified RawName as R
+import QueryTypePure
 import Err
 
 -- === SubstReader class ===
@@ -34,6 +37,10 @@ lookupSubstM name = (!name) <$> getSubst
 dropSubst :: (SubstReader v m, FromName v) => m o o a -> m i o a
 dropSubst cont = withSubst idSubst cont
 {-# INLINE dropSubst #-}
+
+withVoidSubst :: (SubstReader v m, FromName v) => m VoidS o a -> m i o a
+withVoidSubst cont = withSubst (newSubst absurdNameFunction) cont
+{-# INLINE withVoidSubst #-}
 
 extendSubst :: SubstReader v m => SubstFrag v i i' o -> m i' o a -> m i o a
 extendSubst frag cont = do
@@ -146,6 +153,12 @@ fromConstAbs (Abs b e) = hoist b e
 
 extendRenamer :: (SubstReader v m, FromName v) => SubstFrag Name i i' o -> m i' o r -> m i o r
 extendRenamer frag = extendSubst (fmapSubstFrag (const fromName) frag)
+
+extendBinderRename
+  :: (SubstReader v m, FromName v, BindsAtMostOneName b c, BindsOneName b' c)
+  => b i i' -> b' o o' -> m i' o' r -> m i o' r
+extendBinderRename b b' cont = extendSubst (b@>fromName (binderName b')) cont
+{-# INLINE extendBinderRename #-}
 
 applyRename
   :: (ScopeReader m, RenameE e, SinkableE e)
@@ -267,6 +280,17 @@ instance ToSubstVal (SubstVal atom) atom where
 
 type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Atom)
 
+toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar v = do
+  ty <- getType <$> lookupAtomName v
+  return $ AtomVar v ty
+
+lookupAtomSubst :: (IRRep r, SubstReader AtomSubstVal m, EnvReader2 m) => AtomName r i -> m i o (Atom r o)
+lookupAtomSubst v = do
+  lookupSubstM v >>= \case
+    Rename v' -> toAtom <$> toAtomVar v'
+    SubstVal x -> return x
+
 atomSubstM :: (AtomSubstReader v m, EnvReader2 m, SinkableE e, SubstE AtomSubstVal e)
            => e i -> m i o (e o)
 atomSubstM e = do
@@ -280,36 +304,42 @@ asAtomSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
 -- === SubstReaderT transformer ===
 
 newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
-  SubstReaderT { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
+  SubstReaderT' { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
+
+pattern SubstReaderT :: (Subst v i o -> m o a) -> SubstReaderT v m i o a
+pattern SubstReaderT f = SubstReaderT' (ReaderT f)
+
+runSubstReaderT :: Subst v i o -> SubstReaderT v m i o a -> m o a
+runSubstReaderT env m = runReaderT (runSubstReaderT' m) env
+{-# INLINE runSubstReaderT #-}
 
 instance (forall n. Functor (m n)) => Functor (SubstReaderT v m i o) where
-  fmap f (SubstReaderT m) = SubstReaderT $ fmap f m
+  fmap f (SubstReaderT' m) = SubstReaderT' $ fmap f m
   {-# INLINE fmap #-}
 
 instance Monad1 m => Applicative (SubstReaderT v m i o) where
-  pure   = SubstReaderT . pure
+  pure   = SubstReaderT' . pure
   {-# INLINE pure #-}
-  liftA2 f (SubstReaderT x) (SubstReaderT y) = SubstReaderT $ liftA2 f x y
+  liftA2 f (SubstReaderT' x) (SubstReaderT' y) = SubstReaderT' $ liftA2 f x y
   {-# INLINE liftA2 #-}
-  (SubstReaderT f) <*> (SubstReaderT x) = SubstReaderT $ f <*> x
+  (SubstReaderT' f) <*> (SubstReaderT' x) = SubstReaderT' $ f <*> x
   {-# INLINE (<*>) #-}
 
 instance (forall n. Monad (m n)) => Monad (SubstReaderT v m i o) where
-  return = SubstReaderT . return
+  return = SubstReaderT' . return
   {-# INLINE return #-}
-  (SubstReaderT m) >>= f = SubstReaderT (m >>= (runSubstReaderT' . f))
+  (SubstReaderT' m) >>= f = SubstReaderT' (m >>= (runSubstReaderT' . f))
   {-# INLINE (>>=) #-}
 
 deriving instance (Monad1 m, MonadFail1   m) => MonadFail   (SubstReaderT v m i o)
 deriving instance (Monad1 m, Alternative1 m) => Alternative (SubstReaderT v m i o)
-deriving instance (Fallible1 m) => Fallible (SubstReaderT v m i o)
+deriving instance Fallible1  m => Fallible  (SubstReaderT v m i o)
 deriving instance Catchable1 m => Catchable (SubstReaderT v m i o)
-deriving instance CtxReader1 m => CtxReader (SubstReaderT v m i o)
 
 type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
 
 liftSubstReaderT :: Monad1 m => m o a -> SubstReaderT v m i o a
-liftSubstReaderT m = SubstReaderT $ lift m
+liftSubstReaderT m = SubstReaderT' $ lift m
 {-# INLINE liftSubstReaderT #-}
 
 runScopedSubstReader :: Distinct o => Scope o -> Subst v i o
@@ -318,38 +348,42 @@ runScopedSubstReader scope env m =
   runIdentity $ runScopeReaderT scope $ runSubstReaderT env m
 {-# INLINE runScopedSubstReader #-}
 
-runSubstReaderT :: Subst v i o -> SubstReaderT v m i o a -> m o a
-runSubstReaderT env m = runReaderT (runSubstReaderT' m) env
-{-# INLINE runSubstReaderT #-}
-
 withSubstReaderT :: FromName v => SubstReaderT v m n n a -> m n a
 withSubstReaderT = runSubstReaderT idSubst
 {-# INLINE withSubstReaderT #-}
 
 instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
-  getSubst = SubstReaderT ask
+  getSubst = SubstReaderT' ask
   {-# INLINE getSubst #-}
-  withSubst env (SubstReaderT cont) = SubstReaderT $ withReaderT (const env) cont
+  withSubst env (SubstReaderT' cont) = SubstReaderT' $ withReaderT (const env) cont
   {-# INLINE withSubst #-}
 
 instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
-  unsafeGetScope = SubstReaderT $ lift unsafeGetScope
+  unsafeGetScope = liftSubstReaderT unsafeGetScope
   {-# INLINE unsafeGetScope #-}
-  getDistinct = SubstReaderT $ lift getDistinct
+  getDistinct = liftSubstReaderT getDistinct
   {-# INLINE getDistinct #-}
 
 instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
-  unsafeGetEnv = SubstReaderT $ lift unsafeGetEnv
+  unsafeGetEnv = liftSubstReaderT unsafeGetEnv
   {-# INLINE unsafeGetEnv #-}
 
 instance (SinkableV v, ScopeReader m, EnvExtender m)
          => EnvExtender (SubstReaderT v m i) where
-  refreshAbs ab cont = SubstReaderT $ ReaderT \subst ->
+  refreshAbs ab cont = SubstReaderT \subst ->
     refreshAbs ab \b e -> do
       subst' <- sinkM subst
-      let SubstReaderT (ReaderT cont') = cont b e
+      let SubstReaderT cont' = cont b e
       cont' subst'
   {-# INLINE refreshAbs #-}
+
+instance MonadDiffState1 m s d => MonadDiffState1 (SubstReaderT v m i) s d where
+  withDiffState s m =
+    SubstReaderT \subst -> do
+      withDiffState s $ runSubstReaderT subst m
+
+  updateDiffStateM d = liftSubstReaderT $ updateDiffStateM d
+  getDiffState = liftSubstReaderT getDiffState
 
 type SubstEnvReaderM v = SubstReaderT v EnvReaderM :: MonadKind2
 
@@ -362,25 +396,24 @@ liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
 
 instance (SinkableV v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (SubstReaderT v m i) where
-  refreshAbsScope ab cont = SubstReaderT $ ReaderT \env ->
+  refreshAbsScope ab cont = SubstReaderT \env ->
     refreshAbsScope ab \b e -> do
-      let SubstReaderT (ReaderT cont') = cont b e
+      let SubstReaderT cont' = cont b e
       env' <- sinkM env
       cont' env'
 
 instance (SinkableV v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
-  liftIO m = SubstReaderT $ lift $ liftIO m
+  liftIO m = liftSubstReaderT $ liftIO m
   {-# INLINE liftIO #-}
 
 instance (Monad1 m, MonadState (s o) (m o)) => MonadState (s o) (SubstReaderT v m i o) where
-  state = SubstReaderT . lift . state
+  state = liftSubstReaderT . state
   {-# INLINE state #-}
 
 instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT v m i o) where
-  ask = SubstReaderT $ ReaderT $ const ask
+  ask = SubstReaderT $ const ask
   {-# INLINE ask #-}
-  local r (SubstReaderT (ReaderT f)) = SubstReaderT $ ReaderT $ \env ->
-    local r $ f env
+  local r (SubstReaderT' (ReaderT f)) = SubstReaderT \env -> local r $ f env
   {-# INLINE local #-}
 
 -- === instances ===
@@ -465,6 +498,9 @@ instance FromName v => SubstE v (LiftE a) where
 
 instance SubstE v e => SubstE v (ListE e) where
   substE env (ListE xs) = ListE $ map (substE env) xs
+
+instance SubstE v e => SubstE v (RListE e) where
+  substE env (RListE xs) = RListE $ fmap (substE env) xs
 
 instance SubstE v e => SubstE v (NonEmptyListE e) where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs

@@ -43,7 +43,8 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
                , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
-import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..) )
+import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
+import PPrint
 import Err
 import IRVariants
 
@@ -228,7 +229,7 @@ class SinkableB b => RenameB (b::B) where
 class (SinkableV v , forall c. Color c => RenameE (v c)) => RenameV (v::V)
 
 
-type HasNamesE e = (RenameE e, HoistableE e)
+type HasNamesE e = (RenameE e, SinkableE e, HoistableE e)
 type HasNamesB = RenameB
 
 instance RenameV Name
@@ -247,6 +248,17 @@ instance Color c => RenameB (NameBinder c) where
                    _ -> sink env <>> b @> (fromName $ binderName b')
       cont (scope', env') b'
 
+-- === E-kinded functor ===
+
+class FunctorE (f::E -> E) where
+  fmapE :: (forall l. e l -> e' l) -> f e n -> f e' n
+
+instance FunctorE ListE where
+  fmapE f (ListE xs) = ListE (fmap f xs)
+
+instance FunctorE (Abs b) where
+  fmapE f (Abs b e) = Abs b (f e)
+
 -- === monadic type classes for reading and extending envs and scopes ===
 
 data WithScope (e::E) (n::S) where
@@ -261,6 +273,10 @@ instance SinkableE e => SinkableE (WithScope e) where
 class Monad1 m => ScopeReader (m::MonadKind1) where
   unsafeGetScope :: m n (Scope n)
   getDistinct :: m n (DistinctEvidence n)
+
+withDistinct :: ScopeReader m => (Distinct n => m n a) -> m n a
+withDistinct cont = getDistinct >>= \Distinct -> cont
+{-# INLINE withDistinct #-}
 
 class ScopeReader m => ScopeExtender (m::MonadKind1) where
   -- We normally use the EnvReader version, `refreshAbs`, but sometime we're
@@ -430,6 +446,9 @@ type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
 type OrdV v = (forall (c::C) (n::S). Ord (v c n)) :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
 
+type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
+type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
+
 type HashableE (e::E) = forall n. Hashable (e n)
 
 data UnitE (n::S) = UnitE
@@ -468,6 +487,9 @@ forgetEitherE (RightE x) = x
 {-# INLINE forgetEitherE #-}
 
 newtype ListE (e::E) (n::S) = ListE { fromListE :: [e n] }
+        deriving (Show, Eq, Generic)
+
+newtype RListE (e::E) (n::S) = RListE { fromRListE :: (SnocList (e n)) }
         deriving (Show, Eq, Generic)
 
 newtype MapE (k::E) (v::E) (n::S) = MapE { fromMapE :: M.Map (k n) (v n) }
@@ -524,6 +546,9 @@ deriving instance (ShowB b1, ShowB b2) => Show (PairB b1 b2 n l)
 data WithAttrB (a:: *) (b::B) (n::S) (l::S) =
   WithAttrB {getAttr :: a , withoutAttr :: b n l }
   deriving (Show, Generic)
+
+pattern ZipB :: [a] -> Nest b n l -> Nest (WithAttrB a b) n l
+pattern ZipB attrs bs <- (unzipAttrs -> (attrs, bs))
 
 unzipAttrs :: Nest (WithAttrB a b) n l -> ([a], Nest b n l)
 unzipAttrs Empty = ([], Empty)
@@ -859,12 +884,6 @@ type MonadIO2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadIO (m n l)
 
 type Catchable1 (m :: MonadKind1) = forall (n::S)        . Catchable (m n  )
 type Catchable2 (m :: MonadKind2) = forall (n::S) (l::S) . Catchable (m n l)
-
-type Searcher1 (m :: MonadKind1) = forall (n::S)        . Searcher (m n  )
-type Searcher2 (m :: MonadKind2) = forall (n::S) (l::S) . Searcher (m n l)
-
-type CtxReader1 (m :: MonadKind1) = forall (n::S)        . CtxReader (m n  )
-type CtxReader2 (m :: MonadKind2) = forall (n::S) (l::S) . CtxReader (m n l)
 
 type MonadFail1 (m :: MonadKind1) = forall (n::S)        . MonadFail (m n  )
 type MonadFail2 (m :: MonadKind2) = forall (n::S) (l::S) . MonadFail (m n l)
@@ -1316,12 +1335,6 @@ instance (Monad1 m, Alternative (m n)) => Alternative (OutReaderT e m n) where
       f1 env <|> f2 env
   {-# INLINE (<|>) #-}
 
-instance Searcher1 m => Searcher (OutReaderT e m n) where
-  OutReaderT (ReaderT f1) <!> OutReaderT (ReaderT f2) =
-    OutReaderT $ ReaderT \env ->
-      f1 env <!> f2 env
-  {-# INLINE (<!>) #-}
-
 instance MonadWriter w (m n) => MonadWriter w (OutReaderT e m n) where
   tell w = OutReaderT $ lift $ tell w
   {-# INLINE tell #-}
@@ -1549,14 +1562,7 @@ instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, 
 
 instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, Fallible m)
          => Fallible (InplaceT bindings decls m n) where
-  throwErrs errs = UnsafeMakeInplaceT \_ _ -> throwErrs errs
-  addErrCtx ctx cont = UnsafeMakeInplaceT \env decls ->
-    addErrCtx ctx $ unsafeRunInplaceT cont env decls
-  {-# INLINE addErrCtx #-}
-
-instance (ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m, CtxReader m)
-         => CtxReader (InplaceT bindings decls m n) where
-  getErrCtx = lift1 getErrCtx
+  throwErr errs = UnsafeMakeInplaceT \_ _ -> throwErr errs
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m
          , Alternative m)
@@ -1566,13 +1572,6 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls, Monad m
   UnsafeMakeInplaceT f1 <|> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
     f1 env decls <|> f2 env decls
   {-# INLINE (<|>) #-}
-
-instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
-           Monad m, Alternative m, Searcher m)
-         => Searcher (InplaceT bindings decls m n) where
-  UnsafeMakeInplaceT f1 <!> UnsafeMakeInplaceT f2 = UnsafeMakeInplaceT \env decls ->
-    f1 env decls <!> f2 env decls
-  {-# INLINE (<!>) #-}
 
 instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls,
            Catchable m)
@@ -1632,7 +1631,7 @@ newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a ::
   { unsafeRunDoubleInplaceT
     :: StateT (Scope UnsafeS, d1 UnsafeS UnsafeS) (InplaceT bindings d2 m n) a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , CtxReader, MonadWriter w, MonadReader r, MonadIO, Catchable)
+           , MonadWriter w, MonadReader r, MonadIO, Catchable)
 
 liftDoubleInplaceT
   :: (Monad m, ExtOutMap bindings d2, OutFrag d2)
@@ -2004,11 +2003,11 @@ instance (SinkableE k, SinkableE v, OrdE k) => SinkableE (MapE k v) where
       itemsE = ListE $ toPairE <$> M.toList m
       newItems = fromPairE <$> (fromListE $ sinkingProofE fresh itemsE)
 
-instance SinkableE e => SinkableE (ListE e) where
-  sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
-
 instance SinkableE e => SinkableE (NonEmptyListE e) where
   sinkingProofE fresh (NonEmptyListE xs) = NonEmptyListE $ fmap (sinkingProofE fresh) xs
+
+instance SinkableE e => SinkableE (ListE e) where
+  sinkingProofE fresh (ListE xs) = ListE $ map (sinkingProofE fresh) xs
 
 instance AlphaEqE e => AlphaEqE (ListE e) where
   alphaEqE (ListE xs) (ListE ys)
@@ -2016,10 +2015,27 @@ instance AlphaEqE e => AlphaEqE (ListE e) where
     | otherwise              = zipErr
 
 instance Monoid (ListE e n) where
-  mempty = ListE []
+  mempty = ListE mempty
 
 instance Semigroup (ListE e n) where
   ListE xs <> ListE ys = ListE $ xs <> ys
+
+instance SinkableE e => SinkableE (RListE e) where
+  sinkingProofE fresh (RListE xs) = RListE $ fmap (sinkingProofE fresh) xs
+
+instance RenameE e => RenameE (RListE e) where
+  renameE env (RListE xs) = RListE $ fmap (renameE env) xs
+
+instance AlphaEqE e => AlphaEqE (RListE e) where
+  alphaEqE (RListE xs) (RListE ys)
+    | length xs == length ys = mapM_ (uncurry alphaEqE) (zip (fromReversedList xs) (fromReversedList ys))
+    | otherwise              = zipErr
+
+instance Monoid (RListE e n) where
+  mempty = RListE mempty
+
+instance Semigroup (RListE e n) where
+  RListE xs <> RListE ys = RListE $ xs <> ys
 
 instance (EqE k, HashableE k) => GenericE (HashMapE k v) where
   type RepE (HashMapE k v) = ListE (PairE k v)
@@ -2148,6 +2164,11 @@ instance (PrettyE e1, PrettyE e2) => Pretty (EitherE e1 e2 n) where
 
 instance PrettyE e => Pretty (ListE e n) where
   pretty (ListE e) = pretty e
+
+instance PrettyE e => Pretty (RListE e n) where
+  pretty (RListE e) = pretty $ unsnoc e
+
+deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
 
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )
@@ -2731,18 +2752,20 @@ canonicalizeForPrinting e cont = do
     ClosedWithScope scope e' ->
       cont $ renameE (scope, newSubst id) e'
 
-liftHoistExcept :: Fallible m => HoistExcept a -> m a
-liftHoistExcept (HoistSuccess x) = return x
-liftHoistExcept (HoistFailure vs) = throw EscapedNameErr (pprint vs)
+pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> String
+pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
-liftHoistExcept' :: Fallible m => String -> HoistExcept a -> m a
-liftHoistExcept' _ (HoistSuccess x) = return x
-liftHoistExcept' msg (HoistFailure vs) =
-  throw EscapedNameErr $ (pprint vs) ++ "\n" ++ msg
+liftHoistExcept :: Fallible m => SrcId -> HoistExcept a -> m a
+liftHoistExcept _ (HoistSuccess x) = return x
+liftHoistExcept sid (HoistFailure vs) = throw sid $ EscapedNameErr $ map pprint vs
 
 ignoreHoistFailure :: HasCallStack => HoistExcept a -> a
 ignoreHoistFailure (HoistSuccess x) = x
 ignoreHoistFailure (HoistFailure _) = error "hoist failure"
+
+-- TODO: make this a no-op in the non-debug build
+hardHoist :: (HasCallStack, BindsNames b, HoistableE e) => b n l -> e l -> e n
+hardHoist b e = ignoreHoistFailure $ hoist b e
 
 hoist :: (BindsNames b, HoistableE e) => b n l -> e l -> HoistExcept (e n)
 hoist b e =
@@ -2822,10 +2845,11 @@ exchangeBs (PairB b1 b2) =
 
 partitionBinders
   :: forall b b1 b2 m n l
-  . (SinkableB b2, HoistableB b1, BindsNames b2, Fallible m, Distinct l) => Nest b n l
+  . (SinkableB b2, HoistableB b1, BindsNames b2, Fallible m, Distinct l)
+  => SrcId -> Nest b n l
   -> (forall n' l'. b n' l' -> m (EitherB b1 b2 n' l'))
   -> m (PairB (Nest b1) (Nest b2) n l)
-partitionBinders bs assignBinder = go bs where
+partitionBinders sid bs assignBinder = go bs where
   go :: Distinct l' => Nest b n' l' -> m (PairB (Nest b1) (Nest b2) n' l')
   go = \case
     Empty -> return $ PairB Empty Empty
@@ -2836,7 +2860,7 @@ partitionBinders bs assignBinder = go bs where
         RightB b2 -> withSubscopeDistinct bs2
           case exchangeBs (PairB b2 bs1) of
             HoistSuccess (PairB bs1' b2') -> return $ PairB bs1' (Nest b2' bs2)
-            HoistFailure vs -> throw EscapedNameErr $ (pprint vs)
+            HoistFailure vs -> throw sid $ EscapedNameErr $ map pprint vs
 
 -- NameBinder has no free vars, so there's no risk associated with hoisting.
 -- The scope is completely distinct, so their exchange doesn't create any accidental
@@ -2868,6 +2892,10 @@ abstractFreeVarsNoAnn vs e =
     Abs bs e' -> Abs bs' e'
       where bs' = fmapNest (\(b:>UnitE) -> b) bs
 
+unsafeFromNest :: Nest b n l -> [b UnsafeS UnsafeS]
+unsafeFromNest Empty = []
+unsafeFromNest (Nest b rest) = unsafeCoerceB b : unsafeFromNest rest
+
 instance Color c => HoistableB (NameBinder c) where
   freeVarsB _ = mempty
 
@@ -2887,6 +2915,9 @@ instance HoistableB UnitB where
 
 instance HoistableE e => HoistableE (ListE e) where
   freeVarsE (ListE xs) = foldMap freeVarsE xs
+
+instance HoistableE e => HoistableE (RListE e) where
+  freeVarsE (RListE xs) = foldMap freeVarsE xs
 
 -- === environments ===
 
@@ -3050,6 +3081,12 @@ toSubstPairs (UnsafeMakeSubst m) =
 
 data WithRenamer e i o where
   WithRenamer :: SubstFrag Name i i' o -> e i' -> WithRenamer e i o
+
+instance Category UnitB where
+  id = UnitB
+  {-# INLINE id #-}
+  UnitB . UnitB = UnitB
+  {-# INLINE (.) #-}
 
 instance Category (Nest b) where
   id = Empty
@@ -3360,6 +3397,13 @@ hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
 -- XXX: the intention is that we won't have to use this much
 unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
 unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
+
+-- === Pretty instances ===
+
+instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+
+instance PrettyE ann => Pretty (BinderP c ann n l)
+  where pretty (b:>ty) = pretty b <> ":" <> pretty ty
 
 -- === notes ===
 

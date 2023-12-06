@@ -28,7 +28,7 @@ Base64 = Byte -- first two bits should be zero
 -- This could go in the prelude, or in a library of array-dicing functions.
 -- An explicit "view" builder would be good here, to avoid copies
 def get_chunks(chunkSize:Nat, padVal:a, xs:n=>a)
-    -> List (Fin chunkSize => a) given (n|Ix, a) =
+    -> List (Fin chunkSize => a) given (n|Ix, a:Type) =
   numChunks = idiv_ceil (size n) chunkSize
   paddedSize = numChunks * chunkSize
   xsPadded = pad_to (Fin paddedSize) padVal xs
@@ -44,29 +44,28 @@ def base64s_to_bytes(chunk : Fin 4 => Base64) -> Fin 3 => Byte =
 def bytes_to_base64s(chunk : Fin 3 => Byte) -> Fin 4 => Base64 =
   [a, b, c] = chunk
   -- '?' is 00111111
-  map (\x. x .&. '?') $
-    [                 a .>>. 2
-    , (a .<<. 4) .|. (b .>>. 4)
-    , (b .<<. 2) .|. (c .>>. 6)
-    ,  c                    ]
+  tmp =  [                 a .>>. 2
+         , (a .<<. 4) .|. (b .>>. 4)
+         , (b .<<. 2) .|. (c .>>. 6)
+         ,  c                    ]
+  each tmp \x. x .&. '?'
 
 def base64_to_ascii(x:Base64) -> Char =
   encoding_table[from_ordinal (w8_to_n x)]
 
 def encode_chunk(chunk : Fin 3 => Char) -> Fin 4 => Char =
-  map base64_to_ascii $ bytes_to_base64s chunk
+  each (bytes_to_base64s chunk) base64_to_ascii
 
 -- TODO: the `AsList` unpacking is very tedious. Daniel's change will help
 def base64_encode(s:String) -> String =
   AsList(n, cs) = s
   AsList(numChunks, chunks) = get_chunks 3 '\NUL' cs
-  encodedChunks = map encode_chunk chunks
-  flattened = for pair.
-    (i, j) = pair
-    encodedChunks[i, j]
+  encodedChunks = each chunks encode_chunk
+  FlatIxType : Type = (Fin numChunks, Fin 4)
+  flattened = flatten2D(encodedChunks)
   padChars = rem (unsafe_nat_diff 3 (rem n 3)) 3
   validOutputChars = unsafe_nat_diff (numChunks * 4) padChars
-  to_list for i. case ordinal i < validOutputChars of
+  to_list for i:FlatIxType. case ordinal i < validOutputChars of
     True  -> flattened[i]
     False -> '='
 
@@ -74,7 +73,7 @@ def ascii_to_base64(c:Char) -> Maybe Base64 =
   decoding_table[from_ordinal (w8_to_n c)]
 
 def decode_chunk(chunk : Fin 4 => Char) -> Maybe (Fin 3 => Char) =
-  case seq_maybes $ map ascii_to_base64 chunk of
+  case chunk | each(ascii_to_base64) | seq_maybes of
     Nothing -> Nothing
     Just base64s -> Just $ base64s_to_bytes base64s
 
@@ -87,16 +86,14 @@ def replace(pair:(a,a), x:a) -> a given (a|Eq) =
 
 def base64_decode(s:String) -> Maybe String =
   AsList(n, cs) = s
-  numValidInputChars = sum for i. b_to_n $ cs[i] /= '='
+  numValidInputChars = sum for i:(Fin n). b_to_n $ cs[i] /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
-  csZeroed = map (\x. replace(('=', 'A'), x)) cs  -- swap padding char with 'zero' char
+  csZeroed = each cs \c. replace(('=', 'A'), c)  -- swap padding char with 'zero' char
   AsList(_, chunks) = get_chunks 4 '\NUL' csZeroed
-  case seq_maybes $ map decode_chunk chunks of
+  case chunks | each(decode_chunk) | seq_maybes of
     Nothing -> Nothing
     Just decodedChunks ->
-      resultPadded = for pair.
-        (i, j) = pair
-        decodedChunks[i, j]
+      resultPadded = flatten2D(decodedChunks)
       Just $ to_list $ slice resultPadded 0 (Fin numValidOutputChars)
 
 '## PNG FFI
@@ -108,7 +105,7 @@ Gif  : Type = String
 foreign "encodePNG" encodePNG : (RawPtr, Word32, Word32) -> {IO} (Word32, RawPtr)
 
 def make_png(img:n=>m=>(Fin 3)=>Word8) -> Png given (n|Ix, m|Ix) = unsafe_io \.
-  AsList(_, imgFlat) = to_list for triple.
+  AsList(_, imgFlat) = to_list for triple:(n,(m,Fin 3)).
     (i, (j, k)) = triple
     img[i, j, k]
   with_table_ptr imgFlat \ptr.
@@ -116,13 +113,13 @@ def make_png(img:n=>m=>(Fin 3)=>Word8) -> Png given (n|Ix, m|Ix) = unsafe_io \.
     (sz, ptr') = encodePNG rawPtr (nat_to_rep $ size m) (nat_to_rep $ size n)
     AsList((rep_to_nat sz), table_from_ptr(Ptr(ptr')))
 
-def pngs_to_gif(delay:Int, pngs:t=>Png) -> Gif given (t|Ix) = unsafe_io \.
-  with_temp_files \pngFiles.
-    for i. write_file pngFiles[i] pngs[i]
+def pngs_to_gif(pngs:t=>Png, delay:Int) -> Gif given (t|Ix) = unsafe_io \.
+  with_temp_files(t) \pngFiles.
+    for i:t. write_file pngFiles[i] pngs[i]
     with_temp_file \gifFile.
       shell_out $
          "convert" <> " -delay " <> show delay <> " " <>
-          concat (for i. "png:" <> pngFiles[i] <> " ") <>
+          concat (for i:t. "png:" <> pngFiles[i] <> " ") <>
          "gif:" <> gifFile
       read_file gifFile
 
@@ -135,7 +132,7 @@ def float_to_8bit(x:Float) -> Word8 =
   n_to_w8 $ f_to_n $ 255.0 * clip (0.0, 1.0) x
 
 def img_to_png(img:n=>m=>(Fin 3)=>Float) -> Png given (n|Ix, m|Ix) =
-  make_png for i j k. float_to_8bit img[i, j, k]
+  make_png for i:n j:m k:(Fin 3). float_to_8bit img[i, j, k]
 
 '## API entry point
 
@@ -143,4 +140,4 @@ def imshow(img:n=>m=>(Fin 3)=>Float) -> Html given (n|Ix, m|Ix) =
   img_to_html $ img_to_png img
 
 def imseqshow(imgs:t=>n=>m=>(Fin 3)=>Float) -> Html given (t|Ix, n|Ix, m|Ix) =
-  img_to_html $ pngs_to_gif 50 $ map img_to_png imgs
+  imgs | each(img_to_png) | pngs_to_gif(50) | img_to_html

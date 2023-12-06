@@ -48,7 +48,6 @@ library
                      , Algebra
                      , Builder
                      , CUDA
-                     , Cat
                      , CheapReduction
                      , CheckType
                      , ConcreteSyntax
@@ -58,6 +57,7 @@ library
                      , Generalize
                      , Imp
                      , ImpToLLVM
+                     , IncState
                      , Inference
                      , Inline
                      , IRVariants
@@ -70,13 +70,14 @@ library
                      , LLVM.Shims
                      , Lexing
                      , Linearize
-                     , Logging
                      , Lower
+                     , MonadUtil
                      , MTL1
                      , Name
                      , Occurrence
                      , OccAnalysis
                      , Optimize
+                     , PeepholeOptimize
                      , PPrint
                      , RawName
                      , Runtime
@@ -84,17 +85,16 @@ library
                      , Serialize
                      , Simplify
                      , Subst
-                     , SourceInfo
                      , SourceRename
+                     , SourceIdTraversal
                      , TopLevel
                      , Transpose
-                     , TraverseSourceInfo
                      , Types.Core
                      , Types.Imp
-                     , Types.Misc
                      , Types.Primitives
                      , Types.OpNames
                      , Types.Source
+                     , Types.Top
                      , QueryType
                      , QueryTypePure
                      , Util
@@ -102,7 +102,6 @@ library
   if flag(live)
     exposed-modules:   Actor
                      , Live.Eval
-                     , Live.Terminal
                      , Live.Web
                      , RenderHtml
   other-modules:       Paths_dex
@@ -126,7 +125,6 @@ library
                      , prettyprinter
                      , text
                        -- Portable system utilities
-                     , ansi-terminal
                      , directory
                      , filepath
                      , haskeline
@@ -135,11 +133,13 @@ library
                        -- Serialization
                      , aeson
                      , store
+                     , time
                        -- Floating-point pedanticness (correcting for GHC < 9.2.2)
                      , floating-bits
   if flag(live)
     build-depends:     binary
                      , blaze-html
+                     , blaze-markup
                      , cmark
                      , http-types
                      , wai
@@ -234,6 +234,7 @@ executable dex
   main-is:             dex.hs
   build-depends:       dex
                      , ansi-wl-pprint
+                     , ansi-terminal
                      , base
                      , bytestring
                      , containers

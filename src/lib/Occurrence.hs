@@ -19,6 +19,7 @@ import Data.List (foldl')
 import Data.Store (Store (..))
 import GHC.Generics (Generic (..))
 
+import PPrint
 import IRVariants
 import Name
 
@@ -888,3 +889,15 @@ instance RenameE AccessInfo
 
 instance Hashable UsageInfo
 instance Store UsageInfo
+
+-- === instances ===
+
+instance Pretty UsageInfo where
+  pretty (UsageInfo static (ixDepth, ct)) =
+    "occurs in" <+> pretty static <+> "places, read"
+    <+> pretty ct <+> "times, to depth" <+> pretty (show ixDepth)
+
+instance Pretty Count where
+  pretty = \case
+    Bounded ct -> "<=" <+> pretty ct
+    Unbounded -> "many"

@@ -21,25 +21,25 @@ import Data.List
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Map.Strict as M
+import qualified System.Console.ANSI as ANSI
+import System.Console.ANSI hiding (Color)
 
-import PPrint (toJSONStr, printResult)
 import TopLevel
 import Err
 import Name
 import AbstractSyntax (parseTopDeclRepl)
 import ConcreteSyntax (keyWordStrs, preludeImportBlock)
-#ifdef DEX_LIVE
 import RenderHtml
-import Live.Terminal (runTerminal)
+-- import Live.Terminal (runTerminal)
 import Live.Web (runWeb)
-#endif
+import PPrint  hiding (hardline)
 import Core
 import Types.Core
 import Types.Imp
-import Types.Misc
 import Types.Source
+import Types.Top
+import MonadUtil
 
-data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly
             | TextDoc
             | JSONDoc
@@ -58,40 +58,26 @@ data EvalMode = ReplMode String
 data CmdOpts = CmdOpts EvalMode EvalConfig
 
 runMode :: EvalMode -> EvalConfig -> IO ()
-runMode evalMode opts = case evalMode of
+runMode evalMode cfg = case evalMode of
   ScriptMode fname fmt onErr -> do
     env <- loadCache
-    (litProg, finalEnv) <- runTopperM opts env do
+    ((), finalEnv) <- runTopperM cfg env do
       source <- liftIO $ T.decodeUtf8 <$> BS.readFile fname
-      evalSourceText source (printIncrementalSource fmt) \result@(Result _ errs) -> do
-        printIncrementalResult fmt result
-        return case (onErr, errs) of (HaltOnErr, Failure _) -> False; _ -> True
-    printFinal fmt litProg
+      evalSourceText source $ printIncrementalSource fmt
     storeCache finalEnv
   ReplMode prompt -> do
     env <- loadCache
-    void $ runTopperM opts env do
-      evalBlockRepl preludeImportBlock
+    void $ runTopperM cfg env do
+      evalSourceBlockRepl preludeImportBlock
       forever do
          block <- readSourceBlock prompt
-         evalBlockRepl block
-    where
-      evalBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
-      evalBlockRepl block = do
-        result <- evalSourceBlockRepl block
-        case result of
-          Result [] (Success ()) -> return ()
-          _ -> liftIO $ putStrLn $ pprint result
+         evalSourceBlockRepl block
   ClearCache -> clearCache
 #ifdef DEX_LIVE
-  -- These are broken if the prelude produces any arrays because the blockId
-  -- counter restarts at zero. TODO: make prelude an implicit import block
   WebMode    fname -> do
     env <- loadCache
-    runWeb fname opts env
-  WatchMode  fname -> do
-    env <- loadCache
-    runTerminal fname opts env
+    runWeb fname cfg env
+  WatchMode  _ -> error "not implemented"
 #endif
 
 printIncrementalSource :: DocFmt -> SourceBlock -> IO ()
@@ -101,26 +87,6 @@ printIncrementalSource fmt sb = case fmt of
   TextDoc    -> putStr $ pprint sb
 #ifdef DEX_LIVE
   HTMLDoc -> return ()
-#endif
-
-printIncrementalResult :: DocFmt -> Result -> IO ()
-printIncrementalResult fmt result = case fmt of
-  ResultOnly -> case pprint result of [] -> return (); msg -> putStrLn msg
-  JSONDoc    -> case toJSONStr result of "{}" -> return (); s -> putStrLn s
-  TextDoc    -> do
-    isatty <- queryTerminal stdOutput
-    putStr $ printResult isatty result
-#ifdef DEX_LIVE
-  HTMLDoc -> return ()
-#endif
-
-printFinal :: DocFmt -> [(SourceBlock, Result)] -> IO ()
-printFinal fmt prog = case fmt of
-  ResultOnly -> return ()
-  TextDoc    -> return ()
-  JSONDoc    -> return ()
-#ifdef DEX_LIVE
-  HTMLDoc    -> putStr $ progHtml prog
 #endif
 
 readSourceBlock :: (MonadIO (m n), EnvReader m) => String -> m n SourceBlock
@@ -210,24 +176,43 @@ parseEvalOpts = EvalConfig
   <*> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
     <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
-  <*> optional (strOption $ long "logto"
-                    <> metavar "FILE"
-                    <> help "File to log to" <> showDefault)
-  <*> pure Nothing
   <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
   <*> enumOption "print" "Print backend" PrintCodegen printBackends
+  <*> flag ContinueOnErr HaltOnErr (
+                long "stop-on-error"
+             <> help "Stop program evaluation when an error occurs (type or runtime)")
+  <*> enumOption "loglevel" "Log level" NormalLogLevel logLevels
+  <*> pure stdOutLogger
   where
     printBackends = [ ("haskell", PrintHaskell)
                     , ("dex"    , PrintCodegen) ]
-    backends = [ ("llvm", LLVM)
-               , ("llvm-mc", LLVMMC)
-#ifdef DEX_CUDA
-               , ("llvm-cuda", LLVMCUDA)
-#endif
-#if DEX_LLVM_VERSION == HEAD
-               , ("mlir", MLIR)
-#endif
-               , ("interpreter", Interpreter)]
+    backends = [ ("llvm"   , LLVM  )
+               , ("llvm-mc", LLVMMC) ]
+    logLevels = [ ("normal", NormalLogLevel)
+                , ("debug" , DebugLogLevel ) ]
+
+stdOutLogger :: Outputs -> IO ()
+stdOutLogger (Outputs outs) = do
+  isatty <- queryTerminal stdOutput
+  forM_ outs \out -> putStr $ printOutput isatty out
+
+printOutput :: Bool -> Output -> String
+printOutput isatty out = case out of
+  Error _ -> addColor isatty Red $ addPrefix ">" $ pprint out
+  _       -> addPrefix (addColor isatty Cyan ">") $ pprint $ out
+
+addPrefix :: String -> String -> String
+addPrefix prefix str = unlines $ map prefixLine $ lines str
+  where prefixLine :: String -> String
+        prefixLine s = case s of "" -> prefix
+                                 _  -> prefix ++ " " ++ s
+
+addColor :: Bool -> ANSI.Color -> String -> String
+addColor False _ s = s
+addColor True c s =
+  setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
+  ++ s ++ setSGRCode [Reset]
+
 
 pathOption :: ReadM [LibPath]
 pathOption = splitPaths [] <$> str
@@ -242,13 +227,7 @@ pathOption = splitPaths [] <$> str
       "BUILTIN_LIBRARIES" -> LibBuiltinPath
       path -> LibDirectory path
 
-openLogFile :: EvalConfig -> IO EvalConfig
-openLogFile EvalConfig {..} = do
-  logFile <- forM logFileName (`openFile` WriteMode)
-  return $ EvalConfig {..}
-
 main :: IO ()
 main = do
   CmdOpts evalMode opts <- execParser parseOpts
-  opts' <- openLogFile opts
-  runMode evalMode opts'
+  runMode evalMode opts

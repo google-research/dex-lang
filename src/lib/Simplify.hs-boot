@@ -9,5 +9,6 @@ module Simplify (linearizeTopFun) where
 import Name
 import Builder
 import Types.Core
+import Types.Top
 
 linearizeTopFun :: (Mut n, Fallible1 m, TopBuilder m) => LinearizationSpec n -> m n (TopFunName n, TopFunName n)

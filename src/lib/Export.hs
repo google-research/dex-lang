@@ -21,6 +21,7 @@ import Foreign.Ptr
 import Builder
 import Core
 import Err
+import PPrint
 import IRVariants
 import Name
 import QueryType
@@ -29,6 +30,7 @@ import Subst hiding (Rename)
 import TopLevel
 import Types.Core
 import Types.Imp
+import Types.Top
 import Types.Primitives hiding (sizeOf)
 
 type ExportAtomNameC = AtomNameC CoreIR
@@ -45,14 +47,14 @@ prepareFunctionForExport :: (Mut n, Topper m)
   => CallingConvention -> CAtom n -> m n ExportNativeFunction
 prepareFunctionForExport cc f = do
   naryPi <- case getType f of
-    Pi piTy -> return piTy
-    _ -> throw TypeErr "Only first-order functions can be exported"
+    TyCon (Pi piTy) -> return piTy
+    _ -> throwErr $ MiscErr $ MiscMiscErr "Only first-order functions can be exported"
   sig <- liftExportSigM $ corePiToExportSig cc naryPi
   closedSig <- case hoistToTop sig of
     HoistFailure _ ->
-      throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
+      throwErr $ MiscErr $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess s -> return s
-  f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (Var <$> xs)
+  f' <- liftBuilder $ buildCoreLam naryPi \xs -> naryApp (sink f) (toAtom <$> xs)
   fSimp <- simplifyTopFunction $ coreLamToTopLam f'
   fImp <- compileTopLevelFun cc fSimp
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
@@ -66,7 +68,7 @@ prepareSLamForExport cc f@(TopLam _ naryPi _) = do
   sig <- liftExportSigM $ simpPiToExportSig cc naryPi
   closedSig <- case hoistToTop sig of
     HoistFailure _ ->
-      throw TypeErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
+      throwErr $ MiscErr $ MiscMiscErr $ "Types of exported functions have to be closed terms. Got: " ++ pprint naryPi
     HoistSuccess s -> return s
   fImp <- compileTopLevelFun cc f
   nativeFun <- toCFunction "userFunc" fImp >>= emitObjFile >>= loadObject
@@ -87,7 +89,7 @@ instance FromName (Rename r) where
   fromName = JustRefer
 
 newtype ExportSigM (r::IR) (i::S) (o::S) (a:: *) = ExportSigM {
-  runExportSigM :: SubstReaderT (Rename r) (EnvReaderT FallibleM) i o a }
+  runExportSigM :: SubstReaderT (Rename r) (EnvReaderT Except) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader (Rename r), MonadFail)
 
@@ -95,7 +97,7 @@ liftExportSigM :: (EnvReader m, Fallible1 m) => ExportSigM r n n a -> m n a
 liftExportSigM cont = do
   Distinct <- getDistinct
   env <- unsafeGetEnv
-  liftExcept $ runFallibleM $ runEnvReaderT env $ runSubstReaderT idSubst $
+  liftExcept $ runEnvReaderT env $ runSubstReaderT idSubst $
     runExportSigM cont
 
 corePiToExportSig :: CallingConvention
@@ -103,7 +105,7 @@ corePiToExportSig :: CallingConvention
 corePiToExportSig cc (CorePiType _ expls tbs (EffTy effs resultTy)) = do
     case effs of
       Pure -> return ()
-      _    -> throw TypeErr "Only pure functions can be exported"
+      _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
     goArgs cc Empty [] (zipAttrs expls tbs) resultTy
 
 simpPiToExportSig :: CallingConvention
@@ -111,7 +113,7 @@ simpPiToExportSig :: CallingConvention
 simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
   case effs of
     Pure -> return ()
-    _    -> throw TypeErr "Only pure functions can be exported"
+    _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
   bs' <- return $ fmapNest (\b -> WithAttrB Explicit b) bs
   goArgs cc Empty [] bs' resultTy
 
@@ -143,11 +145,11 @@ goResult :: IRRep r => Type r i
              Nest ExportResult o o' -> ExportSigM r i o' a)
          -> ExportSigM r i o a
 goResult ty cont = case ty of
-  ProdTy [one] ->
+  TyCon (ProdType [one]) ->
     goResult one cont
-  ProdTy (lty:rest) ->
+  TyCon (ProdType (lty:rest)) ->
     goResult lty \lres ->
-      goResult (ProdTy rest) \rres ->
+      goResult (TyCon (ProdType rest)) \rres ->
         cont $ lres >>> rres
   _ -> do
     ety <- toExportType ty
@@ -157,33 +159,29 @@ goResult ty cont = case ty of
 toExportType :: IRRep r => Type r i -> ExportSigM r i o (ExportType o)
 toExportType ty = case ty of
   BaseTy (Scalar sbt) -> return $ ScalarType sbt
-  NewtypeTyCon Nat    -> return $ ScalarType IdxRepScalarBaseTy
+  TyCon (NewtypeTyCon Nat)    -> return $ ScalarType IdxRepScalarBaseTy
   TabTy _ _ _         -> parseTabTy ty >>= \case
     Nothing  -> unsupported
     Just ety -> return ety
   _ -> unsupported
-  where unsupported = throw TypeErr $ "Unsupported type of argument in exported function: " ++ pprint ty
+  where unsupported = throwErr $ MiscErr $ MiscMiscErr $ "Unsupported type of argument in exported function: " ++ pprint ty
 {-# INLINE toExportType #-}
 
 parseTabTy :: IRRep r => Type r i -> ExportSigM r i o (Maybe (ExportType o))
 parseTabTy = go []
   where
-    go :: forall r i o. IRRep r => [ExportDim o] -> Type r i
-      -> ExportSigM r i o (Maybe (ExportType o))
+    go :: IRRep r => [ExportDim o] -> Type r i -> ExportSigM r i o (Maybe (ExportType o))
     go shape = \case
-      BaseTy (Scalar sbt) -> return $ Just $ RectContArrayPtr sbt shape
-      NewtypeTyCon Nat    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
-      TabTy d (b:>ixty) a -> do
-        maybeN <- case IxType ixty d of
-          IxType (NewtypeTyCon (Fin n)) _ -> return $ Just n
-          IxType _ (IxDictRawFin n) -> return $ Just n
-          _ -> return Nothing
+      TyCon (BaseType (Scalar sbt)) -> return $ Just $ RectContArrayPtr sbt shape
+      TyCon (NewtypeTyCon Nat)    -> return $ Just $ RectContArrayPtr IdxRepScalarBaseTy shape
+      TyCon (TabPi (TabPiType d (b:>ixty) a)) -> do
+        maybeN <- fromIxFin $ IxType ixty d
         maybeDim <- case maybeN of
-          Just (Var v)    -> do
+          Just (Stuck _ (Var v))    -> do
             s <- getSubst
             let (Rename v') = s ! atomVarName v
             return $ Just (ExportDimVar v')
-          Just (NewtypeCon NatCon (IdxRepVal s)) -> return $ Just (ExportDimLit $ fromIntegral s)
+          Just (Con (NewtypeCon NatCon (IdxRepVal s))) -> return $ Just (ExportDimLit $ fromIntegral s)
           Just (IdxRepVal s) -> return $ Just (ExportDimLit $ fromIntegral s)
           _        -> return Nothing
         case maybeDim of
@@ -191,6 +189,12 @@ parseTabTy = go []
             HoistSuccess a' -> go (shape ++ [dim]) a'
             HoistFailure _  -> return Nothing
           Nothing -> return Nothing
+      _ -> return Nothing
+
+    fromIxFin :: IRRep r => IxType r i -> ExportSigM r i o (Maybe (Atom r i))
+    fromIxFin = \case
+      IxType (TyCon (NewtypeTyCon (Fin n))) (DictCon (IxFin _)) -> return $ Just n
+      IxType _ (DictCon (IxRawFin n)) -> return $ Just n
       _ -> return Nothing
 
 data ArgVisibility = ImplicitArg | ExplicitArg

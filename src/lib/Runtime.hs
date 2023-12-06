@@ -24,17 +24,14 @@ import Control.Monad
 import Control.Concurrent
 import Control.Exception hiding (throw)
 import qualified Control.Exception as E
-import qualified System.Environment as E
 
 import Err
-import Logging
-import Util (measureSeconds)
+import MonadUtil
 import PPrint ()
-import CUDA (synchronizeCUDA)
 
-import Types.Core hiding (DexDestructor)
+import Types.Top hiding (DexDestructor)
+import Types.Source  hiding (CInt)
 import Types.Primitives
-import Types.Misc
 
 -- === One-shot evaluation ===
 
@@ -55,75 +52,44 @@ data BenchRequirement =
 
 data LLVMCallable = LLVMCallable
   { nativeFun :: NativeFunction
-  , benchRequired :: BenchRequirement
   , logger :: PassLogger
-  , resultTypes :: [BaseType]
-  }
+  , resultTypes :: [BaseType] }
 
 -- The NativeFunction needs to have been compiled with EntryFunCC.
 callEntryFun :: LLVMCallable -> [LitVal] -> IO [LitVal]
-callEntryFun LLVMCallable{nativeFun, benchRequired, logger, resultTypes} args = do
+callEntryFun LLVMCallable{nativeFun, logger, resultTypes} args = do
   withPipeToLogger logger \fd ->
     allocaCells (length args) \argsPtr ->
       allocaCells (length resultTypes) \resultPtr -> do
         storeLitVals argsPtr args
         let fPtr = castFunPtr $ nativeFunPtr nativeFun
-        evalTime <- checkedCallFunPtr fd argsPtr resultPtr fPtr
+        checkedCallFunPtr fd argsPtr resultPtr fPtr
         results <- loadLitVals resultPtr resultTypes
-        case benchRequired of
-          NoBench -> logSkippingFilter logger [EvalTime evalTime Nothing]
-          DoBench shouldSyncCUDA -> do
-            let sync = when shouldSyncCUDA $ synchronizeCUDA
-            (avgTime, benchRuns, totalTime) <- runBench do
-              let (CInt fd') = fdFD fd
-              exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-              unless (exitCode == 0) $ throw RuntimeErr ""
-              freeLitVals resultPtr resultTypes
-              sync
-            logSkippingFilter logger [EvalTime avgTime (Just (benchRuns, totalTime + evalTime))]
         return results
 {-# SCC callEntryFun #-}
 
-checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO Double
+checkedCallFunPtr :: FD -> Ptr () -> Ptr () -> DexExecutable -> IO ()
 checkedCallFunPtr fd argsPtr resultPtr fPtr = do
   let (CInt fd') = fdFD fd
-  (exitCode, duration) <- measureSeconds $ do
-    exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
-    return exitCode
-  unless (exitCode == 0) $ throw RuntimeErr ""
-  return duration
+  exitCode <- callFunPtr fPtr fd' argsPtr resultPtr
+  unless (exitCode == 0) $ throwErr RuntimeErr
 
 withPipeToLogger :: PassLogger -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
   result <- snd <$> withPipe
-    (\h -> readStream h \s -> logSkippingFilter logger [TextOut s])
+    (\h -> readStream h \s -> ioLogAction logger $ Outputs [TextOut s])
     (\h -> handleToFd h >>= writeAction)
   case result of
     Left e -> E.throw e
     Right ans -> return ans
-
-runBench :: IO () -> IO (Double, Int, Double)
-runBench run = do
-  exampleDuration <- snd <$> measureSeconds run
-  test_mode <- (Just "t" ==) <$> E.lookupEnv "DEX_TEST_MODE"
-  let timeBudget = (2 - exampleDuration) `max` 0 -- seconds
-  let benchRuns = if test_mode
-        then 0
-        else (ceiling $ timeBudget / exampleDuration) :: Int
-  totalTime' <- liftM snd $ measureSeconds $ do
-    forM_ [1..benchRuns] $ const run
-  let totalTime = totalTime' + exampleDuration
-      avgTime = totalTime / (fromIntegral $ benchRuns + 1)
-
-  return (avgTime, benchRuns + 1, totalTime)
 
 -- === serializing scalars ===
 
 loadLitVals :: MonadIO m => Ptr () -> [BaseType] -> m [LitVal]
 loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
 
-freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
-freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
+_freeLitVals :: MonadIO m => Ptr () -> [BaseType] -> m ()
+_freeLitVals p types = zipWithM_ freeLitVal (ptrArray p) types
 
 storeLitVals :: MonadIO m => Ptr () -> [LitVal] -> m ()
 storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs

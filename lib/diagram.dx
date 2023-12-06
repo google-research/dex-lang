@@ -35,15 +35,16 @@ struct GeomStyle =
 default_geom_style = GeomStyle Nothing (Just black) 1
 
 -- TODO: consider sharing attributes among a set of objects for efficiency
+Object : Type = (GeomStyle, Point, Geom)
 struct Diagram =
-  val : (List (GeomStyle, Point, Geom))
+  val : (List Object)
 
 instance Monoid(Diagram)
   mempty = Diagram mempty
   def (<>)(d1, d2) = Diagram $ d1.val <> d2.val
 
 def concat_diagrams(diagrams:n=>Diagram) -> Diagram given (n|Ix) =
-  Diagram $ concat for i. diagrams[i].val
+  Diagram $ concat $ each diagrams \d. d.val
 
 -- TODO: arbitrary affine transformations. Our current representation of
 -- rectangles and circles means we can only do scale/flip/rotate90.
@@ -54,8 +55,8 @@ def apply_transformation(
     d:Diagram
     ) -> Diagram =
   AsList(_, objs) = d.val
-  Diagram $ to_list for i.
-    (attr, p, geom) = objs[i]
+  Diagram $ to_list $ each objs \obj.
+    (attr, p, geom) = obj
     (attr, transformPoint p, transformGeom geom)
 
 def flip_y(d:Diagram) -> Diagram =
@@ -92,8 +93,8 @@ def text(x:String)         -> Diagram = singleton_default $ Text x
 
 def update_geom(update: (GeomStyle) -> GeomStyle, d:Diagram) -> Diagram =
   AsList(_, objs) = d.val
-  Diagram $ to_list for i.
-    (       attr, point, geoms) = objs[i]
+  Diagram $ to_list $ each objs \obj.
+    (       attr, point, geoms) = obj
     (update attr, point, geoms)
 
 -- TODO: these would be better if we had field-access-based ref projections, so we could
@@ -149,7 +150,7 @@ def (<=>)(attr:String, val:b) -> String given (b|Show) =
   attr <.> "=" <.> quote (show val)
 
 def html_color(cs:HtmlColor) -> String =
-  "#" <> (concat $ for i. showHex cs[i])
+  "#" <> (concat $ each cs showHex)
 
 def optional_html_color(c: Maybe HtmlColor) -> String =
   case c of
@@ -166,7 +167,7 @@ def attr_string(attr:GeomStyle) -> String =
 def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
   -- For things that are solid. SVG says they have fill=stroke.
   solidAttr = GeomStyle attr.strokeColor attr.strokeColor attr.strokeWidth
-  groupEle = \attr s. tag_brackets_attr "g" (attr_string attr) s
+  groupEle = \attr:GeomStyle s:String. tag_brackets_attr "g" (attr_string attr) s
   case geom of
     PointGeom ->
       groupEle solidAttr $ self_closing_brackets $
@@ -188,7 +189,7 @@ def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
          "x"      <=> (p.x - (w/2.0)) <.>
          "y"      <=> (p.y - (h/2.0)))
     Text content ->
-      textEle = \s. tag_brackets_attr("text",
+      textEle = \s:String. tag_brackets_attr("text",
         ("x" <=> p.x <.>
          "y" <=> p.y <.>
          "text-anchor" <=> "middle" <.>    -- horizontal center
@@ -200,8 +201,8 @@ BoundingBox : Type = (Point, Point)
 
 @noinline
 def compute_bounds(d:Diagram) -> BoundingBox =
-  computeSubBound = \sel op.
-    \triple.
+  computeSubBound = \sel:((Point) -> Float) op:((Float) -> Float).
+    \triple:Object.
       (_, p, geom) = triple
       sel p + case geom of
         PointGeom       -> 0.0
@@ -213,12 +214,12 @@ def compute_bounds(d:Diagram) -> BoundingBox =
   AsList(_, objs) = d.val
   (
     Point(
-      minimum $ map (computeSubBound (\p. p.x) neg) objs,
-      minimum $ map (computeSubBound (\p. p.y) neg) objs
+      minimum $ each objs (computeSubBound (\p. p.x) neg),
+      minimum $ each objs (computeSubBound (\p. p.y) neg)
     ),
     Point(
-      maximum $ map (computeSubBound (\p. p.x) id)  objs,
-      maximum $ map (computeSubBound (\p. p.y) id)  objs
+      maximum $ each objs (computeSubBound (\p. p.x) id),
+      maximum $ each objs (computeSubBound (\p. p.y) id)
     )
   )
 
@@ -235,11 +236,11 @@ def render_svg(d:Diagram, bounds:BoundingBox) -> String =
                 <+> "height"  <=> imgHeight
                 <+> "viewBox" <=> (imgXMin <+> imgYMin <+> imgWidth <+> imgHeight))
   tag_brackets_attr "svg" svgAttrStr $
-    concat for i.
-      (attr, pos, geom) = objs[i]
+    concat $ each objs \obj.
+      (attr, pos, geom) = obj
       render_geom attr pos geom
 
-render_scaled_svg = \d. render_svg d (compute_bounds d)
+render_scaled_svg = \d:Diagram. render_svg d (compute_bounds d)
 
 '## Derived convenience methods and combinators
 

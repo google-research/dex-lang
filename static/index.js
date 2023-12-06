@@ -16,174 +16,211 @@ var katexOptions = {
     trust: true
 };
 
-var cells = {};
-
-function append_contents(key, contents) {
-    if (key in cells) {
-        var cur_cells = cells[key];
-    } else {
-        var cell = document.createElement("div");
-        cell.className = "cell";
-        cells[key] = [cell];
-        var cur_cells = [cell];
-    }
-    for (var i = 0; i < contents.length; i++) {
-        for (var j = 0; j < cur_cells.length; j++) {
-            var node = lookup_address(cur_cells[j], contents[i][0])
-            node.innerHTML += contents[i][1];
-        }
-    }
-}
-
-function lookup_address(cell, address) {
-    var node = cell
-    for (i = 0; i < address.length; i++) {
-        node = node.children[address[i]]
-    }
-    return node
-}
-
-function renderHovertips() {
-    var spans = document.querySelectorAll(".code-span");
-    Array.from(spans).map((span) => attachHovertip(span));
-}
-
-function attachHovertip(node) {
-    node.addEventListener("mouseover", (event) => highlightNode(     event, node));
-    node.addEventListener("mouseout" , (event) => removeHighlighting(event, node));
-}
-
-function highlightNode(event, node) {
-    event.stopPropagation();
-    node.style.backgroundColor = "lightblue";
-    node.style.outlineColor = "lightblue";
-    node.style.outlineStyle = "solid";
-    Array.from(node.children).map(function (child) {
-        if (isCodeSpanOrLeaf(child)) {
-            child.style.backgroundColor = "yellow";
-        }
-    })
-}
-
-function isCodeSpanOrLeaf(node) {
-  return node.classList.contains("code-span") || node.classList.contains("code-span-leaf")
-
-}
-
-function removeHighlighting(event, node) {
-    event.stopPropagation();
-    node.style.backgroundColor = null;
-    node.style.outlineColor = null;
-    node.style.outlineStyle = null;
-    Array.from(node.children).map(function (child) {
-        if (isCodeSpanOrLeaf(child)) {
-          child.style.backgroundColor = null;
-        }
-    })
-}
-
-function renderLaTeX() {
+function renderLaTeX(root) {
     // Render LaTeX equations in prose blocks via KaTeX, if available.
     // Skip rendering if KaTeX is unavailable.
     if (typeof renderMathInElement == 'undefined') {
         return;
     }
     // Render LaTeX equations in prose blocks via KaTeX.
-    var proseBlocks = document.querySelectorAll(".prose-block");
+    var proseBlocks = root.querySelectorAll(".prose-block");
     Array.from(proseBlocks).map((proseBlock) =>
         renderMathInElement(proseBlock, katexOptions)
     );
 }
 
-/**
- * Rendering the Table of Contents / Navigation Bar
- * 2 key functions
- *  - `updateNavigation()` which inserts/updates the navigation bar
- *  - and it's helper `extractStructure()` which extracts the structure of the page
- *    and adds ids to heading elements.
-*/
-function updateNavigation() {
-    function navItemList(struct) {
-        var listEle = document.createElement('ol')
-        struct.children.forEach(childStruct=>
-            listEle.appendChild(navItem(childStruct))
-        );
-        return listEle;
-    }
-    function navItem(struct) {
-        var a = document.createElement('a');
-        a.appendChild(document.createTextNode(struct.text));
-        a.title = struct.text;
-        a.href = "#"+struct.id;
-
-        var ele = document.createElement('li')
-        ele.appendChild(a)
-        ele.appendChild(navItemList(struct));
-        return ele;
-    }
-
-    var navbarEle = document.getElementById("navbar")
-    if (navbarEle === null) {  // create it
-        navbarEle = document.createElement("div");
-        navbarEle.id="navbar";
-        navOuterEle = document.createElement("nav")
-        navOuterEle.appendChild(navbarEle);
-        document.body.prepend(navOuterEle);
-    }
-
-    navbarEle.innerHTML = ""
-    var structure = extractStructure()
-    navbarEle.appendChild(navItemList(structure));
-}
-
-function extractStructure() { // Also sets ids on h1,h2,...
-    var headingsNodes = document.querySelectorAll("h1, h2, h3, h4, h5, h6");
-    // For now we are just fulling going to regenerate the structure each time
-    // Might be better if we made minimal changes, but 🤷
-
-    // Extract the structure of the document
-    var structure = {children:[]}
-    var active = [structure.children];
-    headingsNodes.forEach(
-        function(currentValue, currentIndex) {
-            currentValue.id = "s-" + currentIndex;
-            var currentLevel = parseInt(currentValue.nodeName[1]);
-
-            // Insert dummy levels up for any levels that are skipped
-            for (var i=active.length; i < currentLevel; i++) {
-                var dummy = {id: "", text: "", children: []}
-                active.push(dummy.children);
-                var parentList = active[i-1]
-                parentList.push(dummy);
-            }
-            // delete this level and everything after
-            active.splice(currentLevel, active.length);
-
-            var currentStructure = {
-                id: currentValue.id,
-                text: currentValue.textContent,
-                children: [],
-            };
-            active.push(currentStructure.children);
-
-            var parentList = active[active.length-2]
-            parentList.push(currentStructure);
-        },
-    );
-    return structure;
-}
-
-/**
- * HTML rendering mode.
- * Static rendering is used for static HTML pages.
- * Dynamic rendering is used for dynamic HTML pages via `dex web`.
- *
- * @enum {string}
- */
 var RENDER_MODE = Object.freeze({
   STATIC: "static",
   DYNAMIC: "dynamic",
 })
+var body         = document.getElementById("main-output");
+var hoverInfoDiv = document.getElementById("hover-info");
+
+// State of the system beyond the HTML
+var cells = {}
+var frozenHover = false;
+var curHighlights = [];  // HTML elements currently highlighted
+var highlightMap = {}
+var spanMap      = {}
+var hoverInfoMap = {}
+
+function removeHover() {
+    if (frozenHover) return;
+    hoverInfoDiv.innerHTML = ""
+    curHighlights.map(function (element) {
+        element.classList.remove("highlighted", "highlighted-leaf")})
+    curHighlights = [];
+}
+function lookupSrcMap(m, cellId, srcId) {
+    let blockMap = m[cellId]
+    if (blockMap == null) {
+        return null
+    } else {
+        return blockMap[srcId]}
+}
+function applyHover(cellId, srcId) {
+    if (frozenHover) return;
+    applyHoverInfo(cellId, srcId)
+    applyHoverHighlights(cellId, srcId)
+}
+function applyHoverInfo(cellId, srcId) {
+    let hoverInfo = lookupSrcMap(hoverInfoMap, cellId, srcId)
+    if (hoverInfo !== undefined) {
+        hoverInfoDiv.innerHTML = hoverInfo
+    }
+}
+function getSpan(cellId, srcId) {
+    return lookupSrcMap(spanMap, cellId, srcId)
+}
+function applyHoverHighlights(cellId, srcId) {
+    let highlights = lookupSrcMap(highlightMap, cellId, srcId)
+    if (highlights == null) return
+    highlights.map(function (highlight) {
+        let [highlightType, highlightSrcId] = highlight
+        let highlightClass = getHighlightClass(highlightType)
+        addClass(cellId, highlightSrcId, highlightClass)})
+}
+function addClass(cellId, srcId, className) {
+    let span = getSpan(cellId, srcId)
+    if (span !== undefined) {
+        let [l, r] = span
+        let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
+        spans.map(function (span) {
+            span.classList.add(className)
+            curHighlights.push(span)})}
+}
+function toggleFrozenHover() {
+    if (frozenHover) {
+        frozenHover = false
+        removeHover()
+    } else {
+        frozenHover = true}
+}
+function attachHovertip(cellId, srcId) {
+    let span = selectSpan(cellId, srcId)
+    span.addEventListener("mouseover", function (event) {
+        event.stopPropagation()
+        applyHover(cellId, srcId)})
+    span.addEventListener("mouseout" , function (event) {
+        event.stopPropagation()
+        removeHover()})}
+function selectSpan(cellId, srcId) {
+    return cells[cellId].querySelector("#span_".concat(cellId, "_", srcId))
+}
+function selectCell(cellId) {
+    return cells[cellId]
+}
+function getHighlightClass(highlightType) {
+    if (highlightType == "HighlightGroup") {
+        return "highlighted";
+    } else if (highlightType == "HighlightLeaf") {
+        return "highlighted-leaf";
+    } else {
+        throw new Error("Unrecognized highlight type");
+    }
+}
+function getStatusClass(status) {
+    if (status == "Waiting") {
+        return "waiting-cell";
+    } else if (status == "Running") {
+        return "running-cell";
+    } else if (status == "Complete") {
+        return "complete-cell";
+    } else {
+        throw new Error("Unrecognized status type");
+    }
+}
+function spansBetween(l, r) {
+    let spans = []
+    while (l !== null && !(Object.is(l, r))) {
+        spans.push(l);
+        l = l.nextSibling;}
+    spans.push(r)
+    return spans
+}
+function setCellStatus(cell, status) {
+    cell.className = "cell"
+    cell.classList.add(getStatusClass(status))
+}
+function addChild(cell, className, innerHTML) {
+    let child = document.createElement("div")
+    child.innerHTML = innerHTML
+    child.className = className
+    cell.appendChild(child)
+}
+function initializeCellContents(cellId, cell, contents) {
+    let [source, status, result]  = contents;
+    let lineNum    = source["rsbLine"];
+    let sourceText = source["rsbHtml"];
+    highlightMap[cellId] = {};
+    hoverInfoMap[cellId] = {};
+    spanMap[cellId]      = {};
+    addChild(cell, "line-num"    , lineNum.toString())
+    addChild(cell, "code-block"  , sourceText)
+    addChild(cell, "cell-results", "")
+    setCellStatus(cell, status)
+    renderLaTeX(cell)
+    extendCellResult(cellId, cell, result)
+}
+function extendCellResult(cellId, cell, result) {
+    let resultText = result["rrHtml"]
+    if (resultText !== "") {
+        let bodyDiv = cell.querySelector(".cell-results")
+        bodyDiv.innerHTML += resultText
+    }
+    Object.assign(highlightMap[cellId], result["rrHighlightMap"])
+    Object.assign(hoverInfoMap[cellId], result["rrHoverInfoMap"])
+    Object.assign(spanMap[cellId]     , result["rrLexemeSpans"])
+
+    let errSrcIds = result["rrErrorSrcIds"]
+    errSrcIds.map(function (srcId) {
+        addClass(cellId, srcId, "err-span")})
+}
+function updateCellContents(cellId, cell, contents) {
+    let [statusUpdate, result] = contents;
+    if (statusUpdate["tag"] == "OverwriteWith") {
+        setCellStatus(cell, statusUpdate["contents"])}
+    extendCellResult(cellId, cell, result)
+}
+function processUpdate(msg) {
+    let cellUpdates = msg["nodeMapUpdate"]["mapUpdates"];
+    let numDropped  = msg["orderedNodesUpdate"]["numDropped"];
+    let newTail     = msg["orderedNodesUpdate"]["newTail"];
+    // drop_dead_cells
+    for (i = 0; i < numDropped; i++) {
+        body.lastElementChild.remove();}
+
+    Object.keys(cellUpdates).forEach(function (cellId) {
+        let update = cellUpdates[cellId];
+        let tag = update["tag"]
+        let contents = update["contents"]
+        if (tag == "Create" || tag == "Replace") {
+            let cell = document.createElement("div");
+            cells[cellId] = cell;
+            initializeCellContents(cellId, cell, contents)
+        } else if (tag == "Update") {
+            let cell = cells[cellId];
+            updateCellContents(cellId, cell, contents);
+        } else if (tag == "Delete") {
+            delete cells[cellId]
+        } else {
+            console.error(tag);
+        }});
+
+    // append_new_cells
+    newTail.forEach(function (cellId) {
+        let cell = selectCell(cellId);
+        body.appendChild(cell);})
+
+    Object.keys(cellUpdates).forEach(function (cellId) {
+        let update = cellUpdates[cellId]
+        let tag = update["tag"]
+        if (tag == "Create" || tag == "Replace") {
+            let update = cellUpdates[cellId];
+            let source = update["contents"][0];
+            let lexemeList = source["rsbLexemeList"];
+            lexemeList.map(function (lexemeId) {attachHovertip(cellId, lexemeId.toString())})}});
+}
 
 /**
  * Renders the webpage.
@@ -192,48 +229,19 @@ var RENDER_MODE = Object.freeze({
 function render(renderMode) {
     if (renderMode == RENDER_MODE.STATIC) {
         // For static pages, simply call rendering functions once.
-        renderLaTeX();
-        renderHovertips();
-        updateNavigation();
+        renderLaTeX(document);
     } else {
         // For dynamic pages (via `dex web`), listen to update events.
         var source = new EventSource("/getnext");
         source.onmessage = function(event) {
-            var body = document.getElementById("main-output");
             var msg = JSON.parse(event.data);
             if (msg == "start") {
-                body.innerHTML = "";
+                body.innerHTML = ""
+                body.addEventListener("click", function (event) {
+                    event.stopPropagation()
+                    toggleFrozenHover()})
                 cells = {}
                 return
-            }
-            var order    = msg[0];
-            var contents = msg[1];
-            for (var i = 0; i < contents.length; i++) {
-                append_contents(contents[i][0], contents[i][1]);
-            }
-            if (order != null) {
-                var new_cells = {};
-                body.innerHTML = "";
-                for (var i = 0; i < order.val.length; i++) {
-                    var key = order.val[i]
-                    var cur_cells = cells[key]
-                    if (cur_cells.length == 0) {
-                        var cur_cell = new_cells[key][0].cloneNode(true)
-                    } else {
-                        var cur_cell = cur_cells.pop()
-                        if (key in new_cells) {
-                            new_cells[key].push(cur_cell);
-                        } else {
-                            new_cells[key] = [cur_cell];
-                        }
-                    }
-                    body.appendChild(cur_cell);
-                }
-                Object.assign(cells, new_cells);
-            }
-            renderLaTeX();
-            renderHovertips();
-            updateNavigation();
-        };
-    }
+            } else {
+                processUpdate(msg)}};}
 }

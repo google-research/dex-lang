@@ -37,6 +37,7 @@ import Err
 import IRVariants
 
 import Types.Core
+import Types.Top
 import Types.Imp
 import Types.Primitives
 import Types.Source
@@ -79,10 +80,9 @@ type EnvExtender2 (m::MonadKind2) = forall (n::S). EnvExtender (m n)
 newtype EnvReaderT (m::MonadKind) (n::S) (a:: *) =
   EnvReaderT {runEnvReaderT' :: ReaderT (DistinctEvidence n, Env n) m a }
   deriving ( Functor, Applicative, Monad, MonadFail
-           , MonadWriter w, Fallible, Searcher, Alternative)
+           , MonadWriter w, Fallible, Alternative)
 
 type EnvReaderM = EnvReaderT Identity
-type FallibleEnvReaderM = EnvReaderT FallibleM
 
 runEnvReaderM :: Distinct n => Env n -> EnvReaderM n a -> a
 runEnvReaderM bindings m = runIdentity $ runEnvReaderT bindings m
@@ -131,6 +131,11 @@ instance MonadIO m => MonadIO (EnvReaderT m n) where
   {-# INLINE liftIO #-}
 
 deriving instance (Monad m, MonadState s m) => MonadState s (EnvReaderT m o)
+
+instance (Monad m, Catchable m) => Catchable (EnvReaderT m o) where
+  catchErr (EnvReaderT (ReaderT m)) f = EnvReaderT $ ReaderT \env ->
+    m env `catchErr` \err -> runReaderT (runEnvReaderT' $ f err) env
+  {-# INLINE catchErr #-}
 
 -- === Instances for Name monads ===
 
@@ -389,12 +394,6 @@ withFreshBinders (binding:rest) cont = do
       cont (Nest b bs)
            (sink (binderName b) : vs)
 
-getInstanceDicts :: EnvReader m => ClassName n -> m n [InstanceName n]
-getInstanceDicts name = do
-  env <- withEnv moduleEnv
-  return $ M.findWithDefault [] name $ instanceDicts $ envSynthCandidates env
-{-# INLINE getInstanceDicts #-}
-
 -- These `fromNary` functions traverse a chain of unary structures (LamExpr,
 -- TabLamExpr, CorePiType, respectively) up to the given maxDepth, and return the
 -- discovered binders packed as the nary structure (NaryLamExpr or PiType),
@@ -407,9 +406,10 @@ getInstanceDicts name = do
 --   structure.  Excess binders, if any, are still left in the unary structures.
 
 liftLamExpr :: (IRRep r, EnvReader m)
-  => (forall l m2. EnvReader m2 => Block r l -> m2 l (Block r l))
-  -> TopLam r n -> m n (TopLam r n)
-liftLamExpr f (TopLam d ty (LamExpr bs body)) = liftM (TopLam d ty) $ liftEnvReaderM $
+  => TopLam r n
+  -> (forall l m2. EnvReader m2 => Expr r l -> m2 l (Expr r l))
+  -> m n (TopLam r n)
+liftLamExpr (TopLam d ty (LamExpr bs body)) f = liftM (TopLam d ty) $ liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
 
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
@@ -419,38 +419,10 @@ fromNaryForExpr maxDepth = \case
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do
-        expr <- exprBlock body
         guard $ maxDepth > 1
-        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) expr
+        (d, LamExpr bs body2) <- fromNaryForExpr (maxDepth - 1) body
         return (d + 1, LamExpr (Nest b bs) body2)
   _ -> Nothing
-
-mkConsListTy :: [Type r n] -> Type r n
-mkConsListTy = foldr PairTy UnitTy
-
-mkConsList :: [Atom r n] -> Atom r n
-mkConsList = foldr PairVal UnitVal
-
-fromConsListTy :: (IRRep r, Fallible m) => Type r n -> m [Type r n]
-fromConsListTy ty = case ty of
-  UnitTy         -> return []
-  PairTy t rest -> (t:) <$> fromConsListTy rest
-  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
-
--- ((...((ans & x{n}) & x{n-1})... & x2) & x1) -> (ans, [x1, ..., x{n}])
-fromLeftLeaningConsListTy :: (IRRep r, Fallible m) => Int -> Type r n -> m (Type r n, [Type r n])
-fromLeftLeaningConsListTy depth initTy = go depth initTy []
-  where
-    go 0        ty xs = return (ty, reverse xs)
-    go remDepth ty xs = case ty of
-      PairTy lt rt -> go (remDepth - 1) lt (rt : xs)
-      _ -> throw CompilerErr $ "Not a pair: " ++ show xs
-
-fromConsList :: (IRRep r, Fallible m) => Atom r n -> m [Atom r n]
-fromConsList xs = case xs of
-  UnitVal        -> return []
-  PairVal x rest -> (x:) <$> fromConsList rest
-  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
 
 type BundleDesc = Int  -- length
 
@@ -462,16 +434,10 @@ bundleFold emptyVal pair els = case els of
     where (tb, td) = bundleFold emptyVal pair t
 
 mkBundleTy :: [Type r n] -> (Type r n, BundleDesc)
-mkBundleTy = bundleFold UnitTy PairTy
+mkBundleTy = bundleFold UnitTy (\x y -> TyCon (ProdType [x, y]))
 
 mkBundle :: [Atom r n] -> (Atom r n, BundleDesc)
-mkBundle = bundleFold UnitVal PairVal
-
-trySelectBranch :: IRRep r => Atom r n -> Maybe (Int, Atom r n)
-trySelectBranch e = case e of
-  SumVal _ i value -> Just (i, value)
-  NewtypeCon con e' | isSumCon con -> trySelectBranch e'
-  _ -> Nothing
+mkBundle = bundleFold UnitVal (\x y -> Con (ProdCon [x, y]))
 
 freeAtomVarsList :: forall r e n. (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
 freeAtomVarsList = freeVarsList
