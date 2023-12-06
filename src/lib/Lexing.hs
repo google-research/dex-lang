@@ -167,7 +167,7 @@ knownSymStrs :: HS.HashSet String
 knownSymStrs = HS.fromList
   [ ".", ":", "::", "!", "=", "-", "+", "||", "&&"
   , "$", "&>", "|", ",", ",>", "<-", "+=", ":="
-  , "->", "->>", "=>", "?->", "?=>", "--o", "--", "<<<", ">>>"
+  , "->", "->>", "=>", "?->", "?=>", "<<<", ">>>"
   , "..", "<..", "..<", "..<", "<..<", "?", "#", "##", "#?", "#&", "#|", "@"]
 
 sym :: Text -> Lexer ()
@@ -228,9 +228,7 @@ sc = (skipSome s >> recordWhitespace) <|> return ()
   where s = hidden space <|> hidden lineComment
 
 lineComment :: Parser ()
-lineComment = do
-  try $ string "--" >> notFollowedBy (void (char 'o'))
-  void (takeWhileP (Just "char") (/= '\n'))
+lineComment = string "#" >> void (takeWhileP (Just "char") (/= '\n'))
 
 outputLines :: Parser ()
 outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> ((eol >> return ()) <|> eof))

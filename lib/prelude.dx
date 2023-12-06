@@ -321,7 +321,7 @@ def size(n:Type|Ix) -> Nat = size'(n=n)
 
 def Fin(n:Nat) -> Type = %Fin(n)
 
--- version of subtraction on Nats that clamps at zero
+# version of subtraction on Nats that clamps at zero
 def (-|)(x: Nat, y:Nat) -> Nat =
   x' = nat_to_rep x
   y' = nat_to_rep y
@@ -333,7 +333,7 @@ def unsafe_nat_diff(x:Nat, y:Nat) -> Nat =
   y' = nat_to_rep y
   rep_to_nat %isub(x', y')
 
--- TODO: need to a way to indicate constructor as private
+# TODO: need to a way to indicate constructor as private
 struct RangeFrom(i:q) given (q:Type) = val : Nat
 
 struct RangeFromExc(i:q) given (q:Type) = val : Nat
@@ -377,16 +377,16 @@ instance Add(n=>a) given (a|Add, n|Ix)
 instance Sub(n=>a) given (a|Sub, n|Ix)
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => RangeFrom i => a) given (a|Add, n|Ix) -- Upper triangular tables
+instance Add((i:n) => RangeFrom i => a) given (a|Add, n|Ix) # Upper triangular tables
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => RangeFrom i => a) given (a|Sub, n|Ix)  -- Upper triangular tables
+instance Sub((i:n) => RangeFrom i => a) given (a|Sub, n|Ix)  # Upper triangular tables
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
-instance Add((i:n) => RangeTo i => a) given (a|Add, n|Ix)  -- Lower triangular tables
+instance Add((i:n) => RangeTo i => a) given (a|Add, n|Ix)  # Lower triangular tables
   def (+)(xs, ys) = for i. xs[i] + ys[i]
   zero = for _. zero
-instance Sub((i:n) => RangeTo i => a) given (a|Sub, n|Ix)  -- Lower triangular tables
+instance Sub((i:n) => RangeTo i => a) given (a|Sub, n|Ix)  # Lower triangular tables
   def (-)(xs, ys) = for i. xs[i] - ys[i]
 
 instance Add((i:n) => RangeToExc i => a) given (a|Add, n|Ix)
@@ -516,8 +516,8 @@ def not(x:Bool) -> Bool =
 '## More Boolean operations
 TODO: move these with the others?
 
--- Can't use `%select` because it lowers to `ISelect`, which requires
--- `a` to be a `BaseTy`.
+# Can't use `%select` because it lowers to `ISelect`, which requires
+# `a` to be a `BaseTy`.
 def select(p:Bool, x:a, y:a) -> a given (a:Type) =
   case p of
     True  -> x
@@ -570,14 +570,14 @@ instance Ix(Either(a, b)) given (a|Ix, b|Ix)
   def unsafe_from_ordinal(o) =
     as = nat_to_rep $ size a
     o' = nat_to_rep o
-    -- TODO: Reshuffle the prelude to be able to use (<) here
+    # TODO: Reshuffle the prelude to be able to use (<) here
     case w8_to_b $ %ilt(o', as) of
       True  -> Left $ unsafe_from_ordinal(n=a, o)
-      -- TODO: Reshuffle the prelude to be able to use `diff_nat` here
+      # TODO: Reshuffle the prelude to be able to use `diff_nat` here
       False -> Right $ unsafe_from_ordinal(n=b, rep_to_nat (%isub(o', as)))
 
 '## Subtraction on Nats
--- TODO: think more about the right API here
+# TODO: think more about the right API here
 
 def unsafe_i_to_n(x:Int) -> Nat =
   rep_to_nat $ internal_cast x
@@ -846,7 +846,7 @@ instance Ord(Nat)
   def (>)(x, y) = nat_to_rep x > nat_to_rep y
   def (<)(x, y) = nat_to_rep x < nat_to_rep y
 
--- TODO: we want Eq and Ord for all index sets, not just `Fin n`
+# TODO: we want Eq and Ord for all index sets, not just `Fin n`
 instance Eq(Fin n) given (n:Nat)
   def (==)(x, y) = ordinal x == ordinal y
 
@@ -886,10 +886,10 @@ instance NonEmpty((a,b)) given (a|NonEmpty, b|NonEmpty)
 instance NonEmpty(Either(a,b)) given (a|NonEmpty, b|Ix)
   first_ix = unsafe_from_ordinal 0
 
--- The below instance is valid, but causes "multiple candidate dictionaries"
--- errors if both Left and Right are NonEmpty.
--- instance NonEmpty (a|b) given {a b} [Ix a, NonEmpty b]
---  first_ix = unsafe_from_ordinal _ 0
+# The below instance is valid, but causes 'multiple candidate dictionaries'
+# errors if both Left and Right are NonEmpty.
+# instance NonEmpty (a|b) given {a b} [Ix a, NonEmpty b]
+#  first_ix = unsafe_from_ordinal _ 0
 
 instance NonEmpty(Maybe a) given (a|Ix)
   first_ix = unsafe_from_ordinal 0
@@ -955,7 +955,7 @@ interface Subset(subset:Type, superset:Type)
   project'        : (superset) -> Maybe subset
   unsafe_project' : (superset) -> subset
 
--- wrappers with more helpful implicit arg names
+# wrappers with more helpful implicit arg names
 def inject(x:from)         -> to       given (to:Type, from:Type) (Subset(from, to)) = inject'(x)
 def project(x:from)        -> Maybe to given (to:Type, from:Type) (Subset(to, from)) = project'(x)
 def unsafe_project(x:from) -> to       given (to:Type, from:Type) (Subset(to, from)) = unsafe_project'(x)
@@ -1053,14 +1053,14 @@ interface Floating(a:Type)
 
 def lbeta(x:a, y:a) -> a given (a|Sub|Floating) = lgamma x + lgamma y - lgamma (x + y)
 
--- Todo: better numerics for very large and small values.
--- Using %exp here to avoid circular definition problems.
+# Todo: better numerics for very large and small values.
+# Using %exp here to avoid circular definition problems.
 def float32_sinh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x), %exp(%fsub(0.0,x))), 2.0)
 def float32_cosh(x:Float32) -> Float32 = %fdiv(%fadd(%exp(x), %exp(%fsub(0.0,x))), 2.0)
 def float32_tanh(x:Float32) -> Float32 = %fdiv(%fsub(%exp(x), %exp(%fsub(0.0,x)))
                                                ,%fadd(%exp(x), %exp(%fsub(0.0,x))))
 
--- Todo: unify this with float32 functions.
+# Todo: unify this with float32 functions.
 def float64_sinh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x), %exp(%fsub(f_to_f64 0.0, x))), f_to_f64 2.0)
 def float64_cosh(x:Float64) -> Float64 = %fdiv(%fadd(%exp(x), %exp(%fsub(f_to_f64 0.0, x))), f_to_f64 2.0)
 def float64_tanh(x:Float64) -> Float64 = %fdiv(%fsub(%exp(x), %exp(%fsub(f_to_f64 0.0, x)))
@@ -1150,9 +1150,9 @@ instance Storable(Nat)
 instance Storable(Ptr a) given (a:Type)
   def store(ptr, x) = %ptrStore(internal_cast(to=%PtrPtr(), ptr.val), x.val)
   def load(ptr) = Ptr(%ptrLoad(internal_cast(to=%PtrPtr(), ptr)))
-  def storage_size() = 8  -- TODO: something more portable?
+  def storage_size() = 8  # TODO: something more portable?
 
--- TODO: Storable instances for other types
+# TODO: Storable instances for other types
 
 def malloc(n:Nat) -> {IO} (Ptr a) given (a|Storable)  =
   numBytes = storage_size(a=a) * n
@@ -1164,7 +1164,7 @@ def (+>>)(ptr:Ptr a, i:Nat) -> Ptr a given (a|Storable) =
   i' = nat_to_rep $ i * storage_size(a=a)
   Ptr(%ptrOffset(ptr.val, i'))
 
--- TODO: consider making a Storable instance for tables instead
+# TODO: consider making a Storable instance for tables instead
 def store_table(ptr: Ptr a, tab:n=>a) -> {IO} () given (a|Storable, n|Ix) =
   for_ i:n. store(ptr +>> ordinal i, tab[i])
 
@@ -1173,8 +1173,8 @@ def memcpy(dest:Ptr a, src:Ptr a, n:Nat) -> {IO} () given (a|Storable) =
     i' = ordinal i
     store(dest +>> i', load $ src +>> i')
 
--- TODO: generalize these brackets to allow other effects
--- TODO: make sure that freeing happens even if there are run-time errors
+# TODO: generalize these brackets to allow other effects
+# TODO: make sure that freeing happens even if there are run-time errors
 def with_alloc(
     a|Storable,
     n:Nat,
@@ -1202,7 +1202,7 @@ pi : Float = 3.141592653589793
 
 def id(x:a) -> a given (a:Type) = x
 def dup(x:a) -> (a, a) given (a:Type) = (x, x)
--- map, flipped so that the function goes last
+# map, flipped so that the function goes last
 def each(xs: n=>a, f:(a)->{|eff} b) -> {|eff} (n=>b)  given (a:Type, b:Type, n|Ix, eff:Effects) =
   for i. f xs[i]
 
@@ -1266,10 +1266,10 @@ def scan(
 def fold(init:c, xs:n=>a, body:(n, a, c)-> c) -> c  given (a:Type, n|Ix, c|Data) =
   snd $ scan(init, xs) \i x carry. ((), body(i, x, carry))
 
--- `combine` should be a commutative and associative, and form a
--- commutative monoid with `identity`
+# `combine` should be a commutative and associative, and form a
+# commutative monoid with `identity`
 def reduce(xs:n=>a, identity:a, combine:(a,a)->a) -> a given (a|Data, n|Ix) =
-  -- TODO: implement with the accumulator effect
+  # TODO: implement with the accumulator effect
   fold(identity, xs) \i x c. combine(c, x)
 
 def fsum(xs:n=>Float) -> Float given (n|Ix) =
@@ -1309,7 +1309,7 @@ def cumsum_low(xs: n=>a) -> n=>a given (n|Ix, a|Add) =
 
 '### AD operations
 
--- TODO: add vector space constraints
+# TODO: add vector space constraints
 def linearize(f:(a)->b, x:a) -> (b, (a)->b) given (a:Type, b:Type) =
   %linearize(\x:a. f x, x)
 
@@ -1327,8 +1327,8 @@ def deriv(f:(Float)->Float, x:Float) -> Float = jvp(f, x, 1.0)
 
 def deriv_rev(f:(Float)->Float, x:Float) -> Float = (snd vjp(f, x))(1.0)
 
--- XXX: Watch out when editing this data type! We depend on its structure
--- deep inside the compiler (mostly in linearization and during rule registration).
+# XXX: Watch out when editing this data type! We depend on its structure
+# deep inside the compiler (mostly in linearization and during rule registration).
 data SymbolicTangent(a:Type) =
   ZeroTangent
   SomeTangent(a)
@@ -1433,13 +1433,13 @@ named-instance ListMonoid (a|Data) -> Monoid(List a)
   mempty = mempty
   def (<>)(x, y) = x <> y
 
--- TODO Eliminate or reimplement this operation, since it costs O(n)
--- where n is the length of the list held in the reference.
+# TODO Eliminate or reimplement this operation, since it costs O(n)
+# where n is the length of the list held in the reference.
 def append(list: Ref(h, List a), x:a) -> {Accum h} ()
       given (a|Data, h:Heap) (AccumMonoid(h, List a)) =
   list += to_list [x]
 
--- TODO: replace `slice` with this?
+# TODO: replace `slice` with this?
 def post_slice(xs:n=>a, start:Post n, end:Post n) -> List a given (n|Ix, a:Type) =
   slice_size = unsafe_nat_diff(ordinal end, ordinal start)
   to_list for i:(Fin slice_size).
@@ -1452,13 +1452,13 @@ String : Type = List Char
 def string_from_char_ptr(n:Word32, ptr:Ptr Char) -> {IO} String =
   AsList(rep_to_nat n, table_from_ptr ptr)
 
--- TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
+# TODO. This is ASCII code point. It really should be Int32 for Unicode codepoint
 def codepoint(c:Char) -> Int = w8_to_i c
 
 struct CString =
   ptr :  RawPtr
 
--- TODO: check the string contains no nulls
+# TODO: check the string contains no nulls
 def with_c_string(
     s:String,
     action: (CString) -> {IO} a
@@ -1563,15 +1563,15 @@ def copysign(a:Float, b:Float) -> Float =
       True -> (-a)
       False -> 0.0
 
--- Todo: use IEEE floating-point builtins.
+# Todo: use IEEE floating-point builtins.
 infinity = 1.0 / 0.0
 nan      = 0.0 / 0.0
 
--- Todo: use IEEE floating-point builtins.
+# Todo: use IEEE floating-point builtins.
 def isinf(x:Float) -> Bool = (x == infinity) || (x == -infinity)
 def isnan(x:Float) -> Bool = not (x >= x && x <= x)
 
--- Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
+# Todo: use IEEE-754R 5.11: Floating Point Comparison Relation cmpUnordered.
 def either_is_nan(x:Float, y:Float) -> Bool = (isnan x) || (isnan y)
 
 '## File system operations
@@ -1633,7 +1633,7 @@ data IterResult(a|Data) =
   Continue
   Done(a)
 
--- A little iteration combinator
+# A little iteration combinator
 def iter(body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a|Data, eff:Effects) =
   result = yield_state (Nothing::Maybe a) \resultRef.
     i <- with_state (0::Nat)
@@ -1693,14 +1693,14 @@ def from_ordinal(i:Nat) -> n given (n|Ix) =
     True  -> unsafe_from_ordinal i
     False -> error $ from_ordinal_error(i, size n)
 
--- TODO: should this be called `from_ordinal`?
+# TODO: should this be called `from_ordinal`?
 def to_ix(i:Nat) -> Maybe n  given (n|Ix) =
   case i < size n of
     True  -> Just $ unsafe_from_ordinal i
     False -> Nothing
 
--- TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
--- TODO: safe (runtime-checked) and unsafe versions
+# TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
+# TODO: safe (runtime-checked) and unsafe versions
 def cast_table(xs:to=>a) -> from=>a given (from|Ix, to|Ix, a|Data) =
   case size from == size to of
      True  -> unsafe_cast_table xs
@@ -1726,19 +1726,19 @@ Dex's PRNG system is modelled directly after [JAX's](https://github.com/google/j
 
 '### Key functions
 
--- TODO: newtype
+# TODO: newtype
 Key = Word64
 
 @noinline
 def threefry_2x32(k:Word64, count:Word64) -> Word64 =
-  -- Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
+  # Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins
   rotations1 : Fin 4 => Int32 = [13, 15, 26, 6]
   rotations2 : Fin 4 => Int32 = [17, 29, 16, 24]
 
   k0 = low_word k
   k1 = high_word k
-  -- TODO: add a fromHex
-  k2 = k0 .^. k1 .^. (n_to_w32 466688986) -- 0x1BD11BDA
+  # TODO: add a fromHex
+  k2 = k0 .^. k1 .^. (n_to_w32 466688986) # 0x1BD11BDA
 
   x = low_word count
   y = high_word count
@@ -1776,8 +1776,8 @@ These functions generate samples taken from, different distributions.
 Such as `rand_mat` with samples from the distribution of floating point matrices where each element is taken from a i.i.d. uniform distribution. Note that additional standard distributions are provided by the `stats` library.
 
 def rand(k:Key) -> Float =
-  exponent_bits : Word32 = 1065353216 -- 1065353216 = 127 << 23
-  mantissa_bits = (high_word k .&. 8388607)  -- 8388607 == (1 << 23) - 1
+  exponent_bits : Word32 = 1065353216 # 1065353216 = 127 << 23
+  mantissa_bits = (high_word k .&. 8388607)  # 8388607 == (1 << 23) - 1
   bits = exponent_bits .|. mantissa_bits
   %bitcast(Float, bits) - 1.0
 
@@ -1789,13 +1789,13 @@ def rand_mat(n:Nat, m:Nat, f: (Key) -> a, k: Key) -> Fin n => Fin m => a given (
 
 def randn(k:Key) -> Float =
   [k1, k2] = split_key(n=2, k)
-  -- rand is uniform between 0 and 1, but implemented such that it rounds to 0
-  -- (in float32) once every few million draws, but never rounds to 1.
+  # rand is uniform between 0 and 1, but implemented such that it rounds to 0
+  # (in float32) once every few million draws, but never rounds to 1.
   u1 = 1.0 - (rand k1)
   u2 = rand k2
   sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
--- TODO: Make this better...
+# TODO: Make this better...
 def rand_int(k:Key) -> Nat = w64_to_n k `mod` 2147483647
 
 def randn_vec(k:Key) -> n=>Float given (n|Ix) =
@@ -1916,7 +1916,7 @@ def minimum(xs:n=>o) -> o given (n|Ix, o|Ord) = minimum_by(xs, id)
 def maximum(xs:n=>o) -> o given (n|Ix, o|Ord) = maximum_by(xs, id)
 
 '### argmin/argmax
--- TODO: put in same section as `searchsorted`
+# TODO: put in same section as `searchsorted`
 
 def argscan(xs:n=>a, comp:(a,a)->Bool) -> n given (a|Ord, n|Ix) =
   AccumTy : Type = (n, a)
@@ -1937,18 +1937,18 @@ def lexical_order(
     compareElements:(n,n)->Bool,
     compareLengths: (Nat,Nat)->Bool
     ) -> Bool  given (n|Ord) =
-  -- Orders Lists according to the order of their elements,
-  -- in the same way a dictionary does.
-  -- For example, this lets us sort Strings.
-  --
-  -- More precisely, it returns True iff compareElements xs.i ys.i is true
-  -- at the first location they differ.
-  --
-  -- This function operates serially and short-circuits
-  -- at the first difference.  One could also write this
-  -- function as a parallel reduction, but it would be
-  -- wasteful in the case where there is an early difference,
-  -- because we can't short circuit.
+  # Orders Lists according to the order of their elements,
+  # in the same way a dictionary does.
+  # For example, this lets us sort Strings.
+  #
+  # More precisely, it returns True iff compareElements xs.i ys.i is true
+  # at the first location they differ.
+  #
+  # This function operates serially and short-circuits
+  # at the first difference.  One could also write this
+  # function as a parallel reduction, but it would be
+  # wasteful in the case where there is an early difference,
+  # because we can't short circuit.
   AsList(nx, xs) = xList
   AsList(ny, ys) = yList
   iter \i.
@@ -1978,10 +1978,10 @@ TODO: these should be with the other Elementary/Special Functions
 ### atan/atan2
 
 def atan_inner(x:Float) -> Float =
-  -- From "Computing accurate Horner form approximations to
-  -- special functions in finite precision arithmetic"
-  -- https://arxiv.org/abs/1508.03211
-  -- Only accurate in the range [-1, 1]
+  # From "Computing accurate Horner form approximations to
+  # special functions in finite precision arithmetic"
+  # https://arxiv.org/abs/1508.03211
+  # Only accurate in the range [-1, 1]
   s = x * x
   r = 0.0027856871
   r = r * s - 0.0158660002
@@ -1996,13 +1996,13 @@ def atan_inner(x:Float) -> Float =
 
 
 def min_and_max(x:a, y:a) -> (a, a) given (a|Ord) =
-  select(x < y, (x, y), (y, x))  -- get both with one comparison.
+  select(x < y, (x, y), (y, x))  # get both with one comparison.
 
 def atan2(y:Float, x:Float) -> Float =
-  -- Based off of the Tensorflow implementation at
-  -- github.com/tensorflow/mlir-hlo/blob/master/lib/
-  -- Dialect/mhlo/transforms/legalize_trigonometric_to_approximation.cc#L147
-  -- With a fix to the nan propagation.
+  # Based off of the Tensorflow implementation at
+  # github.com/tensorflow/mlir-hlo/blob/master/lib/
+  # Dialect/mhlo/transforms/legalize_trigonometric_to_approximation.cc#L147
+  # With a fix to the nan propagation.
   abs_x = abs x
   abs_y = abs y
   (min_abs_x_y, max_abs_x_y) = min_and_max(abs_x, abs_y)
@@ -2012,9 +2012,9 @@ def atan2(y:Float, x:Float) -> Float =
   t = select(x < 0.0, pi,  0.0)
   a = select(y == 0.0, t, a)
   t = select(x < 0.0, 3.0 * pi / 4.0, pi / 4.0)
-  a = select(isinf x && isinf y, t, a)  -- Handle infinite inputs.
+  a = select(isinf x && isinf y, t, a)  # Handle infinite inputs.
   a = copysign(a, y)
-  select(either_is_nan(x, y), nan, a)  -- Propagate NaNs.
+  select(either_is_nan(x, y), nan, a)  # Propagate NaNs.
 
 def atan(x:Float) -> Float = atan2(x, 1.0)
 
@@ -2045,22 +2045,22 @@ def is_odd(x:Nat) -> Bool = rem(x, 2) == 1
 def is_even(x:Nat) -> Bool = rem(x, 2) == 0
 
 def is_power_of_2(x:Nat) -> Bool =
-  -- A fast trick based on bitwise AND.
-  -- This works on integer types larger than 8 bits.
-  -- Note: The bitwise and operator (.&.)
-  -- is only defined for Byte, which is why
-  -- we use %and here. TODO: Make (.&.) polymorphic.
+  # A fast trick based on bitwise AND.
+  # This works on integer types larger than 8 bits.
+  # Note: The bitwise and operator (.&.)
+  # is only defined for Byte, which is why
+  # we use %and here. TODO: Make (.&.) polymorphic.
   x' = nat_to_rep x
   if x' == 0
     then False
     else %and(x', (%isub(x', 1::NatRep))) == 0
 
--- This computes the integer part of the binary logarithm of the input.
--- TODO: natlog2 0 should do something other than underflow the answer.
--- TODO: Use LLVM ctlz intrinsic instead.  It needs a slightly new
--- code path in ImpToLLVM, because it's the first LLVM intrinsic
--- we have with a fixed-point argument.
--- https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
+# This computes the integer part of the binary logarithm of the input.
+# TODO: natlog2 0 should do something other than underflow the answer.
+# TODO: Use LLVM ctlz intrinsic instead.  It needs a slightly new
+# code path in ImpToLLVM, because it's the first LLVM intrinsic
+# we have with a fixed-point argument.
+# https://llvm.org/docs/LangRef.html#llvm-ctlz-intrinsic
 def natlog2(x:Nat) -> Nat =
   tmp = yield_state (0::Nat) \ans.
     cmp <- run_state (1::Nat)
@@ -2072,7 +2072,7 @@ def natlog2(x:Nat) -> Nat =
           True
         else
           False
-  unsafe_nat_diff(tmp, 1)  -- TODO: something less horrible
+  unsafe_nat_diff(tmp, 1)  # TODO: something less horrible
 
 def nextpow2(x:Nat) -> Nat =
   case is_power_of_2 x of
@@ -2085,9 +2085,9 @@ def general_integer_power(
     power:Nat
     ) -> a given (a|Data) =
   iters : Nat = if power == 0 then 0 else 1 + natlog2 power
-  -- Implements exponentiation by squaring.
-  -- This could be nicer if there were a way to explicitly
-  -- specify which typelcass instance to use for Mul.
+  # Implements exponentiation by squaring.
+  # This could be nicer if there were a way to explicitly
+  # specify which typelcass instance to use for Mul.
   yield_state one \ans.
     pow <- with_state power
     z <- with_state base
@@ -2105,8 +2105,8 @@ def from_just(x:Maybe a) -> a given (a:Type) = case x of Just(x') -> x'
 def any_sat(xs:n=>a, f:(a)->Bool) -> Bool given (a:Type, n|Ix) = any(each xs f)
 
 def seq_maybes(xs: n=>Maybe a) -> Maybe (n => a) given (n|Ix, a:Type) =
-  -- is it possible to implement this safely? (i.e. without using partial
-  -- functions)
+  # is it possible to implement this safely? (i.e. without using partial
+  # functions)
   case any_sat(xs, is_nothing) of
     True  -> Nothing
     False -> Just $ each xs from_just
@@ -2121,8 +2121,8 @@ def list_length(l:List a) -> Nat given (a:Type) =
   AsList(n, _) = l
   n
 
--- This is for efficiency (rather than using `<>` repeatedly)
--- TODO: we want this for any monoid but this implementation won't work.
+# This is for efficiency (rather than using `<>` repeatedly)
+# TODO: we want this for any monoid but this implementation won't work.
 def concat(lists:n=>(List a)) -> List a given (a:Type, n|Ix) =
   totalSize = sum for i:n. list_length lists[i]
   to_list $ with_state (0::Nat) \listIdx.
@@ -2155,8 +2155,8 @@ def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
     case res_inds[unsafe_from_ordinal $ ordinal i] of
       Just(j) -> case xs[j] of
         Just(x) -> x
-        Nothing -> todo -- Impossible
-      Nothing -> todo -- Impossible
+        Nothing -> todo # Impossible
+      Nothing -> todo # Impossible
 
 def filter(xs:n=>a, condition:(a)->Bool) -> List a given (a|Data, n|Ix) =
   cat_maybes $ for i:n. if condition xs[i] then Just xs[i] else Nothing
@@ -2164,7 +2164,7 @@ def filter(xs:n=>a, condition:(a)->Bool) -> List a given (a|Data, n|Ix) =
 def arg_filter(xs:n=>a, condition:(a)->Bool) -> List n given (a|Data, n|Ix) =
   cat_maybes $ for i:n. if condition xs[i] then Just i else Nothing
 
--- TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
+# TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
 def prev_ix(i:n) -> Maybe n given (n|Ix) =
   case i_to_n (n_to_i (ordinal i) - 1) of
     Nothing -> Nothing
@@ -2185,7 +2185,7 @@ def lines(source:String) -> List String =
 
 '## Probability
 
--- cdf should include 0.0 but not 1.0
+# cdf should include 0.0 but not 1.0
 def categorical_from_cdf(cdf: n=>Float, key: Key) -> n given (n|Ix) =
   r = rand key
   from_just $ left_fence $ search_sorted(cdf, r)
@@ -2199,8 +2199,8 @@ def cdf_for_categorical(logprobs: n=>Float) -> n=>Float given (n|Ix) =
 def categorical(logprobs: n=>Float, key: Key) -> n given (n|Ix) =
   categorical_from_cdf(cdf_for_categorical logprobs, key)
 
--- batch variant to share the work of forming the cumsum
--- (alternatively we could rely on hoisting of loop constants)
+# batch variant to share the work of forming the cumsum
+# (alternatively we could rely on hoisting of loop constants)
 def categorical_batch(logprobs: n=>Float, key: Key) -> m=>n given (n|Ix, m|Ix) =
   cdf = cdf_for_categorical logprobs
   for i:m. categorical_from_cdf(cdf, ixkey(key, i))
@@ -2223,11 +2223,11 @@ def softmax(x: n=>Float) -> n=>Float given (n|Ix) =
 TODO: Move this somewhere else
 
 def evalpoly(coeffs:n=>v, x:Float) -> v given (n|Ix, v|VSpace) =
-  -- Evaluate a polynomial at x.  Same as Numpy's polyval.
+  # Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero coeffs \i coeff c. coeff + x .* c
 
 '## Exception effect
--- TODO: move `error` and `todo` to here.
+# TODO: move `error` and `todo` to here.
 
 def catch(f:() -> {Except|eff} a) -> {|eff} Maybe a given (a:Type, eff:Effects)=
   f' : (() -> {Except|eff} a) = \. f()
@@ -2277,8 +2277,8 @@ def reversed_digits_to_int(digits: a=>b) -> Nat given (a|Ix, b|Ix) =
     (next_k, next_base)
 
 instance Ix(a=>b) given (a|Ix, b|Ix)
-  -- 0@a is the least significant digit,
-  -- while (size a - 1)@a is the most significant digit.
+  # 0@a is the least significant digit,
+  # while (size a - 1)@a is the most significant digit.
   def size'() = size b `intpow` size a
   def ordinal(i) = reversed_digits_to_int i
   def unsafe_from_ordinal(i) = int_to_reversed_digits i
@@ -2401,12 +2401,12 @@ def check_env(name:String) -> {IO} Bool =
 
 '## Testing Helpers
 
--- -- Reliably causes a segfault if pointers aren't initialized to zero.
--- -- TODO: add this test when we cache modules
--- justSomeDataToTestCaching = toList for i:(Fin 100).
---   if ordinal i == 0
---     then Left (toList [1,2,3])
---     else Right 1
+# # Reliably causes a segfault if pointers aren't initialized to zero.
+# # TODO: add this test when we cache modules
+# justSomeDataToTestCaching = toList for i:(Fin 100).
+#   if ordinal i == 0
+#     then Left (toList [1,2,3])
+#     else Right 1
 
 '### TestMode
 
@@ -2416,7 +2416,7 @@ def dex_test_mode() -> Bool = unsafe_io \. check_env "DEX_TEST_MODE"
 '### More Stream IO
 
 def fread(stream:Stream ReadMode) -> {IO} String =
-  -- TODO: allow reading longer files!
+  # TODO: allow reading longer files!
   n : Nat = 4096
   ptr <- with_alloc(Char, n)
   stack <- with_stack Char
@@ -2508,9 +2508,9 @@ def dot(s:n=>Float, vs:n=>v) -> v given (n|Ix, v|VSpace) = sum for j:n. s[j] .* 
 def naive_matmul(x: l=>m=>Float, y: m=>n=>Float) -> (l=>n=>Float) given (l|Ix, m|Ix, n|Ix) =
   for i k. fsum for j:m. x[i,j] * y[j,k]
 
--- A `FullTileIx` type represents `tile_ix`th full tile (of size
--- `tile_size`) iterating over the index set `n`.
--- This type is only well formed when tile_ix * tile_size < size n.
+# A `FullTileIx` type represents `tile_ix`th full tile (of size
+# `tile_size`) iterating over the index set `n`.
+# This type is only well formed when tile_ix * tile_size < size n.
 struct FullTileIx(n|Ix, tile_size:Nat, tile_ix:Nat) =
   unwrap : Fin tile_size
 
@@ -2524,9 +2524,9 @@ instance Subset(FullTileIx(n, tile_size, tile_ix), n) given (n|Ix, tile_size:Nat
   def project'(i) = todo
   def unsafe_project'(i) = todo
 
--- A `CodaIx` type represents the last few elements of the index set `n`,
--- as might be left over after iterating by tiles.
--- This type is only well formed when size n == coda_offset + coda_size
+# A `CodaIx` type represents the last few elements of the index set `n`,
+# as might be left over after iterating by tiles.
+# This type is only well formed when size n == coda_offset + coda_size
 struct CodaIx(n|Ix, coda_offset:Nat, coda_size:Nat) =
   unwrap : Fin coda_size
 
@@ -2558,7 +2558,7 @@ def tiled_matmul(
     x: l=>m=>Float,
     y: m=>n=>Float
     ) -> l=>n=>Float  given (l|Ix, m|Ix, n|Ix) =
-  -- Tile sizes picked for axch's laptop
+  # Tile sizes picked for axch's laptop
   l_tile_size : Nat = 32
   n_tile_size : Nat = 128
   m_tile_size : Nat = 8
@@ -2574,7 +2574,7 @@ def tiled_matmul(
                 n_ix = inject(to=n, n_offset)
                 result!l_ix!n_ix += x[l_ix][m_ix] * y[m_ix][n_ix]
 
--- matmul. Better symbol to use? `@`?
+# matmul. Better symbol to use? `@`?
 def (**)(
     x: l=>m=>Float,
     y: m=>n=>Float
