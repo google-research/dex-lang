@@ -47,9 +47,6 @@ import Types.Top
 import qualified Types.OpNames as P
 import Util hiding (group)
 
-sidtodo :: SrcId
-sidtodo = rootSrcId
-
 -- === Top-level interface ===
 
 checkTopUType :: (Fallible1 m, TopLogger m, EnvReader m) => UType n -> m n (CType n)
@@ -277,26 +274,26 @@ withInferenceVar hint binding cont = diffStateT1 \s -> do
 {-# INLINE withInferenceVar #-}
 
 withFreshUnificationVar
-  :: (Zonkable e, Emits o) => InfVarDesc -> Kind CoreIR o
+  :: (Zonkable e, Emits o) => SrcId -> InfVarDesc -> Kind CoreIR o
   -> (forall o'. (Emits o', DExt o o') => CAtomVar o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
-withFreshUnificationVar desc k cont = do
+withFreshUnificationVar sid desc k cont = do
   withInferenceVar "_unif_" (InfVarBound k) \v -> do
     ans <- toAtomVar v >>= cont
     soln <- (M.lookup v <$> fromSolverSubst <$> getDiffState) >>= \case
       Just soln ->  return soln
-      Nothing -> throw sidtodo $ AmbiguousInferenceVar (pprint v) (pprint k) desc
+      Nothing -> throw sid $ AmbiguousInferenceVar (pprint v) (pprint k) desc
     return (ans, soln)
 {-# INLINE withFreshUnificationVar #-}
 
 withFreshUnificationVarNoEmits
-  :: (Zonkable e) => InfVarDesc -> Kind CoreIR o
+  :: (Zonkable e) => SrcId -> InfVarDesc -> Kind CoreIR o
   -> (forall o'. (DExt o o') => CAtomVar o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
-withFreshUnificationVarNoEmits desc k cont = diffStateT1 \s -> do
+withFreshUnificationVarNoEmits sid desc k cont = diffStateT1 \s -> do
   Abs Empty resultAndDiff <- buildScoped do
     liftM toPairE $ runDiffStateT1 (sink s) $
-      withFreshUnificationVar desc (sink k) cont
+      withFreshUnificationVar sid desc (sink k) cont
   return $ fromPairE resultAndDiff
 
 withFreshDictVar
@@ -596,13 +593,13 @@ instantiateSigma sid reqTy sigmaAtom = case sigmaAtom of
       bsConstrained <- buildConstraints (Abs bs resultTy) \_ resultTy' -> do
         case reqTy of
           Infer -> return []
-          Check reqTy' -> return [TypeConstraint sidtodo (sink reqTy') resultTy']
-      args <- inferMixedArgs @UExpr fDesc expls bsConstrained ([], [])
-      applySigmaAtom sidtodo sigmaAtom args
+          Check reqTy' -> return [TypeConstraint sid (sink reqTy') resultTy']
+      args <- inferMixedArgs @UExpr sid fDesc expls bsConstrained ([], [])
+      applySigmaAtom sid sigmaAtom args
     _ -> fallback
   _ -> fallback
   where
-    fallback = forceSigmaAtom sigmaAtom >>= matchReq sid reqTy
+    fallback = forceSigmaAtom sid sigmaAtom >>= matchReq sid reqTy
     fDesc = getSourceName sigmaAtom
 
 matchReq :: Ext o o' => SrcId -> RequiredTy o -> CAtom o' -> InfererM i o' (CAtom o')
@@ -612,12 +609,12 @@ matchReq sid (Check reqTy) x = do
 matchReq _ Infer x = return x
 {-# INLINE matchReq #-}
 
-forceSigmaAtom :: Emits o => SigmaAtom o -> InfererM i o (CAtom o)
-forceSigmaAtom sigmaAtom = case sigmaAtom of
+forceSigmaAtom :: Emits o => SrcId -> SigmaAtom o -> InfererM i o (CAtom o)
+forceSigmaAtom sid sigmaAtom = case sigmaAtom of
   SigmaAtom _ x -> return x
   SigmaUVar _ _ v -> case v of
     UAtomVar v' -> inlineTypeAliases v'
-    _ -> applySigmaAtom sidtodo sigmaAtom []
+    _ -> applySigmaAtom sid sigmaAtom []
   SigmaPartialApp _ _ _ -> error "not implemented" -- better error message?
 
 withBlockDecls
@@ -738,6 +735,7 @@ class PrettyE e => ExplicitArg (e::E) where
   checkExplicitDependentArg    ::            e i -> PartialType o -> InfererM i o (CAtom o)
   inferExplicitArg :: Emits o => e i -> InfererM i o (CAtom o)
   isHole :: e n -> Bool
+  explicitArgSrcId :: e n -> SrcId
 
 instance ExplicitArg UExpr where
   checkExplicitDependentArg arg argTy = checkSigmaDependent arg argTy
@@ -746,18 +744,20 @@ instance ExplicitArg UExpr where
   isHole = \case
     WithSrcE _ UHole -> True
     _ -> False
+  explicitArgSrcId = getSrcId
 
 instance ExplicitArg CAtom where
   checkExplicitDependentArg    = checkCAtom
   checkExplicitNonDependentArg = checkCAtom
   inferExplicitArg arg = renameM arg
   isHole _ = False
+  explicitArgSrcId _ = rootSrcId
 
 checkCAtom :: CAtom i -> PartialType o -> InfererM i o (CAtom o)
 checkCAtom arg argTy = do
   arg' <- renameM arg
   case argTy of
-    FullType argTy' -> expectEq sidtodo argTy' (getType arg')
+    FullType argTy' -> expectEq rootSrcId argTy' (getType arg')
     PartialType _ -> return () -- TODO?
   return arg'
 
@@ -772,7 +772,7 @@ checkOrInferApp appSrcId funSrcId f' posArgs namedArgs reqTy = do
       ExplicitApp -> do
         checkExplicitArity appSrcId expls posArgs
         bsConstrained <- buildAppConstraints appSrcId reqTy piTy
-        args <- inferMixedArgs fDesc expls bsConstrained (posArgs, namedArgs)
+        args <- inferMixedArgs appSrcId fDesc expls bsConstrained (posArgs, namedArgs)
         applySigmaAtom appSrcId f args
       ImplicitApp -> error "should already have handled this case"
     ty -> throw funSrcId $ EliminationErr "function type" (pprint ty)
@@ -922,12 +922,12 @@ buildConstraints ab cont = liftEnvReaderM do
 -- TODO: check that there are no extra named args provided
 inferMixedArgs
   :: forall arg i o . (Emits o, ExplicitArg arg)
-  => SourceName
+  => SrcId -> SourceName
   -> [Explicitness] -> ConstrainedBinders o
   -> MixedArgs (arg i)
   -> InfererM i o [CAtom o]
-inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgsTop) = do
-  checkNamedArgValidity explsTop (map fst namedArgsTop)
+inferMixedArgs appSrcId fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgsTop) = do
+  checkNamedArgValidity appSrcId explsTop (map fst namedArgsTop)
   liftSolverM $ fromListE <$> go explsTop dependenceTop bsAbs argsTop
  where
   go :: Emits oo
@@ -973,7 +973,7 @@ inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgs
         if isHole arg
           then do
             let desc = (pprint fSourceName, "_")
-            withFreshUnificationVar (ImplicitArgInfVar desc) argTy \v ->
+            withFreshUnificationVar appSrcId (ImplicitArgInfVar desc) argTy \v ->
               cont (toAtom v) (argsRest, namedArgs)
           else do
             arg' <- checkOrInferExplicitArg isDependent arg argTy
@@ -985,8 +985,8 @@ inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgs
             arg' <- checkOrInferExplicitArg isDependent arg argTy
             withDistinct $ cont arg' args
           Nothing -> case infMech of
-            Unify -> withFreshUnificationVar (ImplicitArgInfVar desc) argTy \v -> cont (toAtom v) args
-            Synth _ -> withDict sidtodo argTy \d -> cont d args
+            Unify -> withFreshUnificationVar appSrcId (ImplicitArgInfVar desc) argTy \v -> cont (toAtom v) args
+            Synth _ -> withDict appSrcId argTy \d -> cont d args
 
   checkOrInferExplicitArg :: Emits oo => Bool -> arg i -> CType oo -> SolverM i oo (CAtom oo)
   checkOrInferExplicitArg isDependent arg argTy = do
@@ -995,7 +995,7 @@ inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgs
         True  -> checkExplicitDependentArg   arg partialTy
         False -> checkExplicitNonDependentArg arg partialTy
       Nothing -> inferExplicitArg arg
-    constrainEq sidtodo argTy (getType arg')
+    constrainEq (explicitArgSrcId arg) argTy (getType arg')
     return arg'
 
   lookupNamedArg :: MixedArgs x -> Maybe SourceName -> Maybe x
@@ -1015,18 +1015,17 @@ inferMixedArgs fSourceName explsTop (dependenceTop, bsAbs) argsTop@(_, namedArgs
     True -> return Nothing
     False -> return $ Just x
 
-checkNamedArgValidity :: Fallible m => [Explicitness] -> [SourceName] -> m ()
-checkNamedArgValidity expls offeredNames = do
+checkNamedArgValidity :: Fallible m => SrcId -> [Explicitness] -> [SourceName] -> m ()
+checkNamedArgValidity sid expls offeredNames = do
   let explToMaybeName = \case
         Explicit -> Nothing
         Inferred v _ -> v
   let acceptedNames = catMaybes $ map explToMaybeName expls
   let duplicates = repeated offeredNames
-  -- here and below we should be able to get a per-name src id
-  when (not $ null duplicates) $ throw sidtodo $ RepeatedOptionalArgs $ map pprint duplicates
+  when (not $ null duplicates) $ throw sid $ RepeatedOptionalArgs $ map pprint duplicates
   let unrecognizedNames = filter (not . (`elem` acceptedNames)) offeredNames
   when (not $ null unrecognizedNames) do
-    throw sidtodo $ UnrecognizedOptionalArgs (map pprint unrecognizedNames) (map pprint acceptedNames)
+    throw sid $ UnrecognizedOptionalArgs (map pprint unrecognizedNames) (map pprint acceptedNames)
 
 inferPrimArg :: Emits o => UExpr i -> InfererM i o (CAtom o)
 inferPrimArg x = do
@@ -1477,7 +1476,7 @@ checkInstanceBody className params methods = do
 superclassDictTys :: Nest CBinder o o' -> InfererM i o [CType o]
 superclassDictTys Empty = return []
 superclassDictTys (Nest b bs) = do
-  Abs bs' UnitE <- liftHoistExcept sidtodo $ hoist b $ Abs bs UnitE
+  Abs bs' UnitE <- liftHoistExcept rootSrcId $ hoist b $ Abs bs UnitE
   (binderType b:) <$> superclassDictTys bs'
 
 checkMethodDef :: ClassName o -> [CorePiType o] -> UMethodDef i -> InfererM i o (Int, CAtom o)
@@ -1534,7 +1533,7 @@ checkCasePat (WithSrcB sid pat) scrutineeTy cont = case pat of
   UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= lookupDataCon
     tyConDef <- lookupTyCon dataDefName
-    params <- inferParams scrutineeTy dataDefName
+    params <- inferParams sid scrutineeTy dataDefName
     ADTCons cons <- instantiateTyConDef tyConDef params
     DataConDef _ _ repTy idxs <- return $ cons !! con
     when (length idxs /= nestLength ps) $ throw sid $ PatternArityErr (length idxs) (nestLength ps)
@@ -1545,8 +1544,8 @@ checkCasePat (WithSrcB sid pat) scrutineeTy cont = case pat of
         bindLetPats ps args $ cont
   _ -> throw sid IllFormedCasePattern
 
-inferParams :: Emits o => CType o -> TyConName o -> InfererM i o (TyConParams o)
-inferParams ty dataDefName = do
+inferParams :: Emits o => SrcId -> CType o -> TyConName o -> InfererM i o (TyConParams o)
+inferParams sid ty dataDefName = do
   TyConDef sourceName roleExpls paramBs _ <- lookupTyCon dataDefName
   let paramExpls = snd <$> roleExpls
   let inferenceExpls = paramExpls <&> \case
@@ -1554,8 +1553,8 @@ inferParams ty dataDefName = do
         expl -> expl
   paramBsAbs <- buildConstraints (Abs paramBs UnitE) \params _ -> do
     let ty' = toType $ UserADTType sourceName (sink dataDefName) $ TyConParams paramExpls params
-    return [TypeConstraint sidtodo (sink ty) ty']
-  args <- inferMixedArgs sourceName inferenceExpls paramBsAbs emptyMixedArgs
+    return [TypeConstraint sid (sink ty) ty']
+  args <- inferMixedArgs sid sourceName inferenceExpls paramBsAbs emptyMixedArgs
   return $ TyConParams paramExpls args
 
 bindLetPats
@@ -1599,7 +1598,7 @@ bindLetPat (WithSrcB sid pat) v cont = case pat of
       ADTCons [DataConDef _ _ _ idxss] -> do
         when (length idxss /= nestLength ps) $
           throw sid $ PatternArityErr (length idxss) (nestLength ps)
-        void $ inferParams (getType $ toAtom v) dataDefName
+        void $ inferParams sid (getType $ toAtom v) dataDefName
         xs <- forM idxss \idxs -> applyProjectionsReduced idxs (toAtom v) >>= emitInline
         bindLetPats ps xs cont
       _ -> throw sid SumTypeCantFail
@@ -1887,7 +1886,7 @@ withFreshEff
   => (forall o'. DExt o o' => EffectRow CoreIR o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
 withFreshEff cont =
-  withFreshUnificationVarNoEmits MiscInfVar EffKind \v -> do
+  withFreshUnificationVarNoEmits rootSrcId MiscInfVar EffKind \v -> do
     cont $ EffectRow mempty $ EffectRowTail v
 {-# INLINE withFreshEff #-}
 
@@ -2069,12 +2068,12 @@ generalizeInstanceArg role ty arg cont = case role of
   -- that it's valid to implement `generalizeDict` by synthesizing an entirely
   -- fresh dictionary, and if we were to do that, we would infer this type
   -- parameter exactly as we do here, using inference.
-  TypeParam -> withFreshUnificationVarNoEmits MiscInfVar TyKind \v -> cont $ toAtom v
+  TypeParam -> withFreshUnificationVarNoEmits rootSrcId MiscInfVar TyKind \v -> cont $ toAtom v
   DictParam -> withFreshDictVarNoEmits ty (
     \ty' -> case toMaybeDict (sink arg) of
               Just d -> liftM toAtom $ lift11 $ generalizeDictRec ty' d
               _ -> error "not a dict") cont
-  DataParam -> withFreshUnificationVarNoEmits MiscInfVar ty \v -> cont $ toAtom v
+  DataParam -> withFreshUnificationVarNoEmits rootSrcId MiscInfVar ty \v -> cont $ toAtom v
 
 emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
 emitInstanceDef instanceDef@(InstanceDef className _ _ _ _) = do
@@ -2252,7 +2251,7 @@ instantiateSynthArgs sid target (expls, synthPiTy) = do
   liftM fromListE $ withReducibleEmissions sid CantReduceDict do
     bsConstrained <- buildConstraints (sink synthPiTy) \_ resultTy -> do
       return [TypeConstraint sid (TyCon $ DictTy $ sink target) (TyCon $ DictTy resultTy)]
-    ListE <$> inferMixedArgs "dict" expls bsConstrained emptyMixedArgs
+    ListE <$> inferMixedArgs sid "dict" expls bsConstrained emptyMixedArgs
 
 emptyMixedArgs :: MixedArgs (CAtom n)
 emptyMixedArgs = ([], [])
