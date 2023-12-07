@@ -6,13 +6,13 @@ import png
 import plot
 
 def wrapidx(n|Ix, i:Int) -> n =
-  -- Index wrapping around at ends.
+  # Index wrapping around at ends.
   asidx $ unsafe_i_to_n $ mod i $ n_to_i $ size n
 
-def incwrap(i:n) -> n given (n|Ix) =  -- Increment index, wrapping around at ends.
+def incwrap(i:n) -> n given (n|Ix) =  # Increment index, wrapping around at ends.
   asidx $ unsafe_i_to_n $ mod ((n_to_i $ ordinal i) + 1) $ n_to_i $ size n
 
-def decwrap(i:n) -> n given (n|Ix) =  -- Decrement index, wrapping around at ends.
+def decwrap(i:n) -> n given (n|Ix) =  # Decrement index, wrapping around at ends.
   asidx $ unsafe_i_to_n $ mod (n_to_i (ordinal i) - 1) $ n_to_i $ size n
 
 def finite_difference_neighbours(x:n=>a) -> n=>a given (n|Ix, a|Add|Sub) =
@@ -42,11 +42,11 @@ def add_neighbours_2d(x:n=>m=>a) -> (n=>m=>a) given (n|Ix, m|Ix, a|Add) =
   ax1 + ax2
 
 def project_vel(v: n=>m=>(Fin 2)=>a) -> n=>m=>(Fin 2)=>a given (n|Ix, m|Ix, a|VSpace) =
-  -- Project_vel the velocity field to be approximately mass-conserving,
-  -- using a few iterations of Gauss-Seidel.
+  # Project_vel the velocity field to be approximately mass-conserving,
+  # using a few iterations of Gauss-Seidel.
   h = 1.0 / n_to_f (size n)
 
-  -- unpack into two scalar fields
+  # unpack into two scalar fields
   vx = for i j. v[i,j, from_ordinal 0]
   vy = for i j. v[i,j, from_ordinal 1]
 
@@ -59,7 +59,7 @@ def project_vel(v: n=>m=>(Fin 2)=>a) -> n=>m=>(Fin 2)=>a given (n|Ix, m|Ix, a|VS
   vx = vx - (0.5 / h) .* fdx(p)
   vy = vy - (0.5 / h) .* fdy(p)
 
-  for i j. [vx[i,j], vy[i,j]]  -- pack back into a table.
+  for i j. [vx[i,j], vy[i,j]]  # pack back into a table.
 
 def bilinear_interp(
     right_weight:Float, bottom_weight:Float,
@@ -71,32 +71,32 @@ def bilinear_interp(
   left + right
 
 def advect(f: n=>m=>a, v: n=>m=>(Fin 2)=>Float) -> n=>m=>a given (n|Ix, m|Ix, a|VSpace) =
-  -- Move field f according to x and y velocities (u and v)
-  -- using an implicit Euler integrator.
+  # Move field f according to x and y velocities (u and v)
+  # using an implicit Euler integrator.
 
   cell_xs = linspace n 0.0 $ n_to_f (size n)
   cell_ys = linspace m 0.0 $ n_to_f (size m)
 
   for i j.
-    -- Location of source of flow for this cell.  No meshgrid!
+    # Location of source of flow for this cell.  No meshgrid!
     center_xs = cell_xs[i] - v[i,j, from_ordinal 0]
     center_ys = cell_ys[j] - v[i,j, from_ordinal 1]
 
-    -- Index of source cell.
+    # Index of source cell.
     source_col = floor center_xs
     source_row = floor center_ys
 
-    -- Relative weight of right-hand and bottom cells.
+    # Relative weight of right-hand and bottom cells.
     right_weight  = center_xs - source_col
     bottom_weight = center_ys - source_row
 
-    -- Cast back to indices, wrapping around edges.
+    # Cast back to indices, wrapping around edges.
     l = wrapidx n  (f_to_i source_col)
     r = wrapidx n ((f_to_i source_col) + 1)
     t = wrapidx m  (f_to_i source_row)
     b = wrapidx m ((f_to_i source_row) + 1)
 
-    -- A convex weighting of the 4 surrounding cells.
+    # A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f[l,t] f[l,b] f[r,t] f[r,b]
 
 def fluidsim(
@@ -107,9 +107,9 @@ def fluidsim(
   with_state (color_init, v) \state.
     for i:(Fin num_steps).
       (color, v) = get state
-      v = advect v v          -- Move velocities
-      v = project_vel v       -- Project to be volume-preserving
-      color' = advect color v -- Move color
+      v = advect v v          # Move velocities
+      v = project_vel v       # Project to be volume-preserving
+      color' = advect color v # Move color
       state := (color', v)
       color
 
@@ -118,13 +118,13 @@ def fluidsim(
 N = Fin 50
 M = Fin 50
 
--- Create random velocity field.
+# Create random velocity field.
 def ixkey3(k:Key, i:n, j:m, k2:o) -> Key given (n|Ix, m|Ix, o|Ix) =
   hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
 init_velocity = for i:N j:M k:(Fin 2).
   3.0 * (randn $ ixkey3 (new_key 0) i j k)
 
--- Create diagonally-striped color pattern.
+# Create diagonally-striped color pattern.
 init_color = for i:N j:M.
   i' = n_to_f $ ordinal i
   j' = n_to_f $ ordinal j
@@ -133,7 +133,7 @@ init_color = for i:N j:M.
   g = b_to_f $ (sin $ (j' + i') / 4.0) > 0.0
   [r, g, b]
 
--- Run fluid sim and plot it.
+# Run fluid sim and plot it.
 num_steps = 5
 :html imseqshow $ fluidsim num_steps init_color init_velocity
 > <html output>
@@ -142,7 +142,7 @@ num_steps = 5
 
 target = transpose init_color
 
--- This is partial
+# This is partial
 def last(xs:n=>a) -> a given (n|Ix, a) = xs[(unsafe_nat_diff (size n) 1)@_]
 
 def objective(v:N=>M=>(Fin 2)=>Float) -> Float =

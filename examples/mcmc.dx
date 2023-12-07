@@ -37,7 +37,7 @@ def meanAndCovariance(xs:n=>d=>Float) -> (d=>Float, d=>d=>Float) given (n|Ix, d|
 
 '## Metropolis-Hastings implementation
 
-MHParams : Type = Float  -- step size
+MHParams : Type = Float  # step size
 
 def mhStep(
     stepSize: MHParams,

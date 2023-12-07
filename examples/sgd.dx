@@ -13,7 +13,7 @@ def sgd_step(
   new_x = x - step_size .* new_m
   (new_x, new_m)
 
--- In-place optimization loop.
+# In-place optimization loop.
 def sgd(
     step_size:Float,
     decay:Float,

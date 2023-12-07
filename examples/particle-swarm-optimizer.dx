@@ -54,12 +54,12 @@ We have **arguments**:
 '**Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
 def optimize(
-    np':Nat,                      -- number of particles
-    niter:Nat,                    -- number of iteration
-    key:Key,                      -- random seed
-    f:(d=>Float)->Float,          -- function to optimize
-    bounds:(d=>Float, d=>Float),  -- bounds
-    params:(Float, Float, Float)  -- momentum/pRate/gRate
+    np':Nat,                      # number of particles
+    niter:Nat,                    # number of iteration
+    key:Key,                      # random seed
+    f:(d=>Float)->Float,          # function to optimize
+    bounds:(d=>Float, d=>Float),  # bounds
+    params:(Float, Float, Float)  # momentum/pRate/gRate
     ) -> d=>Float given (d|Ix) =
     (lb,ub) = bounds
     (momentum, gRate, pRate) = params
@@ -96,7 +96,7 @@ def optimize(
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
-'---
+'#-
 Let's see how it goes.
 Run it for more iterations and the result should improve.
 Which it indeed does.

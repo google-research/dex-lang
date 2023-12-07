@@ -11,17 +11,17 @@ import linalg
 
 'Todo: factor out a more general linear map typeclass, and make this one inherit from it.
 
--- interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
-  -- apply: m -> in -> out
-  -- transpose': m -> m
+# interface [VSpace m, VSpace in, VSpace out] LinearMap m in out
+  # apply: m -> in -> out
+  # transpose': m -> m
 
 '## Linear Endomorphisms
 a.k.a. linear maps from a space back to that same space.
 
 interface HasDeterminant(m)
   determinant': (m) -> Float
-  transposeType : Type  -- unused for now
-  transpose': (m) -> m      -- In future: m -> transposeType m
+  transposeType : Type  # unused for now
+  transpose': (m) -> m      # In future: m -> transposeType m
   identity': m
 
 interface LinearEndo(m|HasDeterminant, v|VSpace)
@@ -139,8 +139,8 @@ instance HasDeterminant(SkewSymmetricMap n) given (n|Ix)
     True -> zero
     False ->
       dense_rep = skew_symmetric_prod a.val eye
-      determinant dense_rep  -- Naive algorithm, could be done with Pfaffian
-  transposeType = (i:n)=>(..<i)=>Float  -- 
+      determinant dense_rep  # Naive algorithm, could be done with Pfaffian
+  transposeType = (i:n)=>(..<i)=>Float  # 
   def transpose'(x) = SkewSymmetricMap (-x.val)
   identity' = error "Skew symmetric matrices can't represent the identity map."
 
@@ -148,20 +148,20 @@ instance LinearEndo(SkewSymmetricMap n, n=>v) given (n|Ix, v|Mul|VSpace)
   def apply(x, y)  = skew_symmetric_prod x.val y
   def diag(x)      = zero
   def solve'(x, y) =
-    dense_rep = skew_symmetric_prod x.val eye  -- Fall back to naive algorithm
+    dense_rep = skew_symmetric_prod x.val eye  # Fall back to naive algorithm
     solve dense_rep y
 
 instance Arbitrary(SkewSymmetricMap n) given (n|Ix)
   def arb(k) = SkewSymmetricMap $ arb k
 
 
--- Todo: Sparse matrices. Need hashmaps for these to be practical.
+# Todo: Sparse matrices. Need hashmaps for these to be practical.
 
 
 
 '## Application 1: Gaussians
 
--- This typeclass will be obsolete once the `Basis` typeclass can be written.
+# This typeclass will be obsolete once the `Basis` typeclass can be written.
 interface HasStandardNormal(a:Type)
   randNormal : (Key) -> a
 
@@ -185,7 +185,7 @@ This single definition of a Gaussian log pdf should work
 efficiently for any type of covariance matrix for which
 an efficient solve and determinant is known.
 
--- This helper will be osbolete once the basis typeclass works.
+# This helper will be osbolete once the basis typeclass works.
 def get_VSpace_dim(x:v) -> Float given (v|Mul|VSpace|InnerProd) =
   one' : v = one
   inner_prod one' one'
@@ -257,11 +257,11 @@ def check_transpose(m|HasDeterminant|Arbitrary, given () (LinearEndo m v)) -> Bo
 
 check_transpose $ SkewSymmetricMap vec_len
 > True
--- Disabled until associated types are implemented.
--- check_transpose $ LowerTriMap vec_len
--- > True
--- check_transpose $ UpperTriMap vec_len
--- > True
+# Disabled until associated types are implemented.
+# check_transpose $ LowerTriMap vec_len
+# > True
+# check_transpose $ UpperTriMap vec_len
+# > True
 check_transpose $ vec_len=>vec_len=>Float
 > True
 check_transpose $ DiagMap vec_len
@@ -269,7 +269,7 @@ check_transpose $ DiagMap vec_len
 check_transpose ScalarMap
 > True
 
--- Check that 1D Gaussian sums to 1
+# Check that 1D Gaussian sums to 1
 sizen = Fin 2000
 span = 10.0
 xs = linspace sizen (-span) span
@@ -293,14 +293,14 @@ def check_2D_Gaussian_normalizes(m|Arbitrary, given () (LinearEndo m ((Fin 2) =>
     exp $ gaussian_log_pdf meanvec covroot x
   integral ~~ 1.0
 
--- Disable due to FP tolerance issue
--- check_2D_Gaussian_normalizes (SkewSymmetricMap (Fin 2))
--- > True
--- Disabled until associated types are implemented.
--- check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
--- > True
--- check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
--- > True
+# Disable due to FP tolerance issue
+# check_2D_Gaussian_normalizes (SkewSymmetricMap (Fin 2))
+# > True
+# Disabled until associated types are implemented.
+# check_2D_Gaussian_normalizes (LowerTriMat (Fin 2) Float)
+# > True
+# check_2D_Gaussian_normalizes (UpperTriMat (Fin 2) Float)
+# > True
 check_2D_Gaussian_normalizes $ (Fin 2)=>(Fin 2)=>Float
 > True
 check_2D_Gaussian_normalizes $ DiagMap (Fin 2)
@@ -323,9 +323,9 @@ def radon_nikodym(
   state:s,
   t:Time
   ) -> Float given (m, s|InnerProd) (LinearEndo m s) =
-  -- By Girsanov's theorem, this gives a simple Monte Carlo estimator
-  -- of the (loosely speaking) instantaneous KL divergence between
-  -- two SDEs that share a diffusion function.
+  # By Girsanov's theorem, this gives a simple Monte Carlo estimator
+  # of the (loosely speaking) instantaneous KL divergence between
+  # two SDEs that share a diffusion function.
   difference = (drift1 state t) - (drift2 state t)
   cur_diffusion = diffusion state t
   a = solve' cur_diffusion difference
@@ -357,7 +357,7 @@ def stationary_SDE_parts_to_SDE(
   (neg_energy_func, skew_symm_map, diffusion_func) = parts
   drift = \state time.
 
-    diffusion_prod = \vec.  -- Square the root of the covariance matrix
+    diffusion_prod = \vec.  # Square the root of the covariance matrix
       cur_diffusion_root = diffusion_func state
       0.5 .* (apply cur_diffusion_root (apply cur_diffusion_root vec))
   
@@ -376,4 +376,4 @@ def stationary_SDE_parts_to_SDE(
   diffusion = \state time. diffusion_func state
   (drift, diffusion)
 
--- Todo: tests for SDE functions.
+# Todo: tests for SDE functions.

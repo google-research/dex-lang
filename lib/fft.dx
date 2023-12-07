@@ -12,7 +12,7 @@ import complex
 '## Helper functions
 
 def odd_sized_palindrome(mid:a, seq:n=>a) -> ((n `Either` () `Either` n)=>a) given (a, n|Ix) =
-  -- Turns sequence 12345 into 543212345.
+  # Turns sequence 12345 into 543212345.
   for i.
     case i of
       Left i -> case i of
@@ -27,10 +27,10 @@ data FTDirection =
   InverseFT
 
 def butterfly_ixs(j':halfn, pow2:Nat) -> (n, n, n, n) given (halfn|Ix, n|Ix) =
-  -- Re-index at a finer frequency.
-  -- halfn must have half the size of n.
-  -- For explanation, see https://en.wikipedia.org/wiki/Butterfly_diagram
-  -- Note: with fancier index sets, this might be replacable by reshapes.
+  # Re-index at a finer frequency.
+  # halfn must have half the size of n.
+  # For explanation, see https://en.wikipedia.org/wiki/Butterfly_diagram
+  # Note: with fancier index sets, this might be replacable by reshapes.
   j = ordinal j'
   k = ((idiv j pow2) * pow2 * 2) + mod j pow2
   left_write_ix  = unsafe_from_ordinal k
@@ -44,7 +44,7 @@ def power_of_2_fft(
   direction: FTDirection,
   x: ((Fin log2_n)=>(Fin 2))=>Complex
   ) -> ((Fin log2_n)=>(Fin 2))=>Complex given (log2_n:Nat) =
-  -- (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin 2) has exactly n.
+  # (Fin n)=>(Fin 2) has 2^n elements, so (Fin log2_n)=>(Fin 2) has exactly n.
 
   dir_const = case direction of
     ForwardFT -> -pi
@@ -56,17 +56,17 @@ def power_of_2_fft(
       xRef = snd_ref combRef
       ipow2 = get ipow2Ref
 
-      log2_half_n = unsafe_nat_diff log2_n 1  -- TODO: use `i` as a proof that log2_n > 0
+      log2_half_n = unsafe_nat_diff log2_n 1  # TODO: use `i` as a proof that log2_n > 0
       xRef := yield_accum (AddMonoid Complex) \bufRef.
-        for j:((Fin log2_half_n)=>(Fin 2)).  -- Executes in parallel.
+        for j:((Fin log2_half_n)=>(Fin 2)).  # Executes in parallel.
           (left_read_ix, right_read_ix,
            left_write_ix, right_write_ix) = butterfly_ixs j ipow2
 
-          -- Read one element from the last buffer, scaled.
+          # Read one element from the last buffer, scaled.
           angle = dir_const * (n_to_f $ mod (ordinal j) ipow2) / n_to_f ipow2
           v = (get xRef!right_read_ix) * (Complex (cos angle) (sin angle))
 
-          -- Add and subtract it to the relevant places in the new buffer.
+          # Add and subtract it to the relevant places in the new buffer.
           bufRef!left_write_ix  += (get (xRef!left_read_ix)) + v
           bufRef!right_write_ix += (get (xRef!left_read_ix)) - v
       ipow2Ref := ipow2 * 2
@@ -87,8 +87,8 @@ def convolve_complex(
     u:n=>Complex,
     v:m=>Complex
     ) -> (Either n m=>Complex) given (n|Ix, m|Ix) =
-  -- Convolve by pointwise multiplication in the Fourier domain.
-  -- Pad and convert to Fourier domain.
+  # Convolve by pointwise multiplication in the Fourier domain.
+  # Pad and convert to Fourier domain.
   min_convolve_size = (size n + size m) -| 1
   log_working_size = nextpow2 min_convolve_size
   u_padded = pad_to_power_of_2 log_working_size zero u
@@ -96,10 +96,10 @@ def convolve_complex(
   spectral_u = power_of_2_fft ForwardFT u_padded
   spectral_v = power_of_2_fft ForwardFT v_padded
 
-  -- Pointwise multiply.
+  # Pointwise multiply.
   spectral_conv = for i. spectral_u[i] * spectral_v[i]
 
-  -- Convert back to primal domain and undo padding.
+  # Convert back to primal domain and undo padding.
   padded_conv = power_of_2_fft InverseFT spectral_conv
   slice padded_conv 0 (Either n m)
 
@@ -110,9 +110,9 @@ def convolve(u:n=>Float, v:m=>Float) -> (Either n m =>Float) given (n|Ix, m|Ix) 
   for i. ans[i].re
 
 def bluestein(x: n=>Complex) -> n=>Complex given (n|Ix) =
-  -- Bluestein's algorithm.
-  -- Converts the general FFT into a convolution,
-  -- which is then solved with calls to a power-of-2 FFT.
+  # Bluestein's algorithm.
+  # Converts the general FFT into a convolution,
+  # which is then solved with calls to a power-of-2 FFT.
   im = Complex 0.0 1.0
   wks = for i.
     i_squared = n_to_f $ sq $ ordinal i

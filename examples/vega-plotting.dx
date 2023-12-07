@@ -9,7 +9,7 @@
 ' ## JSON Implementation
 
 def join (joiner: List a) (lists:n=>(List a)) : List a =
-    -- Join together lists with an intermediary joiner
+    # Join together lists with an intermediary joiner
     concat $ for i.
         case ordinal i == (size n - 1) of
              True -> lists.i
@@ -17,7 +17,7 @@ def join (joiner: List a) (lists:n=>(List a)) : List a =
 
 ' A serialized JSON Value
 
--- TODO - once Dex supports recursive ADT JValue becomes Value.
+# TODO - once Dex supports recursive ADT JValue becomes Value.
 data JValue = AsJValue String
 
 ' Simple JSON Data Type
@@ -91,7 +91,7 @@ instance [ToJSON v] ToJSON (List (String & v))
 
 
 def wrapCol [ToJSON d]  (iso: Iso a (d & c)) (x:n=>a) : n=> Value =
-    -- Helper function. Returns JSON of a column of a record
+    # Helper function. Returns JSON of a column of a record
     for i. toJSON $ get_at iso x.i
 
 ' ## Declarative Graph Grammars
@@ -210,17 +210,17 @@ data VLChart row col v =
 instance [ToJSON v] ToJSON (VLChart r c v)
    toJSON = \ x.
     (AsVLDescriptor mark opts df) = x
-    -- Make the mark
+    # Make the mark
     (WithOpts mtype options) = mark
     jmark = ("mark", mergeOpts options [("type", show mtype)])
 
-    -- Make the data
+    # Make the data
     jdf = toJSON $ for row : r. toJSON $ for col : c.
                    ("col" <> (show $ ordinal col),
                     toJSON (get_at #rows df.col).row)
     jdata = ("data", toJSON [("values", jdf)])
 
-    -- Make the encodings
+    # Make the encodings
     jencodings = toJSON $ concat $ for col : c.
         (AsList v encopts) = get_at #encodings df.col
         AsList v $ for f.

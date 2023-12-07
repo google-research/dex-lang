@@ -10,7 +10,7 @@ def rejectionSample(try: (Key) -> Maybe a, k:Key) -> a  given (a|Data) =
 Prob    = Float
 LogProb = Float
 
--- log probability density of a Binomial distribution
+# log probability density of a Binomial distribution
 def logBinomialProb(n':Nat, p:Prob, counts':Nat) -> LogProb =
   n      = n_to_f n'
   counts = n_to_f counts'
@@ -35,13 +35,13 @@ def trySampleBinomial(n:Nat, p:Prob, k:Key) -> Maybe Nat =
 
 'We test the implementation by sampling from a Binomial distribution with 10 trials and success probability 0.4.
 
--- parameters
+# parameters
 n = 10
 p = 0.4
 numSamples = 5000
 k0 = new_key 0
 
--- TODO: use currying sugar (or even better, effects)
+# TODO: use currying sugar (or even better, effects)
 rejectionSamples = rand_vec numSamples (\k. rejectionSample (\k'. trySampleBinomial n p k') k) k0
 
 :p slice rejectionSamples 0 $ Fin 10

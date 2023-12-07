@@ -36,8 +36,8 @@ instance Arbitrary(LogSpace Float)
   def arb(k) = Exp (randn k)
 
 def is_infinite(x:f) -> Bool given (f|Fractional|Sub|Mul|Ord) =
-  -- Note: According to this function, nan is not infinite.
-  -- Todo: Make polymorphic versions of these and put them in the prelude.
+  # Note: According to this function, nan is not infinite.
+  # Todo: Make polymorphic versions of these and put them in the prelude.
   infinity = divide one zero
   neg_infinity = zero - infinity
   x == infinity || x == neg_infinity
@@ -81,15 +81,15 @@ def ls_sum(x:n=>LogSpace f) -> LogSpace f
 Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions which can be sampled should implement `Random`, and those which can be evaluated should implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
 
 interface Random(d, a)
-  draw : (d, Key) -> a                -- function for random draws
+  draw : (d, Key) -> a                # function for random draws
 
 interface Dist(d, a, f)
-  density : (d, a) -> LogSpace f      -- either the density function or mass function
+  density : (d, a) -> LogSpace f      # either the density function or mass function
 
 interface OrderedDist(d, a, f, given () (Dist d a f))
-  cumulative : (d, a) -> LogSpace f   -- the cumulative distribution function (CDF)
-  survivor   : (d, a) -> LogSpace f   -- the survivor function (complement of CDF)
-  quantile   : (d, f) -> a            -- the quantile function (inverse CDF)
+  cumulative : (d, a) -> LogSpace f   # the cumulative distribution function (CDF)
+  survivor   : (d, a) -> LogSpace f   # the survivor function (complement of CDF)
+  quantile   : (d, f) -> a            # the quantile function (inverse CDF)
 
 '## Univariate probability distributions
 Some commonly encountered univariate distributions.
@@ -245,7 +245,7 @@ instance OrderedDist(Normal, Float, Float)
     Exp $ log (0.5 * erfc ((d.loc - x) / (d.scale * sqrt(2.0))))
   def survivor(d, x) =
     Exp $ log (0.5 * erfc ((x - d.loc) / (d.scale * sqrt(2.0))))
-  def quantile(_, _)  = todo  -- Add `erfinv`.
+  def quantile(_, _)  = todo  # Add `erfinv`.
 
 
 '### Poisson distribution

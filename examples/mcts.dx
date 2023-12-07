@@ -23,7 +23,7 @@ data Node(node_ix, a) =
 
 def Tree(node_ix|Ix, a:Type) -> Type =
   (node_ix=>(Maybe (Node node_ix a)), node_ix)
-  -- Node array, and pointer to last used node.
+  # Node array, and pointer to last used node.
 
 def root_of(tree:Tree(node_ix, a)) -> node_ix given (node_ix|Ix, a) = 0@node_ix
 
@@ -49,7 +49,7 @@ struct Game(state:Type, move:Type) =
 
 def NodeStats(state:Type) -> Type =
   (Nat, Nat, Nat, state)
-  -- (#winning rollouts for max/first player, #visit, level, state)
+  # (#winning rollouts for max/first player, #visit, level, state)
 
 def node_win_visit_stats(node:(Node node_ix (NodeStats state)))
   -> (Nat, Nat) given (node_ix, state) =
@@ -82,7 +82,7 @@ The upper confidence bound for trees of node $n$ is
 $$UCT(n) = \frac{Q(n)}{N(n)} + \sqrt{2\frac{ln(N(n_p))}{N(n)}}$$
 
 def uct(win:Nat, n:Nat, parent_n:Nat) -> Float =
-  -- wins stored at every node are w.r.t to the max_player
+  # wins stored at every node are w.r.t to the max_player
   (n_to_f win) / (n_to_f n) + sqrt (2.0 / (n_to_f n) * (log (n_to_f parent_n)))
 
 'Recursively find the most promising leaf (measured by UCT) to rollout next.
@@ -113,7 +113,7 @@ def mcts_select(
               Done ()
             else
               (_, p_visits) = node_win_visit_stats node
-              -- minimax
+              # minimax
               is_max_player = is_even $ node_level node
               selector = if is_max_player then argmax else argmin
               best_child = selector for i.
@@ -130,14 +130,14 @@ def mcts_expand(
     tree_ref: Ref h (Tree node_ix (NodeStats state)),
     node: node_ix
     ) -> {State h} () given (node_ix|Ix, state|Data, move, h) =
-    -- assume `node` is a leaf node (base) and has a non-terminal state (base_state)
+    # assume `node` is a leaf node (base) and has a non-terminal state (base_state)
 
-    -- extract info about the base node
+    # extract info about the base node
     base_node = from_just $ get (fst_ref tree_ref)!node
     Branch(base_stats, base_parent, _) = base_node
     (_, _, base_level, base_state) = base_stats
 
-    -- prepare child nodes
+    # prepare child nodes
     AsList(n, base_moves) = game.possible_moves base_state
     child_nodes = for i.
       new_move = base_moves[i]
@@ -145,13 +145,13 @@ def mcts_expand(
       new_stats = (0, 0, base_level + 1, new_state)
       Branch new_stats (Just node) (to_list [])
 
-    -- write to the tree
+    # write to the tree
     new_node = get (snd_ref tree_ref)
     base_children_ix = for i:(Fin n). new_node +| (1 + ordinal i)
-    -- update base's children list
+    # update base's children list
     new_base_node = Branch base_stats base_parent (to_list base_children_ix)
     (fst_ref tree_ref)!node := Just new_base_node
-    -- insert every child
+    # insert every child
     for i.
       child_ix = base_children_ix[i]
       (fst_ref tree_ref)!child_ix := Just child_nodes[i]
@@ -165,17 +165,17 @@ def mcts_rollout(
     key: Key,
     curr_state: state
     ) -> Bool given (move, state|Data)=
-    -- output is w.r.t. current player
+    # output is w.r.t. current player
     with_state curr_state \ref. iter \i.
       curr_state' = get ref
       if game.game_over curr_state'
         then
-          -- #win_or_lose is w.r.t. the last player
+          # #win_or_lose is w.r.t. the last player
           result = game.win_or_lose curr_state'
           Done $ xor (is_even i) result
         else
           AsList(_, new_moves) = game.possible_moves curr_state'
-          -- rollout policy: uniform random
+          # rollout policy: uniform random
           new_move = new_moves[rand_idx (hash key i)]
           ref := game.update curr_state' new_move
           Continue
@@ -189,23 +189,23 @@ def mcts_backpropagate(
     node: node_ix,
     new_rollout_wins: Nat
     ) -> {State h} () given (move, state|Data, node_ix|Eq|Ix, h) =
-    -- new_rollout_wins: #wins w.r.t max player
+    # new_rollout_wins: #wins w.r.t max player
 
     with_state node \node_ref. iter \_.
-      -- update win and loss counts
-      -- -unpack
+      # update win and loss counts
+      # -unpack
       curr_node = from_just $ get (fst_ref tree_ref)!(get node_ref)
       Branch(stats, parent, children) = curr_node
       (wins, visits, level, state) = stats
-      -- -compute
+      # -compute
       new_wins = wins + new_rollout_wins
-      new_visits = visits + 1  -- Todo: or to add ROLLOUTS_PER_SAMPLE
+      new_visits = visits + 1  # Todo: or to add ROLLOUTS_PER_SAMPLE
 
-      -- -pack
+      # -pack
       new_stats = (new_wins, new_visits, level, state)
       (fst_ref tree_ref)!(get node_ref) := Just (Branch new_stats parent children)
 
-      -- find the parent of the current node
+      # find the parent of the current node
       if is_nothing parent || (0@node_ix) == (get node_ref)
         then Done ()
         else
@@ -214,7 +214,7 @@ def mcts_backpropagate(
 
 ' Wrap up the procedure for taking one sample and extend the tree.
 
--- slow: every sample makes two copies of the tree array
+# slow: every sample makes two copies of the tree array
 def mcts_sample(
     game: Game state move,
     key: Key,
@@ -233,7 +233,7 @@ def mcts_sample(
       for i:(Fin ROLLOUTS_PER_SAMPLE).
         key' = ixkey key i
         leaf_result = mcts_rollout game key' $ node_state leaf
-                  -- w.r.t. the current player
+                  # w.r.t. the current player
         max_rollout_wins = b_to_n $ xor leaf_min_player leaf_result
         c += max_rollout_wins
 
@@ -264,7 +264,7 @@ key = new_key 0
 def test(key:Key, current_state:Nat) -> (Nat, Nat) =
   init_node_stats : NodeStats Count21State =
     (0, 0, 0, current_state)
-  -- (0 wins, 0 visits, level 0, game state)
+  # (0 wins, 0 visits, level 0, game state)
   start_tree = init_tree MAX_TREE_SIZE init_node_stats
   end_tree = fold start_tree \i:(Fin SAMPLES) tree.
     mcts_sample Count21 (ixkey key i) tree

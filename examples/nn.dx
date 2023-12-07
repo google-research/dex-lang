@@ -20,7 +20,7 @@ struct DenseParams(a|Ix, b|Ix) =
   weights : a=>b=>Float
   biases  : b=>Float
 
--- TODO: these instances are all exactly the same as those for pairs. We should derive them!
+# TODO: these instances are all exactly the same as those for pairs. We should derive them!
 instance Add(DenseParams(a, b)) given (a|Ix, b|Ix)
   def (+)(p1, p2) = DenseParams( p1.weights + p2.weights
                                    , p1.biases  + p2.biases)
@@ -120,14 +120,14 @@ def simple(h1|Ix) =
     (ndense1.init k1, ndense2.init k2)
   Layer(forward, init)
 
--- :t simple
--- > ((h1:Type)
--- >  -> (v#0:(Ix h1))
--- >  ?=> Layer
--- >        ((Fin 2) => Float32)
--- >        ((Fin 2) => Float32)
--- >        ((((Fin 2) => h1 => Float32) & (h1 => Float32))
--- >         & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
+# :t simple
+# > ((h1:Type)
+# >  -> (v#0:(Ix h1))
+# >  ?=> Layer
+# >        ((Fin 2) => Float32)
+# >        ((Fin 2) => Float32)
+# >        ((((Fin 2) => h1 => Float32) & (h1 => Float32))
+# >         & ((h1 => (Fin 2) => Float32) & ((Fin 2) => Float32))))
 
 'Train a multiclass classifier with minibatch SGD
 '`minibatch * minibatches = batch`
@@ -155,7 +155,7 @@ def trainClass(
               loss
        (get params, loss)
 
--- todo : Do I have to give minibatches as a param?
+# todo : Do I have to give minibatches as a param?
 simple_model = simple (Fin 10)
 (all_params,losses) = trainClass simple_model xs (for i. (y[i] @ (Fin 2))) (Fin 500) (Fin 100) (Fin 1)
 
@@ -198,20 +198,20 @@ def lenet(h1|Ix, h2|Ix, h3|Ix) =
     (ncnn1.init k1, ncnn2.init k2, ndense1.init k3, ndense2.init k4)
   Layer(forward, init)
 
--- :t lenet
--- > ((h1:Type)
--- >  -> (h2:Type)
--- >  -> (h3:Type)
--- >  -> (v#0:(Ix h1))
--- >  ?=> (v#1:(Ix h2))
--- >  ?=> (v#2:(Ix h3))
--- >  ?=> Layer
--- >        ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
--- >        ((Fin 10) => Float32)
--- >        (((h1 => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & (h1 => Float32))
--- >         & (((h2 => h1 => (Fin 3) => (Fin 3) => Float32) & (h2 => Float32))
--- >            & ((((h2 & (Fin 7 & Fin 7)) => h3 => Float32) & (h3 => Float32))
--- >               & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
+# :t lenet
+# > ((h1:Type)
+# >  -> (h2:Type)
+# >  -> (h3:Type)
+# >  -> (v#0:(Ix h1))
+# >  ?=> (v#1:(Ix h2))
+# >  ?=> (v#2:(Ix h3))
+# >  ?=> Layer
+# >        ((Fin 1) => (Fin 28) => (Fin 28) => Float32)
+# >        ((Fin 10) => Float32)
+# >        (((h1 => (Fin 1) => (Fin 3) => (Fin 3) => Float32) & (h1 => Float32))
+# >         & (((h2 => h1 => (Fin 3) => (Fin 3) => Float32) & (h2 => Float32))
+# >            & ((((h2 & (Fin 7 & Fin 7)) => h3 => Float32) & (h3 => Float32))
+# >               & ((h3 => (Fin 10) => Float32) & ((Fin 10) => Float32))))))
 
 
 '## Data Loading
@@ -233,39 +233,39 @@ def pixel(x:Char) -> Float32 =
 
 ' `wget https://github.com/srush/learns-dex/raw/main/labels.bin`
 
--- getIm : Batch=>Image =
---   AsList(_, im) = unsafe_io \. read_file "examples/mnist.bin"
---   raw = unsafe_cast_table(to=Full, im)
---   for b: Batch  c:(Fin 1) i:(Fin W) j:(Fin H).
---     pixel raw[(ordinal (b, i, j)) @ Full]
+# getIm : Batch=>Image =
+#   AsList(_, im) = unsafe_io \. read_file "examples/mnist.bin"
+#   raw = unsafe_cast_table(to=Full, im)
+#   for b: Batch  c:(Fin 1) i:(Fin W) j:(Fin H).
+#     pixel raw[(ordinal (b, i, j)) @ Full]
 
--- getLabel : Batch => Class =
---   AsList(_, im2) = unsafe_io \. read_file "examples/labels.bin"
---   r = unsafe_cast_table(to=Batch, im2)
---   for i. (w8_to_n r[i] @ Class)
+# getLabel : Batch => Class =
+#   AsList(_, im2) = unsafe_io \. read_file "examples/labels.bin"
+#   r = unsafe_cast_table(to=Batch, im2)
+#   for i. (w8_to_n r[i] @ Class)
 
--- ims = getIm
--- labels = getLabel
+# ims = getIm
+# labels = getLabel
 
--- small_ims = for i: (Fin 10). ims[(ordinal i)@_]
--- small_labels = for i: (Fin 10). labels[(ordinal i)@_]
+# small_ims = for i: (Fin 10). ims[(ordinal i)@_]
+# small_labels = for i: (Fin 10). labels[(ordinal i)@_]
 
--- :p small_labels
+# :p small_labels
 
--- Epochs = (Fin 5)
--- Minibatches = (Fin 1)
--- Minibatch = (Fin 10)
+# Epochs = (Fin 5)
+# Minibatches = (Fin 1)
+# Minibatch = (Fin 10)
 
--- :t ims[2@_]
+# :t ims[2@_]
 
--- model = lenet (Fin 1) (Fin 1) (Fin 20)
--- init_param = model.init $ new_key 0
--- :p model.forward(init_param, ims[2@Batch])
+# model = lenet (Fin 1) (Fin 1) (Fin 20)
+# init_param = model.init $ new_key 0
+# :p model.forward(init_param, ims[2@Batch])
 
 ' Sanity check
 
--- :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
---
--- (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
---
--- :p losses'
+# :t (grad ((\x param. sum (forward model param x)) (ims.(2@_)))) init_param
+#
+# (all_params', losses') = trainClass model small_ims small_labels Epochs Minibatch Minibatches
+#
+# :p losses'

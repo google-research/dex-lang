@@ -81,7 +81,7 @@ halftone = [[14.0,  10,  6, 13, 19, 23, 27, 20],
 
 ' # Dithering a real image
 
--- conversion from RGB to grayscale
+# conversion from RGB to grayscale
 
 def pixel(x:Char) -> Float32 =
   r = w8_to_i x

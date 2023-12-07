@@ -8,7 +8,7 @@ struct ConjGradState(a|VSpace) =
   r : a
   p : a
 
--- Conjugate gradients solver
+# Conjugate gradients solver
 def solve'(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
   x0 = zero
   ax = mat **. x0
@@ -42,7 +42,7 @@ where $k:\mathcal X \times \mathcal X \to \mathbb R$ is a positive semidefinite 
 The optimal coefficients are found by solving a linear system $\alpha=G^{-1}y$,\
 where $G_{ij}:=k(x_i, x_j)+\delta_{ij}\lambda$, $\lambda>0$ and $y = (y_1,\dots,y_N)^\top\in\mathbb R^N$
 
--- Synthetic data
+# Synthetic data
 Nx = Fin 100
 noise = 0.1
 [k1, k2] = split_key (new_key 0)
@@ -53,7 +53,7 @@ def trueFun(x:Float) -> Float =
 xs : Nx=>Float = for i. rand (ixkey k1 i)
 ys : Nx=>Float = for i. trueFun xs[i] + noise * randn (ixkey k2 i)
 
--- Kernel ridge regression
+# Kernel ridge regression
 def regress(kernel: (a, a) -> Float, xs: Nx=>a, ys: Nx=>Float) -> (a) -> Float given (a) =
     gram = for i j. kernel xs[i] xs[j] + select (i==j) 0.0001 0.0
     alpha = solve' gram ys
@@ -64,7 +64,7 @@ def rbf(lengthscale:Float, x:Float, y:Float) -> Float =
 
 predict = regress (\x y. rbf 0.2 x y) xs ys
 
--- Evaluation
+# Evaluation
 Nxtest = Fin 1000
 xtest : Nxtest=>Float = for i. rand (ixkey k1 i)
 preds = map predict xtest

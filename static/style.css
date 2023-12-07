@@ -34,7 +34,7 @@ body {
 }
 
 .code-block, .cell-results, .err-block, .result-block {
-  margin: 0em 0em 0em 4em;
+  margin: 0em 0em 0em 2em;
   padding: 0em 0em 0em 2em;
   display: block;
   font-family: monospace;

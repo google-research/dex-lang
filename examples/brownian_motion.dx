@@ -31,17 +31,17 @@ def sample_unit_brownian_bridge(
     key:Key,
     t:Float
     ) -> v given (v|VSpace) =
-  -- Can only handle t between 0 and 1.
-  -- iteratively subdivide to desired tolerance.
+  # Can only handle t between 0 and 1.
+  # iteratively subdivide to desired tolerance.
   num_iters = 10 + f_to_n (-log tolerance)
   init_state = SamplerState(key, zero, 1.0, t)
   result = fold init_state \i:(Fin num_iters) prev.
       [key_draw, key_left, key_right] = split_key key
-      -- add scaled noise
+      # add scaled noise
       t' = abs (prev.t - 0.5)
       new_y = prev.y + prev.sigma * (0.5 - t') .* sampler key_draw
 
-      -- zoom in left or right
+      # zoom in left or right
       new_key = if prev.t > 0.5
         then key_left
         else key_right
@@ -72,8 +72,8 @@ def sample_brownian_bridge(
     y0:v,            t1:Float,
     y1:v,            t:Float
     ) -> v given (v|VSpace) =
-  -- Linearly interpolate between the two bracketing samples
-  -- and add appropriately scaled Brownian bridge noise.
+  # Linearly interpolate between the two bracketing samples
+  # and add appropriately scaled Brownian bridge noise.
   unit_bb = \t. sample_unit_brownian_bridge (tolerance / (t1 - t0)) sampler key t
   bridge_val = scale_brownian_bridge unit_bb t0 t1 t
   interp_val = linear_interp t0 y0 t1 y1 t
@@ -85,8 +85,8 @@ def sample_brownian_motion(
     key:Key,
     t':Float
     ) -> v   given (v|VSpace) =
-  -- Can handle a t' anywhere on the real line.
-  -- Handle negative times by reflecting and using a different key.
+  # Can handle a t' anywhere on the real line.
+  # Handle negative times by reflecting and using a different key.
   [neg_key', key'] = split_key key
   (key, t) = if t' < 0.0
     then (neg_key', -t')
@@ -95,8 +95,8 @@ def sample_brownian_motion(
   [key_start, key_rest] = split_key key
   first_f = sampler key_start
 
-  -- Iteratively sample a point twice as far ahead
-  -- until we bracket the query time.
+  # Iteratively sample a point twice as far ahead
+  # until we bracket the query time.
   doublings = Fin (1 + (natlog2 (f_to_n t)))
   init_state = (0.0, zero, 1.0, first_f, key_rest)
   (t0, left_f, t1, right_f, key_draw) =
@@ -105,8 +105,8 @@ def sample_brownian_motion(
       [key_current, key_continue] = split_key key_rest
       new_right_f = left_f + (sqrt t1) .* sampler key_current
       (t1, right_f, t1 * 2.0, new_right_f, key_continue)
-  -- The above iterative loop could be mostly parallelized, but would
-  -- require some care to get the random keys right.
+  # The above iterative loop could be mostly parallelized, but would
+  # require some care to get the random keys right.
 
   sample_brownian_bridge tolerance sampler key_draw t0 left_f t1 right_f t
 
@@ -152,7 +152,7 @@ from a Gaussian process.  In particular, we can re-use the
 This process can be nested to arbitrarily many dimensions.
 
 interface HasBrownianSheet(a:Type, v|HasStandardNormal)
-                      -- tolerance -> key -> input -> output
+                      # tolerance -> key -> input -> output
   sample_brownian_sheet : (Float, Key, a) -> v
 
 instance HasBrownianSheet(Float, v) given (v|HasStandardNormal|VSpace)
@@ -161,8 +161,8 @@ instance HasBrownianSheet(Float, v) given (v|HasStandardNormal|VSpace)
 
 instance HasBrownianSheet((a, Float), v) given (a, v|VSpace) (HasBrownianSheet a v)
   def sample_brownian_sheet(tol, k, xab) =
-    -- the call to `sample_brownian_sheet` below will recurse
-    -- until the input is one-dimensional.
+    # the call to `sample_brownian_sheet` below will recurse
+    # until the input is one-dimensional.
     (xa, xb) = xab
     sample_a = \k. sample_brownian_sheet tol k xa
     sample_brownian_motion tol sample_a k xb

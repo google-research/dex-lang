@@ -22,11 +22,11 @@ def all_except_last(xs:n=>a) -> List a given (n|Ix, a) =
   AsList _ allButLast
 
 def merge_unique_sorted_lists(xlist:List a, ylist:List a) -> List a given (a|Eq) =
-  -- This function is associative, for use in a monoidal reduction.
-  -- Assumes all xs are <= all ys.
-  -- The element at the end of xs might equal the
-  -- element at the beginning of ys.  If so, this
-  -- function removes the duplicate when concatenating the lists.
+  # This function is associative, for use in a monoidal reduction.
+  # Assumes all xs are <= all ys.
+  # The element at the end of xs might equal the
+  # element at the beginning of ys.  If so, this
+  # function removes the duplicate when concatenating the lists.
   AsList(nx, xs) = xlist
   AsList(_ , ys) = ylist
   case last xs of
@@ -45,9 +45,9 @@ def remove_duplicates_from_sorted(xs:n=>a) -> List a given (n|Ix, a|Eq) =
 '## Sets
 
 data Set(a|Ord) =
-  -- Guaranteed to be in sorted order with unique elements,
-  -- as long as no one else uses this constructor.
-  -- Instead use the "toSet" function below.
+  # Guaranteed to be in sorted order with unique elements,
+  # as long as no one else uses this constructor.
+  # Instead use the "toSet" function below.
   UnsafeAsSet(n:Nat, elements:(Fin n => a))
 
 def to_set(xs:n=>a) -> Set a given (n|Ix, a|Ord) =
@@ -81,7 +81,7 @@ def set_intersect(
     ) -> Set a given (a|Ord) =
   UnsafeAsSet(nx, xs) = sx
   UnsafeAsSet(ny, ys) = sy
-  -- This could be done in O(nx + ny) instead of O(nx log ny).
+  # This could be done in O(nx + ny) instead of O(nx log ny).
   isInYs = \x. case search_sorted_exact ys x of
     Just x -> True
     Nothing -> False
@@ -91,13 +91,13 @@ def set_intersect(
 
 '## Sets as a type, whose inhabitants can index arrays
 
--- TODO Implicit arguments to data definitions
--- (Probably `a` should be implicit)
+# TODO Implicit arguments to data definitions
+# (Probably `a` should be implicit)
 struct Element(set:(Set a)) given (a|Ord) =
   val: Nat
 
--- TODO The set argument could be implicit (inferred from the Element
--- type), but maybe it's easier to read if it's explicit.
+# TODO The set argument could be implicit (inferred from the Element
+# type), but maybe it's easier to read if it's explicit.
 def member(x:a, set:(Set a)) -> Maybe (Element set) given (a|Ord) =
   UnsafeAsSet(_, elts) = set
   case search_sorted_exact elts x of

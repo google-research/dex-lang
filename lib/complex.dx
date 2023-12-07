@@ -32,7 +32,7 @@ instance VSpace(Complex)
 instance Arbitrary(Complex)
   def arb(key) = Complex(randn key, randn key)
 
--- Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
+# Todo: Hook up to (/) operator.  Might require two-parameter VSpace.
 def complex_division(x:Complex, y:Complex) -> Complex =
   (a, b, c, d) = (x.re, x.im, y.re, y.im)
   Complex((a * c + b * d) / (c * c + d * d), (b * c - a * d) / (c * c + d * d))
@@ -75,8 +75,8 @@ instance Fractional(Complex)
   def divide(x, y) = complex_division(x, y)
 
 def complex_floor(c:Complex) -> Complex =
-  -- from "Complex Floor" by Eugene McDonnell
-  -- https://www.jsoftware.com/papers/eem/complexfloor.htm
+  # from "Complex Floor" by Eugene McDonnell
+  # https://www.jsoftware.com/papers/eem/complexfloor.htm
   fr = floor c.re
   fi = floor c.im
   x = c.re - fr
@@ -91,8 +91,8 @@ def complex_ceil(x:Complex)  -> Complex = -(complex_floor (-x))
 def complex_round(x:Complex) -> Complex = complex_floor Complex(0.5, 0.0)
 
 def complex_lgamma(x:Complex) -> Complex =
-  todo  -- This one is pretty hairy.
-        -- See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
+  todo  # This one is pretty hairy.
+        # See https://cs.uwaterloo.ca/research/tr/1994/23/CS-94-23.pdf
 
 def complex_erf(x:Complex) -> Complex =
   todo

@@ -13,7 +13,7 @@ However, Dex's autodiff can produce the backward
 pass automatically.  That makes this code much shorter than
 most implementations.
 
-import stats  -- for log-space representation of probabilities.
+import stats  # for log-space representation of probabilities.
 
 
 '## Custom index sets
@@ -103,7 +103,7 @@ project(to=AllButFirst (Bool `Either` Bool), 0@(Bool `Either` Bool))
 '### Helper functions
 
 def interleave_blanks(blank:v, seq: m=>v) -> (FenceAndPosts m)=>v given (m|Ix, v) =
-  -- Turns "text" into " t e x t ".
+  # Turns "text" into " t e x t ".
   for idx. case idx of
     Fence i -> seq[i]
     Posts i -> blank
@@ -127,8 +127,8 @@ def ctc_non_empty(
   ilabels = interleave_blanks blank labels
   label_probs = for t. normalize logits[t]
 
-  -- Initialize dynamic programming table to all zeros
-  -- except for starting with either a blank or the first token.
+  # Initialize dynamic programming table to all zeros
+  # except for starting with either a blank or the first token.
   prob_seq_at_start = yield_state zero \lpRef.
     lpRef!(Posts first_ix) := label_probs[first_ix,blank]
     lpRef!(Fence first_ix) := label_probs[first_ix,labels[first_ix]]
@@ -150,14 +150,14 @@ def ctc_non_empty(
       prob_transition_from_blank      = safe_idx_sub prev s 1
       prob_transition_from_last_token = safe_idx_sub prev s 2
 
-      -- Equation 6 from CTC paper.
+      # Equation 6 from CTC paper.
       transition_prob = if ilabels[s] == blank || same_token_as_last s
         then prob_no_transition + prob_transition_from_blank
         else prob_no_transition + prob_transition_from_blank +
           prob_transition_from_last_token
       transition_prob * label_probs[inject t, ilabels[s]]
 
-  -- Sum over last two entries in the table.  Eq 8 from paper.
+  # Sum over last two entries in the table.  Eq 8 from paper.
   end_with_label = prob_seq_final[Fence last_ix]
   end_with_space = prob_seq_final[Posts last_ix]
   end_with_label + end_with_space
@@ -201,11 +201,11 @@ Vocab = Fin 6
 blank = 0@Vocab
 Time = Fin 4
 
--- Create random logits and labels
+# Create random logits and labels
 logits : Time => Vocab => (LogSpace Float) = arb $ new_key 0
 labels = [(3@Vocab), (4@Vocab), (1@Vocab)]
 
--- Evaluate probability.
+# Evaluate probability.
 :p ls_to_f $ ctc blank logits labels
 > 0.00208998
 
@@ -216,7 +216,7 @@ computes `p(labels|logits)`, which should sum to 1.0 over all possible labels.
 They don't sum to one.  Maybe there is a bug in the above code
 or the paper.
 
--- Fin N=>Vocab is the set of all combinations of N tokens.
+# Fin N=>Vocab is the set of all combinations of N tokens.
 sum for i:(Fin 3=>Vocab).
   ls_to_f $ ctc blank logits i
 > 0.5653746

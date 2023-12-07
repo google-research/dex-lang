@@ -15,7 +15,7 @@ encoding_table =
    'w', 'x', 'y', 'z', '0', '1', '2', '3',
    '4', '5', '6', '7', '8', '9', '+', '/']
 
--- TODO: make `Word8` an index set instead of using `Fin 256`
+# TODO: make `Word8` an index set instead of using `Fin 256`
 decoding_table : Fin 256 => Maybe Char =
   for i:(Fin 256).
     idx = linear_search encoding_table (n_to_w8 (ordinal i))
@@ -23,10 +23,10 @@ decoding_table : Fin 256 => Maybe Char =
       Nothing -> Nothing
       Just x  -> Just $ n_to_w8 $ ordinal x
 
-Base64 = Byte -- first two bits should be zero
+Base64 = Byte # first two bits should be zero
 
--- This could go in the prelude, or in a library of array-dicing functions.
--- An explicit "view" builder would be good here, to avoid copies
+# This could go in the prelude, or in a library of array-dicing functions.
+# An explicit "view" builder would be good here, to avoid copies
 def get_chunks(chunkSize:Nat, padVal:a, xs:n=>a)
     -> List (Fin chunkSize => a) given (n|Ix, a:Type) =
   numChunks = idiv_ceil (size n) chunkSize
@@ -43,7 +43,7 @@ def base64s_to_bytes(chunk : Fin 4 => Base64) -> Fin 3 => Byte =
 
 def bytes_to_base64s(chunk : Fin 3 => Byte) -> Fin 4 => Base64 =
   [a, b, c] = chunk
-  -- '?' is 00111111
+  # '?' is 00111111
   tmp =  [                 a .>>. 2
          , (a .<<. 4) .|. (b .>>. 4)
          , (b .<<. 2) .|. (c .>>. 6)
@@ -56,7 +56,7 @@ def base64_to_ascii(x:Base64) -> Char =
 def encode_chunk(chunk : Fin 3 => Char) -> Fin 4 => Char =
   each (bytes_to_base64s chunk) base64_to_ascii
 
--- TODO: the `AsList` unpacking is very tedious. Daniel's change will help
+# TODO: the `AsList` unpacking is very tedious. Daniel's change will help
 def base64_encode(s:String) -> String =
   AsList(n, cs) = s
   AsList(numChunks, chunks) = get_chunks 3 '\NUL' cs
@@ -77,7 +77,7 @@ def decode_chunk(chunk : Fin 4 => Char) -> Maybe (Fin 3 => Char) =
     Nothing -> Nothing
     Just base64s -> Just $ base64s_to_bytes base64s
 
--- TODO: put this in prelude?
+# TODO: put this in prelude?
 def replace(pair:(a,a), x:a) -> a given (a|Eq) =
   (old, new) = pair
   case x == old of
@@ -88,7 +88,7 @@ def base64_decode(s:String) -> Maybe String =
   AsList(n, cs) = s
   numValidInputChars = sum for i:(Fin n). b_to_n $ cs[i] /= '='
   numValidOutputChars = idiv (numValidInputChars * 3) 4
-  csZeroed = each cs \c. replace(('=', 'A'), c)  -- swap padding char with 'zero' char
+  csZeroed = each cs \c. replace(('=', 'A'), c)  # swap padding char with 'zero' char
   AsList(_, chunks) = get_chunks 4 '\NUL' csZeroed
   case chunks | each(decode_chunk) | seq_maybes of
     Nothing -> Nothing

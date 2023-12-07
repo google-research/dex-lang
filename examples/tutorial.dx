@@ -266,7 +266,7 @@ def table_add5'(x : n => Float32) -> n => Float32 given (n|Ix) =
 def transFloat(x : m => n => Float32) -> n => m => Float32 given (n|Ix, m|Ix) =
   for i. for j. x[j, i]
 
-' The types of the input and the output are not the same -- Dex will detect situations
+' The types of the input and the output are not the same # Dex will detect situations
   where a transposition was omitted or inserted by accident.
 
 ' We can even make it more generic by abstracting over the value type.
@@ -327,14 +327,14 @@ def pixel(x:Char) -> Float32 =
     False -> r
 
 def getIm() -> Batch => Image =
-  -- File is unsigned bytes offset with 16 starting bytes
+  # File is unsigned bytes offset with 16 starting bytes
   AsList(_, im) = unsafe_io \. read_file "examples/t10k-images-idx3-ubyte"
   raw = unsafe_cast_table(for i:Full. im[ordinal(i) + 16 @ _])
   for b: Batch i j.
     pixel raw[ordinal((b, i, j)) @ Full]
 
 def getLabel() -> Batch => Class =
-  -- File is unsigned bytes offset with 8 starting bytes
+  # File is unsigned bytes offset with 8 starting bytes
   AsList(_, lab) = unsafe_io \. read_file "examples/t10k-labels-idx1-ubyte"
   r = unsafe_cast_table(for i:Batch. lab[ordinal(i) + 8 @ _])
   for i. (w8_to_n r[i] @ Class)
@@ -422,13 +422,13 @@ im2 : Fin 4 => Fin 4 => Fin 7 => Fin 7 => Float32 = imtile(ims[0@_])
   and `:=` assignment). Here's what it looks like:
 
 def table_mean(x : n => Float32) -> Float32 given (n|Ix) =
-  -- acc = 0
+  # acc = 0
   with_state(0.0) \acc.
-    -- for i in range(len(x))
+    # for i in range(len(x))
     for i.
-      -- acc = acc + x[i]
+      # acc = acc + x[i]
       acc := get(acc) + x[i]
-    -- return acc / len(x)
+    # return acc / len(x)
     get(acc) / n_to_f(size n)
 
 
@@ -477,7 +477,7 @@ with_state(10) \state.
   "let-binding"). This one is built into the language and can be used anywhere.
 
 :t for i:Height.
-        -- Bind a temporary variable `temp`, as an example.
+        # Bind a temporary variable `temp`, as an example.
         temp = ordinal(i) + 10
         for j:Width.
             temp
@@ -576,8 +576,8 @@ instance VSpace((a, b)) given (a|VSpace, b|VSpace)
 def table_mean'(x : n => v) -> v given (n|Ix, v|VSpace) =
   with_state(zero) \acc.
     for i.
-      acc := get(acc) + x[i]       -- `Add` requirement
-    get(acc) / n_to_f(size(n))       -- `VSpace` requirement
+      acc := get(acc) + x[i]       # `Add` requirement
+    get(acc) / n_to_f(size(n))       # `VSpace` requirement
 
 table_mean'([0.1, 0.5, 0.9])
 > 0.5

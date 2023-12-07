@@ -8,7 +8,7 @@ struct SolverState(n|Ix) =
   r : n=>Float
   p : n=>Float
 
--- Conjugate gradients solver
+# Conjugate gradients solver
 def solve(mat:m=>m=>Float, b:m=>Float) -> m=>Float given (m|Ix) =
   x0 = zero :: m=>Float
   r0 = b - (mat **. x0)

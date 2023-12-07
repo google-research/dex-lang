@@ -26,18 +26,18 @@ compiler is able to infer the tangent space type from the manifold type, but
 this feature is not yet available in Dex.
 
 interface TangentSpace(manifold, tangent|VSpace)
-  -- Given a point p on the manifold M and a point v in its tangent space TpM,
-  -- this returns another point q on the manifold.
-  -- Must satisfy tangentExponentialMap p zero == p
-  -- (tangentExponentialMap p) will be linearized around zero, so it is
-  -- important that any operations used have well-defined derivatives for inputs
-  -- p, zero.
+  # Given a point p on the manifold M and a point v in its tangent space TpM,
+  # this returns another point q on the manifold.
+  # Must satisfy tangentExponentialMap p zero == p
+  # (tangentExponentialMap p) will be linearized around zero, so it is
+  # important that any operations used have well-defined derivatives for inputs
+  # p, zero.
   tangentExponentialMap: (manifold, tangent) -> manifold
-  -- (tangentLogarithmMap p) is the pointwise inverse to
-  -- (tangentExponentialMap p).
-  -- Must satisfy tangentLogarithmMap p p == zero
-  -- (tangentLogarithmMap p) will be linearized around p, so it is important
-  -- that any operations used have well-defined derivatives for inputs p, p.
+  # (tangentLogarithmMap p) is the pointwise inverse to
+  # (tangentExponentialMap p).
+  # Must satisfy tangentLogarithmMap p p == zero
+  # (tangentLogarithmMap p) will be linearized around p, so it is important
+  # that any operations used have well-defined derivatives for inputs p, p.
   tangentLogarithmMap: (manifold, manifold) -> tangent
 
 
@@ -101,7 +101,7 @@ def myFunc(x : n => Float) -> Float given (n|Ix) =
 
 equivalence_example = for i:(Fin 10). n_to_f (ordinal i) / 10.
 original = linearize myFunc equivalence_example
--- Need to explicitly set up the types here, due to missing associated types.
+# Need to explicitly set up the types here, due to missing associated types.
 new : (Float, (Fin 10 => Float) -> Float) = manifoldLinearize myFunc equivalence_example
 
 fst original ~~ fst new
@@ -142,8 +142,8 @@ values, as long as they are not both zero, and we will identify `S{x, y}` with
 the point $(x, y)$ on $S^1$ given by normalizing the associated element of
 $\mathbb{R}^2$, that is $x$ = `x / sqrt(x*x + y*y)`, $y$ = `y / sqrt(x*x + y*y)`.
 
--- Normalizes an S1 instance. Note this doesn't modify the point on the circle
--- which it represents.
+# Normalizes an S1 instance. Note this doesn't modify the point on the circle
+# which it represents.
 def s1Normalize(s: S1) -> S1 =
   magnitude = sqrt $ s.x * s.x + s.y * s.y
   S1(s.x / magnitude, s.y / magnitude)
@@ -179,7 +179,7 @@ between them: $\cos \theta = (1 - d^2) / 2$.
 ' Now we can define the tangent space structure on `S1`. There is no arccos
 function in Dex so we copy the numerical approximation from `quaterions.dx`.
 
--- source: https://developer.nvidia.com/cg-toolkit
+# source: https://developer.nvidia.com/cg-toolkit
 def acos(x:Float) -> Float =
   negate = select (x < 0.0) 1.0 0.0
   x = abs x
@@ -199,22 +199,22 @@ instance TangentSpace(S1, Float)
     sn  = s1Normalize s
     sn' = s1Normalize s'
     dSquared = (sn.x - sn'.x) * (sn.x - sn'.x) + (sn.y - sn'.y) * (sn.y - sn'.y)
-    -- Check if we're using positive or negative inverse cos solution.
-    -- This is done by considering the sign of the cross product of the two
-    -- points in 3D space.
+    # Check if we're using positive or negative inverse cos solution.
+    # This is done by considering the sign of the cross product of the two
+    # points in 3D space.
     negate = select ((sn.x * sn'.y - sn'.x * sn.y) > 0.) 1.0 (-1.0)
     negate * (acos $ (1. - dSquared / 2.))
 
 ' Check that the tangent and logarithm are actually inverse to one another:
 
--- Convenience function to help check for equality.
+# Convenience function to help check for equality.
 def s1ToR2(s: S1) -> (Fin 2 => Float) = [s.x, s.y]
 
--- Two arbitrary points on the circle, not normalized.
+# Two arbitrary points on the circle, not normalized.
 circlePointOne = S1(3.4, 0.2)
 circlePointTwo = S1(-1.0,1.8)
 
--- Applying tangent mappings at circlePointTwo, to circlePointOne
+# Applying tangent mappings at circlePointTwo, to circlePointOne
 intermediateLog: Float = tangentLogarithmMap circlePointTwo circlePointOne
 roundTrip = tangentExponentialMap circlePointTwo intermediateLog
 
@@ -229,7 +229,7 @@ $- \sin \theta = -y$.
 
 def getX(s: S1) -> Float = s.x
 
--- Make types explicit
+# Make types explicit
 s1ManifoldGrad : ((S1) -> Float, S1) -> Float = manifoldGrad
 
 s1ManifoldGrad getX S1(0.0,1.0) ~~ -1.
@@ -264,22 +264,22 @@ struct Quaternion =
   z:Float
   w:Float
 
--- Conversion functions from a quaternion to an array of four components.
+# Conversion functions from a quaternion to an array of four components.
 def quatAsVec(q:Quaternion) -> Fin 4 => Float = [q.x, q.y, q.z, q.w]
 def quatFromVec(vec:Fin 4 => Float) -> Quaternion =
   [x, y, z, w] = vec
   Quaternion(x,y,z,w)
 
--- General normalization functions for arrays.
+# General normalization functions for arrays.
 def squareMagnitude(x:a=>Float) -> Float given (a|Ix) = sum $ for i. x[i] * x[i]
 def magnitude(x:a=>Float) -> Float given (a|Ix) = sqrt $ squareMagnitude x
 def normalize(x:a=>Float) -> a=> Float given (a|Ix) = (1.0 / (magnitude x)) .* x
 
--- Normalization for quaternions.
+# Normalization for quaternions.
 def quatNormalize(q: Quaternion) -> Quaternion =
   quatFromVec $ normalize $ quatAsVec q
 
--- The identity quaternion, representing a no-op rotation.
+# The identity quaternion, representing a no-op rotation.
 quatIdent = Quaternion(0.0, 0.0, 0.0, 1.0)
 
 
@@ -345,10 +345,10 @@ and running autodiff on the resulting linearizations may be inefficient.
 Taking higher-order deriviatives will also lose further precision as the number
 of approximation terms will be reduced by each successive differentiation.
 
--- Convenience alias for an array of three floats.
+# Convenience alias for an array of three floats.
 R3 = (Fin 3 => Float)
 
--- Taylor expansion for sinc (sqrt x).
+# Taylor expansion for sinc (sqrt x).
 def sincSqrt(x : Float) -> Float =
  (1.
   - (x  / 6.)
@@ -358,7 +358,7 @@ def sincSqrt(x : Float) -> Float =
   - (x * x * x * x * x/ 39916800.)
   + (x * x * x * x * x *  x / 6227020800.))
 
--- Taylor expansion for cos (sqrt x).
+# Taylor expansion for cos (sqrt x).
 def cosSqrt(x: Float) -> Float =
   (1.
    - (x / 2.)
@@ -368,7 +368,7 @@ def cosSqrt(x: Float) -> Float =
    - (x * x * x * x * x / 3628800.)
    + (x * x * x * x * x * x / 479001600.))
 
--- Taylor expansion for sinc (arccos x)
+# Taylor expansion for sinc (arccos x)
 def sincAcos(x: Float) -> Float =
   (2. / pi
    + x * 4. / (pow pi 2.)
@@ -377,11 +377,11 @@ def sincAcos(x: Float) -> Float =
    + x * x * x * x * (384. - 16. * pow pi 2. - 3. * pow pi 4.) / (12. * pow pi 5.)
    - x * x * x * x * x * 8. * (pow pi 4. - 120.) / (15. * pow pi 6.))
 
--- Exponential function at the identity.
+# Exponential function at the identity.
 def quatExpAtIdent(v : R3) -> Quaternion =
   [x', y', z'] = v
   m2 = squareMagnitude v
-  -- This is equal to sinc (m / 2) = 2 * sin (m / 2) / m
+  # This is equal to sinc (m / 2) = 2 * sin (m / 2) / m
   sincHalfM = sincSqrt $ m2 / 4.
   Quaternion(
      x' * sincHalfM / 2.,
@@ -389,10 +389,10 @@ def quatExpAtIdent(v : R3) -> Quaternion =
      z' * sincHalfM / 2.,
       cosSqrt $ m2 / 4. )
 
--- Inverse to exponential function at the identity.
+# Inverse to exponential function at the identity.
 def quatExpAtIdentInv(q': Quaternion) -> R3 =
-  -- Fine to use qNormalize here, since q should be approximately unit magnitude
-  -- (or at least non-zero), so the sqrt operation can be differentiated.
+  # Fine to use qNormalize here, since q should be approximately unit magnitude
+  # (or at least non-zero), so the sqrt operation can be differentiated.
   q = quatNormalize q'
   2. .* [q.x, q.y, q.z] / (sincAcos q.w)
 
@@ -411,23 +411,23 @@ looseTolerance = 0.005
 quatLooseTolerance = quatFromVec $ for i. looseTolerance
 tangentLooseTolerance : R3 = for i. looseTolerance
 
--- Just arbitrary quaternions.
+# Just arbitrary quaternions.
 quatForTestOne = quatNormalize (Quaternion(0.5, -0.2,  0.4,  1.0))
 quatForTestTwo = quatNormalize (Quaternion(0.5,  0.8, -0.9, -0.4))
 
 allclose quatLooseTolerance default_rtol (quatExpAtIdent $ quatExpAtIdentInv quatForTestOne) (quatForTestOne)
 > True
 
--- Same, but taking the logarithm and exponential at a non-identity point.
+# Same, but taking the logarithm and exponential at a non-identity point.
 logOfQuatForTestOne : R3 = tangentLogarithmMap quatForTestTwo quatForTestOne
 allclose quatLooseTolerance default_rtol (tangentExponentialMap quatForTestTwo logOfQuatForTestOne) quatForTestOne
 > True
 
--- Should be equal to quatIdent
+# Should be equal to quatIdent
 allclose quatLooseTolerance default_rtol (quatExpAtIdent $ quatExpAtIdentInv quatIdent) quatIdent
 > True
 
--- Now the other way around
+# Now the other way around
 tangentVectorForTest = [0.1, -0.2, 0.3]
 
 allclose tangentLooseTolerance default_rtol (quatExpAtIdentInv $ quatExpAtIdent tangentVectorForTest) tangentVectorForTest
@@ -465,18 +465,18 @@ allclose quatLooseTolerance default_rtol perturbedRotationDirect perturbedRotati
 
 ' Now we can test the linearization and gradient functions.
 
--- A function to get the Euler-angle roll from a quaternion.
+# A function to get the Euler-angle roll from a quaternion.
 def quatRoll(q : Quaternion) -> Float =
   sinrCosp = 2. * (q.w * q.x + q.y * q.z)
   cosrCosp = 1. - 2. * (q.x * q.x + q.y * q.y)
   atan2 sinrCosp cosrCosp
 
--- A fixed quaternion with roll = 0.5.
+# A fixed quaternion with roll = 0.5.
 quatSomeRoll = Quaternion(0.247, 0., 0., 0.969)
 quatRoll quatSomeRoll
 > 0.4991595
 
--- A function to compose a given quaternion with fixed rotation.
+# A function to compose a given quaternion with fixed rotation.
 def quatAddSomeRoll(q: Quaternion) -> Quaternion = q * quatSomeRoll
 
 ' According to our right-multiplication definition of the tangent space mappings,
@@ -492,20 +492,20 @@ allclose tangentLooseTolerance default_rtol (quatAddSomeRollLinearized linearInp
 
 ' Try taking the gradient of the `quatRoll` function, at various points.
 
--- Without associated types we have to define this, otherwise we get ambiguous
--- type variables.
+# Without associated types we have to define this, otherwise we get ambiguous
+# type variables.
 def quatGrad(f: (Quaternion) -> Float, x: Quaternion) -> R3 = manifoldGrad f x
 
--- Applying the gradient at a quaternion representing a "pure roll" rotation, we
--- see that the only way to modify the roll is by adding further rotation in the
--- roll direction.
+# Applying the gradient at a quaternion representing a "pure roll" rotation, we
+# see that the only way to modify the roll is by adding further rotation in the
+# roll direction.
 quatGrad quatRoll quatSomeRoll
 > [0.9999734, 0., 0.]
 
 
--- However, at other points, we can also modify the roll of the rotation by
--- moving in pitch and/or yaw directions. This demonstrates that the Euler
--- angles are not independent.
+# However, at other points, we can also modify the roll of the rotation by
+# moving in pitch and/or yaw directions. This demonstrates that the Euler
+# angles are not independent.
 quatGrad quatRoll quatForTestOne
 > [1.041024, 0.5948712, 1.490116e-08]
 

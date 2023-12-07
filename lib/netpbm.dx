@@ -8,12 +8,12 @@ data Image =
   MkImage(rows:Nat, cols:Nat, pixels:(Fin rows => Fin cols => Fin 3 => Word8))
 
 parse_p6 : Parser Image = MkParser \h.
-  -- Loads a raw PPM file in P6 format.
-  -- The header will look something like:
-  --   P6
-  --   220 220    (width, height)
-  --   255        (max color value)
-  -- followed by a flat block of height x width x 3 chars.
+  # Loads a raw PPM file in P6 format.
+  # The header will look something like:
+  #   P6
+  #   220 220    (width, height)
+  #   255        (max color value)
+  # followed by a flat block of height x width x 3 chars.
   parse h $ p_char 'P'
   parse h $ p_char '6'
   parse h $ parse_any

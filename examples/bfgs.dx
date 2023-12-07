@@ -21,7 +21,7 @@ def zoom(
   c1:Float,
   c2:Float
 ) -> Float =
-  -- Zoom line search helper; Algorithm 3.6 from Nocedal and Wright (2006).
+  # Zoom line search helper; Algorithm 3.6 from Nocedal and Wright (2006).
 
   f0 = f_line 0.
   g0 = grad f_line 0.
@@ -32,10 +32,10 @@ def zoom(
     a_lo = get a_lo_ref
     a_hi = get a_hi_ref
 
-    --Find a trial step length between a_lo and a_hi.
+    #Find a trial step length between a_lo and a_hi.
     a_i = 0.5 * (a_lo + a_hi)
 
-    if (a_hi - a_lo) < 0.000001  -- The line search failed.
+    if (a_hi - a_lo) < 0.000001  # The line search failed.
       then Done a_i
       else
         f_ai = f_line a_i
@@ -57,7 +57,7 @@ def zoom_line_search(
   maxiter:Nat,
   f: (Float)->Float
   ) -> Float =
-  --Algorithm 3.5 from Nocedal and Wright (2006).
+  #Algorithm 3.5 from Nocedal and Wright (2006).
   c1 = 0.0001
   c2 = 0.9
   a_max = 1.
@@ -90,7 +90,7 @@ def backtracking_line_search(
   maxiter:Nat,
   f: (Float)->Float
   ) -> Float =
-  -- Algorithm 3.1 in Nocedal and Wright (2006).
+  # Algorithm 3.1 in Nocedal and Wright (2006).
   a_init = 1.
   f_0 = f 0.
   g_0 = grad f 0.
@@ -113,14 +113,14 @@ struct BFGSresults(n|Ix) =
   num_iter: Nat
 
 def bfgs_minimize(
-  f: (n=>Float)->Float,                 --Objective function.
-  x0: n=>Float,                       --Initial point.
-  H0: n=>n=>Float,                    --Initial inverse Hessian approximation.
-  linesearch: ((Float)->Float)->Float,  --Line search that returns a step size.
-  tol: Float,                         --Convergence tolerance (of the gradient L2 norm).
-  maxiter: Nat                        --Maximum number of BFGS iterations.
+  f: (n=>Float)->Float,                 #Objective function.
+  x0: n=>Float,                       #Initial point.
+  H0: n=>n=>Float,                    #Initial inverse Hessian approximation.
+  linesearch: ((Float)->Float)->Float,  #Line search that returns a step size.
+  tol: Float,                         #Convergence tolerance (of the gradient L2 norm).
+  maxiter: Nat                        #Maximum number of BFGS iterations.
   ) -> BFGSresults n given (n|Ix) =
-  -- Algorithm 6.1 in Nocedal and Wright (2006).
+  # Algorithm 6.1 in Nocedal and Wright (2006).
 
   xref <- with_state x0
   Href <- with_state H0
@@ -143,7 +143,7 @@ def bfgs_minimize(
         g_next = grad f x_next
         grad_diff = g_next - g
 
-        -- Update the inverse Hessian approximation.
+        # Update the inverse Hessian approximation.
         rho_inv = vdot grad_diff x_diff
         if not (rho_inv == 0.)
             then
@@ -157,7 +157,7 @@ def bfgs_minimize(
 
 
 def rosenbrock(coord:(Fin 2)=>Float) -> Float =
-  --A standard optimization test case; the optimum is (1, 1).
+  #A standard optimization test case; the optimum is (1, 1).
   x = coord[0@_]
   y = coord[1@_]
   pow (1 - x) 2 + 100 * pow (y - x * x) 2
@@ -188,8 +188,8 @@ def multiclass_logreg(
   res = bfgs_minimize ob_fun w0 eye (\f. zoom_line_search maxls f) tol maxiter
   res.fval
 
--- Define a version of `multiclass_logreg` with Int instead of Nat labels, callable from Python
--- (see benchmarks/bfgs.py).
+# Define a version of `multiclass_logreg` with Int instead of Nat labels, callable from Python
+# (see benchmarks/bfgs.py).
 def multiclass_logreg_int(
   xs:(Fin n)=>(Fin d)=>Float,
   ys:(Fin n)=>Int,

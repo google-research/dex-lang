@@ -24,19 +24,19 @@ See the README for installation instructions.
 indentation rules.
 
 :p
-   x = 1.     -- let binding
-   y = (      -- let binding of a nested let expression
+   x = 1.     # let binding
+   y = (      # let binding of a nested let expression
      z = 2.
      z + 1.)
-   x + y                 -- body of let expression
+   x + y                 # body of let expression
 > 4.0
 
 'We also have lambda, tuple construction and (tuple) pattern-matching (destructuring):
 
 :p
-   (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
-   f = lam z. x + z * y  -- let binding of a lambda function
-   f 1. + f 2.           -- body of let expression
+   (x, y) = (1., 2.)     # let binding (with pattern-matching), tuple construction
+   f = lam z. x + z * y  # let binding of a lambda function
+   f 1. + f 2.           # body of let expression
 > 8.0
 
 'We use white space for function application (we write `f x y` instead of `f(x, y)`).
@@ -298,7 +298,7 @@ For example, adding two vectors of the same size:
 :p
    addVec : n=>Float -> n=>Float -> n=>Float
    addVec x y = for i. x.i + y.i
-   --
+   #
    addVec [1.0, 2.0] [0.1, 0.2]
 > [1.1, 2.2]
 
@@ -307,7 +307,7 @@ For example, adding two vectors of the same size:
 :p
    myTranspose : n=>m=>a -> m=>n=>a
    myTranspose x = for i j. x.j.i
-   --
+   #
    myTranspose [[1,2,3],[10,20,30]]
 > [[1, 10], [2, 20], [3, 30]]
 
@@ -316,7 +316,7 @@ For example, adding two vectors of the same size:
 :p
    diag : n=>n=>a -> n=>a
    diag x = for i. x.i.i
-   --
+   #
    diag [[1,2],[10,20]]
 > [1, 20]
 
@@ -326,7 +326,7 @@ For example, adding two vectors of the same size:
   * visible type application
   * existentials, packing/unpacking
   * input and output
-  * compiler internals -- normalized IR, imperative IR, LLVM
+  * compiler internals # normalized IR, imperative IR, LLVM
   * currying tables
   * mention prelude
   * splittable PRNG

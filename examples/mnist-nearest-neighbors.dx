@@ -6,7 +6,7 @@ load dxbo "scratch/mnist.dxbo" as mnist
 
 :t mnist
 
--- TODO: these should come from the data set itself
+# TODO: these should come from the data set itself
 type Img = 28=>28=>Float
 type NTrain = 60000
 type NTest  = 10000
@@ -27,11 +27,11 @@ fracTrue xs = mean for i. float (b2i xs.i)
 example = asidx @NTest 123
 :plotmat xsTest.example
 
--- look at closest match in the training set
+# look at closest match in the training set
 closest = findNearestNeighbor imgDistance xsTrain (xsTest.example)
 :plotmat xsTrain.closest
 
--- Make a subset of the test set (evaluating a single test example takes ~80ms)
+# Make a subset of the test set (evaluating a single test example takes ~80ms)
 type NTestSmall = 1000
 xsTest' = slice @NTestSmall xsTest 0
 ysTest' = slice @NTestSmall ysTest 0

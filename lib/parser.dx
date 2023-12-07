@@ -9,8 +9,8 @@ def from_ordinal_exc(n|Ix, i:Nat) -> {Except} n =
     then unsafe_from_ordinal i
     else throw()
 
--- TODO: allow this to happen in-place
--- TODO: if it takes too long to make that possible, start with a bounded version
+# TODO: allow this to happen in-place
+# TODO: if it takes too long to make that possible, start with a bounded version
 def push(ref:Ref h (List a), x:a) -> {State h} () given (h, a|Data) =
   l = get ref
   ref := l <> AsList _ [x]

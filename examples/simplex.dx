@@ -18,8 +18,8 @@ import plot
 
 '# General utility functions.
 
--- Hopefully these instances can one day be generated automatically for
--- all record types.
+# Hopefully these instances can one day be generated automatically for
+# all record types.
 instance [Eq cons, Eq a] Eq {constraints: cons | objective: Unit | extra:a}
   (==) = \r1 r2.
     case r1 of
@@ -73,13 +73,13 @@ instance [Eq a, Eq b] Eq {artificials: a | realvars: b}
 
 
 def argmax_suchthat [Ord o] (xs:n=>o) (cond:o->Bool): n =
-  -- Assumes that there's at least one element of xs
-  -- that satisfies the condition.
+  # Assumes that there's at least one element of xs
+  # that satisfies the condition.
   cmp = \x y. (not $ cond y) || (x > y && cond x)
   argscan cmp xs
 
 def argmax_suchthat_table [Ord o] (xs:n=>o) (cond:n=>Bool): n =
-  -- This variant takes a table of pre-evaluated conditions.
+  # This variant takes a table of pre-evaluated conditions.
   cmp = \i j. (not $ cond.j) || (xs.i > xs.j && cond.i)
   argscan cmp (for i. i)
 
@@ -94,7 +94,7 @@ data SimplexResult n:Type =
 data ConstraintType =
   LessThan
   GreaterThan
-  -- Todo: Add equality constraints
+  # Todo: Add equality constraints
 
 data ObjectiveType =
   Maximize
@@ -105,12 +105,12 @@ def Constraint (n:Type) : Type =
 
 def RowIx (cons:Type) (a:Type) : Type =
   {constraints:cons | objective:Unit | extra:a}
-  -- extra is a field that could be left unused or (Fin 1)
+  # extra is a field that could be left unused or (Fin 1)
 
 def ColIx (cons:Type) (vars:Type) : Type =
   {variables:vars | slacks:cons | value:Unit}
-  -- Todo: we assigned a slack variable for every constraints
-  -- even though equality constraints do not need them.
+  # Todo: we assigned a slack variable for every constraints
+  # even though equality constraints do not need them.
 
 Void : Type = Fin 0
 
@@ -119,15 +119,15 @@ def AbsTableau (cons:Type) (vars:Type) (extra:Type) : Type =
   rowtype = RowIx cons extra
   tabletype = rowtype => coltype => Float
   (cons => coltype & vars => coltype & tabletype)
-  -- (basics, nonbasics, table)
+  # (basics, nonbasics, table)
 
 def Tableau (cons:Type) (vars:Type) : Type =
-  AbsTableau cons vars Void -- no need for extra row
+  AbsTableau cons vars Void # no need for extra row
 
 def FeasibilityTableau (cons:Type) (vars:Type) : Type =
-  -- The feasibility tableau has extra columns for the artificial variables.
-  -- Todo: use a List of artificial variables, since not each constraint
-  -- actually requires an artificial variable.
+  # The feasibility tableau has extra columns for the artificial variables.
+  # Todo: use a List of artificial variables, since not each constraint
+  # actually requires an artificial variable.
   allvars = {realvars: vars | artificials: cons}
   AbsTableau cons allvars Unit
 
@@ -189,9 +189,9 @@ The type of this normal table is:
 
 def cononicalize_constraint (inequality: Constraint vars):
   (vars=>Float & Float) =
-  -- Turn all constraints into less-than inequalities,
-  -- so after this step we don't have to track which direction
-  -- the inequality was originallly.
+  # Turn all constraints into less-than inequalities,
+  # so after this step we don't have to track which direction
+  # the inequality was originallly.
   ({coeffs=coeffs, offset=offset, conType=conType}) = inequality
   case conType of
     LessThan    ->  (coeffs,  offset)
@@ -208,13 +208,13 @@ def build_tableau [Eq cons]
       (coeffs, offset) = cononicalize_constraint ineqs.i
       for j. case j of  
         {|variables=j|} -> coeffs.j
-        {|slacks=j|}    -> select (i == j) 1.0 0.0  -- identity matrix.
+        {|slacks=j|}    -> select (i == j) 1.0 0.0  # identity matrix.
         {|value=j|}     -> offset
     {|objective=()|} -> for j. case j of
       {|variables=j|} -> case objType of
         Maximize ->  objective.j
         Minimize -> -objective.j
-      {|slacks=j|} -> 0.0  -- slack variables never contribute to loss.
+      {|slacks=j|} -> 0.0  # slack variables never contribute to loss.
       {|value=j|}  -> 0.0
 
   basics    = for r:cons. {|slacks=r|}
@@ -236,9 +236,9 @@ def negate_constraints_with_negative_offsets [Eq cons]
 def build_feasibility_tableau [Eq cons]
       (tableau: (Tableau cons vars))
       : FeasibilityTableau cons vars =
-  -- Builds an expanded tableau, with an extra variable for each constraint.
-  -- If these new variables can be driven to zero,
-  -- while satisfying all constraints, then the original problem is feasible.
+  # Builds an expanded tableau, with an extra variable for each constraint.
+  # If these new variables can be driven to zero,
+  # while satisfying all constraints, then the original problem is feasible.
 
   tableau' = negate_constraints_with_negative_offsets tableau
   (basics, nonbasics, table) = tableau'
@@ -288,8 +288,8 @@ def isFeasible (tableau: FeasibilityTableau cons vars) : Bool =
 ' #### Choose `pivot` and apply
 
 def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
-  -- An unchecked assumption is that there exists
-  -- at least one nonbasic variable with a positive objective coefficient.
+  # An unchecked assumption is that there exists
+  # at least one nonbasic variable with a positive objective coefficient.
   (_, nonbasics, table) = tableau
   objective_coeffs = for c:vars.
     table.{|objective=()|}.(nonbasics.c)
@@ -299,7 +299,7 @@ def chooseColumn (tableau: (AbsTableau cons vars extra)) : ColIx cons vars =
 def findPivotIndex
       (tableau: (AbsTableau cons vars extra))
       : Maybe (RowIx cons extra & ColIx cons vars) =
-  -- Chooses row and column to pivot around next.
+  # Chooses row and column to pivot around next.
   (_, _, table) = tableau
   pivotcol = chooseColumn tableau  
   unbounded = all for r. 
@@ -308,7 +308,7 @@ def findPivotIndex
   case unbounded of
     True -> Nothing
     False ->
-      -- pick row index minimizing the quotient amongst positive quotients
+      # pick row index minimizing the quotient amongst positive quotients
       quotients = for r. -table.{|objective|extra|...r|}.{|value=()|} /
                           table.{|objective|extra|...r|}.pivotcol
       cond = for r. table.{|objective|extra|...r|}.pivotcol > 0.0
@@ -330,11 +330,11 @@ def pivot [Eq cons, Eq extra, Eq vars]
 
   i' = from_just $ (match_with #?constraints) pivotrow
 
-  -- Swap in new basic variable.
+  # Swap in new basic variable.
   newBasics = yield_state basics \ref.
     ref!i' := pivotcol
 
-  -- Move old basic variable to nonbasics.
+  # Move old basic variable to nonbasics.
   newNonbasics = for i. case nonbasics.i == pivotcol of
     True -> basics.i'
     False -> nonbasics.i
@@ -362,7 +362,7 @@ def find_non_artificial_pivcol [Eq cons, Eq vars]
 def pivot_artificials [Eq cons, Eq vars]
       (tableau: FeasibilityTableau cons vars)
       : (FeasibilityTableau cons vars) =
-  -- Pivot out all the artificial variables out of the basis
+  # Pivot out all the artificial variables out of the basis
   yield_state tableau \tRef.
     tableau = get tRef
     (basics, _, _) = tableau
@@ -395,9 +395,9 @@ def deduce_nonbasics [Eq cons, Eq vars]
   all_columns = for i. i
   nonBasicsList = filter not_in_basics all_columns
 
-  -- We know that there will be one nonbasic for every variable,
-  -- but don't know how to tell the compiler that, so
-  -- need to use an unsafe cast.
+  # We know that there will be one nonbasic for every variable,
+  # but don't know how to tell the compiler that, so
+  # need to use an unsafe cast.
   (AsList n nonBasicsTable) = nonBasicsList
   unsafe_cast_table vars nonBasicsTable
 
@@ -408,20 +408,20 @@ def eliminate_artificials [Eq cons, Eq vars]
 
   (basics, nonbasics, table) = tableau
 
-  -- copy to new tableau without the artificial columns
+  # copy to new tableau without the artificial columns
   newBasics = for r:cons. case basics.r of
     {|slacks=r|} -> {|slacks=r|}
     {|variables=r|} -> case r of
       {|realvars=r|} -> {|variables=r|}
       {|artificials=r|} -> error("leftover artificial variable")
 
-  -- keep real vars only
+  # keep real vars only
   t = for i. for j:(ColIx cons vars). case j of
       {|slacks=j|}    -> table.i.{|slacks=j|}
       {|value=j|}     -> table.i.{|value=()|}
       {|variables=j|} -> table.i.{|variables={|realvars=j|}|}
 
-  -- replace objective row
+  # replace objective row
   t2 = for i:(RowIx cons Void). case i of
     {|constraints=i|} -> t.{|constraints=i|}
     {|objective=()|} -> t.{|extra=()|}
@@ -446,7 +446,7 @@ def constraints_satisfied (constraints: m=>Constraint n) (x: n=>Float) : Bool =
     case conType of
       LessThan    -> dot coeffs x <= offset
       GreaterThan -> dot coeffs x >= offset
-  -- also enforces that all vars are >= 0.0
+  # also enforces that all vars are >= 0.0
   constraints_ok && all for i:n. x.i >= 0.0 || x.i ~~ 0.0
 
 def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
@@ -454,7 +454,7 @@ def extractSolution (tableau: AbsTableau cons vars extra) : vars=>Float =
   yield_accum (AddMonoid Float) \varRef.
     for v:cons.
       var = basics.v
-      case var of  -- If this basic variable is an original variable, write it.
+      case var of  # If this basic variable is an original variable, write it.
         {|variables=var|} ->
           varRef!var += table.{|constraints=v|}.{|value=()|}
         {|slacks=var|} -> ()
@@ -467,12 +467,12 @@ def simplex [Eq cons, Eq vars]
       (objective: vars=>Float)
       (objType:ObjectiveType)
       : SimplexResult vars =
-  -- Note: Also enforces that all vars are >= 0.0
-  -- Operates in two phases:
-  -- First, finds a point within the simplex (or return infeasible)
-  -- Second, optimizes within the simplex.
+  # Note: Also enforces that all vars are >= 0.0
+  # Operates in two phases:
+  # First, finds a point within the simplex (or return infeasible)
+  # Second, optimizes within the simplex.
 
-  -- Find a feasible initial solution.
+  # Find a feasible initial solution.
   init_tableau = build_tableau ineqs objective objType
   initFeasibilityTableau = build_feasibility_tableau init_tableau
   feasibilityAns = yield_state initFeasibilityTableau \tableauRef. iter \_.
@@ -492,9 +492,9 @@ def simplex [Eq cons, Eq vars]
     True ->
       tf = feasibilityTableauToNormalTableau feasibilityAns
 
-      -- Optimize within the simplex.
+      # Optimize within the simplex.
       with_state tf \tableauRef. iter \_.
-        tableau = get tableauRef  -- Whole tableau will be overwritten.
+        tableau = get tableauRef  # Whole tableau will be overwritten.
         isopt = isOptimal tableau
         case isopt of
           True -> Done $ Solution $ extractSolution tableau
@@ -507,7 +507,7 @@ def simplex [Eq cons, Eq vars]
 
 '# Tests
 
--- An impossible problem.
+# An impossible problem.
 impossible_constraints = for i.
     angles = linspace (Fin 3) 0.0 (2.0 * pi)
     cs = [-(sin (angles.i)), -(cos (angles.i))]
@@ -518,7 +518,7 @@ impossible_constraints = for i.
 
 initft = build_feasibility_tableau $ build_tableau impossible_constraints [1.0, 1.0] Maximize
 
--- An unbounded problem.
+# An unbounded problem.
 unbounded_constraints =
   angles = linspace (Fin 3) 0.0 1.0
   for i.
@@ -529,9 +529,9 @@ unbounded_constraints =
 :p simplex unbounded_constraints [1.0, 1.0] Maximize
 > Unbounded
 
--- A feasible problem: Example 3.5 in
--- Introduction to Linear Optimization
--- by D. Bertsimas and J. Tsitsiklis
+# A feasible problem: Example 3.5 in
+# Introduction to Linear Optimization
+# by D. Bertsimas and J. Tsitsiklis
 obj = [10.0, 12.0, 12.0]
 a =
   [[1., 2., 2.],
@@ -544,7 +544,7 @@ textbook_constraints =
 > (Solution [4., 4., 4.])
 
 
--- A feasible problem from Waterloo notes
+# A feasible problem from Waterloo notes
 obj' = [1., -1.,  1.]
 a' =
   [[ 2., -1.,  2.],
@@ -578,8 +578,8 @@ dup_constraints =
 > (Solution [0.5, 0.])
 
 
--- differs from dup_constraints only in the ordering
--- artificial variables are in the basis of FeasibilityAns
+# differs from dup_constraints only in the ordering
+# artificial variables are in the basis of FeasibilityAns
 dup_constraints2 =
   [{coeffs=equal_a.(1@_), offset=equal_b.(1@_), conType=GreaterThan},
   {coeffs=equal_a.(0@_), offset=equal_b.(0@_), conType=LessThan},
@@ -589,7 +589,7 @@ dup_constraints2 =
 > (Solution [0.5, 0.])
 
 
--- the first constraint is always satisfied
+# the first constraint is always satisfied
 redundant_obj = [1.0, 1.0]
 redundant_constraints =
   [{coeffs=[0.0, 0.0], offset=0.0, conType=LessThan},
@@ -615,7 +615,7 @@ def pixToReal (px:n) (py:m): (Fin 2)=>Float =
 
 def draw_point [Eq n, Eq m]
   (image: n=>m=>(Fin 3)=>Float) (row:n) (col:m) : n=>m=>(Fin 3)=>Float =
-  -- todo: in-place drawing
+  # todo: in-place drawing
   for j:n. case row == j of
     True -> for k:m. case col == k of
       True  -> [1.0, 0.0, 0.0]
@@ -625,19 +625,19 @@ def draw_point [Eq n, Eq m]
 
 '### Pentagon example
 
--- XXX This used to typecheck, now fails, so coefficients are hardcoded below.
+# XXX This used to typecheck, now fails, so coefficients are hardcoded below.
 
--- def polygon_constraints (num_sides: Int) (radius:Float)
---   (center:(Fin 2)=>Float) : (Fin num_sides)=>Constraint (Fin 2) =
---   angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
---   for i.
---     cs = [-(sin (0.23 + angles.i)),
---           -(cos (0.23 + angles.i))]
---     {coeffs=cs,
---      offset=radius + (dot cs center),
---      conType=LessThan}
---
--- pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
+# def polygon_constraints (num_sides: Int) (radius:Float)
+#   (center:(Fin 2)=>Float) : (Fin num_sides)=>Constraint (Fin 2) =
+#   angles = linspace (Fin num_sides) 0.0 (2.0 * pi)
+#   for i.
+#     cs = [-(sin (0.23 + angles.i)),
+#           -(cos (0.23 + angles.i))]
+#     {coeffs=cs,
+#      offset=radius + (dot cs center),
+#      conType=LessThan}
+#
+# pentagon = polygon_constraints 5 0.2 [0.5, 0.5]
 
 pentagon = [
   {coeffs = [-0.227978, -0.973666], conType = LessThan, offset = -0.400822}
@@ -654,12 +654,12 @@ image = for i:(Fin 150). for j:(Fin 150).
     False -> [0.0, 0.0, 0.0]
 
 
--- Find optimum by simplex method
+# Find optimum by simplex method
 simplexSolution = simplex pentagon objective Maximize
 :p simplexSolution
 > (Solution [0.55636, 0.740704])
 
--- Plot objective function and location of answer (red dot).
+# Plot objective function and location of answer (red dot).
 simplexLocation = case simplexSolution of
   Solution ans -> ans
 (x, y) : (Fin 150 & Fin 150) = float2pix simplexLocation

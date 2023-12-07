@@ -10,19 +10,19 @@ import plot
 
 Time = Float
 
--- Should this go in the prelude?
+# Should this go in the prelude?
 def length(x: d=>Float) -> Float given (d|Ix) = sqrt $ sum for i. sq x[i]
 def (./)(x: d=>Float, y: d=>Float) -> d=>Float given (d|Ix) = for i. x[i] / y[i]
 
 def fit_4th_order_polynomial(z0:v, z1:v, z_mid:v, dz0:v, dz1:v, dt:Time)
     -> (Fin 5)=>v given (v|VSpace) =
-  -- dz0 and dz1 are gradient evaluations.
+  # dz0 and dz1 are gradient evaluations.
   a = -2. * dt .* dz0 + 2. * dt .* dz1 -  8. .* z0 -  8. .* z1 + 16. .* z_mid
   b =  5. * dt .* dz0 - 3. * dt .* dz1 + 18. .* z0 + 14. .* z1 - 32. .* z_mid
   c = -4. * dt .* dz0 +      dt .* dz1 - 11. .* z0 -  5. .* z1 + 16. .* z_mid
   d = dt .* dz0
   e = z0
-  [a, b, c, d, e]  -- polynomial coefficients.
+  [a, b, c, d, e]  # polynomial coefficients.
 
 dps_c_mid = [
    6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
@@ -31,7 +31,7 @@ dps_c_mid = [
 
 def interp_fit_dopri(z0:v, z1:v, k:(Fin 7)=>v, dt:Time)
     -> (Fin 5)=>v given (v|VSpace) =
-  -- Fit a polynomial to the results of a Runge-Kutta step.
+  # Fit a polynomial to the results of a Runge-Kutta step.
   z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k[0@_] k[1@_] dt
 
@@ -40,8 +40,8 @@ def initial_step_size(
     t0:Time, z0:d=>Float,
     order:Int, rtol:Float, atol:Float, f0:d=>Float
     ) -> Time given (d|Ix) =
-  -- Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
-  -- Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
+  # Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
+  # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
   scale = for i. atol + ((abs z0[i]) * rtol)
   d0 = length (z0 ./ scale)
   d1 = length (f0 ./ scale)
@@ -54,10 +54,10 @@ def initial_step_size(
   h1 = select ((d1 <= 1.0e-15) && (d2 <= 1.0e-15)) left right
   min (100. * h0) h1
 
--- Dopri5 Butcher tableaux
+# Dopri5 Butcher tableaux
 alpha = [1. / 5., 3. / 10., 4. / 5., 8. / 9., 1., 1.]
 
-beta : ((i:Fin 6)=>(..i)=>Float) =  -- triangular array type.
+beta : ((i:Fin 6)=>(..i)=>Float) =  # triangular array type.
   [coerce_table _ [1. / 5.],
    coerce_table _ [3. / 40., 9. / 40.],
    coerce_table _ [44. / 45., -56. / 15., 32.0 / 9.],
@@ -119,15 +119,15 @@ def odeint(
     func: (d=>Float, Time) -> d=>Float,
     z0: d=>Float, t0: Time, times: n=>Time
     ) -> n=>d=>Float given (n|Ix, d|Ix) =
-  -- Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
-  --  Args:
-  --    func: time derivative of the solution z at time t.
-  --    z0: the initial value for the state.
-  --    t: times for evaluation. values must be strictly increasing.
-  --  Returns:
-  --    Values of the solution at each time point in times.
-  rtol = 1.4e-8 -- relative local error tolerance for solver.
-  atol = 1.4e-8 -- absolute local error tolerance for solver.
+  # Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
+  #  Args:
+  #    func: time derivative of the solution z at time t.
+  #    z0: the initial value for the state.
+  #    t: times for evaluation. values must be strictly increasing.
+  #  Returns:
+  #    Values of the solution at each time point in times.
+  rtol = 1.4e-8 # relative local error tolerance for solver.
+  atol = 1.4e-8 # absolute local error tolerance for solver.
   max_iters = 10000
   V : Type = d=>Float
   S : Type = ODEState V
@@ -148,7 +148,7 @@ def odeint(
       stay_state = ODEState(     z, state.f, state.t, new_dt, state.last_t , state.interp_coeffs)
       select (ratio <= 1.0) move_state stay_state
 
-    -- Take steps until we pass target_t
+    # Take steps until we pass target_t
     new_state = yield_state init_carry \stateRef.
       iter \_.
         state = get stateRef
@@ -158,14 +158,14 @@ def odeint(
             Continue
           else Done ()
 
-    -- Interpolate to the target time.
+    # Interpolate to the target time.
     relative_output_time = (target_t - new_state.last_t) / (new_state.t - new_state.last_t)
     z_target = evalpoly new_state.interp_coeffs relative_output_time
     (new_state, z_target)
 
   f0 = func z0 t0
   init_step = initial_step_size func t0 z0 4 rtol atol f0
-  init_interp_coeff = zero  -- dummy vals
+  init_interp_coeff = zero  # dummy vals
   init_carry = ODEState(z0, f0, t0, init_step, t0, init_interp_coeff)
   snd $ scan init_carry integrate_to_next_time
 
@@ -183,7 +183,7 @@ approx_e = odeint myDyn z0 t0 t1
 
 exact_e = [[exp 1.0]]
 
-:p (approx_e - exact_e) -- amount of numerical error
+:p (approx_e - exact_e) # amount of numerical error
 > [[0.001894474]]
 
 times = linspace (Fin 100) 0.00001 1.0

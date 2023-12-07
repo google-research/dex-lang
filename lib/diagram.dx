@@ -9,7 +9,7 @@ struct Point =
 data Geom =
   PointGeom
   Circle(Float)
-  Rectangle(Float, Float)  -- width, height
+  Rectangle(Float, Float)  # width, height
   Line(Point)
   Text(String)
 
@@ -34,7 +34,7 @@ struct GeomStyle =
 
 default_geom_style = GeomStyle Nothing (Just black) 1
 
--- TODO: consider sharing attributes among a set of objects for efficiency
+# TODO: consider sharing attributes among a set of objects for efficiency
 Object : Type = (GeomStyle, Point, Geom)
 struct Diagram =
   val : (List Object)
@@ -46,9 +46,9 @@ instance Monoid(Diagram)
 def concat_diagrams(diagrams:n=>Diagram) -> Diagram given (n|Ix) =
   Diagram $ concat $ each diagrams \d. d.val
 
--- TODO: arbitrary affine transformations. Our current representation of
--- rectangles and circles means we can only do scale/flip/rotate90.
--- Should we use lenses/isomorphisms for these instead?
+# TODO: arbitrary affine transformations. Our current representation of
+# rectangles and circles means we can only do scale/flip/rotate90.
+# Should we use lenses/isomorphisms for these instead?
 def apply_transformation(
     transformPoint: (Point) -> Point,
     transformGeom:  (Geom) -> Geom,
@@ -97,8 +97,8 @@ def update_geom(update: (GeomStyle) -> GeomStyle, d:Diagram) -> Diagram =
     (       attr, point, geoms) = obj
     (update attr, point, geoms)
 
--- TODO: these would be better if we had field-access-based ref projections, so we could
--- write `geom~fillColor := c` instead of unpack and packing explicitly.
+# TODO: these would be better if we had field-access-based ref projections, so we could
+# write `geom~fillColor := c` instead of unpack and packing explicitly.
 def set_fill_color(d:Diagram, c:HtmlColor) -> Diagram =
   update_geom (\s. GeomStyle (Just c) s.strokeColor s.strokeWidth) d
 
@@ -165,7 +165,7 @@ def attr_string(attr:GeomStyle) -> String =
 
 @noinline
 def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
-  -- For things that are solid. SVG says they have fill=stroke.
+  # For things that are solid. SVG says they have fill=stroke.
   solidAttr = GeomStyle attr.strokeColor attr.strokeColor attr.strokeWidth
   groupEle = \attr:GeomStyle s:String. tag_brackets_attr "g" (attr_string attr) s
   case geom of
@@ -192,8 +192,8 @@ def render_geom(attr:GeomStyle, p:Point, geom:Geom) -> String =
       textEle = \s:String. tag_brackets_attr("text",
         ("x" <=> p.x <.>
          "y" <=> p.y <.>
-         "text-anchor" <=> "middle" <.>    -- horizontal center
-         "dominant-baseline" <=> "middle"  -- vertical center
+         "text-anchor" <=> "middle" <.>    # horizontal center
+         "dominant-baseline" <=> "middle"  # vertical center
         ), s)
       groupEle solidAttr $ textEle content
 
@@ -208,8 +208,8 @@ def compute_bounds(d:Diagram) -> BoundingBox =
         PointGeom       -> 0.0
         Circle r        -> op r
         Rectangle(w, h) -> op $ (sel Point(w,h))/2.0
-        Line q          -> op $ max 0.0 $ op $ sel q  -- equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
-        Text _          -> 0.0  -- no size info possible as it is scale invariant
+        Line q          -> op $ max 0.0 $ op $ sel q  # equivalent to either `-min(0, sel q)` or `max(0.0, sel q)` depending on op
+        Text _          -> 0.0  # no size info possible as it is scale invariant
 
   AsList(_, objs) = d.val
   (
@@ -257,7 +257,7 @@ def move_y(d:Diagram, y:Float) -> Diagram = move_xy(d, 0.0, y)
        | set_fill_color blue | set_stroke_color red)
   <> (circle 5.0 | move_xy(40.0, 41.0))
   <> (rect  10.0 20.0 | move_xy(5.0, 10.0)  | set_stroke_color red)
-  <> (text "DexLang"  | move_xy(30.0, 10.0) | set_stroke_color green)
+  <> (text "types are good"  | move_xy(30.0, 10.0) | set_stroke_color green)
   <> (point_diagram   | move_xy(15.0, 5.0)  | set_stroke_color red)
   )
   render_scaled_svg mydiagram
@@ -269,7 +269,7 @@ def move_y(d:Diagram, y:Float) -> Diagram = move_xy(d, 0.0, y)
   concentric_diagram : Diagram = (
        (rect 2.0 2.0 | set_fill_color red)
     <> (circle 1.0 | set_fill_color blue)
-    <> (text "DexLang" | set_stroke_color white)
+    <> (text "types are good" | set_stroke_color white)
   ) | move_xy(5.0, 5.0)
   render_scaled_svg concentric_diagram
 > <html output>

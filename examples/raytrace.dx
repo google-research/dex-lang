@@ -16,7 +16,7 @@ def Mat(n:Nat, m:Nat) -> Type = Fin n => Fin m => Float
 
 def relu(x:Float) -> Float = max x 0.0
 def length(x: d=>Float) -> Float given (d|Ix) = sqrt $ sum for i:d. sq x[i]
--- TODO: make a newtype for normal vectors
+# TODO: make a newtype for normal vectors
 def normalize(x: d=>Float) -> d=>Float given (d|Ix) = x / (length x)
 def directionAndLength(x: d=>Float) -> (d=>Float, Float) given (d|Ix) =
   l = length x
@@ -39,7 +39,7 @@ def cross(a:Vec 3, b:Vec 3) -> Vec 3 =
   [b1, b2, b3] = b
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
 
--- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
+# TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
 data Image =
  MkImage(height:Nat, width:Nat, Fin height => Fin width => Color)
 
@@ -47,7 +47,7 @@ xHat : Vec 3 = [1., 0., 0.]
 yHat : Vec 3 = [0., 1., 0.]
 zHat : Vec 3 = [0., 0., 1.]
 
-Angle = Float  -- angle in radians
+Angle = Float  # angle in radians
 
 def rotateX(p:Vec 3, angle:Angle) -> Vec 3 =
   c = cos angle
@@ -85,7 +85,7 @@ def sampleCosineWeightedHemisphere(normal: Vec 3, k:Key) -> Vec 3 =
 Distance = Float
 
 Position  = Vec 3
-Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
+Direction = Vec 3  # Should be normalized. TODO: use a newtype wrapper
 
 BlockHalfWidths = Vec 3
 Radius = Float
@@ -106,7 +106,7 @@ struct OrientedSurface =
 
 data Object =
   PassiveObject(ObjectGeom, Surface)
-  -- position, half-width, intensity (assumed to point down)
+  # position, half-width, intensity (assumed to point down)
   Light(Position, Float, Radiance)
 
 struct Ray =
@@ -120,7 +120,7 @@ struct Params =
  maxBounces : Nat
  shareSeed  : Bool
 
--- TODO: use a list instead, once they work
+# TODO: use a list instead, once they work
 struct Scene(n|Ix) =
   objects : n=>Object
 
@@ -128,15 +128,15 @@ def sampleReflection(surf:OrientedSurface, ray:Ray, k:Key) -> Ray =
   nor = surf.normal
   newDir = case surf.surface of
     Matte _ -> sampleCosineWeightedHemisphere nor k
-    -- TODO: surely there's some change-of-solid-angle correction we need to
-    -- consider when reflecting off a curved surface.
+    # TODO: surely there's some change-of-solid-angle correction we need to
+    # consider when reflecting off a curved surface.
     Mirror  -> ray.dir - (2.0 * dot ray.dir nor) .* nor
   Ray(ray.origin, newDir)
 
 def probReflection(surf:OrientedSurface, _:Ray, out_ray:Ray) -> Float =
   case surf.surface of
     Matte _ -> relu $ dot surf.normal out_ray.dir
-    Mirror  -> 0.0  -- TODO: this should be a delta function of some sort
+    Mirror  -> 0.0  # TODO: this should be a delta function of some sort
 
 def applyFilter(filter:Filter, radiance:Radiance) -> Radiance =
   for i. filter[i] * radiance[i]
@@ -169,21 +169,21 @@ def calcNormal(obj:Object, pos:Position) -> Direction =
   grad(\p:Position. sdObject(p, obj)) pos | normalize
 
 data RayMarchResult =
-  -- incident ray, surface normal, surface properties
+  # incident ray, surface normal, surface properties
   HitObj(Ray, OrientedSurface)
   HitLight(Radiance)
-  -- Could refine with failure reason (beyond horizon, failed to converge etc)
+  # Could refine with failure reason (beyond horizon, failed to converge etc)
   HitNothing
 
 def raymarch(scene:Scene n, ray:Ray) -> RayMarchResult given (n|Ix) =
   maxIters : Nat = 100
   tol = 0.01
-  startLength = 10.0 * tol  -- trying to escape the current surface
+  startLength = 10.0 * tol  # trying to escape the current surface
   with_state (10.0 * tol) \rayLength.
     bounded_iter maxIters HitNothing \_.
       rayPos = ray.origin + get rayLength .* ray.dir
       (obj, d) = sdScene scene $ rayPos
-      -- 0.9 ensures we come close to the surface but don't touch it
+      # 0.9 ensures we come close to the surface but don't touch it
       rayLength := get rayLength + 0.9 * d
       case d < tol of
         False -> Continue
@@ -191,11 +191,11 @@ def raymarch(scene:Scene n, ray:Ray) -> RayMarchResult given (n|Ix) =
           surfNorm = calcNormal obj rayPos
           case positiveProjection ray.dir surfNorm of
             True ->
-              -- Oops, we didn't escape the surface we're leaving..
-              -- (Is there a more standard way to do this?)
+              # Oops, we didn't escape the surface we're leaving..
+              # (Is there a more standard way to do this?)
               Continue
             False ->
-              -- We made it!
+              # We made it!
               Done $ case obj of
                 PassiveObject(_, surf) ->
                   newRay = Ray(rayPos, ray.dir)
@@ -226,7 +226,7 @@ def sampleLightRadiance(
         (dirToLight, distToLight) = directionAndLength $
                                       lightPos + sampleSquare hw k - inRay.origin
         if positiveProjection dirToLight osurf.normal then
-          -- light on this far side of current surface
+          # light on this far side of current surface
           fracSolidAngle = (relu $ dot dirToLight yHat) * sq hw / (pi * sq distToLight)
           outRay = Ray(inRay.origin, dirToLight)
           coeff = fracSolidAngle * probReflection osurf inRay outRay
@@ -241,7 +241,7 @@ def trace(params:Params, scene:Scene n, initRay:Ray, k:Key) -> Color given (n|Ix
         case raymarch scene $ get ray of
           HitNothing -> Done ()
           HitLight intensity ->
-            if i == 0 then radiance += intensity   -- TODO: scale etc
+            if i == 0 then radiance += intensity   # TODO: scale etc
             Done ()
           HitObj(incidentRay, osurf) ->
             [k1, k2] = split_key(n=2, hash k i)
@@ -251,16 +251,16 @@ def trace(params:Params, scene:Scene n, initRay:Ray, k:Key) -> Color given (n|Ix
             radiance += applyFilter (get filter) lightRadiance
             Continue
 
--- Assumes we're looking towards -z.
+# Assumes we're looking towards -z.
 struct Camera =
   numPix     : Nat
-  pos        : Position  -- pinhole position
-  halfWidth  : Float     -- sensor half-width
-  sensorDist : Float     -- pinhole-sensor distance
+  pos        : Position  # pinhole position
+  halfWidth  : Float     # sensor half-width
+  sensorDist : Float     # pinhole-sensor distance
 
--- TODO: might be better with an anonymous dependent pair for the result
+# TODO: might be better with an anonymous dependent pair for the result
 def cameraRays(n:Nat, camera:Camera) -> Fin n => Fin n => ((Key) -> Ray) =
-  -- images indexed from top-left
+  # images indexed from top-left
   halfWidth = camera.halfWidth
   pixHalfWidth = halfWidth / n_to_f n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
@@ -310,13 +310,13 @@ defaultCamera = Camera 250 (10.0 .* zHat) 0.3 1.0
 
 testCamera = Camera 10 (10.0 .* zHat) 0.3 1.0
 
--- We change to a small num pix here to reduce the compute needed for tests
+# We change to a small num pix here to reduce the compute needed for tests
 params = defaultParams
 camera = if dex_test_mode()
   then testCamera
   else defaultCamera
 
--- %time
+# %time
 MkImage(_, _, image) = takePicture params theScene camera
 :html imshow image
 > <html output>

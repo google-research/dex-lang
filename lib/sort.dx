@@ -18,20 +18,20 @@ def concat_table(leftin: a=>v, rightin: b=>v) -> (Either a b=>v) given (a|Ix, b|
     Right i -> rightin[i]
 
 def merge_sorted_tables(xs:m=>a, ys:n=>a) -> (Either m n=>a) given (a|Ord, m|Ix, n|Ix) =
-  -- Possible improvements:
-  --  1) Using a SortedTable type.
-  --  2) Avoid needlessly initializing the return array.
-  init = concat_table xs ys  -- Initialize array of correct size.
+  # Possible improvements:
+  #  1) Using a SortedTable type.
+  #  2) Avoid needlessly initializing the return array.
+  init = concat_table xs ys  # Initialize array of correct size.
   yield_state init \buf.
     with_state (0, 0) \countrefs.
       for i:(Either m n).
         (cur_x, cur_y) = get countrefs
-        if cur_y >= size n  -- no ys left
+        if cur_y >= size n  # no ys left
           then
             countrefs := (cur_x + 1, cur_y)
             buf!i := xs[unsafe_from_ordinal cur_x]
           else
-            if cur_x < size m -- still xs left
+            if cur_x < size m # still xs left
               then
                 if xs[unsafe_from_ordinal cur_x] <= ys[unsafe_from_ordinal cur_y]
                   then
@@ -42,8 +42,8 @@ def merge_sorted_tables(xs:m=>a, ys:n=>a) -> (Either m n=>a) given (a|Ord, m|Ix,
                     buf!i := ys[unsafe_from_ordinal cur_y]
 
 def merge_sorted_lists(lx: List a, ly: List a) -> List a given (a|Ord) =
-  -- Need this wrapper because Dex can't automatically weaken
-  -- (a | b)=>c to ((Fin d)=>c)
+  # Need this wrapper because Dex can't automatically weaken
+  # (a | b)=>c to ((Fin d)=>c)
   AsList(nx, xs) = lx
   AsList(ny, ys) = ly
   sorted = merge_sorted_tables xs ys
@@ -51,15 +51,15 @@ def merge_sorted_lists(lx: List a, ly: List a) -> List a given (a|Ord) =
   AsList _ $ unsafe_cast_table(to=Fin newsize, sorted)
 
 def sort(xs: n=>a) -> n=>a given (n|Ix, a|Ord) =
-  -- Warning: Has quadratic runtime cost for now.
+  # Warning: Has quadratic runtime cost for now.
 
   xlists = for i:n. (AsList 1 [xs[i]])
 
-  -- Merge sort monoid:
+  # Merge sort monoid:
   mempty = AsList 0 []
   mcombine = merge_sorted_lists
 
-  -- reduce might someday recursively subdivide the problem.
+  # reduce might someday recursively subdivide the problem.
   AsList(_, r) = reduce mempty mcombine xlists
   unsafe_cast_table(to=n, r)
 

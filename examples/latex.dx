@@ -33,9 +33,9 @@
 'LaTeX rendering should not occur in code blocks, nor in error output cells.
 
 def array_sum(x:a=>Int32) -> Int32 given (a|Ix) =
-  -- Note: the following line has `$ ... $`, but it should not trigger KaTeX.
-  -- Note: the incorrect usage of `with_state` below is intentional to verify
-  --       that `$ ... $` is not rendered as LaTeX in error output cells.
+  # Note: the following line has `$ ... $`, but it should not trigger KaTeX.
+  # Note: the incorrect usage of `with_state` below is intentional to verify
+  #       that `$ ... $` is not rendered as LaTeX in error output cells.
   snd $ with_state 0 \acc.
     for i.
       acc := (get acc) + x[i]

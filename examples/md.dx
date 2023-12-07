@@ -13,11 +13,11 @@ def truncate(x: Float) -> Float =
     True -> -floor(-x)
     False -> floor x
 
--- A mod that matches np.mod and python mod.
+# A mod that matches np.mod and python mod.
 def pmod(x: Float, y: Float) -> Float =
   x - floor(x / y) * y
 
--- A mod that matches np.fmod and c fmod.
+# A mod that matches np.fmod and c fmod.
 def fmod(x: Float, y: Float) -> Float =
   x - truncate (x / y) * y
 
@@ -114,9 +114,9 @@ def fire_descent_step(
   energy: Energy n dim,
   state: FireDescentState n dim
   ) -> FireDescentState n dim given (n|Ix, dim|Ix) =
-  -- Constants that parameterize the FIRE algorithm.
-  -- TODO: Thread these constants through somehow.
-  -- dougalm@ is there a canonical way to do this?
+  # Constants that parameterize the FIRE algorithm.
+  # TODO: Thread these constants through somehow.
+  # dougalm@ is there a canonical way to do this?
   dt_start = 0.1
   dt_max = 0.4
   n_min = 5
@@ -129,27 +129,27 @@ def fire_descent_step(
 
   force = \r. -(grad energy) r
 
-  -- FIRE algorithm.
-  -- (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
+  # FIRE algorithm.
+  # (MkFireDescentState {R, V, F, dt, alpha, n_pos}) = state
   dt = state.dt
   alpha = state.alpha
   n_pos = state.n_pos
-  -- Do a Velocity-Verlet step.
+  # Do a Velocity-Verlet step.
   R = for i. shift state.R[i] (state.V[i] *. dt + state.F[i] *. pow dt 2)
   F_old = state.F
   F = force R
   V = state.V + dt * 0.5 .* (F_old + F)
 
-  -- Rescale the velocity.
+  # Rescale the velocity.
   F_norm = sqrt $ sum $ sum for i j. pow F[i, j] 2
   V_norm = sqrt $ sum $ sum for i j. pow V[i, j] 2
 
   V = V + alpha .* (F *. V_norm / (F_norm + ε) - V)
 
-  -- Check whether the force is aligned with the velocity.
+  # Check whether the force is aligned with the velocity.
   FdotV = sum $ sum for i j. F[i, j] * V[i, j]
 
-  -- Decide whether to increase the speed of the simulation or reduce it.
+  # Decide whether to increase the speed of the simulation or reduce it.
   (n_pos, dt, alpha) = if FdotV >= 0.0
     then
       dt' = if n_pos >= n_min then (min (dt * f_inc) dt_max) else dt
@@ -182,7 +182,7 @@ N_small = 500
 d = 2
 L_small = box_size_at_number_density (n_to_i N_small) 1.2 (n_to_i d)
 
--- We will simulate in a box of this side length
+# We will simulate in a box of this side length
 L_small
 > 20.41241
 
@@ -271,8 +271,8 @@ are close enough to each other that we wish not to neglect them.
 get O(1) insertion at the end, we (currently) have to give an upper
 bound for the list's size.
 
--- TODO Can we encapsulate this BoundedList type as a `data` and still
--- define in-place mutation operations on it?
+# TODO Can we encapsulate this BoundedList type as a `data` and still
+# define in-place mutation operations on it?
 struct BoundedList(n|Ix, a|Data) =
   lim : n
   buf : n=>a
@@ -283,7 +283,7 @@ def unsafe_next_index(ix:n) -> n given (n|Ix)  =
 def empty_bounded_list(dummy_val: a) -> BoundedList n a given (a|Data, n|Ix) =
   BoundedList(unsafe_from_ordinal 0, for _. dummy_val)
 
--- The point of a `BoundedList` is O(1) push by in-place mutation
+# The point of a `BoundedList` is O(1) push by in-place mutation
 def bd_push(ref: Ref h (BoundedList n a), x: a) -> {State h} () given (h, a|Data, n|Ix) =
   sz = get ref.lim
   if ordinal sz < size n
@@ -291,9 +291,9 @@ def bd_push(ref: Ref h (BoundedList n a), x: a) -> {State h} () given (h, a|Data
       ref.buf!sz := x
       ref.lim := unsafe_next_index sz
     else
-      todo -- throw ()
+      todo # throw ()
 
--- Once we're done pushing, we can compact a `BoundedList` into a standard `List`.
+# Once we're done pushing, we can compact a `BoundedList` into a standard `List`.
 def as_list(lst: BoundedList n a) -> List a given (a|Data, n|Ix) =
   n_result = ordinal lst.lim
   AsList _ $ for i:(Fin n_result). lst.buf[unsafe_from_ordinal $ ordinal i]
@@ -310,13 +310,13 @@ that appear in each cell in the grid.
 def CellTable(dim|Ix, grid_size, bucket_size, atom_ix|Data) -> Type =
   GridIx dim grid_size => BoundedList (Fin bucket_size) atom_ix
 
--- Compute the cell an atom should go into.
+# Compute the cell an atom should go into.
 def target_cell(cell_size: Float, atom: Vec dim)
   -> GridIx dim grid_size given (dim|Ix, grid_size) =
   for dim. from_ordinal $ f_to_n $ atom[dim] / cell_size
 
--- A traversal of an atom array together with target cell.
--- We abstract this because we will use it twice.
+# A traversal of an atom array together with target cell.
+# We abstract this because we will use it twice.
 def traverse_cells(
   grid_size, cell_size,
   atoms: atom_ix => Vec dim,
@@ -337,14 +337,14 @@ def cell_table(
     traverse_cells grid_size cell_size atoms \ix cell.
       bd_push ref!cell ix
 
--- This is a helper for computing the bucket size.  Right now we end
--- up traversing the input twice (once to compute a size and once to
--- actually build the cell table); this is working around limitations
--- in Dex's support for mutable lists of statically unknown length.
+# This is a helper for computing the bucket size.  Right now we end
+# up traversing the input twice (once to compute a size and once to
+# actually build the cell table); this is working around limitations
+# in Dex's support for mutable lists of statically unknown length.
 def cell_table_bucket_size(
   grid_size, cell_size, atoms: atom_ix => Vec dim
   ) -> Nat given (dim|Ix, atom_ix|Ix) =
-  -- TODO Use yield_accum here
+  # TODO Use yield_accum here
   bucket_sizes = yield_state (for _:(GridIx dim grid_size). 0) \ref.
     traverse_cells grid_size cell_size atoms \ix cell.
       ref!cell := get ref!cell + 1
@@ -358,7 +358,7 @@ def grid_params(L, desired_cell_size) =
   grid_size = unsafe_i_to_n $ f_to_i cells_per_side
   (cell_size, grid_size)
 
-desired_cell_size = 1.0 -- unit interaction range
+desired_cell_size = 1.0 # unit interaction range
 
 (cell_size, grid_size) = grid_params L_small desired_cell_size
 
@@ -390,13 +390,13 @@ cell_neighbors_2d = [[-1, -1], [-1, 0], [-1, 1], [0, -1],
 :t cell_neighbors_2d
 > ((Fin 9) => (Fin 2) => Int32)
 
--- Toroidal index offsetting
+# Toroidal index offsetting
 def torus_offset(ix: (Fin n), offset: Int) -> (Fin n) given (n) =
   unsafe_from_ordinal $ unsafe_i_to_n $
     mod (n_to_i (ordinal ix) + offset) (n_to_i n)
 
--- A traversal of pairs of atoms from adjacent or equal cells in a
--- cell table.
+# A traversal of pairs of atoms from adjacent or equal cells in a
+# cell table.
 def traverse_pairs(
     tbl: CellTable(TwoDimensions, grid_size, bucket_size, atom_ix),
     atoms: atom_ix => Vec TwoDimensions,
@@ -431,8 +431,8 @@ def neighbor_list(
       if is_neighbor(atom1, atom2)
         then bd_push(ref, (atom1, atom2))
 
--- Also a helper to pre-compute how large a buffer to allocate for the
--- neighbor list, by traversing the input an extra time.
+# Also a helper to pre-compute how large a buffer to allocate for the
+# neighbor list, by traversing the input an extra time.
 def count_neighbor_list_size(
     tbl: CellTable(TwoDimensions, grid_size, bucket_size, atom_ix),
     is_neighbor: (atom_ix, atom_ix) -> Bool,
@@ -498,8 +498,8 @@ energy_nl(L_small, as_list res)(state_small'.R)
 energy (state_small'.R)
 > 1.230966
 
--- Package the above up into a function that just computes the
--- neighbor list from an array of atoms.
+# Package the above up into a function that just computes the
+# neighbor list from an array of atoms.
 def just_neighbor_list(
     desired_cell_size,
     L,
@@ -525,7 +525,7 @@ energy R_init_small
 energy $ fire_descent_step(free_shift, energy, state_small).R
 > 71.78407
 
--- A helper for short-circuiting `any` computation
+# A helper for short-circuiting `any` computation
 def fast_any(f: (n) -> {|eff} Bool) -> {|eff} Bool given (n|Ix, eff) =
   iter \ct.
     if ct >= size n
@@ -541,7 +541,7 @@ some atom moves more than `halo/2` away from where it was when the
 neighbor list is computed, because otherwise it remains a sound
 approximation.
 
--- TODO(Issue 1133) Can't use scan with a body that has an effect?
+# TODO(Issue 1133) Can't use scan with a body that has an effect?
 def simulate(
     displacement : Displacement TwoDimensions,
     halo_size,

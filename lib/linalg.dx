@@ -22,7 +22,7 @@ def lower_tri_identity() -> LowerTriMat n a given(n|Ix, a|Add|Mul)  =
 
 '## Representing inequalities between indices
 
--- These would be unnecessary if there were syntax for dependent pairs.
+# These would be unnecessary if there were syntax for dependent pairs.
 data LowerTriIx(n)    = MkLowerTriIx(   i:n, j:(..i))
 data UpperTriIx(n)    = MkUpperTriIx(   i:n, j:(i..))
 data LowerTriIxExc(n) = MkLowerTriIxExc(i:n, j:(..<i))
@@ -30,7 +30,7 @@ data UpperTriIxExc(n) = MkUpperTriIxExc(i:n, j:(i<..))
 
 '## Flipping inequalities between indices
 
--- TODO: Put these in instances of an Isomorphism interface?
+# TODO: Put these in instances of an Isomorphism interface?
 def transpose_upper_ix(i:n, j:(i..)) -> LowerTriIx n given (n|Ix) =
   j' = inject j
   i' = unsafe_project i
@@ -180,28 +180,28 @@ def relax_ee(i:(p<..), j:(..<p)) -> LowerTriIxExc n given(n|Ix, p:n) =
 
 def skew_symmetric_prod(lower: (i:n)=>(..<i)=>Float, y: n=>v) -> n=>v given (n|Ix, v|VSpace) =
   upper = transpose_lower_to_upper_no_diag lower
-  -- We could probably fuse these two for loops.
+  # We could probably fuse these two for loops.
   lower_prod = for i. sum for j. lower[i,j] .* y[inject j]
   upper_prod = for i. sum for j. upper[i,j] .* y[inject j]
   lower_prod - upper_prod
 
 def forward_substitute(a:LowerTriMat n Float, b:n=>v) -> n=>v given (n|Ix, v|VSpace) =
-  -- Solves lower triangular linear system (inverse a) **. b
+  # Solves lower triangular linear system (inverse a) **. b
   yield_state zero \sRef.
     for i:n.
-      s = sum for k:(..i).  -- dot product
+      s = sum for k:(..i).  # dot product
         a[i,k] .* get sRef!(inject k)
       sRef!i := (b[i] - s) / (lower_tri_diag a)[i]
 
 def backward_substitute(a:UpperTriMat n Float, b:n=>v) -> n=>v given (n|Ix, v|VSpace) =
-  -- Solves upper triangular linear system (inverse a) **. b
+  # Solves upper triangular linear system (inverse a) **. b
   yield_state zero \sRef.
     rof i:n.
-      s = sum for k:(i..).  -- dot product
+      s = sum for k:(i..).  # dot product
         a[i,k] .* get sRef!(inject k)
       sRef!i := (b[i] - s) / (upper_tri_diag a)[i]
 
--- Todo: get rid of these by writing a dependent indexing (!) operator.
+# Todo: get rid of these by writing a dependent indexing (!) operator.
 def lower_tri_mat(ref:Ref h (LowerTriMat a b), i:a, j:(..i)) -> Ref h b given (a|Data|Ix, b|Data, h) =
   d = %indexRef(ref, i)
   d!j
@@ -230,10 +230,10 @@ def chol(x:n=>n=>Float) -> LowerTriMat n Float given (n|Ix) =
 
 '## Permutations
 
--- The sign of the determinant of a permutation is either 1.0 or -1.0
+# The sign of the determinant of a permutation is either 1.0 or -1.0
 PermutationSign = Float
 
--- TODO: use a struct once we can handle reference projections of struct fields
+# TODO: use a struct once we can handle reference projections of struct fields
 struct Permutation(n|Ix) =
   p    : n=>n
   sign : PermutationSign
@@ -253,7 +253,7 @@ def swap_in_place(perm: Ref h (Permutation n), i:n, j:n) -> {State h} () given (
 '## LU decomposition functions
 
 def pivotize(a:n=>n=>Float) -> Permutation n given (n|Ix) =
-  -- Gives a row permutation that makes Gaussian elimination more stable.
+  # Gives a row permutation that makes Gaussian elimination more stable.
   yield_state identity_permutation \permRef.
     for j:n.
       row_with_largest = argmax for i:(j..). abs a[inject(to=n, i),j]
@@ -261,8 +261,8 @@ def pivotize(a:n=>n=>Float) -> Permutation n given (n|Ix) =
         swap_in_place permRef j (inject(to=n, row_with_largest))
 
 def lu(a: n=>n=>Float) -> (LowerTriMat n Float, UpperTriMat n Float, Permutation n) given (n|Ix) =
-  -- Computes lower, upper, and permuntation matrices from a square matrix,
-  -- such that apply_permutation permutation a == lower ** upper.
+  # Computes lower, upper, and permuntation matrices from a square matrix,
+  # such that apply_permutation permutation a == lower ** upper.
   permutation = pivotize a
   a = apply_permutation permutation a
 
@@ -273,23 +273,23 @@ def lu(a: n=>n=>Float) -> (LowerTriMat n Float, UpperTriMat n Float, Permutation
     lRef = fst_ref stateRef
     uRef = snd_ref stateRef
 
-  -- For reference, here's code to compute the LU decomposition
-  -- with standard flat matrices:
-  --  for j:n.
-  --    for i:(..j).
-  --      i = inject _ i
-  --      s = sum for k':(..i).
-  --        k = inject _ k'
-  --        (get uRef!k!j) * (get lRef!i!k)
-  --      uRef!i!j := a.i.j - s
+  # For reference, here's code to compute the LU decomposition
+  # with standard flat matrices:
+  #  for j:n.
+  #    for i:(..j).
+  #      i = inject _ i
+  #      s = sum for k':(..i).
+  #        k = inject _ k'
+  #        (get uRef!k!j) * (get lRef!i!k)
+  #      uRef!i!j := a.i.j - s
 
-  --    for i':(j<..).
-  --      i = inject _ i'
-  --      s = sum for k':(..j).
-  --        k = inject _ k'
-  --        (get uRef!k!j) * (get lRef!i!k)
-  --      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
-  --    for i:n. ()
+  #    for i':(j<..).
+  #      i = inject _ i'
+  #      s = sum for k':(..j).
+  #        k = inject _ k'
+  #        (get uRef!k!j) * (get lRef!i!k)
+  #      lRef!i!j := (a.i.j - s) / (get uRef!j!j)
+  #    for i:n. ()
 
     for j:n.
       for i:(..j).
@@ -320,10 +320,10 @@ def lu(a: n=>n=>Float) -> (LowerTriMat n Float, UpperTriMat n Float, Permutation
 '## General linear algebra functions
 
 def solve(a:n=>n=>Float, b:n=>v) -> n=>v  given (n|Ix, v|VSpace) =
-  -- There's a small speedup possible by exploiting the fact
-  -- that l always has ones on the diagonal.  It would just require a
-  -- custom forward_substitute routine that doesn't divide
-  -- by the diagonal entries.
+  # There's a small speedup possible by exploiting the fact
+  # that l always has ones on the diagonal.  It would just require a
+  # custom forward_substitute routine that doesn't divide
+  # by the diagonal entries.
   (l, u, perm) = lu a
   b' = apply_permutation perm b
   y = forward_substitute l b'
