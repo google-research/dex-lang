@@ -105,11 +105,11 @@ standardCompilationPipeline opt logger exports tm m = do
   {-# SCC showAssembly      #-} logPass AsmPass $ showAsm tm m
   where
     logPass :: PassName -> IO String -> IO ()
-    logPass passName showIt = case ioLogLevel logger of
-      DebugLogLevel -> do
-        s <- showIt
-        ioLogAction logger $ Outputs [PassInfo passName s]
-      NormalLogLevel -> return ()
+    logPass passName showIt = do
+      s <- case ioLogLevel logger of
+        DebugLogLevel -> Just <$> showIt
+        NormalLogLevel -> return Nothing
+      ioLogAction logger [PassResult passName s]
 {-# SCC standardCompilationPipeline #-}
 
 internalize :: [String] -> Mod.Module -> IO ()

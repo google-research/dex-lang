@@ -8,8 +8,6 @@ body {
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
-  display: flex;
-  justify-content: space-between;
   overflow-x: hidden;
   padding-bottom:50vw;
 }
@@ -26,101 +24,49 @@ body {
   white-space: pre;
 }
 
-#main-output {
-  margin: auto;
+/* cell structure */
+.cell {
+  display: flex;
 }
-
-.code-block {
-}
-
-.code-block, .cell-results, .err-block, .result-block {
-  margin: 0em 0em 0em 2em;
-  padding: 0em 0em 0em 2em;
-  display: block;
+.status, .line-nums, .contents {
   font-family: monospace;
   white-space: pre;
 }
+.status {
+  flex: 0 0 1em;
+  height: 1em;
+  margin-left: 1em;
+}
+.line-nums {
+  flex: 0 0 3em;
+  height: 100%;
+  text-align: right;
+  color: #808080;
+}
+.contents {
+  margin-left: 1em;
+}
+/* special results */
+.err-result {
+  font-weight: bold;
+  color: #B22222;
+}
+
+/* status colors */
+.status-waiting {background-color: gray;}
+.status-running {background-color: lightblue;}
+.status-err     {background-color: red;}
+.status-success {}  /* i.e. white */
+
+/* error highlighting */
 .err-span {
   text-decoration: red wavy underline;
   text-decoration-skip-ink: none;
 }
-code {
-  background-color: #F0F0F0;
-}
 
-.result-block {
-  border-left: 3px solid  #87CEFA;
-}
-
-.prose-block {
-  line-height: 140%;
-}
-
-.err-block {
-  font-weight: bold;
-  color: #B22222;
-  border-left: 3px solid #B22222;
-}
-
-.plot {
-  padding: 5em;
-}
-
-.plot-img {
-  width: 80%;
-}
-
-.comment {
-  color: #808080;
-}
-
-.keyword {
-  color: #0000DD;
-}
-
-.command {
-  color: #A80000;
-}
-
-.symbol {
-  color: #E07000;
-}
-
-.highlighted {
-  background-color: yellow;
-}
-
-.highlighted-leaf {
-  background-color: lightblue;
-}
-
-.type-name {
-  color: #A80000;
-}
-
-.iso-sugar {
-  color: #25BBA7;
-}
-
-.cell {
-}
-
-.line-num {
-  display: block;
-  font-family: monospace;
-  width: 3em;
-  color: #808080;
-  float: left;
-  text-align: right;
-}
-
-.waiting-cell {
-  border-left: 6px solid #AAAAFF;
-}
-
-.running-cell {
-  border-left: 6px solid #AAFFAA;
-}
-
-.complete-cell {
-}
+/* Lexeme colors */
+.comment   {color: #808080;}
+.keyword   {color: #0000DD;}
+.command   {color: #A80000;}
+.symbol    {color: #E07000;}
+.type-name {color: #A80000;}

@@ -168,7 +168,7 @@ type InfererCPSB2 b i i' o a = (forall o'. DExt o o' => b o o' -> InfererM i' o'
 liftInfererM :: (EnvReader m, TopLogger m, Fallible1 m) => InfererM n n a -> m n a
 liftInfererM cont = do
   (ansExcept, typeInfo) <- liftInfererMPure cont
-  emitLog $ Outputs [SourceInfo $ SITypeInfo typeInfo]
+  emitLog [SourceInfo $ SITypeInfo typeInfo]
   liftExcept ansExcept
 {-# INLINE liftInfererM #-}
 

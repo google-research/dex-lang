@@ -447,14 +447,16 @@ importModule name = do
 
 evalUType :: (Topper m, Mut n) => UType VoidS -> m n (CType n)
 evalUType ty = do
-  logDebug $ return $ PassInfo Parse $ pprint ty
-  renamed <- logPass RenamePass $ renameSourceNamesUExpr ty
+  logPass Parse ty
+  renamed <- renameSourceNamesUExpr ty
+  logPass RenamePass renamed
   checkPass TypePass $ checkTopUType renamed
 
 evalUExpr :: (Topper m, Mut n) => UExpr VoidS -> m n (CAtom n)
 evalUExpr expr = do
-  logDebug $ return $ PassInfo Parse $ pprint expr
-  renamed <- logPass RenamePass $ renameSourceNamesUExpr expr
+  logPass Parse expr
+  renamed <- renameSourceNamesUExpr expr
+  logPass RenamePass renamed
   typed <- checkPass TypePass $ inferTopUExpr renamed
   evalBlock typed
 
@@ -523,9 +525,9 @@ evalSpecializations fs = do
 
 evalDictSpecializations :: (Topper m, Mut n) => [SpecDictName n] -> m n ()
 evalDictSpecializations ds = do
-  -- -- TODO Do we have to do these in order, like evalSpecializations, or are they
-  -- -- independent enough not to need it?
-  -- -- TODO Do we need to gate the status of these, too?
+  -- TODO Do we have to do these in order, like evalSpecializations, or are they
+  -- independent enough not to need it?
+  -- TODO Do we need to gate the status of these, too?
   forM_ ds \dName -> do
     SpecializedDict _ (Just fs) <- lookupSpecDict dName
     fs' <- forM fs \lam -> do
@@ -538,9 +540,9 @@ evalDictSpecializations ds = do
 execUDecl
   :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
 execUDecl mname decl = do
-  logDebug $ return $ PassInfo Parse $ pprint decl
-  Abs renamedDecl sourceMap <-
-    logPass RenamePass $ renameSourceNamesTopUDecl mname decl
+  logPass Parse decl
+  renamed@(Abs renamedDecl sourceMap) <- renameSourceNamesTopUDecl mname decl
+  logPass RenamePass renamed
   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
   case inferenceResult of
     UDeclResultBindName ann block (Abs b sm) -> do
@@ -650,9 +652,8 @@ funNameToObj v = do
 checkPass :: (Topper m, Pretty (e n), CheckableE r e)
           => PassName -> m n (e n) -> m n (e n)
 checkPass name cont = do
-  result <- logPass name do
-    result <- cont
-    return result
+  result <- cont
+  logPass name result
 #ifdef DEX_DEBUG
   logDebug $ return $ MiscLog $ "Running checks"
   checkTypes result
@@ -663,22 +664,21 @@ checkPass name cont = do
   return result
 
 logTop :: TopLogger m => Output -> m ()
-logTop x = emitLog $ Outputs [x]
+logTop x = emitLog [x]
 
 logDebug :: TopLogger m => m Output -> m ()
 logDebug m = getLogLevel >>= \case
   NormalLogLevel -> return ()
   DebugLogLevel -> do
     x <- m
-    emitLog $ Outputs [x]
+    emitLog [x]
 
-logPass :: Topper m => Pretty a => PassName -> m n a -> m n a
-logPass passName cont = do
-  logDebug $ return $ PassInfo passName $ "=== " <> pprint passName <> " ==="
-  logDebug $ return $ MiscLog $ "Starting "++ pprint passName
-  result <- cont
-  logDebug $ return $ PassInfo passName $ "=== Result ===\n" <> pprint result
-  return result
+logPass :: Topper m => Pretty a => PassName -> a -> m n ()
+logPass passName result = do
+  getLogLevel >>= \case
+    NormalLogLevel -> logTop $ PassResult passName Nothing
+    DebugLogLevel  -> logTop $ PassResult passName  $ Just s
+      where s = "=== " <> pprint passName <> " ===\n" <> pprint result
 
 loadModuleSource
   :: (MonadIO m, Fallible m) => EvalConfig -> ModuleSourceName -> m File

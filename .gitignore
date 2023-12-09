@@ -37,3 +37,4 @@ julia/deps/build.log
 examples/t10k-images-idx3-ubyte
 examples/t10k-labels-idx1-ubyte
 examples/camera.ppm
+static/index.js

@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 module RenderHtml (
-  progHtml, ToMarkup, renderSourceBlock, renderOutputs,
+  progHtml, pprintHtml, ToMarkup, renderSourceBlock, renderOutputs,
   RenderedSourceBlock, RenderedOutputs) where
 
 import Text.Blaze.Internal (MarkupM)
@@ -18,9 +18,6 @@ import Text.Blaze.Html.Renderer.String
 import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
-import Control.Monad.Writer.Strict
-import Data.Foldable (fold)
-import Data.Functor ((<&>))
 import Data.Maybe (fromJust)
 import Data.String (fromString)
 import Data.Text    qualified as T
@@ -30,7 +27,6 @@ import System.IO.Unsafe
 import GHC.Generics
 
 import Err
-import IncState
 import Paths_dex (getDataFileName)
 import PPrint
 import Types.Source
@@ -44,116 +40,52 @@ import Util (unsnoc)
 
 type BlockId = Int
 data RenderedSourceBlock = RenderedSourceBlock
-  { rsbLine      :: Int
-  , rsbBlockId   :: BlockId
+  { rsbLine       :: Int
+  , rsbNumLines   :: Int
+  , rsbBlockId    :: BlockId
   , rsbLexemeList :: [SrcId]
   , rsbHtml       :: String }
   deriving (Generic)
 
-data RenderedOutputs = RenderedOutputs
-  { rrHtml         :: String
-  , rrLexemeSpans  :: SpanMap
-  , rrHighlightMap :: HighlightMap
-  , rrHoverInfoMap :: HoverInfoMap
-  , rrErrorSrcIds  :: [SrcId] }
-  deriving (Generic)
+type RenderedOutputs = [RenderedOutput]
+-- This is extremely close to `Output` and we could just use that directly. The
+-- reason to keep it separate is that the haskell-javascript boundary is a bit
+-- delicate and this provides some robustness against future changes to
+-- `Output`.
+data RenderedOutput =
+    RenderedTextOut String
+  | RenderedHtmlOut String
+  | RenderedSourceInfo SourceInfo  -- for hovertips etc
+  | RenderedPassResult PassName (Maybe String)
+  | RenderedMiscLog String
+  | RenderedError (Maybe SrcId) String
+    deriving (Show, Eq, Generic)
 
 renderOutputs :: Outputs -> RenderedOutputs
-renderOutputs (Outputs outputs) = fold $ map renderOutput outputs
+renderOutputs outs = map renderOutput outs
 
-renderOutput :: Output -> RenderedOutputs
-renderOutput r = RenderedOutputs
-  { rrHtml         = pprintHtml        r
-  , rrLexemeSpans  = computeSpanMap    r
-  , rrHighlightMap = computeHighlights r
-  , rrHoverInfoMap = computeHoverInfo  r
-  , rrErrorSrcIds  = computeErrSrcIds  r}
+renderOutput :: Output -> RenderedOutput
+renderOutput = \case
+  TextOut s      -> RenderedTextOut s
+  HtmlOut s      -> RenderedHtmlOut s
+  SourceInfo si  -> RenderedSourceInfo si
+  PassResult n s -> RenderedPassResult n s
+  MiscLog s      -> RenderedMiscLog s
+  Error e        -> RenderedError (getErrSrcId e) (pprint e)
 
 renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
 renderSourceBlock n b = RenderedSourceBlock
-  { rsbLine    = sbLine b
-  , rsbBlockId = n
+  { rsbLine       = sbLine b
+  , rsbNumLines   = length $ lines $ T.unpack $ sbText b
+  , rsbBlockId    = n
   , rsbLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b
   , rsbHtml = renderHtml case sbContents b of
       Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
       _ -> renderSpans n (sbLexemeInfo b) (sbText b)
   }
 
-instance ToMarkup Outputs where
-  toMarkup (Outputs outs) = foldMap toMarkup outs
-
-instance ToMarkup Output where
-  toMarkup out = case out of
-    HtmlOut s -> preEscapedString s
-    SourceInfo _ -> mempty
-    Error _ -> cdiv "err-block" $ toHtml $ pprint out
-    _ -> cdiv "result-block" $ toHtml $ pprint out
-
-instance ToJSON RenderedOutputs
 instance ToJSON RenderedSourceBlock
-
-instance Semigroup RenderedOutputs where
-  RenderedOutputs x1 y1 z1 w1 v1 <> RenderedOutputs x2 y2 z2 w2 v2 =
-    RenderedOutputs (x1<>x2) (y1<>y2) (z1<>z2) (w1<>w2) (v1<>v2)
-
-instance Monoid RenderedOutputs where
-  mempty = RenderedOutputs mempty mempty mempty mempty mempty
-
--- === textual information on hover ===
-
-type HoverInfo = String
-newtype HoverInfoMap = HoverInfoMap (M.Map LexemeId HoverInfo)   deriving (ToJSON, Semigroup, Monoid)
-
-computeHoverInfo :: Output -> HoverInfoMap
-computeHoverInfo (SourceInfo (SITypeInfo m)) = HoverInfoMap $ fromTypeInfo m
-computeHoverInfo _ = mempty
-
--- === highlighting on hover ===
-
-newtype SpanMap      = SpanMap (M.Map SrcId LexemeSpan)       deriving (ToJSON, Semigroup, Monoid)
-newtype HighlightMap = HighlightMap (M.Map SrcId Highlights)  deriving (ToJSON, Semigroup, Monoid)
-type Highlights = [(HighlightType, SrcId)]
-data HighlightType = HighlightGroup | HighlightLeaf  deriving Generic
-
-instance ToJSON HighlightType
-
-computeErrSrcIds :: Output -> [SrcId]
-computeErrSrcIds (Error err) = case err of
-  SearchFailure _ -> []
-  InternalErr   _ -> []
-  ParseErr      _ -> []
-  SyntaxErr sid _ -> [sid]
-  NameErr   sid _ -> [sid]
-  TypeErr   sid _ -> [sid]
-  RuntimeErr -> []
-  MiscErr _  -> []
-computeErrSrcIds _ = []
-
-computeSpanMap :: Output -> SpanMap
-computeSpanMap (SourceInfo (SIGroupTree (OverwriteWith tree))) =
-  execWriter $ go tree where
-  go :: GroupTree -> Writer SpanMap ()
-  go t = do
-    tell $ SpanMap $ M.singleton (gtSrcId t) (gtSpan t)
-    mapM_ go $ gtChildren t
-computeSpanMap _ = mempty
-
-computeHighlights :: Output -> HighlightMap
-computeHighlights (SourceInfo (SIGroupTree (OverwriteWith tree))) =
-  execWriter $ go tree where
-  go :: GroupTree -> Writer HighlightMap ()
-  go t = do
-    let children = gtChildren t
-    let highlights = children <&> \child ->
-          (getHighlightType (gtIsAtomicLexeme child), gtSrcId child)
-    forM_ children \child-> do
-      tell $ HighlightMap $ M.singleton (gtSrcId child) highlights
-      go child
-
-  getHighlightType :: Bool -> HighlightType
-  getHighlightType True  = HighlightLeaf
-  getHighlightType False = HighlightGroup
-computeHighlights _ = mempty
+instance ToJSON RenderedOutput
 
 -- -----------------
 
@@ -201,9 +133,18 @@ renderSpans blockId lexInfo sourceText = cdiv "code-block" do
   runTextWalkerT sourceText do
     forM_ (lexemeList lexInfo) \sourceId -> do
       let (lexemeTy, (l, r)) = fromJust $ M.lookup sourceId (lexemeInfo lexInfo)
-      takeTo l >>= emitSpan Nothing (Just "comment")
+      takeTo l >>= emitWhitespace
       takeTo r >>= emitSpan (Just (blockId, sourceId)) (lexemeClass lexemeTy)
     takeRest >>= emitSpan Nothing (Just "comment")
+
+emitWhitespace :: T.Text -> TextWalker ()
+emitWhitespace t
+  | t == ""     = return ()
+  | blankText t = emitSpan Nothing Nothing t
+  | otherwise   = emitSpan Nothing (Just "comment") t
+
+blankText :: T.Text -> Bool
+blankText t = all (==' ') $ T.unpack t
 
 emitSpan :: Maybe (BlockId, SrcId) -> Maybe String -> T.Text -> TextWalker ()
 emitSpan maybeSrcId className t = lift do

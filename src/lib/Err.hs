@@ -14,7 +14,7 @@ module Err (
   catchIOExcept, liftExcept, liftExceptAlt,
   ignoreExcept, getCurrentCallStack, printCurrentCallStack,
   ExceptT (..), rootSrcId, SrcId (..), assertEq, throwInternal,
-  InferenceArgDesc, InfVarDesc (..), HasSrcId (..)) where
+  InferenceArgDesc, InfVarDesc (..), HasSrcId (..), getErrSrcId) where
 
 import Control.Exception hiding (throw)
 import Control.Applicative
@@ -23,7 +23,7 @@ import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Data.Aeson (ToJSON, ToJSONKey)
+import Data.Aeson (ToJSON)
 import Data.Coerce
 import Data.Hashable
 import Data.List (sort)
@@ -45,6 +45,17 @@ rootSrcId = SrcId 0
 
 class HasSrcId a where
   getSrcId :: a -> SrcId
+
+getErrSrcId :: Err -> Maybe SrcId
+getErrSrcId = \case
+  SearchFailure _ -> Nothing
+  InternalErr   _ -> Nothing
+  ParseErr      _ -> Nothing
+  SyntaxErr sid _ -> Just sid
+  NameErr   sid _ -> Just sid
+  TypeErr   sid _ -> Just sid
+  RuntimeErr -> Nothing
+  MiscErr _  -> Nothing
 
 -- === core errro type ===
 
@@ -563,7 +574,5 @@ instance Pretty Err where
   pretty e = pretty $ printErr e
 
 instance ToJSON SrcId
-deriving instance ToJSONKey SrcId
-
 instance Hashable InfVarDesc
 instance Store InfVarDesc

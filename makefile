@@ -146,11 +146,14 @@ all: build
 tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
+static/index.js: static/index.ts
+	tsc --strict --lib es2015,dom static/index.ts
+
 # Build without clearing the cache. Use at your own risk.
-just-build: dexrt-llvm
+just-build: dexrt-llvm static/index.js
 	$(STACK) build $(STACK_FLAGS)
 
-build: dexrt-llvm
+build: dexrt-llvm static/index.js
 	$(STACK) build $(STACK_FLAGS) --fast
 	$(dex) clean             # clear cache
 	$(dex) script /dev/null  # precompile the prelude

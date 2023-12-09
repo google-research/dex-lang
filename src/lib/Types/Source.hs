@@ -20,14 +20,14 @@
 
 module Types.Source where
 
-import Data.Aeson (ToJSON)
+import Data.Aeson (ToJSON (..))
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 import Data.Text (Text)
 import Data.Word
-import Data.Text.Prettyprint.Doc (vcat, line, group, parens, nest, align, punctuate, hsep)
+import Data.Text.Prettyprint.Doc (line, group, parens, nest, align, punctuate, hsep)
 import Data.Text (snoc, unsnoc)
 import Data.Tuple (swap)
 
@@ -95,50 +95,32 @@ instance Semigroup LexemeInfo where
 instance Monoid LexemeInfo where
   mempty = LexemeInfo mempty mempty
 
--- === Type Info ===
+-- === Source info ===
 
 newtype TypeInfo = TypeInfo { fromTypeInfo :: M.Map SrcId String }
-        deriving (Semigroup, Monoid, ToJSON, Show, Eq)
-
--- === Results ===
-
-type LitProg = [(SourceBlock, Result)]
-
-data Result = Result
-                { resultOutputs :: Outputs
-                , resultErrs    :: Except () }
-              deriving (Show, Eq)
-
-type BenchStats = (Int, Double) -- number of runs, total benchmarking time
+        deriving (Semigroup, Monoid, Show, Eq)
 
 data SourceInfo =
    SIGroupTree (Overwrite GroupTree)
  | SITypeInfo  TypeInfo
      deriving (Show, Eq, Generic)
 
+-- === Results ===
+
+type LitProg = [(SourceBlock, Outputs)]
+
+type Outputs = [Output]
 data Output =
     TextOut String
   | HtmlOut String
-  | SourceInfo SourceInfo  -- for hovertips etc
-  | PassInfo PassName String
+  | SourceInfo SourceInfo       -- hovertips etc
+  | PassResult PassName (Maybe String)
   | MiscLog String
   | Error Err
     deriving (Show, Eq, Generic)
-newtype Outputs = Outputs { fromOutputs :: [Output] }
-  deriving (Show, Eq, Generic, Semigroup, Monoid)
 
 type PassLogger = IOLogger Outputs
-
 data OptLevel = NoOptimize | Optimize
-
-instance Semigroup Result where
-  Result outs err <> Result outs' err' = Result (outs <> outs') err''
-    where err'' = case err' of
-            Success () -> err
-            Failure _  -> err'
-
-instance Monoid Result where
-  mempty = Result mempty (Success ())
 
 -- === Concrete syntax ===
 -- The grouping-level syntax of the source language
@@ -961,6 +943,12 @@ deriving instance Eq   (UEffectRow n)
 deriving instance Ord  (UEffectRow n)
 
 instance ToJSON LexemeType
+instance ToJSON SourceInfo
+instance ToJSON GroupTree
+instance ToJSON PassName
+
+instance ToJSON TypeInfo where
+  toJSON m = toJSON $ M.toList $ fromTypeInfo m
 
 -- === Pretty instances ===
 
@@ -1185,17 +1173,12 @@ instance Pretty Output where
     TextOut s -> pretty s
     HtmlOut _ -> "<html output>"
     SourceInfo _ -> ""
-    PassInfo _ s -> pretty s
+    PassResult _ s -> pretty s
     MiscLog s -> pretty s
     Error e -> pretty e
 
 instance Pretty PassName where
   pretty x = pretty $ show x
-
-instance Pretty Result where
-  pretty (Result (Outputs outs) r) = vcat (map pretty outs) <> maybeErr
-    where maybeErr = case r of Failure err -> pretty err
-                               Success () -> mempty
 
 instance Pretty (UBinder' c n l) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UBinder' c n l) where

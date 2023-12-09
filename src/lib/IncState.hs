@@ -11,7 +11,7 @@ module IncState (
   Overwrite (..), TailUpdate (..), Unchanging (..), Overwritable (..),
   mapUpdateMapWithKey, MonoidState (..)) where
 
-import Data.Aeson (ToJSON, ToJSONKey)
+import Data.Aeson (ToJSON (..))
 import qualified Data.Map.Strict as M
 import GHC.Generics
 
@@ -29,7 +29,7 @@ data MapEltUpdate s d =
  | Delete
  deriving (Functor, Show, Generic)
 
-data MapUpdate k s d = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s d) }
+newtype MapUpdate k s d = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s d) }
      deriving (Functor, Show, Generic)
 
 mapUpdateMapWithKey :: MapUpdate k s d -> (k -> s -> s') -> (k -> d -> d') -> MapUpdate k s' d'
@@ -136,6 +136,7 @@ instance IncState (Unchanging a) () where
   applyDiff s () = s
 
 instance            ToJSON a  => ToJSON (Overwrite a)
-instance (ToJSON s, ToJSON d, ToJSONKey k) => ToJSON (MapUpdate k s d)
+instance (ToJSON k, ToJSON s, ToJSON d) => ToJSON (MapUpdate k s d) where
+  toJSON m = toJSON $ M.toList $ mapUpdates m
 instance ToJSON a => ToJSON (TailUpdate a)
 instance (ToJSON s, ToJSON d) => ToJSON (MapEltUpdate s d)
