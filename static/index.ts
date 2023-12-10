@@ -9,6 +9,7 @@ function oops<T>() : T {throw new Error("oops")}
 
 const body         : Element = document.getElementById("main-output") ?? oops()
 const hoverInfoDiv : Element = document.getElementById("hover-info")  ?? oops()
+const minimap      : Element = document.getElementById("minimap") ?? oops()
 
 type CellId = number
 type SrcId  = number
@@ -24,10 +25,11 @@ type HoverMap     = Map<SrcId, HTMLString>
 type Cell = {
     cellId       : CellId;
     root         : Div;
-    status       : Div;
     lineNums     : Div;
     source       : Div;
     results      : Div;
+    status       : Div;
+    sourceText   : string;
     spanMap      : SpanMap;
     highlightMap : HighlightMap;
     hoverMap     : HoverMap}
@@ -39,6 +41,7 @@ type HsRenderedSourceBlock = {
     rsbNumLines   : number;
     rsbBlockId    : CellId;
     rsbLexemeList : SrcId[];
+    rsbText       : string;
     rsbHtml       : HTMLString }
 type HsRenderedOutput =
     {tag: "RenderedTextOut"   ; contents: string                  } |
@@ -74,12 +77,10 @@ type HsMsg = {
 
 const cells = new Map<CellId, Cell>()
 const curHighlights : Div[] = []  // HTML elements currently highlighted
-let frozenHover:boolean = false;
 
 function processUpdates(msg:HsMsg) {
-    for (let i = 0; i < msg.orderedNodesUpdate.numDropped; i++) {
-        let cell : Element = body.lastElementChild ?? oops()
-        cell.remove();}
+    dropElements(body   ,  msg.orderedNodesUpdate.numDropped)
+    dropElements(minimap,  msg.orderedNodesUpdate.numDropped)
     msg.nodeMapUpdate.forEach(function (elt:[CellId, HsCellMapUpdate]) {
         const [cellId, update] = elt
         switch (update.tag) {
@@ -92,44 +93,55 @@ function processUpdates(msg:HsMsg) {
                 updateCellContents(lookupCell(cellId), update.contents);}})
     msg.orderedNodesUpdate.newTail.forEach(function (cellId) {
         const cell : Cell = lookupCell(cellId);
-        body.appendChild(cell.root);})
+        body.appendChild(cell.root)
+        minimap.appendChild(cell.status);})
     msg.nodeMapUpdate.forEach(function (elt:[CellId, HsCellMapUpdate]) {
         const [cellId, update] = elt
         switch (update.tag) {
             case "Create":
                 const cell : Cell = lookupCell(cellId)
                 const lexemes : SrcId[] = update.contents[0].rsbLexemeList
+                attachStatusHovertip(cell)
                 lexemes.map((lexemeId) => attachHovertip(cell, lexemeId))
                 break
             case "Update": // nothing
         }})
+}
+function dropElements(div:Div, n:number) {
+    for (let i = 0; i < n; i++) {
+        const cell : Element = div.lastElementChild ?? oops()
+        cell.remove()}
 }
 function lookupCell(cellId: CellId) : Cell {
     return cells.get(cellId) ?? oops()
 }
 // Structure of each cell
 // [cell]
-//   [status] [line-nums] [contents]
-//                          [source]
-//                          [results]
-//                            [result]
-//                            [result]
+//   [line-nums] [contents]
+//                 [source]
+//                 [results]
+//                   [result]
+//                   [result]
 function createCell(cellId: CellId) : Cell {
     const root : Div = document.createElement("div")
+    const cellHtmlId : string =  "cell_".concat(cellId.toString())
+    root.id = cellHtmlId
     root.className = "cell"
-    const status   : Div = addChild(root, "status")
     const lineNums : Div = addChild(root, "line-nums")
     const contents : Div = addChild(root, "contents")
     const source   : Div = addChild(contents, "source")
     const results  : Div = addChild(contents, "results")
-    source.innerHTML
+    const status : Div = document.createElement("a")
+    status.setAttribute("href", "#".concat(cellHtmlId))
+    status.className = "status"
     const cell : Cell = {
         cellId       : cellId,
         root         : root,
-        status       : status,
         lineNums     : lineNums,
         source       : source,
         results      : results,
+        status       : status,
+        sourceText   : "",
         spanMap      : new Map<SrcId, Span>(),
         highlightMap : new Map<SrcId, [HighlightType, SrcId]>(),
         hoverMap     : new Map<SrcId, HTMLString>()}
@@ -143,6 +155,7 @@ function initializeCell(cell: Cell, state: HsCellState) {
         const lineNum : number = i + source.rsbLine
         const s : string = lineNum.toString().concat("\n")
         appendText(cell.lineNums, s)}
+    cell.sourceText = source.rsbText
     setCellStatus(cell, status)
     extendCellOutput(cell, outs)
 }
@@ -153,24 +166,24 @@ function updateCellContents(cell:Cell, update:HsCellUpdate) {
     extendCellOutput(cell, outputs)
 }
 function removeHover() {
-    if (frozenHover) return;
     hoverInfoDiv.innerHTML = ""
     curHighlights.map(function (element) {
         element.classList.remove("highlighted", "highlighted-leaf")})
     curHighlights.length = 0
 }
-function toggleFrozenHover() {
-    if (frozenHover) {
-        frozenHover = false
-        removeHover()
-    } else {
-        frozenHover = true}
+function attachStatusHovertip(cell:Cell) {
+    cell.status.addEventListener("mouseover", function (event:Event) {
+        event.stopPropagation()
+        setHoverInfo(cell.sourceText)})
+    cell.status.addEventListener("mouseout", function (event:Event) {
+        event.stopPropagation()
+        removeHover()})
 }
 function attachHovertip(cell:Cell, srcId:SrcId) {
     let span = selectSpan(cell, srcId)
     span.addEventListener("mouseover", function (event:Event) {
         event.stopPropagation()
-        applyHover(cell, srcId)})
+        applyCellHover(cell, srcId)})
     span.addEventListener("mouseout" , function (event:Event) {
         event.stopPropagation()
         removeHover()})
@@ -217,9 +230,13 @@ function cellStatusClass(status: Status) : string {
         default:
             return oops()}
 }
+function setDivStatus(div: Div, status: Status) {
+    div.classList.remove("status-waiting", "status-running", "status-success")
+    div.classList.add(cellStatusClass(status))
+}
 function setCellStatus(cell: Cell, status: Status) {
-    cell.status.className = "status"
-    cell.status.classList.add(cellStatusClass(status))
+    setDivStatus(cell.lineNums, status)
+    setDivStatus(cell.status  , status)
 }
 function addTextResult(cell:Cell, contents:string) {
     const child = addChild(cell.results, "text-result")
@@ -273,15 +290,15 @@ function extendSourceInfo(cell: Cell, info: HsSourceInfo) {
             // nothing
     }
 }
-function applyHover(cell:Cell, srcId:SrcId) {
-    if (frozenHover) return;
-    applyHoverInfo(cell, srcId)
+function applyCellHover(cell:Cell, srcId:SrcId) {
     applyHoverHighlights(cell, srcId)
-}
-function applyHoverInfo(cell:Cell, srcId:SrcId) {
     const hoverInfo : undefined | HTMLString = cell.hoverMap.get(srcId)
     if (hoverInfo !== undefined) {
-        hoverInfoDiv.innerHTML = hoverInfo}
+        setHoverInfo(hoverInfo)}
+}
+function setHoverInfo(s:string) {
+    hoverInfoDiv.innerHTML = ""
+    appendText(hoverInfoDiv, s)
 }
 function applyHoverHighlights(cell:Cell, srcId:SrcId) {
     // TODO
@@ -299,9 +316,6 @@ function render(renderMode:RenderMode) {
               const msg = JSON.parse(event.data);
               if (msg == "start") {
                   body.innerHTML = ""
-                  body.addEventListener("click", function (event) {
-                      event.stopPropagation()
-                      toggleFrozenHover()})
                   cells.clear()
                   return
               } else {

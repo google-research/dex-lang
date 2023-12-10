@@ -8,6 +8,7 @@ described
 import png
 import plot
 
+
 '## Generic Helper Functions
 Some of these should probably go in prelude.
 

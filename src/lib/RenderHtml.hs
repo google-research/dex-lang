@@ -44,7 +44,8 @@ data RenderedSourceBlock = RenderedSourceBlock
   , rsbNumLines   :: Int
   , rsbBlockId    :: BlockId
   , rsbLexemeList :: [SrcId]
-  , rsbHtml       :: String }
+  , rsbText       :: String
+  , rsbHtml       :: String}
   deriving (Generic)
 
 type RenderedOutputs = [RenderedOutput]
@@ -79,6 +80,7 @@ renderSourceBlock n b = RenderedSourceBlock
   , rsbNumLines   = length $ lines $ T.unpack $ sbText b
   , rsbBlockId    = n
   , rsbLexemeList = unsnoc $ lexemeList $ sbLexemeInfo b
+  , rsbText = T.unpack $ sbText b
   , rsbHtml = renderHtml case sbContents b of
       Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
       _ -> renderSpans n (sbLexemeInfo b) (sbText b)
