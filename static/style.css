@@ -28,7 +28,7 @@ body {
 .status {
   flex: 1;
   width  : 30px;
-  border-top: 1px solid;
+  border-top: 1px dotted;
   border-color: gray;
   margin-left: 1px;
 }
@@ -46,6 +46,7 @@ body {
 
 /* cell structure */
 .cell {
+  margin-left: 5px;
   display: flex;
 }
 .line-nums, .contents {
@@ -71,6 +72,7 @@ body {
 .status-waiting {background-color: gray;}
 .status-running {background-color: lightblue;}
 .status-err     {background-color: red;}
+.status-inert   {}
 .status-success {background-color: white;}
 
 /* error highlighting */

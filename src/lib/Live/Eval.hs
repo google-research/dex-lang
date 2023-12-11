@@ -42,7 +42,7 @@ watchAndEvalFile fname opts env = do
   parser <- launchCellParser watcher \source -> uModuleSourceBlocks $ parseUModule Main source
   launchDagEvaluator opts parser env
 
-sourceBlockEvalFun :: EvalConfig -> Mailbox Outputs -> TopStateEx -> SourceBlock -> IO TopStateEx
+sourceBlockEvalFun :: EvalConfig -> Mailbox Outputs -> TopStateEx -> SourceBlock -> IO (ExitStatus, TopStateEx)
 sourceBlockEvalFun cfg resultChan env block = do
   let cfg' = cfg { cfgLogAction = send resultChan }
   evalSourceBlockIO cfg' env block
@@ -205,7 +205,13 @@ data EvaluatorState = EvaluatorState
   , prevEnvs      :: [TopStateEx]
   , curRunningJob :: CurJobStatus }
 
-data CellStatus = Waiting | Running | Complete deriving (Show, Generic)
+data CellStatus =
+    Waiting
+  | Running            -- TODO: split into compiling/running
+  | Complete           -- completed without errors
+  | CompleteWithErrors
+  | Inert              -- doesn't require running at all
+    deriving (Show, Generic)
 
 data CellState  = CellState SourceBlockWithId CellStatus Outputs
      deriving (Show, Generic)
@@ -219,7 +225,7 @@ type CellIndex = Int -- index in the list of cells, not the NodeId
 
 data JobUpdate =
     PartialJobUpdate   Outputs
-  | JobComplete        TopStateEx
+  | JobComplete        (ExitStatus, TopStateEx)
     deriving (Show)
 
 data EvaluatorMsg =
@@ -259,8 +265,11 @@ processJobUpdate jobId jobUpdate = do
     Just (jobId', _) -> when (jobId == jobId') do
       let nodeId = snd jobId
       case jobUpdate of
-        JobComplete newEnv -> do
-          update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith Complete) mempty
+        JobComplete (exitStatus, newEnv) -> do
+          let newStatus = case exitStatus of
+                ExitSuccess -> Complete
+                ExitFailure -> CompleteWithErrors
+          update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith newStatus) mempty
           update $ UpdateCurJob Nothing
           update $ AppendEnv newEnv
           launchNextJob
@@ -280,12 +289,16 @@ launchNextJob = do
   when (cellIndex < length nodeList) do -- otherwise we're all done
     curEnv <- (!! cellIndex) <$> getl PrevEnvs
     let nodeId = nodeList !! cellIndex
-    launchJob cellIndex nodeId curEnv
+    CellState source _ _ <- fromJust <$> getl (NodeInfo nodeId)
+    if isInert $ sourceBlockWithoutId source
+      then do
+        update $ AppendEnv curEnv
+        launchNextJob
+      else launchJob cellIndex nodeId curEnv
 
 launchJob :: CellIndex -> NodeId -> TopStateEx -> EvaluatorM ()
 launchJob cellIndex nodeId env = do
-  cfg <- getl EvalCfg
-  let jobAction = sourceBlockEvalFun cfg
+  jobAction <- sourceBlockEvalFun <$> getl EvalCfg
   CellState source _ _ <- fromJust <$> getl (NodeInfo nodeId)
   mailbox <- selfMailbox id
   update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith Running) mempty
@@ -310,7 +323,7 @@ processDagUpdate (NodeListUpdate tailUpdate mapUpdate) = do
   envs <- getl PrevEnvs
   update $ UpdateEnvs $ take (nValid + 1) envs
   update $ UpdateDagEU $ NodeListUpdate tailUpdate $ mapUpdateMapWithKey mapUpdate
-    (\cellId (Unchanging i) -> CellState (SourceBlockWithId cellId i) Waiting mempty)
+    (\cellId (Unchanging source) -> initCellState cellId source)
     (\_ () -> mempty)
   getl CurRunningJob >>= \case
     Nothing -> launchNextJob
@@ -321,6 +334,28 @@ processDagUpdate (NodeListUpdate tailUpdate mapUpdate) = do
           update $ UpdateCurJob Nothing
           launchNextJob
       | otherwise -> return () -- Current job is fine. Let it continue.
+
+isInert :: SourceBlock -> Bool
+isInert sb = case sbContents sb of
+  TopDecl _   -> False
+  Command _ _ -> False
+  DeclareForeign _ _ _ -> False
+  DeclareCustomLinearization _ _ _ -> False
+  Misc misc -> case misc of
+    GetNameType _  -> False
+    ImportModule _ -> False
+    QueryEnv _     -> False
+    ProseBlock _  -> True
+    CommentLine   -> True
+    EmptyLines    -> True
+  UnParseable _ _ -> True
+
+initCellState :: NodeId -> SourceBlock -> CellState
+initCellState cellId source = do
+  let status = if isInert source
+        then Inert
+        else Waiting
+  CellState (SourceBlockWithId cellId source) status mempty
 
 -- === ToJSON ===
 

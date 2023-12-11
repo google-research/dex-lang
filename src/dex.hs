@@ -68,10 +68,10 @@ runMode evalMode cfg = case evalMode of
   ReplMode prompt -> do
     env <- loadCache
     void $ runTopperM cfg env do
-      evalSourceBlockRepl preludeImportBlock
+      void $ evalSourceBlockRepl preludeImportBlock
       forever do
          block <- readSourceBlock prompt
-         evalSourceBlockRepl block
+         void $ evalSourceBlockRepl block
   ClearCache -> clearCache
 #ifdef DEX_LIVE
   WebMode    fname -> do

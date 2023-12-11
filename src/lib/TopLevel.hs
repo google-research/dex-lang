@@ -13,7 +13,8 @@ module TopLevel (
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, packageLLVMCallable,
-  simpOptimizations, loweredOptimizations, compileTopLevelFun, ErrorHandling (..)) where
+  simpOptimizations, loweredOptimizations, compileTopLevelFun, ErrorHandling (..),
+  ExitStatus (..)) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -160,9 +161,9 @@ allocateDynamicVarKeyPtrs = do
 -- ======
 
 evalSourceBlockIO
-  :: EvalConfig -> TopStateEx -> SourceBlock -> IO TopStateEx
+  :: EvalConfig -> TopStateEx -> SourceBlock -> IO (ExitStatus, TopStateEx)
 evalSourceBlockIO opts env block =
-  liftM snd $ runTopperM opts env $ evalSourceBlockRepl block
+  runTopperM opts env $ evalSourceBlockRepl block
 
 -- Used for the top-level source file (rather than imported modules)
 evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> m n ()
@@ -183,9 +184,11 @@ evalSourceText source logSourceBlock = do
               HaltOnErr -> return ()
               ContinueOnErr -> evalSourceBlocks mname rest
 
+data ExitStatus = ExitSuccess | ExitFailure  deriving (Show)
+
 -- Module imports have to be handled differently in the repl because we don't
 -- know ahead of time which modules will be needed.
-evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ()
+evalSourceBlockRepl :: (Topper m, Mut n) => SourceBlock -> m n ExitStatus
 evalSourceBlockRepl block = do
   case sbContents block of
     Misc (ImportModule name) -> do
@@ -194,8 +197,10 @@ evalSourceBlockRepl block = do
     _ -> return ()
   maybeErr <- evalSourceBlock Main block
   case maybeErr of
-    Success () -> return ()
-    Failure e -> logTop $ Error e
+    Success () -> return ExitSuccess
+    Failure e -> do
+      logTop $ Error e
+      return $ ExitFailure
 
 -- XXX: This ensures that a module and its transitive dependencies are loaded,
 -- (which will require evaluating them if they're not in the cache) but it

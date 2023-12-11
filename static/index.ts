@@ -15,7 +15,7 @@ type CellId = number
 type SrcId  = number
 type HTMLString = string
 type Div = Element
-type Status = "Waiting" | "Running" | "Complete"
+type Status = "Waiting" | "Running" | "Complete" | "CompleteWithErrors" | "Inert"
 type HighlightType = "HighlightGroup" |  "HighlightLeaf"
 type Span = [Div, Div]
 type SpanMap      = Map<SrcId, Span>
@@ -29,6 +29,7 @@ type Cell = {
     source       : Div;
     results      : Div;
     status       : Div;
+    curStatus    : Status | null ;
     sourceText   : string;
     spanMap      : SpanMap;
     highlightMap : HighlightMap;
@@ -75,12 +76,12 @@ type HsMsg = {
         numDropped : number;
         newTail    : CellId[]}}
 
+const orderedCells : Cell[] = []
 const cells = new Map<CellId, Cell>()
 const curHighlights : Div[] = []  // HTML elements currently highlighted
 
 function processUpdates(msg:HsMsg) {
-    dropElements(body   ,  msg.orderedNodesUpdate.numDropped)
-    dropElements(minimap,  msg.orderedNodesUpdate.numDropped)
+    dropCells(msg.orderedNodesUpdate.numDropped)
     msg.nodeMapUpdate.forEach(function (elt:[CellId, HsCellMapUpdate]) {
         const [cellId, update] = elt
         switch (update.tag) {
@@ -88,13 +89,15 @@ function processUpdates(msg:HsMsg) {
             case "Replace":
                 const cell : Cell = createCell(cellId)
                 initializeCell(cell, update.contents)
+                orderedCells.push(cell)
                 break
             case "Update":
                 updateCellContents(lookupCell(cellId), update.contents);}})
     msg.orderedNodesUpdate.newTail.forEach(function (cellId) {
         const cell : Cell = lookupCell(cellId);
         body.appendChild(cell.root)
-        minimap.appendChild(cell.status);})
+        if (cell.curStatus !== "Inert") {
+            minimap.appendChild(cell.status)}})
     msg.nodeMapUpdate.forEach(function (elt:[CellId, HsCellMapUpdate]) {
         const [cellId, update] = elt
         switch (update.tag) {
@@ -107,10 +110,11 @@ function processUpdates(msg:HsMsg) {
             case "Update": // nothing
         }})
 }
-function dropElements(div:Div, n:number) {
+function dropCells(n:number) {
     for (let i = 0; i < n; i++) {
-        const cell : Element = div.lastElementChild ?? oops()
-        cell.remove()}
+        const cell : Cell = orderedCells.pop() ?? oops()
+        cell.root.remove()
+        cell.status.remove()}
 }
 function lookupCell(cellId: CellId) : Cell {
     return cells.get(cellId) ?? oops()
@@ -141,6 +145,7 @@ function createCell(cellId: CellId) : Cell {
         source       : source,
         results      : results,
         status       : status,
+        curStatus    : null,
         sourceText   : "",
         spanMap      : new Map<SrcId, Span>(),
         highlightMap : new Map<SrcId, [HighlightType, SrcId]>(),
@@ -227,6 +232,10 @@ function cellStatusClass(status: Status) : string {
             return "status-running"
         case "Complete":
             return "status-success"
+        case "CompleteWithErrors":
+            return "status-err"
+        case "Inert":
+            return "status-inert"
         default:
             return oops()}
 }
@@ -235,6 +244,7 @@ function setDivStatus(div: Div, status: Status) {
     div.classList.add(cellStatusClass(status))
 }
 function setCellStatus(cell: Cell, status: Status) {
+    cell.curStatus = status
     setDivStatus(cell.lineNums, status)
     setDivStatus(cell.status  , status)
 }
