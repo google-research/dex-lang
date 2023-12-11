@@ -9,13 +9,13 @@
 
 module RenderHtml (
   progHtml, pprintHtml, ToMarkup, renderSourceBlock, renderOutputs,
-  RenderedSourceBlock, RenderedOutputs) where
+  RenderedSourceBlock, RenderedOutputs, SourceBlockWithId (..)) where
 
 import Text.Blaze.Internal (MarkupM)
 import Text.Blaze.Html5 as H hiding (map, b)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.Aeson (ToJSON)
+import Data.Aeson (ToJSON (..))
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import Data.Maybe (fromJust)
@@ -32,13 +32,26 @@ import PPrint
 import Types.Source
 import Util (unsnoc)
 
+-- === rendering source blocks and results ===
+
+type BlockId = Int
+data SourceBlockWithId = SourceBlockWithId
+  { sourceBlockId        :: BlockId
+  , sourceBlockWithoutId :: SourceBlock }
+  deriving (Show, Generic)
+
+instance ToJSON SourceBlockWithId where
+  toJSON (SourceBlockWithId n b) = toJSON $ renderSourceBlock n b
+
+instance ToJSON Output where
+  toJSON x = toJSON $ renderOutput x
+
 -- === rendering results ===
 
 -- RenderedOutputs, RenderedSourceBlock aren't 100% HTML themselves but the idea
 -- is that they should be trivially convertable to JSON and sent over to the
 -- client which can do the final rendering without much code or runtime work.
 
-type BlockId = Int
 data RenderedSourceBlock = RenderedSourceBlock
   { rsbLine       :: Int
   , rsbNumLines   :: Int
