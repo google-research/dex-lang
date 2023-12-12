@@ -180,12 +180,14 @@ function updateCellContents(cell:Cell, update:HsCellUpdate) {
 function removeHover() {
     hoverInfoDiv.innerHTML = ""
     curHighlights.map(function (element) {
-        element.classList.remove("highlight-group", "highlight-leaf")})
+        element.classList.remove("highlight-group", "highlight-leaf", "status-hover")})
     curHighlights.length = 0
 }
 function attachStatusHovertip(cell:Cell) {
     cell.status.addEventListener("mouseover", function (event:Event) {
         event.stopPropagation()
+        cell.status.classList.add("status-hover")
+        curHighlights.push(cell.status)
         setHoverInfo(cell.sourceText)})
     cell.status.addEventListener("mouseout", function (event:Event) {
         event.stopPropagation()

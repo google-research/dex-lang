@@ -28,8 +28,8 @@ body {
 .status {
   flex: 1;
   width  : 30px;
-  border-top: 1px dotted;
-  border-color: gray;
+  border-top: 1px solid;
+  border-color: lightgray;
   margin-left: 1px;
 }
 #hover-info {
@@ -88,3 +88,7 @@ body {
 .command   {color: #A80000;}
 .symbol    {color: #E07000;}
 .type-name {color: #A80000;}
+
+.status-hover {
+  background-color: yellow;
+}
