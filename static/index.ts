@@ -13,15 +13,24 @@ const minimap      : Element = document.getElementById("minimap") ?? oops()
 
 type CellId = number
 type SrcId  = number
+type LexemeId  = number
 type HTMLString = string
 type Div = Element
 type Status = "Waiting" | "Running" | "Complete" | "CompleteWithErrors" | "Inert"
-type HighlightType = "HighlightGroup" |  "HighlightLeaf"
-type Span = [Div, Div]
-type SpanMap      = Map<SrcId, Span>
-type HighlightMap = Map<SrcId, [HighlightType, SrcId]>
-type HoverMap     = Map<SrcId, HTMLString>
 
+type HighlightType = "HighlightGroup" |  "HighlightLeaf" | "HighlightError"
+type Highlight    = [SrcId, HighlightType]
+
+type HsMaybe<T> = {tag:"Just"; contents:T} | {tag: "Nothing"}
+type HsOverwrite<T> = {tag:"OverwriteWith"; contents:T} | {tag: "NoChange"}
+
+type FocusMap = Map<LexemeId, SrcId>
+type TreeMap  = Map<SrcId, TreeNode>
+type TreeNode = {
+    srcId      : SrcId
+    span       : [Div, Div] | null ;
+    highlights : Highlight[];
+    text       : HTMLString}
 type Cell = {
     cellId       : CellId;
     root         : Div;
@@ -31,12 +40,8 @@ type Cell = {
     status       : Div;
     curStatus    : Status | null ;
     sourceText   : string;
-    spanMap      : SpanMap;
-    highlightMap : HighlightMap;
-    hoverMap     : HoverMap}
-type HsSourceInfo =
-    {tag: "SIGroupTree"; contents: HsMaybe<HsGroupTree>} |
-    {tag: "SITypeInfo" ; contents: [SrcId, string][]}
+    focusMap     : FocusMap;
+    treeMap      : TreeMap}
 type HsRenderedSourceBlock = {
     rsbLine       : number;
     rsbNumLines   : number;
@@ -47,22 +52,25 @@ type HsRenderedSourceBlock = {
 type HsRenderedOutput =
     {tag: "RenderedTextOut"   ; contents: string                  } |
     {tag: "RenderedHtmlOut"   ; contents: HTMLString              } |
-    {tag: "RenderedSourceInfo"; contents: HsSourceInfo            } |
-    {tag: "RenderedPassResult"; contents: PassName                } |
+    {tag: "RenderedPassResult"; contents: string                  } |
     {tag: "RenderedMiscLog"   ; contents: string                  } |
-    {tag: "RenderedError"     ; contents: [HsMaybe<SrcId>, string]}
-type PassName = string
-type PassInfo = string | null
-type LexemeId = SrcId
-type LexemeSpan = [LexemeId, LexemeId]
-type HsGroupTree = {
-    gtSrcId          : SrcId;
-    gtSpan           : LexemeSpan;
-    gtChildren       : [HsGroupTree];
-    gtIsAtomicLexeme : boolean }
+    {tag: "RenderedError"     ; contents: [HsMaybe<SrcId>, string]} |
+    {tag: "RenderedTreeNodeUpdate" ; contents: [SrcId, HsTreeNodeMapUpdate][]} |
+    {tag: "RenderedFocusUpdate"    ; contents: [LexemeId, SrcId][]}
 
-type HsMaybe<T> = {tag:"Just"; contents:T} | {tag: "Nothing"}
-type HsOverwrite<T> = {tag:"OverwriteWith"; contents:T} | {tag: "NoChange"}
+type HsFocusMap = Map<LexemeId, SrcId>
+type HsTreeNodeState = {
+    tnSpan        : [LexemeId, LexemeId]
+    tnHighlights  : Highlight[]
+    tnText        : HTMLString}
+type HsTreeNodeUpdate = {
+    tnuHighlights : HsOverwrite<Highlight[]>;
+    tnuText       : HsOverwrite<HTMLString>}
+type HsTreeNodeMapUpdate =
+    {tag: "Create" ; contents: HsTreeNodeState}  |
+    {tag: "Replace"; contents: HsTreeNodeState}  |
+    {tag: "Update" ; contents: HsTreeNodeUpdate} |
+    {tag: "Delete"}
 type HsCellState = [HsRenderedSourceBlock, Status, HsRenderedOutput[]]
 type HsCellUpdate = [HsOverwrite<Status>, HsRenderedOutput[]]
 type HsCellMapUpdate =
@@ -147,9 +155,8 @@ function createCell(cellId: CellId) : Cell {
         status       : status,
         curStatus    : null,
         sourceText   : "",
-        spanMap      : new Map<SrcId, Span>(),
-        highlightMap : new Map<SrcId, [HighlightType, SrcId]>(),
-        hoverMap     : new Map<SrcId, HTMLString>()}
+        focusMap     : new Map<LexemeId, SrcId>(),
+        treeMap      : new Map<SrcId, TreeNode>()}
     cells.set(cellId, cell)
     return cell
 }
@@ -173,7 +180,7 @@ function updateCellContents(cell:Cell, update:HsCellUpdate) {
 function removeHover() {
     hoverInfoDiv.innerHTML = ""
     curHighlights.map(function (element) {
-        element.classList.remove("highlighted", "highlighted-leaf")})
+        element.classList.remove("highlight-group", "highlight-leaf")})
     curHighlights.length = 0
 }
 function attachStatusHovertip(cell:Cell) {
@@ -186,12 +193,13 @@ function attachStatusHovertip(cell:Cell) {
 }
 function attachHovertip(cell:Cell, srcId:SrcId) {
     let span = selectSpan(cell, srcId)
-    span.addEventListener("mouseover", function (event:Event) {
-        event.stopPropagation()
-        applyCellHover(cell, srcId)})
-    span.addEventListener("mouseout" , function (event:Event) {
-        event.stopPropagation()
-        removeHover()})
+    if (span !== null) {
+        span.addEventListener("mouseover", function (event:Event) {
+            event.stopPropagation()
+            applyCellHover(cell, srcId)})
+        span.addEventListener("mouseout" , function (event:Event) {
+            event.stopPropagation()
+            removeHover()})}
 }
 function addChild(div:Div, className:string) : Div {
     const child = document.createElement("div")
@@ -202,18 +210,9 @@ function addChild(div:Div, className:string) : Div {
 function appendText(div:Div, s:string) {
     div.appendChild(document.createTextNode(s))
 }
-function selectSpan(cell:Cell, srcId:SrcId) : Div {
+function selectSpan(cell:Cell, srcId:SrcId) : Div | null {
     const spanId : string = "#span_".concat(cell.cellId.toString(), "_", srcId.toString())
-    return cell.source.querySelector(spanId) ?? oops()
-}
-function addClassToSrcNode(cell: Cell, srcId:SrcId, className:string) {
-    // let span = getSpan(cellId, srcId)
-    // if (span !== undefined) {
-    //     let [l, r] = span
-    //     let spans = spansBetween(selectSpan(cellId, l), selectSpan(cellId, r));
-    //     spans.map(function (span) {
-    //         span.classList.add(className)
-    //         curHighlights.push(span)})}
+    return cell.source.querySelector(spanId)
 }
 function spansBetween(l:Div, r:Div) : Div[] {
     let spans : Div[] = []
@@ -269,9 +268,6 @@ function extendCellOutput(cell: Cell, outputs:HsRenderedOutput[]) {
             case "RenderedHtmlOut":
                 addHTMLResult(cell, output.contents)
                 break
-            case "RenderedSourceInfo":
-                extendSourceInfo(cell, output.contents)
-                break
             case "RenderedPassResult":
                 // TODO: show passes
                 break
@@ -281,37 +277,93 @@ function extendCellOutput(cell: Cell, outputs:HsRenderedOutput[]) {
             case "RenderedError":
                 const [maybeSrcId, errMsg] = output.contents
                 if (maybeSrcId.tag == "Just") {
-                    addClassToSrcNode(cell, maybeSrcId.contents, "err-span")}
+                    const node : TreeNode = cell.treeMap.get(maybeSrcId.contents) ?? oops()
+                    highlightTreeNode(false, node, "HighlightError")}
                 addErrResult(cell, errMsg)
+                break
+            case "RenderedTreeNodeUpdate":
+                output.contents.forEach(function (elt:[SrcId, HsTreeNodeMapUpdate]) {
+                    const [srcId, update] = elt
+                    applyTreeNodeUpdate(cell, srcId, update)})
+                break
+            case "RenderedFocusUpdate":
+                output.contents.forEach(function (elt:[LexemeId, SrcId]) {
+                    const [lexemeId, srcId] = elt
+                    cell.focusMap.set(lexemeId, srcId)})
                 break
             default:
                 // nothing
         }})
 }
-function extendSourceInfo(cell: Cell, info: HsSourceInfo) {
-    switch (info.tag) {
-        case "SITypeInfo":
-            // TODO: this should really merge with previous rather than
-            // clobbering it completely but for now we only expect to do this
-            // once per cell so it's ok.
-            cell.hoverMap = new Map(info.contents)
+function applyTreeNodeUpdate(cell:Cell, srcId:SrcId, update:HsTreeNodeMapUpdate) {
+    switch (update.tag) {
+        case "Create":  // deliberate fallthrough
+        case "Replace":
+            const s : HsTreeNodeState = update.contents
+            const [l, r] = s.tnSpan
+            const range = computeRange(cell, l, r)
+            const treeNode : TreeNode = {
+                srcId      : srcId,
+                span       : range,
+                highlights : s.tnHighlights,
+                text       : s.tnText}
+            cell.treeMap.set(srcId, treeNode)
             break
-        default:
-            // nothing
+        case "Update":
+            const nodeUpdate : HsTreeNodeUpdate = update.contents
+            const curTreeNode : TreeNode = cell.treeMap.get(srcId) ?? oops()
+            const text = nodeUpdate.tnuText
+            if (text.tag == "OverwriteWith") {
+                curTreeNode.text = text.contents}
+            const hl = nodeUpdate.tnuHighlights
+            if (hl.tag == "OverwriteWith") {
+                curTreeNode.highlights = hl.contents}
+            break}
+}
+function computeRange(cell:Cell, l:SrcId, r:SrcId) : [Div, Div] | null {
+    const lDiv = selectSpan(cell, l)
+    const rDiv = selectSpan(cell, r)
+    if (lDiv !== null && rDiv !== null) {
+        return [lDiv, rDiv]
+    } else {
+        return null}
+}
+function applyCellHover(cell:Cell, srcId:LexemeId) {
+    const focus : undefined | SrcId = cell.focusMap.get(srcId)
+    if (focus !== undefined) {
+        applyFocus(cell, focus)
     }
 }
-function applyCellHover(cell:Cell, srcId:SrcId) {
-    applyHoverHighlights(cell, srcId)
-    const hoverInfo : undefined | HTMLString = cell.hoverMap.get(srcId)
-    if (hoverInfo !== undefined) {
-        setHoverInfo(hoverInfo)}
+function applyFocus(cell:Cell, focus:SrcId) {
+    const focusNode : TreeNode = cell.treeMap.get(focus) ?? oops()
+    focusNode.highlights.forEach((h:Highlight) => {
+        const [sid, ty] = h
+        const node : TreeNode = cell.treeMap.get(sid) ?? oops()
+        highlightTreeNode(true, node, ty)})
+    setHoverInfo(focusNode.text)
 }
 function setHoverInfo(s:string) {
     hoverInfoDiv.innerHTML = ""
     appendText(hoverInfoDiv, s)
 }
-function applyHoverHighlights(cell:Cell, srcId:SrcId) {
-    // TODO
+function computeHighlightClass(h:HighlightType) : string {
+    switch (h) {
+        case "HighlightGroup":
+            return "highlight-group"
+        case "HighlightLeaf":
+            return "highlight-leaf"
+        case "HighlightError":
+            return "highlight-error"
+    }
+}
+function highlightTreeNode(isTemporary: boolean, node: TreeNode, highlightType:HighlightType) {
+    const highlightClass : string = computeHighlightClass(highlightType)
+    if (node.span !== null) {
+        let [l, r] = node.span
+        let spans = spansBetween(l, r)
+        spans.map(function (span) {
+            span.classList.add(highlightClass)
+            if (isTemporary) {curHighlights.push(span)}})}
 }
 type RenderMode = "Static" | "Dynamic"
 function render(renderMode:RenderMode) {

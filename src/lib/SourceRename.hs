@@ -25,7 +25,7 @@ import Types.Primitives
 import Types.Top (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
-  :: (Fallible1 m, EnvReader m)
+  :: (Fallible1 m, EnvReader m, TopLogger1 m)
   => ModuleSourceName -> UTopDecl VoidS VoidS -> m n (Abs UTopDecl SourceMap n)
 renameSourceNamesTopUDecl mname decl = do
   Distinct <- getDistinct
@@ -40,7 +40,7 @@ uDeclErrSourceMap mname decl =
   SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
 {-# SCC uDeclErrSourceMap #-}
 
-renameSourceNamesUExpr :: (Fallible1 m, EnvReader m) => UExpr VoidS -> m n (UExpr n)
+renameSourceNamesUExpr :: (Fallible1 m, EnvReader m, TopLogger1 m) => UExpr VoidS -> m n (UExpr n)
 renameSourceNamesUExpr expr = do
   Distinct <- getDistinct
   liftRenamer $ sourceRenameE expr

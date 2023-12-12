@@ -4,14 +4,26 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module SourceIdTraversal (getGroupTree) where
+module SourceIdTraversal (getGroupingInfo) where
 
 import Control.Monad.Writer.Strict
+import qualified Data.Map.Strict as M
 import Data.Functor ((<&>))
 
 import Types.Source
 import Types.Primitives
 import Err
+
+getGroupingInfo :: SourceBlock' -> GroupingInfo
+getGroupingInfo sb = groupTreeToGroupingInfo $ getGroupTree sb
+
+groupTreeToGroupingInfo :: GroupTree -> GroupingInfo
+groupTreeToGroupingInfo groupTreeTop = execWriter $ go Nothing groupTreeTop where
+  go :: Maybe SrcId -> GroupTree -> Writer GroupingInfo ()
+  go parent (GroupTree sid lexSpan children isAtomic) = do
+    mapM_ (go (Just sid)) children
+    let node = GroupTreeNode parent lexSpan (map gtSrcId children) isAtomic
+    tell $ GroupingInfo $ M.singleton sid node
 
 getGroupTree :: SourceBlock' -> GroupTree
 getGroupTree b = mkGroupTree False rootSrcId $ runTreeM $ visit b

@@ -27,7 +27,7 @@ data MapEltUpdate s d =
  | Replace s  -- TODO: should we merge Create/Replace?
  | Update d
  | Delete
- deriving (Functor, Show, Generic)
+ deriving (Eq, Functor, Show, Generic)
 
 newtype MapUpdate k s d = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s d) }
      deriving (Functor, Show, Generic)

@@ -43,25 +43,25 @@ body {
   font-family: monospace;
   white-space: pre;
 }
-
 /* cell structure */
 .cell {
   margin-left: 5px;
   display: flex;
-}
-.line-nums, .contents {
-  font-family: monospace;
-  white-space: pre;
 }
 .line-nums {
   flex: 0 0 3em;
   height: 100%;
   text-align: right;
   color: #808080;
+  font-family: monospace;
+  white-space: pre;
 }
 .contents {
   margin-left: 1em;
+  font-family: monospace;
+  white-space: pre;
 }
+
 /* special results */
 .err-result {
   font-weight: bold;
@@ -69,19 +69,20 @@ body {
 }
 
 /* status colors */
+.status-inert   {}
 .status-waiting {background-color: gray;}
 .status-running {background-color: lightblue;}
 .status-err     {background-color: red;}
-.status-inert   {}
 .status-success {background-color: white;}
 
-/* error highlighting */
-.err-span {
+/* span highlighting */
+.highlight-error {
   text-decoration: red wavy underline;
-  text-decoration-skip-ink: none;
-}
+  text-decoration-skip-ink: none;}
+.highlight-group { background-color: yellow; }
+.highlight-leaf  { background-color: lightgray; }
 
-/* Lexeme colors */
+/* lexeme colors */
 .comment   {color: gray;}
 .keyword   {color: #0000DD;}
 .command   {color: #A80000;}

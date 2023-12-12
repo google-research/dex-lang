@@ -109,7 +109,7 @@ standardCompilationPipeline opt logger exports tm m = do
       s <- case ioLogLevel logger of
         DebugLogLevel -> Just <$> showIt
         NormalLogLevel -> return Nothing
-      ioLogAction logger [PassResult passName s]
+      ioLogAction logger $ Outputs [PassResult passName s]
 {-# SCC standardCompilationPipeline #-}
 
 internalize :: [String] -> Mod.Module -> IO ()

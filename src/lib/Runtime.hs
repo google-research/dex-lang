@@ -77,7 +77,7 @@ checkedCallFunPtr fd argsPtr resultPtr fPtr = do
 withPipeToLogger :: PassLogger -> (FD -> IO a) -> IO a
 withPipeToLogger logger writeAction = do
   result <- snd <$> withPipe
-    (\h -> readStream h \s -> ioLogAction logger [TextOut s])
+    (\h -> readStream h \s -> ioLogAction logger (Outputs [TextOut s]))
     (\h -> handleToFd h >>= writeAction)
   case result of
     Left e -> E.throw e

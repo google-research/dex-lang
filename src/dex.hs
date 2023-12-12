@@ -192,7 +192,7 @@ parseEvalOpts = EvalConfig
                 , ("debug" , DebugLogLevel ) ]
 
 stdOutLogger :: Outputs -> IO ()
-stdOutLogger outs = do
+stdOutLogger (Outputs outs) = do
   isatty <- queryTerminal stdOutput
   forM_ outs \out -> putStr $ printOutput isatty out
 

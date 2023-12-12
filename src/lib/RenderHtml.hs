@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 module RenderHtml (
-  progHtml, pprintHtml, ToMarkup, renderSourceBlock, renderOutputs,
+  progHtml, pprintHtml, ToMarkup, renderSourceBlock,
   RenderedSourceBlock, RenderedOutputs, SourceBlockWithId (..)) where
 
 import Text.Blaze.Internal (MarkupM)
@@ -18,7 +18,9 @@ import Text.Blaze.Html.Renderer.String
 import Data.Aeson (ToJSON (..))
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+import Data.Foldable (fold)
 import Data.Maybe (fromJust)
+import Data.Functor ((<&>))
 import Data.String (fromString)
 import Data.Text    qualified as T
 import Data.Text.IO qualified as T
@@ -31,6 +33,7 @@ import Paths_dex (getDataFileName)
 import PPrint
 import Types.Source
 import Util (unsnoc)
+import IncState
 
 -- === rendering source blocks and results ===
 
@@ -43,8 +46,8 @@ data SourceBlockWithId = SourceBlockWithId
 instance ToJSON SourceBlockWithId where
   toJSON (SourceBlockWithId n b) = toJSON $ renderSourceBlock n b
 
-instance ToJSON Output where
-  toJSON x = toJSON $ renderOutput x
+instance ToJSON Outputs where
+  toJSON x = toJSON $ renderOutputs x
 
 -- === rendering results ===
 
@@ -62,30 +65,51 @@ data RenderedSourceBlock = RenderedSourceBlock
   deriving (Generic)
 
 type RenderedOutputs = [RenderedOutput]
--- This is extremely close to `Output` and we could just use that directly. The
--- reason to keep it separate is that the haskell-javascript boundary is a bit
--- delicate and this provides some robustness against future changes to
--- `Output`.
 data RenderedOutput =
     RenderedTextOut String
   | RenderedHtmlOut String
-  | RenderedSourceInfo SourceInfo  -- for hovertips etc
   | RenderedPassResult PassName (Maybe String)
   | RenderedMiscLog String
   | RenderedError (Maybe SrcId) String
+  | RenderedTreeNodeUpdate [(SrcId, MapEltUpdate TreeNodeState TreeNodeUpdate)]
+  | RenderedFocusUpdate [(LexemeId, SrcId)]
+    deriving (Show, Eq, Generic)
+
+data HighlightType =
+   HighlightGroup
+ | HighlightLeaf
+ | HighlightError
+ | HighlightBinder
+ | HighlightOcc
+ | HighlightScope
+   deriving (Show, Eq, Generic)
+
+type RenderedHighlight = (SrcId, HighlightType)
+data TreeNodeState  = TreeNodeState
+  { tnSpan       :: (LexemeId, LexemeId)
+  , tnHighlights :: [RenderedHighlight]
+  , tnText       :: String }
+  deriving (Show, Eq, Generic)
+
+data TreeNodeUpdate = TreeNodeUpdate
+  { tnuHighlights :: Overwrite [RenderedHighlight]
+  , tnuText       :: Overwrite String }
     deriving (Show, Eq, Generic)
 
 renderOutputs :: Outputs -> RenderedOutputs
-renderOutputs outs = map renderOutput outs
+renderOutputs (Outputs outs) = foldMap renderOutput outs
 
-renderOutput :: Output -> RenderedOutput
+renderOutput :: Output -> [RenderedOutput]
 renderOutput = \case
-  TextOut s      -> RenderedTextOut s
-  HtmlOut s      -> RenderedHtmlOut s
-  SourceInfo si  -> RenderedSourceInfo si
-  PassResult n s -> RenderedPassResult n s
-  MiscLog s      -> RenderedMiscLog s
-  Error e        -> RenderedError (getErrSrcId e) (pprint e)
+  TextOut s      -> pure $ RenderedTextOut s
+  HtmlOut s      -> pure $ RenderedHtmlOut s
+  SourceInfo s   -> case s of
+    SIGroupingInfo  info -> renderGroupingInfo  info
+    SINamingInfo    info -> renderNamingInfo    info
+    SITypeInfo      info -> renderTypeInfo      info
+  PassResult n s -> pure $ RenderedPassResult n s
+  MiscLog s      -> pure $ RenderedMiscLog s
+  Error e        -> pure $ RenderedError (getErrSrcId e) (pprint e)
 
 renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
 renderSourceBlock n b = RenderedSourceBlock
@@ -99,8 +123,48 @@ renderSourceBlock n b = RenderedSourceBlock
       _ -> renderSpans n (sbLexemeInfo b) (sbText b)
   }
 
+renderGroupingInfo :: GroupingInfo -> RenderedOutputs
+renderGroupingInfo (GroupingInfo m) =
+  [ RenderedFocusUpdate    focus
+  , RenderedTreeNodeUpdate treeNodeUpdate]
+  where
+    treeNodeUpdate = M.toList m <&> \(sid, node) -> (sid, Create $ renderTreeNode m sid node)
+    focus = fold $ uncurry renderFocus <$> M.toList m
+
+renderTreeNode :: M.Map SrcId GroupTreeNode -> SrcId -> GroupTreeNode -> TreeNodeState
+renderTreeNode m sid node = TreeNodeState (gtnSpan node) (getHighlights m sid node) ""
+
+getHighlights :: M.Map SrcId GroupTreeNode -> SrcId -> GroupTreeNode -> [RenderedHighlight]
+getHighlights m sid node = case gtnChildren node of
+  [] -> [(sid, HighlightGroup)]
+  children -> children <&> \childSrcId -> do
+    let child = fromJust $ M.lookup childSrcId m
+    let highlight = case gtnIsAtomicLexeme child of
+                      True  -> HighlightLeaf
+                      False -> HighlightGroup
+    (childSrcId, highlight)
+
+renderFocus :: SrcId -> GroupTreeNode -> [(LexemeId, SrcId)]
+renderFocus srcId node = case gtnChildren node of
+  [] -> case gtnIsAtomicLexeme node of
+    False -> [(srcId, srcId)]
+    True -> case gtnParent node of
+      Nothing -> [(srcId, srcId)]
+      Just parentId -> [(srcId, parentId)]
+  _ -> []  -- not a lexeme
+
+renderNamingInfo :: NamingInfo -> RenderedOutputs
+renderNamingInfo _ = mempty
+
+renderTypeInfo :: TypeInfo -> RenderedOutputs
+renderTypeInfo _ = mempty
+
+
 instance ToJSON RenderedSourceBlock
 instance ToJSON RenderedOutput
+instance ToJSON TreeNodeState
+instance ToJSON TreeNodeUpdate
+instance ToJSON HighlightType
 
 -- -----------------
 

@@ -54,7 +54,6 @@ import Err
 import IRVariants
 import Imp
 import ImpToLLVM
-import IncState
 import Inference
 import Inline
 import Lower
@@ -219,7 +218,7 @@ evalSourceBlock
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n (Except ())
 evalSourceBlock mname block = do
   maybeErr <- catchErrExcept do
-    logTop $ SourceInfo $ SIGroupTree $ OverwriteWith $ getGroupTree $ sbContents block
+    logTop $ SourceInfo $ SIGroupingInfo $ getGroupingInfo $ sbContents block
     evalSourceBlock' mname block
   case (maybeErr, sbContents block) of
     (Failure _, TopDecl decl) -> do
@@ -669,14 +668,14 @@ checkPass name cont = do
   return result
 
 logTop :: TopLogger m => Output -> m ()
-logTop x = emitLog [x]
+logTop x = emitLog $ Outputs [x]
 
 logDebug :: TopLogger m => m Output -> m ()
 logDebug m = getLogLevel >>= \case
   NormalLogLevel -> return ()
   DebugLogLevel -> do
     x <- m
-    emitLog [x]
+    emitLog $ Outputs [x]
 
 logPass :: Topper m => Pretty a => PassName -> a -> m n ()
 logPass passName result = do

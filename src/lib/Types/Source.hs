@@ -42,7 +42,6 @@ import qualified Types.OpNames as P
 import IRVariants
 import MonadUtil
 import Util (File (..), SnocList)
-import IncState
 
 import Types.Primitives
 
@@ -97,19 +96,50 @@ instance Monoid LexemeInfo where
 
 -- === Source info ===
 
-newtype TypeInfo = TypeInfo { fromTypeInfo :: M.Map SrcId String }
-        deriving (Semigroup, Monoid, Show, Eq)
-
 data SourceInfo =
-   SIGroupTree (Overwrite GroupTree)
- | SITypeInfo  TypeInfo
-     deriving (Show, Eq, Generic)
+   SIGroupingInfo  GroupingInfo
+ | SINamingInfo    NamingInfo
+ | SITypeInfo      TypeInfo
+   deriving (Show, Eq, Generic)
+
+newtype GroupingInfo = GroupingInfo (M.Map SrcId GroupTreeNode)
+        deriving (Show, Eq, Semigroup, Monoid, Generic)
+data GroupTreeNode = GroupTreeNode
+  { gtnParent         :: Maybe SrcId
+  , gtnSpan           :: LexemeSpan
+  , gtnChildren       :: [SrcId]
+  , gtnIsAtomicLexeme :: Bool }
+    deriving (Show, Eq, Generic)
+
+data NamingInfo = NamingInfo (M.Map SrcId NameInfo)
+  deriving (Show, Eq, Generic)
+data NameInfo =
+   LocalBinder [SrcId] -- src ids of groups for which this binder is in scope
+ | LocalOcc SrcId      -- src id of this occ's binder
+ | TopOcc String
+ deriving (Show, Eq, Generic)
+
+newtype TypeInfo = TypeInfo (M.Map SrcId TypeInfo)
+        deriving (Show, Eq, Semigroup, Monoid, Generic)
+type TypeStr = String
+type ExprStr = String
+data NodeTypeInfo =
+   ExprType TypeStr      -- type of arbitrary expression
+ | BinderType TypeStr
+ | AppType
+    TypeStr             -- type of whole application expression
+    [(String, TypeStr)] -- names and inferred types of implicit args
+    [ExprStr]           -- values of synthesized dictionaries
+    [SrcId]             -- binder srcIds for vars ocurring in terms produce by inference
+  deriving (Show, Eq, Generic)
 
 -- === Results ===
 
+type TopLogger1 (m::MonadKind1) = forall n. Logger Outputs (m n)
+
 type LitProg = [(SourceBlock, Outputs)]
 
-type Outputs = [Output]
+newtype Outputs = Outputs [Output] deriving (Show, Eq, Generic, Semigroup, Monoid)
 data Output =
     TextOut String
   | HtmlOut String
@@ -943,12 +973,7 @@ deriving instance Eq   (UEffectRow n)
 deriving instance Ord  (UEffectRow n)
 
 instance ToJSON LexemeType
-instance ToJSON SourceInfo
-instance ToJSON GroupTree
 instance ToJSON PassName
-
-instance ToJSON TypeInfo where
-  toJSON m = toJSON $ M.toList $ fromTypeInfo m
 
 -- === Pretty instances ===
 

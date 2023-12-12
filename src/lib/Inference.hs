@@ -49,11 +49,11 @@ import Util hiding (group)
 
 -- === Top-level interface ===
 
-checkTopUType :: (Fallible1 m, TopLogger m, EnvReader m) => UType n -> m n (CType n)
+checkTopUType :: (Fallible1 m, TopLogger1 m, EnvReader m) => UType n -> m n (CType n)
 checkTopUType ty = liftInfererM $ checkUType ty
 {-# SCC checkTopUType #-}
 
-inferTopUExpr :: (Fallible1 m, TopLogger m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
+inferTopUExpr :: (Fallible1 m, TopLogger1 m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
 inferTopUExpr e = fst <$> (asTopBlock =<< liftInfererM (buildBlock $ bottomUp e))
 {-# SCC inferTopUExpr #-}
 
@@ -62,9 +62,7 @@ data UDeclInferenceResult e n =
  | UDeclResultBindName LetAnn (TopBlock CoreIR n) (Abs (UBinder (AtomNameC CoreIR)) e n)
  | UDeclResultBindPattern NameHint (TopBlock CoreIR n) (ReconAbs CoreIR e n)
 
-type TopLogger (m::MonadKind1) = forall n. Logger Outputs (m n)
-
-inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, HasNamesE e, TopLogger m)
+inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, HasNamesE e, TopLogger1 m)
               => UTopDecl n l -> e l -> m n (UDeclInferenceResult e n)
 inferTopUDecl (UStructDecl tc def) result = do
   tc' <- emitBinding (getNameHint tc) $ TyConBinding Nothing (DotMethods mempty)
@@ -165,10 +163,10 @@ newtype InfererM (i::S) (o::S) (a:: *) = InfererM
 type InfererCPSB  b i    o a = (forall o'. DExt o o' => b o o' -> InfererM i  o' a) -> InfererM i o a
 type InfererCPSB2 b i i' o a = (forall o'. DExt o o' => b o o' -> InfererM i' o' a) -> InfererM i o a
 
-liftInfererM :: (EnvReader m, TopLogger m, Fallible1 m) => InfererM n n a -> m n a
+liftInfererM :: (EnvReader m, TopLogger1 m, Fallible1 m) => InfererM n n a -> m n a
 liftInfererM cont = do
   (ansExcept, typeInfo) <- liftInfererMPure cont
-  emitLog [SourceInfo $ SITypeInfo typeInfo]
+  emitLog $ Outputs [SourceInfo $ SITypeInfo typeInfo]
   liftExcept ansExcept
 {-# INLINE liftInfererM #-}
 
@@ -350,9 +348,7 @@ withAllowedEffects effs cont = withInfState (\(InfState g _) -> InfState g effs)
 {-# INLINE withAllowedEffects #-}
 
 emitTypeInfo :: SrcId -> String -> InfererM i o ()
-emitTypeInfo sid ty = do
-  InfererM $ liftSubstReaderT $ lift11 $ lift1 $ lift do
-    modify \(TypeInfo m) -> TypeInfo $ M.insert sid ty m
+emitTypeInfo _ _ = return ()
 
 withReducibleEmissions
   :: (HasNamesE e, SubstE AtomSubstVal e, ToErr err)
