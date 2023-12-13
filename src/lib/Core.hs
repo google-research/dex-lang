@@ -357,7 +357,7 @@ lookupSourceMap :: EnvReader m => SourceName -> m n (Maybe (UVar n))
 lookupSourceMap sourceName = do
   sm <- withEnv $ envSourceMap . moduleEnv
   case lookupSourceMapPure sm sourceName of
-    LocalVar x:_  -> return $ Just x
+    LocalVar _ x:_  -> return $ Just x
     [ModuleVar _ (Just x)] -> return $ Just x
     _   -> return Nothing
 

@@ -574,5 +574,9 @@ instance Pretty Err where
   pretty e = pretty $ printErr e
 
 instance ToJSON SrcId
-instance Hashable InfVarDesc
+
 instance Store InfVarDesc
+instance Store SrcId
+
+instance Hashable InfVarDesc
+instance Hashable SrcId

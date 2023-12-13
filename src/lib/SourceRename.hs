@@ -11,13 +11,16 @@ module SourceRename ( renameSourceNamesTopUDecl, uDeclErrSourceMap
 
 import Prelude hiding (id, (.))
 import Control.Category
-import Control.Monad.Except hiding (Except)
+import Control.Monad.Reader
+import Control.Monad.State.Strict
 import qualified Data.Set        as S
 import qualified Data.Map.Strict as M
 
 import Err
 import Name
 import Core (EnvReader (..), withEnv, lookupSourceMapPure)
+import MonadUtil
+import MTL1
 import PPrint
 import IRVariants
 import Types.Source
@@ -26,18 +29,18 @@ import Types.Top (Env (..), ModuleEnv (..))
 
 renameSourceNamesTopUDecl
   :: (Fallible1 m, EnvReader m, TopLogger1 m)
-  => ModuleSourceName -> UTopDecl VoidS VoidS -> m n (Abs UTopDecl SourceMap n)
-renameSourceNamesTopUDecl mname decl = do
+  => TopNameDescription -> UTopDecl VoidS VoidS -> m n (Abs UTopDecl SourceMap n)
+renameSourceNamesTopUDecl desc decl = do
   Distinct <- getDistinct
   Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
-  let sourceMap = SourceMap $ fmap (fmap (\(LocalVar v) -> ModuleVar mname (Just v))) $
+  let sourceMap = SourceMap $ fmap (fmap (\(LocalVar _ v) -> ModuleVar desc (Just v))) $
                     fromSourceMap sourceMapLocalNames
   return $ Abs renamedDecl sourceMap
 {-# SCC renameSourceNamesTopUDecl #-}
 
-uDeclErrSourceMap:: ModuleSourceName -> UTopDecl VoidS VoidS -> SourceMap n
-uDeclErrSourceMap mname decl =
-  SourceMap $ M.fromSet (const [ModuleVar mname Nothing]) (sourceNames decl)
+uDeclErrSourceMap:: TopNameDescription -> UTopDecl VoidS VoidS -> SourceMap n
+uDeclErrSourceMap desc decl =
+  SourceMap $ M.fromSet (const [ModuleVar desc Nothing]) (sourceNames decl)
 {-# SCC uDeclErrSourceMap #-}
 
 renameSourceNamesUExpr :: (Fallible1 m, EnvReader m, TopLogger1 m) => UExpr VoidS -> m n (UExpr n)
@@ -59,34 +62,41 @@ data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
                                    , renamerMayShadow :: Bool }
 
 newtype RenamerM (n::S) (a:: *) =
-  RenamerM { runRenamerM :: OutReaderT RenamerSubst (ScopeReaderT Except) n a }
+  RenamerM { runRenamerM :: ReaderT1 RenamerSubst (ScopeReaderT (ExceptT (State NamingInfo))) n a }
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , ScopeReader, ScopeExtender)
 
-liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e) => RenamerM n (e n) -> m n (e n)
+liftRenamer :: (EnvReader m, Fallible1 m, SinkableE e, TopLogger1 m) => RenamerM n (e n) -> m n (e n)
 liftRenamer cont = do
   sm <- withEnv $ envSourceMap . moduleEnv
   Distinct <- getDistinct
-  (liftExcept =<<) $ liftScopeReaderT $
-    runOutReaderT (RenamerSubst sm False) $ runRenamerM $ cont
+  m <- liftScopeReaderT $ runReaderT1 (RenamerSubst sm False) $ runRenamerM $ cont
+  let (ans, namingInfo) = runState (runExceptT m) mempty
+  emitLog $ Outputs [SourceInfo $ SINamingInfo namingInfo]
+  liftExcept ans
 
 class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
   askMayShadow :: m n Bool
   setMayShadow :: Bool -> m n a -> m n a
   askSourceMap    :: m n (SourceMap n)
-  extendSourceMap :: SourceName -> UVar n -> m n a -> m n a
+  extendSourceMap :: SrcId -> SourceName -> UVar n -> m n a -> m n a
+  emitNameInfo :: SrcId -> NameInfo -> m n ()
 
 instance Renamer RenamerM where
-  askMayShadow = RenamerM $ renamerMayShadow <$> askOutReader
-  askSourceMap = RenamerM $ renamerSourceMap <$> askOutReader
+  askMayShadow = RenamerM $ renamerMayShadow <$> ask
+  askSourceMap = RenamerM $ renamerSourceMap <$> ask
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
-    RenamerSubst sm _ <- askOutReader
-    localOutReader (RenamerSubst sm mayShadow) cont
-  extendSourceMap name var (RenamerM cont) = RenamerM do
-    RenamerSubst sm mayShadow <- askOutReader
-    let ext = SourceMap $ M.singleton name [LocalVar var]
-    localOutReader (RenamerSubst (sm <> ext) mayShadow) cont
+    RenamerSubst sm _ <- ask
+    local (const $ RenamerSubst sm mayShadow) cont
+  extendSourceMap sid name var (RenamerM cont) = RenamerM do
+    RenamerSubst sm mayShadow <- ask
+    let ext = SourceMap $ M.singleton name [LocalVar sid var]
+    local (const $ RenamerSubst (sm <> ext) mayShadow) cont
+  emitNameInfo sid info = do
+    NamingInfo curNameInfo <- RenamerM $ lift11 $ lift1 $ lift get
+    let newNameInfo = M.insert sid info curNameInfo
+    RenamerM $ lift11 $ lift1 $ lift $ put $ NamingInfo newNameInfo
 
 class SourceRenamableE e where
   sourceRenameE :: (Distinct o, Renamer m) => e i -> m o (e o)
@@ -107,19 +117,26 @@ lookupSourceName sid v = do
   sm <- askSourceMap
   case lookupSourceMapPure sm v of
     [] -> throw sid $ UnboundVarErr $ pprint v
-    LocalVar v' : _ -> return v'
-    [ModuleVar _ maybeV] -> case maybeV of
-      Just v' -> return v'
+    LocalVar binderSid v' : _ -> do
+      emitNameInfo sid $ LocalOcc binderSid
+      return v'
+    [ModuleVar desc maybeV] -> case maybeV of
+      Just v' -> do
+        emitNameInfo sid $ TopOcc (prettyNameDesc desc)
+        return v'
       Nothing -> throw sid $ VarDefErr $ pprint v
     vs -> throw sid $ AmbiguousVarErr (pprint v) (map wherePretty vs)
     where
       wherePretty :: SourceNameDef n -> String
-      wherePretty (ModuleVar mname _) = case mname of
+      wherePretty (ModuleVar desc _) = case tndModuleName desc of
         Main -> "in this file"
         Prelude -> "in the prelude"
         OrdinaryModule mname' -> "in " ++ pprint mname'
-      wherePretty (LocalVar _) =
+      wherePretty (LocalVar _ _) =
         error "shouldn't be possible because module vars can't shadow local ones"
+
+      prettyNameDesc :: TopNameDescription -> String
+      prettyNameDesc s = tndTextSummary s -- TODO: also mention the module where it comes from
 
 instance SourceRenamableE (SourceNameOr (Name (AtomNameC CoreIR))) where
   sourceRenameE (SourceName sid sourceName) = do
@@ -302,10 +319,10 @@ sourceRenameUBinder asUVar (WithSrcB sid ubinder) cont = case ubinder of
     mayShadow <- askMayShadow
     let shadows = M.member b sm
     when (not mayShadow && shadows) $ throw sid $ RepeatedVarErr $ pprint b
-    withFreshM (getNameHint b) \freshName -> do
+    withFreshM (getNameHint b) \name -> do
       Distinct <- getDistinct
-      extendSourceMap b (asUVar $ binderName freshName) $
-        cont $ WithSrcB sid $ UBind b freshName
+      extendSourceMap sid b (asUVar $ binderName name) $
+        cont $ WithSrcB sid $ UBind b name
   UBind _ _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> cont $ WithSrcB sid $ UIgnore
 

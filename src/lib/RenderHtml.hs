@@ -154,7 +154,16 @@ renderFocus srcId node = case gtnChildren node of
   _ -> []  -- not a lexeme
 
 renderNamingInfo :: NamingInfo -> RenderedOutputs
-renderNamingInfo _ = mempty
+renderNamingInfo (NamingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]
+  where
+    treeNodeUpdate = M.toList m <&> \(sid, node) ->
+      (sid, Update $ renderNameInfo node)
+
+renderNameInfo :: NameInfo -> TreeNodeUpdate
+renderNameInfo = \case
+  LocalOcc _ -> TreeNodeUpdate mempty mempty
+  LocalBinder _ -> TreeNodeUpdate mempty mempty
+  TopOcc s -> TreeNodeUpdate NoChange (OverwriteWith s)
 
 renderTypeInfo :: TypeInfo -> RenderedOutputs
 renderTypeInfo _ = mempty

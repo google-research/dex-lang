@@ -223,7 +223,7 @@ evalSourceBlock mname block = do
   case (maybeErr, sbContents block) of
     (Failure _, TopDecl decl) -> do
       case parseDecl decl of
-        Success decl' -> emitSourceMap $ uDeclErrSourceMap mname decl'
+        Success decl' -> emitSourceMap $ uDeclErrSourceMap (makeTopNameDescription mname block) decl'
         Failure _ -> return ()
     _ -> return ()
   return maybeErr
@@ -231,7 +231,7 @@ evalSourceBlock mname block = do
 evalSourceBlock'
   :: (Topper m, Mut n) => ModuleSourceName -> SourceBlock -> m n ()
 evalSourceBlock' mname block = case sbContents block of
-  TopDecl decl -> parseDecl decl >>= execUDecl mname
+  TopDecl decl -> parseDecl decl >>= execUDecl (makeTopNameDescription mname block)
   Command cmd expr' -> do
    expr <- parseExpr expr'
    case cmd of
@@ -274,8 +274,9 @@ evalSourceBlock' mname block = case sbContents block of
         let hint = fromString $ pprint dexName
         fTop  <- emitBinding hint $ TopFunBinding $ FFITopFun (pprint $ withoutSrc fname) impFunTy
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
+        let desc = makeTopNameDescription mname block
         emitSourceMap $ SourceMap $
-          M.singleton dexName [ModuleVar mname (Just $ UAtomVar vCore)]
+          M.singleton dexName [ModuleVar desc (Just $ UAtomVar vCore)]
   DeclareCustomLinearization fname zeros g -> do
     expr <- parseExpr g
     lookupSourceMap (withoutSrc fname) >>= \case
@@ -542,10 +543,10 @@ evalDictSpecializations ds = do
   return ()
 
 execUDecl
-  :: (Topper m, Mut n) => ModuleSourceName -> UTopDecl VoidS VoidS -> m n ()
-execUDecl mname decl = do
+  :: (Topper m, Mut n) => TopNameDescription -> UTopDecl VoidS VoidS -> m n ()
+execUDecl desc decl = do
   logPass Parse decl
-  renamed@(Abs renamedDecl sourceMap) <- renameSourceNamesTopUDecl mname decl
+  renamed@(Abs renamedDecl sourceMap) <- renameSourceNamesTopUDecl desc decl
   logPass RenamePass renamed
   inferenceResult <- checkPass TypePass $ inferTopUDecl renamedDecl sourceMap
   case inferenceResult of

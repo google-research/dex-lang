@@ -1292,6 +1292,10 @@ instance Monad m => ScopeExtender (ScopeReaderT m) where
          let env' = extendOutMap scope $ toScopeFrag b
          runReaderT (runScopeReaderT' $ cont b e) (Distinct, env')
 
+instance MonadTrans1 ScopeReaderT where
+  lift1 m = ScopeReaderT $ lift m
+  {-# INLINE lift1 #-}
+
 -- === OutReader monad: reads data in the output name space ===
 
 class OutReader (e::E) (m::MonadKind1) | m -> e where

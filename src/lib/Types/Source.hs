@@ -25,6 +25,7 @@ import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
+import qualified Data.Text             as T
 import Data.Text (Text)
 import Data.Word
 import Data.Text.Prettyprint.Doc (line, group, parens, nest, align, punctuate, hsep)
@@ -111,8 +112,8 @@ data GroupTreeNode = GroupTreeNode
   , gtnIsAtomicLexeme :: Bool }
     deriving (Show, Eq, Generic)
 
-data NamingInfo = NamingInfo (M.Map SrcId NameInfo)
-  deriving (Show, Eq, Generic)
+newtype NamingInfo = NamingInfo (M.Map SrcId NameInfo)
+  deriving (Show, Eq, Generic, Semigroup, Monoid)
 data NameInfo =
    LocalBinder [SrcId] -- src ids of groups for which this binder is in scope
  | LocalOcc SrcId      -- src id of this occ's binder
@@ -549,15 +550,24 @@ instance FromSourceNameW (b n l) => FromSourceNameW (WithSrcB b n l) where
 
 -- === SourceMap ===
 
+-- TODO: line in module where it's defined
+data TopNameDescription = TopNameDescription
+  { tndModuleName  :: ModuleSourceName
+  , tndTextSummary :: String }
+    deriving (Show, Eq, Ord, Generic)
+
 data SourceNameDef n =
-    LocalVar  (UVar n)                          -- bound within a decl or expression
+    LocalVar  SrcId (UVar n)                      -- bound within a decl or expression
     -- the Nothing case is for vars whose definitions have errors
-  | ModuleVar ModuleSourceName (Maybe (UVar n)) -- bound at the module level
+  | ModuleVar TopNameDescription (Maybe (UVar n)) -- bound at the module level
     deriving (Show, Generic)
 
 data SourceMap (n::S) = SourceMap
   {fromSourceMap :: M.Map SourceName [SourceNameDef n]}
   deriving Show
+
+makeTopNameDescription :: ModuleSourceName -> SourceBlock -> TopNameDescription
+makeTopNameDescription mname sb = TopNameDescription mname (T.unpack $ sbText sb)
 
 -- === Source modules ===
 
@@ -772,11 +782,11 @@ instance Monoid (SourceMap n) where
   mempty = SourceMap mempty
 
 instance GenericE SourceNameDef where
-  type RepE SourceNameDef = EitherE UVar (LiftE ModuleSourceName `PairE` MaybeE UVar)
-  fromE (LocalVar v) = LeftE v
+  type RepE SourceNameDef = EitherE (LiftE SrcId `PairE` UVar) (LiftE TopNameDescription `PairE` MaybeE UVar)
+  fromE (LocalVar sid v) = LeftE (PairE (LiftE sid) v)
   fromE (ModuleVar name maybeUVar) = RightE (PairE (LiftE name) (toMaybeE maybeUVar))
   {-# INLINE fromE #-}
-  toE (LeftE v) = LocalVar v
+  toE (LeftE (PairE (LiftE sid) v)) = LocalVar sid v
   toE (RightE (PairE (LiftE name) maybeUVar)) = ModuleVar name (fromMaybeE maybeUVar)
   {-# INLINE toE #-}
 
@@ -803,9 +813,9 @@ instance RenameE        SourceMap
 
 instance Pretty (SourceNameDef n) where
   pretty def = case def of
-    LocalVar v -> pretty v
+    LocalVar _ v -> pretty v
     ModuleVar _ Nothing -> "<error in definition>"
-    ModuleVar mname (Just v) -> pretty v <> " defined in " <> pretty mname
+    ModuleVar desc (Just v) -> pretty v <> " defined in " <> pretty (tndModuleName desc)
 
 instance Pretty ModuleSourceName where
   pretty Main = "main"
@@ -948,8 +958,10 @@ instance Store ModuleSourceName
 instance Store (UVar n)
 instance Store (SourceNameDef n)
 instance Store (SourceMap n)
+instance Store TopNameDescription
 
 instance Hashable ModuleSourceName
+instance Hashable TopNameDescription
 
 deriving instance Show (UBinder' s n l)
 deriving instance Show (UDataDefTrail n)
