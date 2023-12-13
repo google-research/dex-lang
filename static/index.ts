@@ -86,7 +86,6 @@ type HsMsg = {
 
 const orderedCells : Cell[] = []
 const cells = new Map<CellId, Cell>()
-const curHighlights : Div[] = []  // HTML elements currently highlighted
 
 function processUpdates(msg:HsMsg) {
     dropCells(msg.orderedNodesUpdate.numDropped)
@@ -177,53 +176,24 @@ function updateCellContents(cell:Cell, update:HsCellUpdate) {
         setCellStatus(cell, statusUpdate["contents"])}
     extendCellOutput(cell, outputs)
 }
-function removeHover() {
-    hoverInfoDiv.innerHTML = ""
-    curHighlights.map(function (element) {
-        element.classList.remove("highlight-group", "highlight-leaf", "status-hover")})
-    curHighlights.length = 0
-}
 function attachStatusHovertip(cell:Cell) {
-    cell.status.addEventListener("mouseover", function (event:Event) {
-        event.stopPropagation()
-        cell.status.classList.add("status-hover")
-        curHighlights.push(cell.status)
-        setHoverInfo(cell.sourceText)})
-    cell.status.addEventListener("mouseout", function (event:Event) {
-        event.stopPropagation()
-        removeHover()})
+    addHoverAction(cell.status  , () => applyHoverStatus(cell))
+    if (cell.curStatus !== "Inert") {
+        addHoverAction(cell.lineNums, () => applyHoverStatus(cell))
+    }
+}
+function applyHoverStatus(cell:Cell) {
+    addHoverClass(cell.status  , "status-hover")
+    addHoverClass(cell.lineNums, "status-hover")
 }
 function attachHovertip(cell:Cell, srcId:SrcId) {
     let span = selectSpan(cell, srcId)
     if (span !== null) {
-        span.addEventListener("mouseover", function (event:Event) {
-            event.stopPropagation()
-            applyCellHover(cell, srcId)})
-        span.addEventListener("mouseout" , function (event:Event) {
-            event.stopPropagation()
-            removeHover()})}
-}
-function addChild(div:Div, className:string) : Div {
-    const child = document.createElement("div")
-    child.className = className
-    div.appendChild(child)
-    return child
-}
-function appendText(div:Div, s:string) {
-    div.appendChild(document.createTextNode(s))
+        addHoverAction(span, ()=>applyCellHover(cell, srcId))}
 }
 function selectSpan(cell:Cell, srcId:SrcId) : Div | null {
     const spanId : string = "#span_".concat(cell.cellId.toString(), "_", srcId.toString())
     return cell.source.querySelector(spanId)
-}
-function spansBetween(l:Div, r:Div) : Div[] {
-    let spans : Div[] = []
-    let curL : Div | null = l
-    while (curL !== null && !(Object.is(curL, r))) {
-        spans.push(curL);
-        curL = curL.nextElementSibling;}
-    spans.push(r)
-    return spans
 }
 function cellStatusClass(status: Status) : string {
     switch (status) {
@@ -364,8 +334,11 @@ function highlightTreeNode(isTemporary: boolean, node: TreeNode, highlightType:H
         let [l, r] = node.span
         let spans = spansBetween(l, r)
         spans.map(function (span) {
-            span.classList.add(highlightClass)
-            if (isTemporary) {curHighlights.push(span)}})}
+            if (isTemporary) {
+                addHoverClass(span, highlightClass)
+            } else {
+                span.classList.add(highlightClass)
+            }})}
 }
 type RenderMode = "Static" | "Dynamic"
 function render(renderMode:RenderMode) {
@@ -410,4 +383,48 @@ function renderLaTeX(root:Div) {
     // Array.from(proseBlocks).map((proseBlock) =>
     //     renderMathInElement(proseBlock, katexOptions)
     // );
+}
+
+// === hover system ===
+
+const curHighlights : [Div, string][] = []  // HTML elements currently highlighted
+function addHoverClass(div: Div, className: string) {
+    div.classList.add(className)
+    curHighlights.push([div, className])
+}
+function addHoverAction(div: Div, handler:()=>void) {
+    div.addEventListener( "mouseover", (event:Event) => {
+        event.stopPropagation()
+        handler()})
+    div.addEventListener("mouseout", function (event:Event) {
+        event.stopPropagation()
+        removeHover()})
+}
+function removeHover() {
+    hoverInfoDiv.innerHTML = ""
+    curHighlights.map(function (elementAndClass:[Div, string]) {
+        const [element, className] = elementAndClass
+        element.classList.remove(className)})
+    curHighlights.length = 0
+}
+
+// === utils ===
+
+function spansBetween(l:Div, r:Div) : Div[] {
+    let spans : Div[] = []
+    let curL : Div | null = l
+    while (curL !== null && !(Object.is(curL, r))) {
+        spans.push(curL);
+        curL = curL.nextElementSibling;}
+    spans.push(r)
+    return spans
+}
+function addChild(div:Div, className:string) : Div {
+    const child = document.createElement("div")
+    child.className = className
+    div.appendChild(child)
+    return child
+}
+function appendText(div:Div, s:string) {
+    div.appendChild(document.createTextNode(s))
 }
