@@ -139,20 +139,6 @@ instance (Monad m, Catchable m) => Catchable (EnvReaderT m o) where
 
 -- === Instances for Name monads ===
 
-instance (SinkableE e, EnvReader m)
-         => EnvReader (OutReaderT e m) where
-  unsafeGetEnv = OutReaderT $ lift $ unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
-instance (SinkableE e, ScopeReader m, EnvExtender m)
-         => EnvExtender (OutReaderT e m) where
-  refreshAbs ab cont = OutReaderT $ ReaderT \env ->
-    refreshAbs ab \b e -> do
-      let OutReaderT (ReaderT cont') = cont b e
-      env' <- sinkM env
-      cont' env'
-  {-# INLINE refreshAbs #-}
-
 instance (Monad m, ExtOutMap Env decls, OutFrag decls)
          => EnvReader (InplaceT Env decls m) where
   unsafeGetEnv = getOutMapInplaceT

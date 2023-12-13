@@ -499,21 +499,6 @@ instance (SinkableV v, Builder r m) => Builder r (SubstReaderT v m i) where
   rawEmitDecl hint ann expr = liftSubstReaderT $ emitDecl hint ann expr
   {-# INLINE rawEmitDecl #-}
 
-instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (OutReaderT e m) where
-  buildScopedAndThen cont1 cont2 = OutReaderT $ ReaderT \env ->
-    buildScopedAndThen
-      (do env' <- sinkM env
-          runReaderT (runOutReaderT' cont1) env')
-      (\d e -> do
-          env' <- sinkM env
-          runReaderT (runOutReaderT' $ cont2 d e) env')
-  {-# INLINE buildScopedAndThen #-}
-
-instance (SinkableE e, Builder r m) => Builder r (OutReaderT e m) where
-  rawEmitDecl hint ann expr =
-    OutReaderT $ lift $ emitDecl hint ann expr
-  {-# INLINE rawEmitDecl #-}
-
 instance (SinkableE e, ScopableBuilder r m) => ScopableBuilder r (ReaderT1 e m) where
   buildScopedAndThen cont1 cont2 = ReaderT1 $ ReaderT \env ->
     buildScopedAndThen

@@ -1296,55 +1296,6 @@ instance MonadTrans1 ScopeReaderT where
   lift1 m = ScopeReaderT $ lift m
   {-# INLINE lift1 #-}
 
--- === OutReader monad: reads data in the output name space ===
-
-class OutReader (e::E) (m::MonadKind1) | m -> e where
-  askOutReader :: m n (e n)
-  localOutReader :: e n -> m n a -> m n a
-
-newtype OutReaderT (e::E) (m::MonadKind1) (n::S) (a :: *) =
-  OutReaderT { runOutReaderT' :: ReaderT (e n) (m n) a }
-  deriving (Functor, Applicative, Monad, MonadFail, Fallible)
-
-runOutReaderT :: e n -> OutReaderT e m n a -> m n a
-runOutReaderT env m = flip runReaderT env $ runOutReaderT' m
-{-# INLINE runOutReaderT #-}
-
-instance (SinkableE e, ScopeReader m)
-         => ScopeReader (OutReaderT e m) where
-  unsafeGetScope = OutReaderT $ lift unsafeGetScope
-  {-# INLINE unsafeGetScope #-}
-  getDistinct = OutReaderT $ lift getDistinct
-  {-# INLINE getDistinct #-}
-
-instance (SinkableE e, ScopeExtender m)
-         => ScopeExtender (OutReaderT e m) where
-  refreshAbsScope ab cont = OutReaderT $ ReaderT \env ->
-    refreshAbsScope ab \b e -> do
-      let OutReaderT (ReaderT cont') = cont b e
-      env' <- sinkM env
-      cont' env'
-
-instance Monad1 m => OutReader e (OutReaderT e m) where
-  askOutReader = OutReaderT ask
-  {-# INLINE askOutReader #-}
-  localOutReader r (OutReaderT m) = OutReaderT $ local (const r) m
-  {-# INLINE localOutReader #-}
-
-instance (Monad1 m, Alternative (m n)) => Alternative (OutReaderT e m n) where
-  empty = OutReaderT $ lift empty
-  {-# INLINE empty #-}
-  OutReaderT (ReaderT f1) <|> OutReaderT (ReaderT f2) =
-    OutReaderT $ ReaderT \env ->
-      f1 env <|> f2 env
-  {-# INLINE (<|>) #-}
-
-instance MonadWriter w (m n) => MonadWriter w (OutReaderT e m n) where
-  tell w = OutReaderT $ lift $ tell w
-  {-# INLINE tell #-}
-  listen = undefined
-  pass = undefined
-
 -- === ZipSubstReaderT transformer ===
 
 newtype ZipSubstReaderT (m::MonadKind1) (i1::S) (i2::S) (o::S) (a:: *) =

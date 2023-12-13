@@ -87,12 +87,10 @@ instance Renamer RenamerM where
   askMayShadow = RenamerM $ renamerMayShadow <$> ask
   askSourceMap = RenamerM $ renamerSourceMap <$> ask
   setMayShadow mayShadow (RenamerM cont) = RenamerM do
-    RenamerSubst sm _ <- ask
-    local (const $ RenamerSubst sm mayShadow) cont
+    local (\(RenamerSubst sm _) -> RenamerSubst sm mayShadow) cont
   extendSourceMap sid name var (RenamerM cont) = RenamerM do
-    RenamerSubst sm mayShadow <- ask
     let ext = SourceMap $ M.singleton name [LocalVar sid var]
-    local (const $ RenamerSubst (sm <> ext) mayShadow) cont
+    local (\(RenamerSubst sm mayShadow) -> RenamerSubst (sm <> ext) mayShadow) cont
   emitNameInfo sid info = do
     NamingInfo curNameInfo <- RenamerM $ lift11 $ lift1 $ lift get
     let newNameInfo = M.insert sid info curNameInfo
