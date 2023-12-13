@@ -120,21 +120,10 @@ lookupSourceName sid v = do
       return v'
     [ModuleVar desc maybeV] -> case maybeV of
       Just v' -> do
-        emitNameInfo sid $ TopOcc (prettyNameDesc desc)
+        emitNameInfo sid $ TopOcc (pprint desc)
         return v'
       Nothing -> throw sid $ VarDefErr $ pprint v
-    vs -> throw sid $ AmbiguousVarErr (pprint v) (map wherePretty vs)
-    where
-      wherePretty :: SourceNameDef n -> String
-      wherePretty (ModuleVar desc _) = case tndModuleName desc of
-        Main -> "in this file"
-        Prelude -> "in the prelude"
-        OrdinaryModule mname' -> "in " ++ pprint mname'
-      wherePretty (LocalVar _ _) =
-        error "shouldn't be possible because module vars can't shadow local ones"
-
-      prettyNameDesc :: TopNameDescription -> String
-      prettyNameDesc s = tndTextSummary s -- TODO: also mention the module where it comes from
+    vs -> throw sid $ AmbiguousVarErr (pprint v) (map pprint vs)
 
 instance SourceRenamableE (SourceNameOr (Name (AtomNameC CoreIR))) where
   sourceRenameE (SourceName sid sourceName) = do

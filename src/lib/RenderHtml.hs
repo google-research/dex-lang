@@ -161,7 +161,7 @@ renderNamingInfo (NamingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]
 
 renderNameInfo :: NameInfo -> TreeNodeUpdate
 renderNameInfo = \case
-  LocalOcc _ -> TreeNodeUpdate mempty mempty
+  LocalOcc _ -> TreeNodeUpdate NoChange (OverwriteWith "Local name")
   LocalBinder _ -> TreeNodeUpdate mempty mempty
   TopOcc s -> TreeNodeUpdate NoChange (OverwriteWith s)
 

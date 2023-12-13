@@ -811,6 +811,11 @@ instance AlphaEqE       SourceMap
 instance AlphaHashableE SourceMap
 instance RenameE        SourceMap
 
+instance Pretty TopNameDescription where
+  pretty (TopNameDescription moduleName sourceText) =
+         "Top-level name defined in " <> pretty moduleName <> ":"
+      <> hardline <> pretty sourceText
+
 instance Pretty (SourceNameDef n) where
   pretty def = case def of
     LocalVar _ v -> pretty v
