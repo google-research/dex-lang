@@ -41,7 +41,7 @@ def cross(a:Vec 3, b:Vec 3) -> Vec 3 =
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
 
 # TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
-data Image =
+enum Image =
  MkImage(height:Nat, width:Nat, Fin height => Fin width => Color)
 
 xHat : Vec 3 = [1., 0., 0.]
@@ -92,12 +92,12 @@ BlockHalfWidths = Vec 3
 Radius = Float
 Radiance = Color
 
-data ObjectGeom =
+enum ObjectGeom =
   Wall(Direction, Distance)
   Block(Position, BlockHalfWidths, Angle)
   Sphere(Position, Radius)
 
-data Surface =
+enum Surface =
   Matte(Color)
   Mirror
 
@@ -105,7 +105,7 @@ struct OrientedSurface =
   normal  : Direction
   surface : Surface
 
-data Object =
+enum Object =
   PassiveObject(ObjectGeom, Surface)
   # position, half-width, intensity (assumed to point down)
   Light(Position, Float, Radiance)
@@ -169,7 +169,7 @@ def sdScene(scene:Scene n, pos:Position) -> (Object, Distance) given (n|Ix) =
 def calcNormal(obj:Object, pos:Position) -> Direction =
   grad(\p:Position. sdObject(p, obj)) pos | normalize
 
-data RayMarchResult =
+enum RayMarchResult =
   # incident ray, surface normal, surface properties
   HitObj(Ray, OrientedSurface)
   HitLight(Radiance)

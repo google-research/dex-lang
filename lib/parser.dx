@@ -25,7 +25,7 @@ struct ParserHandle(h:Heap) =
   input: String
   offset: Ref h Nat
 
-data Parser(a:Type) =
+enum Parser(a:Type) =
   MkParser((given(h:Heap), ParserHandle h )-> {Except, State h} a)
 
 def parse(handle:ParserHandle h, parser:Parser a) -> {Except, State h} a given (a, h)  =

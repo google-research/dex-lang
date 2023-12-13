@@ -1089,7 +1089,7 @@ instance Pretty (UAlt n) where
 instance Pretty (UTopDecl n l) where
   pretty = \case
     UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
-      "data" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
+      "enum" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
          (prettyLines (zip (toList $ unsafeFromNest bDataCons) dataCons))
     UStructDecl bTyCon (UStructDef nm bs fields defs) ->
       "struct" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2

@@ -491,7 +491,7 @@ instance VSpace(())
 
 '## Boolean type
 
-data Bool =
+enum Bool =
   False
   True
 
@@ -530,7 +530,7 @@ def b_to_f(x:Bool) -> Float = i_to_f(b_to_i x)
 '## Ordering
 TODO: move this down to with `Ord`?
 
-data Ordering =
+enum Ordering =
   LT
   EQ
   GT
@@ -542,7 +542,7 @@ A [sum type, or tagged union](https://en.wikipedia.org/wiki/Tagged_union) can ho
 For those familiar with the C language, they can be though of as a combination of an `enum` with a `union`.
 Here we define several basic kinds, and some operators on them.
 
-data Maybe(a:Type) =
+enum Maybe(a:Type) =
   Nothing
   Just(a)
 
@@ -558,7 +558,7 @@ def maybe(d:b, f:(a)->b, x:Maybe a) -> b given (a:Type, b:Type) =
     Nothing  -> d
     Just(x') -> f x'
 
-data Either(a:Type, b:Type) =
+enum Either(a:Type, b:Type) =
   Left(a)
   Right(b)
 
@@ -630,7 +630,7 @@ def (:=)(ref:Ref h s, x:s) -> {State h} () given (h:Heap, s|Data) = %put(ref, x)
 
 def ask(ref:Ref h r) -> {Read h} r given (h:Heap, r|Data) = %ask(ref)
 
-data AccumMonoidData(h:Heap, w:Type) = UnsafeMkAccumMonoidData(b:Type, Monoid b)
+enum AccumMonoidData(h:Heap, w:Type) = UnsafeMkAccumMonoidData(b:Type, Monoid b)
 
 interface AccumMonoid(h:Heap, w:Type)
   getAccumMonoidData : AccumMonoidData(h, w)
@@ -1329,7 +1329,7 @@ def deriv_rev(f:(Float)->Float, x:Float) -> Float = (snd vjp(f, x))(1.0)
 
 # XXX: Watch out when editing this data type! We depend on its structure
 # deep inside the compiler (mostly in linearization and during rule registration).
-data SymbolicTangent(a:Type) =
+enum SymbolicTangent(a:Type) =
   ZeroTangent
   SomeTangent(a)
 
@@ -1398,7 +1398,7 @@ def check_deriv(f:(Float)->Float, x:Float) -> Bool =
 
 '## Length-erased lists
 
-data List(a:Type) =
+enum List(a:Type) =
   AsList(n:Nat, elements:(Fin n => a))
 
 instance Eq(List a) given (a|Eq)
@@ -1588,7 +1588,7 @@ def from_nullable_raw_ptr(ptr:RawPtr) -> Maybe (Ptr a) given (a:Type) =
 
 def c_string_ptr(s:CString) -> Maybe (Ptr Char) = from_nullable_raw_ptr s.ptr
 
-data StreamMode =
+enum StreamMode =
   ReadMode
   WriteMode
 
@@ -1629,7 +1629,7 @@ def while(body: () -> {|eff} Bool) -> {|eff} () given (eff:Effects) =
   body' : () -> {|eff} Word8 = \. b_to_w8 $ body()
   %while(body')
 
-data IterResult(a|Data) =
+enum IterResult(a|Data) =
   Continue
   Done(a)
 

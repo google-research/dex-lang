@@ -6,7 +6,7 @@ struct Point =
  x : Float
  y : Float
 
-data Geom =
+enum Geom =
   PointGeom
   Circle(Float)
   Rectangle(Float, Float)  # width, height

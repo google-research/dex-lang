@@ -2079,7 +2079,7 @@ instance Pretty (TyConParams n) where
   pretty (TyConParams _ _) = undefined
 
 instance Pretty (TyConDef n) where
-  pretty (TyConDef name _ bs cons) = "data" <+> pretty name <+> pretty bs <> pretty cons
+  pretty (TyConDef name _ bs cons) = "enum" <+> pretty name <+> pretty bs <> pretty cons
 
 instance Pretty (DataConDefs n) where
   pretty = undefined

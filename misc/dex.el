@@ -12,7 +12,7 @@
     ("^:\\w*"                . font-lock-preprocessor-face)
     (,(concat
        "\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b\\|"
-       "\\bstruct\\b\\|\\bdata\\b\\|\\bwhere\\b\\|\\bof\\b\\|"
+       "\\bstruct\\b\\|\\benum\\b\\|\\bwhere\\b\\|\\bof\\b\\|"
        "\\bif\\b\\|\\bthen\\b\\|\\belse\\b\\|\\binterface\\b\\|"
        "\\binstance\\b\\|\\bgiven\\b\\|\\bdo\\b\\|\\bview\\b\\|"
        "\\bwith\\b\\|\\bself\\b\\|"

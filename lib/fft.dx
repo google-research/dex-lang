@@ -22,7 +22,7 @@ def odd_sized_palindrome(mid:a, seq:n=>a) -> ((n `Either` () `Either` n)=>a) giv
 
 '## Inner FFT functions
 
-data FTDirection =
+enum FTDirection =
   ForwardFT
   InverseFT
 

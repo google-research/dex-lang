@@ -107,7 +107,7 @@ keyWordToken = \case
   ThenKW          -> "then"
   ElseKW          -> "else"
   OfKW            -> "of"
-  DataKW          -> "data"
+  DataKW          -> "enum"
   StructKW        -> "struct"
   InterfaceKW     -> "interface"
   InstanceKW      -> "instance"

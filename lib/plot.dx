@@ -3,7 +3,7 @@
 import diagram
 import png
 
-data CompactSet(a:Type) =
+enum CompactSet(a:Type) =
   Interval(a, a)
   Singleton(a)
 

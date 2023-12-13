@@ -23,10 +23,10 @@ def lower_tri_identity() -> LowerTriMat n a given(n|Ix, a|Add|Mul)  =
 '## Representing inequalities between indices
 
 # These would be unnecessary if there were syntax for dependent pairs.
-data LowerTriIx(n)    = MkLowerTriIx(   i:n, j:(..i))
-data UpperTriIx(n)    = MkUpperTriIx(   i:n, j:(i..))
-data LowerTriIxExc(n) = MkLowerTriIxExc(i:n, j:(..<i))
-data UpperTriIxExc(n) = MkUpperTriIxExc(i:n, j:(i<..))
+enum LowerTriIx(n)    = MkLowerTriIx(   i:n, j:(..i))
+enum UpperTriIx(n)    = MkUpperTriIx(   i:n, j:(i..))
+enum LowerTriIxExc(n) = MkLowerTriIxExc(i:n, j:(..<i))
+enum UpperTriIxExc(n) = MkUpperTriIxExc(i:n, j:(i<..))
 
 '## Flipping inequalities between indices
 

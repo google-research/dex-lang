@@ -44,7 +44,7 @@ def remove_duplicates_from_sorted(xs:n=>a) -> List a given (n|Ix, a|Eq) =
 
 '## Sets
 
-data Set(a|Ord) =
+enum Set(a|Ord) =
   # Guaranteed to be in sorted order with unique elements,
   # as long as no one else uses this constructor.
   # Instead use the "toSet" function below.

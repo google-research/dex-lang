@@ -4,7 +4,7 @@
 
 import parser
 
-data Image =
+enum Image =
   MkImage(rows:Nat, cols:Nat, pixels:(Fin rows => Fin cols => Fin 3 => Word8))
 
 parse_p6 : Parser Image = MkParser \h.
