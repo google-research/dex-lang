@@ -68,19 +68,22 @@ mustParseSourceBlock s = mustParseit s sourceBlock
 
 -- === helpers for target ADT ===
 
-interpOperator :: String -> Bin
-interpOperator = \case
-  "&>"  -> DepAmpersand
-  "."   -> Dot
-  ",>"  -> DepComma
-  ":"   -> Colon
-  "|"   -> Pipe
-  "::"  -> DoubleColon
-  "$"   -> Dollar
-  "->>" -> ImplicitArrow
-  "=>"  -> FatArrow
-  "="   -> CSEqual
-  name  -> EvalBinOp $ fromString $ "(" <> name <> ")"
+interpOperator :: SrcId -> String -> ([SrcId], Bin)
+interpOperator sid = \case
+  "&>"  -> atomic DepAmpersand
+  "."   -> atomic Dot
+  ",>"  -> atomic DepComma
+  ":"   -> atomic Colon
+  "|"   -> atomic Pipe
+  "::"  -> atomic DoubleColon
+  "$"   -> atomic Dollar
+  "->>" -> atomic ImplicitArrow
+  "=>"  -> atomic FatArrow
+  "="   -> atomic CSEqual
+  name  -> ([], EvalBinOp $ WithSrc sid $ fromString $ "(" <> name <> ")")
+  where
+    atomic :: Bin -> ([SrcId], Bin)
+    atomic b = ([sid], b)
 
 pattern Identifier :: SourceName -> GroupW
 pattern Identifier name <- (WithSrcs _ _ (CLeaf (CIdentifier name)))
@@ -551,9 +554,9 @@ leafGroup = leafGroup' >>= appendPostfixGroups
 
   appendFieldAccess :: GroupW -> Parser Group
   appendFieldAccess g = try do
-    sid <- dot
+    dot
     field <- cFieldName
-    return $ CBin (WithSrc sid Dot) g field
+    return $ CBin Dot g field
 
 cFieldName :: Parser GroupW
 cFieldName = cIdentifier <|> (toCLeaf CNat <$> natLit)
@@ -622,15 +625,17 @@ ops =
   ] where
   other = ("other", anySymOp)
   backquote = ("backquote", Expr.InfixL backquoteOp)
-  juxtaposition  = ("space", Expr.InfixL $ sc >> addSrcIdToBinOp (return $ CJuxtapose True))
+  juxtaposition  = ("space", Expr.InfixL $ sc >> addSrcIdToBinOp (return \x y -> ([], CJuxtapose True x y)))
   withClausePostfix = ("with", Expr.Postfix withClausePostfixOp)
   arrow = ("->", Expr.InfixR arrowOp)
 
-addSrcIdToBinOp :: Parser (GroupW -> GroupW -> Group) -> Parser (GroupW -> GroupW -> GroupW)
+addSrcIdToBinOp :: Parser (GroupW -> GroupW -> ([SrcId], Group)) -> Parser (GroupW -> GroupW -> GroupW)
 addSrcIdToBinOp op = do
   f <- op
   sid <- freshSrcId
-  return \x y -> WithSrcs sid [] $ f x y
+  return \x y -> do
+    let (atomicSids, g) = f x y
+    WithSrcs sid atomicSids g
 {-# INLINE addSrcIdToBinOp #-}
 
 addSrcIdToUnOp :: Parser (GroupW -> Group) -> Parser (GroupW -> GroupW)
@@ -642,16 +647,13 @@ addSrcIdToUnOp op = do
 
 backquoteOp :: Parser (GroupW -> GroupW -> GroupW)
 backquoteOp = binApp do
-  WithSrc sid fname <- backquoteName
-  return $ WithSrc sid $ EvalBinOp fname
+  fname <- backquoteName
+  return ([], EvalBinOp fname)
 
 anySymOp :: Expr.Operator Parser GroupW
 anySymOp = Expr.InfixL $ binApp do
   WithSrc sid s <- label "infix operator" (mayBreak anySym)
-  return $ WithSrc sid $ interpOperator s
-
-infixSym :: String -> Parser SrcId
-infixSym s = mayBreak $ symWithId $ T.pack s
+  return $ interpOperator sid s
 
 symOpN :: String -> (SourceName, Expr.Operator Parser GroupW)
 symOpN s = (fromString s, Expr.InfixN $ symOp s)
@@ -664,14 +666,14 @@ symOpR s = (fromString s, Expr.InfixR $ symOp s)
 
 symOp :: String -> Parser (GroupW -> GroupW -> GroupW)
 symOp s = binApp do
-  sid <- label "infix operator" (infixSym s)
-  return $ WithSrc sid $ interpOperator s
+  sid <- label "infix operator" (mayBreak $ symWithId $ T.pack s)
+  return $ interpOperator sid s
 
 arrowOp :: Parser (GroupW -> GroupW -> GroupW)
 arrowOp = addSrcIdToBinOp do
-  sym "->"
+  sid <- symWithId "->"
   optEffs <- optional cEffs
-  return \lhs rhs -> CArrow lhs optEffs rhs
+  return \lhs rhs -> ([sid], CArrow lhs optEffs rhs)
 
 unOpPre :: String -> (SourceName, Expr.Operator Parser GroupW)
 unOpPre s = (fromString s, Expr.Prefix $ prefixOp s)
@@ -681,8 +683,10 @@ prefixOp s = addSrcIdToUnOp do
   symId <- symWithId (fromString s)
   return $ CPrefix (WithSrc symId $ fromString s)
 
-binApp :: Parser BinW -> Parser (GroupW -> GroupW -> GroupW)
-binApp f = addSrcIdToBinOp $ CBin <$> f
+binApp :: Parser ([SrcId], Bin) -> Parser (GroupW -> GroupW -> GroupW)
+binApp f = addSrcIdToBinOp do
+  (sids, op) <- f
+  return \x y -> (sids, CBin op x y)
 
 withClausePostfixOp :: Parser (GroupW -> GroupW)
 withClausePostfixOp = addSrcIdToUnOp do

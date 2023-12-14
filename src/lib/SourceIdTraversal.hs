@@ -76,6 +76,11 @@ instance IsTree Group where
     CArrow l effs r -> visit l >> visit effs >> visit r
     CWith b body -> visit b >> visit body
 
+instance IsTree Bin where
+  visit = \case
+    EvalBinOp b -> visit b
+    _ -> return ()
+
 instance IsTree CSBlock where
   visit = \case
     IndentedBlock sid decls -> enterNode sid $ visit decls
@@ -126,4 +131,3 @@ instance (IsTree a, IsTree b, IsTree c) => IsTree (a, b, c) where
 instance IsTree AppExplicitness where visit _ = return ()
 instance IsTree SourceName      where visit _ = return ()
 instance IsTree LetAnn          where visit _ = return ()
-instance IsTree Bin             where visit _ = return ()

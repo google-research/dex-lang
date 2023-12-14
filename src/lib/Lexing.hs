@@ -218,8 +218,10 @@ symChars :: HS.HashSet Char
 symChars = HS.fromList ".,!$^&*:-~+/=<>|?\\@#"
 
 -- XXX: unlike other lexemes, this doesn't consume trailing whitespace
-dot :: Parser SrcId
-dot = srcPos <$> lexeme' (return ()) Symbol (void $ char '.')
+dot :: Parser ()
+dot = do
+  WithSrc sid () <- lexeme' (return ()) Symbol (void $ char '.')
+  emitAtomicLexeme sid
 
 -- === Util ===
 
@@ -372,8 +374,12 @@ lexeme' sc' lexemeType p = do
 atomicLexeme :: LexemeType -> Parser () -> Parser ()
 atomicLexeme lexemeType p = do
   WithSrc sid () <- lexeme lexemeType p
-  modify \ctx -> ctx { curAtomicLexemes = curAtomicLexemes ctx ++ [sid] }
+  emitAtomicLexeme sid
 {-# INLINE atomicLexeme #-}
+
+emitAtomicLexeme :: LexemeId -> Parser ()
+emitAtomicLexeme sid = modify \ctx ->
+  ctx { curAtomicLexemes = curAtomicLexemes ctx ++ [sid] }
 
 collectAtomicLexemeIds :: Parser a -> Parser ([SrcId], a)
 collectAtomicLexemeIds p = do
