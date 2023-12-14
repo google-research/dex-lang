@@ -100,7 +100,7 @@ instance Monoid LexemeInfo where
 data SourceInfo =
    SIGroupingInfo  GroupingInfo
  | SINamingInfo    NamingInfo
- | SITypeInfo      TypeInfo
+ | SITypingInfo    TypingInfo
    deriving (Show, Eq, Generic)
 
 newtype GroupingInfo = GroupingInfo (M.Map SrcId GroupTreeNode)
@@ -120,11 +120,11 @@ data NameInfo =
  | TopOcc String
  deriving (Show, Eq, Generic)
 
-newtype TypeInfo = TypeInfo (M.Map SrcId TypeInfo)
+newtype TypingInfo = TypingInfo (M.Map SrcId TypeInfo)
         deriving (Show, Eq, Semigroup, Monoid, Generic)
 type TypeStr = String
 type ExprStr = String
-data NodeTypeInfo =
+data TypeInfo =
    ExprType TypeStr      -- type of arbitrary expression
  | BinderType TypeStr
  | AppType

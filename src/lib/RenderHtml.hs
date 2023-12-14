@@ -92,8 +92,8 @@ data TreeNodeState  = TreeNodeState
   deriving (Show, Eq, Generic)
 
 data TreeNodeUpdate = TreeNodeUpdate
-  { tnuHighlights :: Overwrite [RenderedHighlight]
-  , tnuText       :: Overwrite String }
+  { tnuHighlights :: [RenderedHighlight]
+  , tnuText       :: [String] }
     deriving (Show, Eq, Generic)
 
 renderOutputs :: Outputs -> RenderedOutputs
@@ -106,7 +106,7 @@ renderOutput = \case
   SourceInfo s   -> case s of
     SIGroupingInfo  info -> renderGroupingInfo  info
     SINamingInfo    info -> renderNamingInfo    info
-    SITypeInfo      info -> renderTypeInfo      info
+    SITypingInfo    info -> renderTypingInfo      info
   PassResult n s -> pure $ RenderedPassResult n s
   MiscLog s      -> pure $ RenderedMiscLog s
   Error e        -> pure $ RenderedError (getErrSrcId e) (pprint e)
@@ -161,13 +161,20 @@ renderNamingInfo (NamingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]
 
 renderNameInfo :: NameInfo -> TreeNodeUpdate
 renderNameInfo = \case
-  LocalOcc _ -> TreeNodeUpdate NoChange (OverwriteWith "Local name")
+  LocalOcc _ -> TreeNodeUpdate [] ["Local name"]
   LocalBinder _ -> TreeNodeUpdate mempty mempty
-  TopOcc s -> TreeNodeUpdate NoChange (OverwriteWith s)
+  TopOcc s -> TreeNodeUpdate [] [s]
 
-renderTypeInfo :: TypeInfo -> RenderedOutputs
-renderTypeInfo _ = mempty
+renderTypingInfo :: TypingInfo -> RenderedOutputs
+renderTypingInfo (TypingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]
+  where
+    treeNodeUpdate = M.toList m <&> \(sid, node) ->
+      (sid, Update $ renderTypeInfo node)
 
+renderTypeInfo :: TypeInfo -> TreeNodeUpdate
+renderTypeInfo = \case
+  ExprType s -> TreeNodeUpdate mempty ["Type:   " <> s]
+  _ -> TreeNodeUpdate mempty mempty
 
 instance ToJSON RenderedSourceBlock
 instance ToJSON RenderedOutput

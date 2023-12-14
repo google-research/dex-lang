@@ -64,8 +64,8 @@ type HsTreeNodeState = {
     tnHighlights  : Highlight[]
     tnText        : HTMLString}
 type HsTreeNodeUpdate = {
-    tnuHighlights : HsOverwrite<Highlight[]>;
-    tnuText       : HsOverwrite<HTMLString>}
+    tnuHighlights : Highlight[];
+    tnuText       : HTMLString[]}
 type HsTreeNodeMapUpdate =
     {tag: "Create" ; contents: HsTreeNodeState}  |
     {tag: "Replace"; contents: HsTreeNodeState}  |
@@ -283,14 +283,9 @@ function applyTreeNodeUpdate(cell:Cell, srcId:SrcId, update:HsTreeNodeMapUpdate)
             break
         case "Update":
             const nodeUpdate : HsTreeNodeUpdate = update.contents
-            const curTreeNode : TreeNode = cell.treeMap.get(srcId) ?? oops()
-            const text = nodeUpdate.tnuText
-            if (text.tag == "OverwriteWith") {
-                curTreeNode.text = text.contents}
-            const hl = nodeUpdate.tnuHighlights
-            if (hl.tag == "OverwriteWith") {
-                curTreeNode.highlights = hl.contents}
-            break}
+            const node : TreeNode = cell.treeMap.get(srcId) ?? oops()
+            nodeUpdate.tnuText.forEach(      (t) => {node.text       = node.text.concat(t, "\n")})
+            nodeUpdate.tnuHighlights.forEach((h) => {node.highlights = node.highlights.concat(h)})}
 }
 function computeRange(cell:Cell, l:SrcId, r:SrcId) : [Div, Div] | null {
     const lDiv = selectSpan(cell, l)

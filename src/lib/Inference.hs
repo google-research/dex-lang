@@ -155,7 +155,7 @@ data InfState (n::S) = InfState
   , infEffects     :: EffectRow CoreIR n }
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
-  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT CoreIR (ExceptT (State TypeInfo)))) i o a }
+  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT CoreIR (ExceptT (State TypingInfo)))) i o a }
   deriving (Functor, Applicative, Monad, MonadFail, Alternative, Builder CoreIR,
             EnvExtender, ScopableBuilder CoreIR,
             ScopeReader, EnvReader, Fallible, Catchable, SubstReader Name)
@@ -166,11 +166,11 @@ type InfererCPSB2 b i i' o a = (forall o'. DExt o o' => b o o' -> InfererM i' o'
 liftInfererM :: (EnvReader m, TopLogger1 m, Fallible1 m) => InfererM n n a -> m n a
 liftInfererM cont = do
   (ansExcept, typeInfo) <- liftInfererMPure cont
-  emitLog $ Outputs [SourceInfo $ SITypeInfo typeInfo]
+  emitLog $ Outputs [SourceInfo $ SITypingInfo typeInfo]
   liftExcept ansExcept
 {-# INLINE liftInfererM #-}
 
-liftInfererMPure :: EnvReader m => InfererM n n a -> m n (Except a, TypeInfo)
+liftInfererMPure :: EnvReader m => InfererM n n a -> m n (Except a, TypingInfo)
 liftInfererMPure cont = do
   ansM <- liftBuilderT $ runReaderT1 emptyInfState $ runSubstReaderT idSubst $ runInfererM' cont
   return $ runState (runExceptT ansM) mempty
@@ -347,8 +347,18 @@ withAllowedEffects :: EffectRow CoreIR o -> InfererM i o a -> InfererM i o a
 withAllowedEffects effs cont = withInfState (\(InfState g _) -> InfState g effs) cont
 {-# INLINE withAllowedEffects #-}
 
-emitTypeInfo :: SrcId -> String -> InfererM i o ()
-emitTypeInfo _ _ = return ()
+getTypeAndEmit :: HasType CoreIR e => SrcId -> e o -> InfererM i o (e o)
+getTypeAndEmit sid e = do
+  emitExprType sid (getType e)
+  return e
+
+emitExprType :: SrcId -> CType any -> InfererM i o ()
+emitExprType sid ty = emitTypeInfo sid $ ExprType $ pprint ty
+
+emitTypeInfo :: SrcId -> TypeInfo -> InfererM i o ()
+emitTypeInfo sid tyInfo =
+  InfererM $ liftSubstReaderT $ lift11 $ lift1 $ lift $
+    modify (<> TypingInfo (M.singleton sid tyInfo))
 
 withReducibleEmissions
   :: (HasNamesE e, SubstE AtomSubstVal e, ToErr err)
@@ -417,7 +427,7 @@ etaExpandPartialPi (PartialPiType appExpl expls bs effs reqTy) cont = do
 
 -- Doesn't introduce implicit pi binders or dependent pairs
 topDownExplicit :: forall i o. Emits o => CType o -> UExpr i -> InfererM i o (CAtom o)
-topDownExplicit reqTy exprWithSrc@(WithSrcE sid expr) = case expr of
+topDownExplicit reqTy exprWithSrc@(WithSrcE sid expr) = emitExprType sid reqTy >> case expr of
   ULam lamExpr -> case reqTy of
     TyCon (Pi piTy) -> toAtom <$> Lam <$> checkULam sid lamExpr piTy
     _       -> throw sid $ UnexpectedTerm "lambda" (pprint reqTy)
@@ -477,11 +487,10 @@ bottomUp expr = bottomUpExplicit expr >>= instantiateSigma (getSrcId expr) Infer
 
 -- Doesn't instantiate implicit args
 bottomUpExplicit :: Emits o => UExpr i -> InfererM i o (SigmaAtom o)
-bottomUpExplicit (WithSrcE sid expr) = case expr of
+bottomUpExplicit (WithSrcE sid expr) = getTypeAndEmit sid =<< case expr of
   UVar ~(InternalName _ sn v) ->  do
     v' <- renameM v
     ty <- getUVarType v'
-    emitTypeInfo sid $ pprint sn ++ " : " ++ pprint ty
     return $ SigmaUVar sn ty v'
   ULit l -> return $ SigmaAtom Nothing $ Con $ Lit l
   UFieldAccess x (WithSrc _ field) -> do
