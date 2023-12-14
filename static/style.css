@@ -21,7 +21,7 @@ body {
   position: fixed;
   top: 0em;
   left: 0em;
-  height: 90vh;
+  height: 85vh;
   width: 32px;
   overflow: hidden;
 }
@@ -34,7 +34,7 @@ body {
 }
 #hover-info {
   position: fixed;
-  height: 10vh;
+  height: 15vh;
   bottom: 0em;
   width: 100vw;
   overflow: hidden;

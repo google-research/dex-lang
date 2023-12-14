@@ -1298,8 +1298,9 @@ inferClassDef className methodNames paramBs methodTys = do
     return $ ClassDef className builtinName methodNames paramNames roleExpls' paramBs''' superclassBs methodTys'
 
 withUBinder :: UAnnBinder i i' -> InfererCPSB2 (WithExpl CBinder) i i' o a
-withUBinder (UAnnBinder expl b ann cs) cont = do
-  ty <- inferAnn (getSrcId b) ann cs
+withUBinder (UAnnBinder expl (WithSrcB sid b) ann cs) cont = do
+  ty <- inferAnn sid ann cs
+  emitExprType sid ty
   withFreshBinderInf (getNameHint b) expl ty \b' ->
     extendSubst (b@>binderName b') $ cont (WithAttrB expl b')
 
@@ -1316,10 +1317,11 @@ inferUBinders
   -> (forall o'. DExt o o' => [CAtomName o'] -> InfererM i' o' (e o'))
   -> InfererM i o (Abs (Nest (WithExpl CBinder)) e o)
 inferUBinders Empty cont = withDistinct $ Abs Empty <$> cont []
-inferUBinders (Nest (UAnnBinder expl b ann cs) bs) cont = do
+inferUBinders (Nest (UAnnBinder expl (WithSrcB sid b) ann cs) bs) cont = do
   -- TODO: factor out the common part of each case (requires an annotated
   -- `where` clause because of the rank-2 type)
-  ty <- inferAnn (getSrcId b) ann cs
+  ty <- inferAnn sid ann cs
+  emitExprType sid ty
   withFreshBinderInf (getNameHint b) expl ty \b' -> do
     extendSubst (b@>binderName b') do
       Abs bs' e <- inferUBinders bs \vs -> cont (sink (binderName b') : vs)
@@ -1393,7 +1395,7 @@ checkULamPartial partialPiTy sid lamExpr = do
             Abs piBs' UnitE <- applyRename (piB@>binderName b) (EmptyAbs piBs)
             checkLamBinders piExpls piBs' lamBs \bs -> cont (Nest b bs)
         Explicit -> case lamBs of
-          Nest (UAnnBinder _ lamB lamAnn _) lamBsRest -> do
+          Nest (UAnnBinder _ (WithSrcB bSid lamB) lamAnn _) lamBsRest -> emitExprType bSid piAnn >> do
             case lamAnn of
               UAnn lamAnn' -> checkUType lamAnn' >>= expectEq (getSrcId lamAnn') piAnn
               UNoAnn -> return ()
@@ -1576,7 +1578,7 @@ bindLetPat
   => UPat i i' -> CAtomVar o
   -> (forall o'. (Emits o', DExt o o') => InfererM i' o' (e o'))
   -> InfererM i o (e o)
-bindLetPat (WithSrcB sid pat) v cont = case pat of
+bindLetPat (WithSrcB sid pat) v cont = emitExprType sid (getType v) >> case pat of
   UPatBinder b -> getDistinct >>= \Distinct -> extendSubst (b @> atomVarName v) cont
   UPatProd ps -> do
     let n = nestLength ps
