@@ -10,7 +10,7 @@ module Actor (
   ActorM, Actor (..), launchActor, send, selfMailbox, messageLoop,
   sliceMailbox, SubscribeMsg (..), IncServer, IncServerT, FileWatcher,
   StateServer, flushDiffs, handleSubscribeMsg, subscribe, subscribeIO, sendSync,
-  runIncServerT, launchFileWatcher, Mailbox, launchIncFunctionEvaluator
+  runIncServerT, launchFileWatcher, Mailbox,
   ) where
 
 import Control.Concurrent
@@ -34,10 +34,10 @@ newtype ActorM msg a = ActorM { runActorM ::  ReaderT (Chan msg) IO a }
 
 newtype Mailbox a = Mailbox { sendToMailbox :: a -> IO () }
 
-class (Show msg, MonadIO m) => Actor msg m | m -> msg where
+class (MonadIO m) => Actor msg m | m -> msg where
   selfChan :: m (Chan msg)
 
-instance Show msg => Actor msg (ActorM msg) where
+instance Actor msg (ActorM msg) where
   selfChan = ActorM ask
 
 instance Actor msg m => Actor msg (ReaderT r m) where selfChan = lift $ selfChan
@@ -94,34 +94,34 @@ sendSync mailbox msg = do
 
 -- === Diff server ===
 
-data IncServerState s d = IncServerState
-  { subscribers     :: [Mailbox d]
-  , bufferedUpdates :: d
+data IncServerState s = IncServerState
+  { subscribers     :: [Mailbox (Delta s)]
+  , bufferedUpdates :: Delta s
   , curIncState     :: s }
-  deriving (Show, Generic)
+  deriving (Generic)
 
-class (Monoid d, MonadIO m) => IncServer s d m | m -> s, m -> d where
-  getIncServerStateRef :: m (IORef (IncServerState s d))
+class (IncState s, MonadIO m) => IncServer s m | m -> s where
+  getIncServerStateRef :: m (IORef (IncServerState s))
 
-data SubscribeMsg s d = Subscribe (SyncMsg (Mailbox d) s)  deriving (Show)
+data SubscribeMsg s = Subscribe (SyncMsg (Mailbox (Delta s)) s)  deriving (Show)
 
-getIncServerState :: IncServer s d m => m (IncServerState s d)
+getIncServerState :: IncServer s m => m (IncServerState s)
 getIncServerState = readRef =<< getIncServerStateRef
 
-updateIncServerState :: IncServer s d m => (IncServerState s d -> IncServerState s d) -> m ()
+updateIncServerState :: IncServer s m => (IncServerState s -> IncServerState s) -> m ()
 updateIncServerState f = do
   ref <- getIncServerStateRef
   prev <- readRef ref
   writeRef ref $ f prev
 
-handleSubscribeMsg :: IncServer s d m => SubscribeMsg s d -> m ()
+handleSubscribeMsg :: IncServer s m => SubscribeMsg s -> m ()
 handleSubscribeMsg (Subscribe (SyncMsg newSub response)) = do
   flushDiffs
   updateIncServerState \s -> s { subscribers = newSub : subscribers s }
   curState <- curIncState <$> getIncServerState
   setPromise response curState
 
-flushDiffs :: IncServer s d m => m ()
+flushDiffs :: IncServer s m => m ()
 flushDiffs = do
   d <- bufferedUpdates <$> getIncServerState
   updateIncServerState \s -> s { bufferedUpdates = mempty }
@@ -129,68 +129,38 @@ flushDiffs = do
   -- TODO: consider testing for emptiness here
   forM_ subs \sub -> send sub d
 
-type StateServer s d = Mailbox (SubscribeMsg s d)
+type StateServer s = Mailbox (SubscribeMsg s)
 
-subscribe :: Actor msg m => (d -> msg) -> StateServer s d -> m s
+subscribe :: (IncState s, Actor msg m) => (Delta s -> msg) -> StateServer s -> m s
 subscribe inject server = do
   updateChannel <- selfMailbox inject
   sendSync (sliceMailbox Subscribe server) updateChannel
 
-subscribeIO :: StateServer s d -> IO (s, Chan d)
+subscribeIO :: IncState s => StateServer s -> IO (s, Chan (Delta s))
 subscribeIO server = do
   chan <- newChan
   let mailbox = Mailbox (writeChan chan)
   s <- sendSync (sliceMailbox Subscribe server) mailbox
   return (s, chan)
 
-newtype IncServerT s d m a = IncServerT { runIncServerT' :: ReaderT (Ref (IncServerState s d)) m a }
+newtype IncServerT s m a = IncServerT { runIncServerT' :: ReaderT (Ref (IncServerState s)) m a }
   deriving (Functor, Applicative, Monad, MonadIO, Actor msg, FreshNames name, MonadTrans)
 
-instance (MonadIO m, IncState s d) => IncServer s d (IncServerT s d m) where
+instance (MonadIO m, IncState s) => IncServer s (IncServerT s m) where
   getIncServerStateRef = IncServerT ask
 
-instance (MonadIO m, IncState s d) => DefuncState d (IncServerT s d m) where
+instance (MonadIO m, IncState s, d ~ Delta s) => DefuncState d (IncServerT s m) where
   update d = updateIncServerState \s -> s
     { bufferedUpdates = bufferedUpdates s <> d
     , curIncState     = curIncState     s `applyDiff` d}
 
-instance (MonadIO m, IncState s d) => LabelReader (SingletonLabel s) (IncServerT s d m) where
+instance (MonadIO m, IncState s) => LabelReader (SingletonLabel s) (IncServerT s m) where
   getl It = curIncState <$> getIncServerState
 
-runIncServerT :: (MonadIO m, IncState s d) => s -> IncServerT s d m a -> m a
+runIncServerT :: (MonadIO m, IncState s) => s -> IncServerT s m a -> m a
 runIncServerT s cont = do
   ref <- newRef $ IncServerState [] mempty s
   runReaderT (runIncServerT' cont) ref
-
--- === Incremental function server ===
-
--- If you just need something that computes a function incrementally and doesn't
--- need to maintain any other state then this will do.
-
-data IncFunctionEvaluatorMsg da b db =
-   Subscribe_IFEM (SubscribeMsg b db)
- | Update_IFEM da
-   deriving (Show)
-
-launchIncFunctionEvaluator
-  :: (IncState b db, Show da, MonadIO m)
-  => StateServer a da
-  -> (a -> (b,s))
-  -> (b -> s -> da -> (db, s))
-  -> m (StateServer b db)
-launchIncFunctionEvaluator server fInit fUpdate =
-  sliceMailbox Subscribe_IFEM <$> launchActor do
-    x0 <- subscribe Update_IFEM server
-    let (y0, s0) = fInit x0
-    flip evalStateT s0 $ runIncServerT y0 $ messageLoop \case
-      Subscribe_IFEM msg -> handleSubscribeMsg msg
-      Update_IFEM dx -> do
-        y <- getl It
-        s <- lift get
-        let (dy, s') = fUpdate y s dx
-        lift $ put s'
-        update dy
-        flushDiffs
 
 -- === Refs ===
 -- Just a wrapper around IORef lifted to `MonadIO`
@@ -218,14 +188,14 @@ launchClock intervalMicroseconds mailbox =
 -- === File watcher ===
 
 type SourceFileContents = Text
-type FileWatcher = StateServer (Overwritable SourceFileContents) (Overwrite SourceFileContents)
+type FileWatcher = StateServer (Overwritable SourceFileContents)
 
 readFileContents :: MonadIO m => FilePath -> m Text
 readFileContents path = liftIO $ T.decodeUtf8 <$> BS.readFile path
 
 data FileWatcherMsg =
    ClockSignal_FW ()
- | Subscribe_FW (SubscribeMsg (Overwritable Text) (Overwrite Text))
+ | Subscribe_FW (SubscribeMsg (Overwritable Text))
    deriving (Show)
 
 launchFileWatcher :: MonadIO m => FilePath -> m FileWatcher

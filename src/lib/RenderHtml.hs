@@ -71,9 +71,9 @@ data RenderedOutput =
   | RenderedPassResult PassName (Maybe String)
   | RenderedMiscLog String
   | RenderedError (Maybe SrcId) String
-  | RenderedTreeNodeUpdate [(SrcId, MapEltUpdate TreeNodeState TreeNodeUpdate)]
+  | RenderedTreeNodeUpdate [(SrcId, MapEltUpdate TreeNodeState)]
   | RenderedFocusUpdate [(LexemeId, SrcId)]
-    deriving (Show, Eq, Generic)
+    deriving (Generic)
 
 data HighlightType =
    HighlightGroup
@@ -95,6 +95,17 @@ data TreeNodeUpdate = TreeNodeUpdate
   { tnuHighlights :: [RenderedHighlight]
   , tnuText       :: [String] }
     deriving (Show, Eq, Generic)
+
+instance Semigroup TreeNodeUpdate where
+  TreeNodeUpdate x y <> TreeNodeUpdate x' y' = TreeNodeUpdate (x<>x') (y<>y')
+
+instance Monoid TreeNodeUpdate where
+  mempty = TreeNodeUpdate mempty mempty
+
+instance IncState TreeNodeState where
+  type Delta TreeNodeState = TreeNodeUpdate
+  applyDiff (TreeNodeState s h t) (TreeNodeUpdate h' t') =
+    TreeNodeState s (h<>h') (t<>fold t')
 
 renderOutputs :: Outputs -> RenderedOutputs
 renderOutputs (Outputs outs) = foldMap renderOutput outs

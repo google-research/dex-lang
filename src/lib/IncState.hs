@@ -15,24 +15,26 @@ import Data.Aeson (ToJSON (..))
 import qualified Data.Map.Strict as M
 import GHC.Generics
 
--- === IncState ===
+-- === Delta type family ===
 
-class Monoid d => IncState s d where
-  applyDiff :: s -> d -> s
+class Monoid (Delta s) => IncState s where
+  type Delta s :: *
+  applyDiff :: s -> Delta s -> s
 
 -- === Diff utils ===
 
-data MapEltUpdate s d =
+data MapEltUpdate s =
    Create s
  | Replace s  -- TODO: should we merge Create/Replace?
- | Update d
+ | Update (Delta s)
  | Delete
- deriving (Eq, Functor, Show, Generic)
+   deriving (Generic)
 
-newtype MapUpdate k s d = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s d) }
-     deriving (Functor, Show, Generic)
+newtype MapUpdate k s = MapUpdate { mapUpdates :: M.Map k (MapEltUpdate s) }
 
-mapUpdateMapWithKey :: MapUpdate k s d -> (k -> s -> s') -> (k -> d -> d') -> MapUpdate k s' d'
+mapUpdateMapWithKey
+  :: (IncState s, IncState s')
+  => MapUpdate k s -> (k -> s -> s') -> (k -> Delta s -> Delta s') -> MapUpdate k s'
 mapUpdateMapWithKey (MapUpdate m) fs fd =
   MapUpdate $ flip M.mapWithKey m \k v -> case v of
     Create  s -> Create $ fs k s
@@ -40,10 +42,10 @@ mapUpdateMapWithKey (MapUpdate m) fs fd =
     Update d  -> Update $ fd k d
     Delete    -> Delete
 
-instance (IncState s d, Ord k) => Monoid (MapUpdate k s d) where
+instance (IncState s, Ord k) => Monoid (MapUpdate k s) where
   mempty = MapUpdate mempty
 
-instance (IncState s d, Ord k) => Semigroup (MapUpdate k s d) where
+instance (IncState s, Ord k) => Semigroup (MapUpdate k s) where
   MapUpdate m1 <> MapUpdate m2 = MapUpdate $
     M.mapMaybe id (M.intersectionWith combineElts m1 m2)
       <> M.difference m1 m2
@@ -70,7 +72,8 @@ instance (IncState s d, Ord k) => Semigroup (MapUpdate k s d) where
               Update _  -> error "shouldn't be updating a node that doesn't exist"
               Delete    -> error "shouldn't be deleting a node that doesn't exist"
 
-instance (IncState s d, Ord k) => IncState (M.Map k s) (MapUpdate k s d) where
+instance (IncState s, Ord k) => IncState (M.Map k s) where
+  type Delta (M.Map k s) = MapUpdate k s
   applyDiff m (MapUpdate updates) =
           M.mapMaybe id (M.intersectionWith applyEltUpdate m updates)
        <> M.difference m updates
@@ -101,7 +104,8 @@ instance Semigroup (TailUpdate a) where
 instance Monoid (TailUpdate a) where
   mempty = TailUpdate 0 []
 
-instance IncState [a] (TailUpdate a) where
+instance IncState [a] where
+  type Delta [a] = TailUpdate a
   applyDiff xs (TailUpdate numDrop ys) = take (length xs - numDrop) xs <> ys
 
 -- Trivial diff that works for any type - just replace the old value with a completely new one.
@@ -117,7 +121,8 @@ instance Semigroup (Overwrite a) where
 instance Monoid (Overwrite a) where
   mempty = NoChange
 
-instance IncState (Overwritable a) (Overwrite a) where
+instance IncState (Overwritable a) where
+  type Delta (Overwritable a) = Overwrite a
   applyDiff s = \case
     NoChange         -> s
     OverwriteWith s' -> Overwritable s'
@@ -125,18 +130,19 @@ instance IncState (Overwritable a) (Overwrite a) where
 -- Case when the diff and the state are the same
 newtype MonoidState a = MonoidState a
 
-instance Monoid a => IncState (MonoidState a) a where
+instance Monoid a => IncState (MonoidState a) where
+  type Delta (MonoidState a) = a
   applyDiff (MonoidState d) d' = MonoidState $ d <> d'
-
 
 -- Trivial diff that works for any type - just replace the old value with a completely new one.
 newtype Unchanging a = Unchanging { fromUnchanging :: a } deriving (Show, Eq, Ord)
 
-instance IncState (Unchanging a) () where
+instance IncState (Unchanging a) where
+  type Delta (Unchanging a) = ()
   applyDiff s () = s
 
 instance            ToJSON a  => ToJSON (Overwrite a)
-instance (ToJSON k, ToJSON s, ToJSON d) => ToJSON (MapUpdate k s d) where
+instance (ToJSON k, ToJSON s, ToJSON (Delta s)) => ToJSON (MapUpdate k s) where
   toJSON m = toJSON $ M.toList $ mapUpdates m
 instance ToJSON a => ToJSON (TailUpdate a)
-instance (ToJSON s, ToJSON d) => ToJSON (MapEltUpdate s d)
+instance (ToJSON s, ToJSON (Delta s)) => ToJSON (MapEltUpdate s)

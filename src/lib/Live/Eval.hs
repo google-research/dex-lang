@@ -32,7 +32,7 @@ import RenderHtml
 
 -- === Top-level interface ===
 
-type EvalServer = StateServer CellsState CellsUpdate
+type EvalServer = StateServer CellsState
 
 -- `watchAndEvalFile` returns the channel by which a client may
 -- subscribe by sending a write-only view of its input channel.
@@ -63,25 +63,26 @@ data NodeList a = NodeList
   , nodeMap      :: M.Map NodeId a }
   deriving (Show, Generic, Functor)
 
-data NodeListUpdate s d = NodeListUpdate
+data NodeListUpdate s = NodeListUpdate
   { orderedNodesUpdate :: TailUpdate NodeId
-  , nodeMapUpdate      :: MapUpdate NodeId s d }
-  deriving (Show, Generic)
+  , nodeMapUpdate      :: MapUpdate NodeId s }
+  deriving (Generic)
 
-instance IncState s d => Semigroup (NodeListUpdate s d) where
+instance IncState s => Semigroup (NodeListUpdate s) where
   NodeListUpdate x1 y1 <> NodeListUpdate x2 y2 = NodeListUpdate (x1<>x2) (y1<>y2)
 
-instance IncState s d => Monoid (NodeListUpdate s d) where
+instance IncState s => Monoid (NodeListUpdate s) where
   mempty = NodeListUpdate mempty mempty
 
-instance IncState s d => IncState (NodeList s) (NodeListUpdate s d) where
+instance IncState s => IncState (NodeList s) where
+  type Delta (NodeList s) = NodeListUpdate s
   applyDiff (NodeList m xs) (NodeListUpdate dm dxs) =
     NodeList (applyDiff m dm) (applyDiff xs dxs)
 
 type Dag       a = NodeList (Unchanging a)
-type DagUpdate a = NodeListUpdate (Unchanging a) ()
+type DagUpdate a = NodeListUpdate (Unchanging a)
 
-nodeListAsUpdate :: NodeList s -> NodeListUpdate s d
+nodeListAsUpdate :: NodeList s -> NodeListUpdate s
 nodeListAsUpdate (NodeList xs m)= NodeListUpdate (TailUpdate 0 xs) (MapUpdate $ fmap Create m)
 
 emptyNodeList :: NodeList a
@@ -101,7 +102,7 @@ commonPrefixLength _ _ = 0
 nodeListVals :: NodeList a -> [a]
 nodeListVals nodes = orderedNodes nodes <&> \k -> fromJust $ M.lookup k (nodeMap nodes)
 
-computeNodeListUpdate :: (Eq s, FreshNames NodeId m) => NodeList s -> [s] -> m (NodeListUpdate s d)
+computeNodeListUpdate :: (Eq s, FreshNames NodeId m) => NodeList s -> [s] -> m (NodeListUpdate s)
 computeNodeListUpdate nodes newVals = do
   let prefixLength = commonPrefixLength (nodeListVals nodes) newVals
   let oldTail = drop prefixLength $ orderedNodes nodes
@@ -114,10 +115,10 @@ computeNodeListUpdate nodes newVals = do
 -- This coarsely parses the full file into blocks and forms a DAG (for now a
 -- trivial one assuming all top-to-bottom dependencies) of the results.
 
-type CellParser = StateServer (Dag SourceBlock) (DagUpdate SourceBlock)
+type CellParser = StateServer (Dag SourceBlock)
 
 data CellParserMsg =
-    Subscribe_CP (SubscribeMsg (Dag SourceBlock) (DagUpdate SourceBlock))
+    Subscribe_CP (SubscribeMsg (Dag SourceBlock))
   | Update_CP (Overwrite Text)
   deriving (Show)
 
@@ -143,14 +144,14 @@ cellParserImpl fileWatcher parseCells = runFreshNameT do
 -- This is where we track the state of evaluation and decide what we needs to be
 -- run and what needs to be killed.
 
-type Evaluator = StateServer CellsState CellsUpdate
+type Evaluator = StateServer CellsState
 newtype EvaluatorM a =
   EvaluatorM { runEvaluatorM' ::
-                 IncServerT CellsState CellsUpdate
+                 IncServerT CellsState
                    (StateT EvaluatorState
                       (ActorM EvaluatorMsg)) a }
   deriving (Functor, Applicative, Monad, MonadIO, Actor (EvaluatorMsg))
-deriving instance IncServer CellsState CellsUpdate EvaluatorM
+deriving instance IncServer CellsState EvaluatorM
 
 instance Semigroup CellUpdate where
   CellUpdate s o <> CellUpdate s' o' = CellUpdate (s<>s') (o<>o')
@@ -158,7 +159,8 @@ instance Semigroup CellUpdate where
 instance Monoid CellUpdate where
   mempty = CellUpdate mempty mempty
 
-instance IncState CellState CellUpdate where
+instance IncState CellState where
+  type Delta CellState = CellUpdate
   applyDiff (CellState source status result) (CellUpdate status' result') =
     CellState source (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')
 
@@ -182,7 +184,7 @@ instance LabelReader EvaluatorMLabel EvaluatorM where
     EvalCfg         -> EvaluatorM $ lift $ evaluatorCfg <$> get
 
 data EvaluatorMUpdate =
-   UpdateDagEU (NodeListUpdate CellState CellUpdate)
+   UpdateDagEU (NodeListUpdate CellState)
  | UpdateCellState NodeId CellUpdate
  | UpdateCurJob CurJobStatus
  | UpdateEnvs [TopStateEx]
@@ -219,7 +221,7 @@ data CellState  = CellState SourceBlockWithId CellStatus Outputs
 data CellUpdate = CellUpdate (Overwrite CellStatus) Outputs deriving (Show, Generic)
 
 type CellsState  = NodeList       CellState
-type CellsUpdate = NodeListUpdate CellState CellUpdate
+type CellsUpdate = NodeListUpdate CellState
 
 type CellIndex = Int -- index in the list of cells, not the NodeId
 
@@ -231,8 +233,7 @@ data JobUpdate =
 data EvaluatorMsg =
    SourceUpdate (DagUpdate SourceBlock)
  | JobUpdate JobId JobUpdate
- | Subscribe_E (SubscribeMsg CellsState CellsUpdate)
-   deriving (Show)
+ | Subscribe_E (SubscribeMsg CellsState)
 
 initEvaluatorState :: EvalConfig -> TopStateEx -> EvaluatorState
 initEvaluatorState cfg s = EvaluatorState cfg [s] Nothing
@@ -362,4 +363,4 @@ initCellState cellId source = do
 instance ToJSON CellState where
 instance ToJSON CellStatus
 instance ToJSON CellUpdate
-instance (ToJSON s, ToJSON d) => ToJSON (NodeListUpdate s d)
+instance (IncState s, ToJSON s, ToJSON (Delta s)) => ToJSON (NodeListUpdate s)
