@@ -16,7 +16,7 @@ build-type:          Simple
 data-files:          lib/*.dx
                    , static/*.css
                    , static/*.html
-                   , static/*.js
+                   , static/*.ts
                    , src/lib/dexrt.bc
 
 flag cuda
