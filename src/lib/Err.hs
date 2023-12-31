@@ -32,6 +32,10 @@ import Data.Store (Store (..))
 import GHC.Stack
 import GHC.Generics
 
+#ifdef DEX_DEBUG
+import System.IO.Unsafe
+#endif
+
 import PPrint
 
 -- === source info ===
