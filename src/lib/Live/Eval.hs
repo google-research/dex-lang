@@ -7,8 +7,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Live.Eval (
-  watchAndEvalFile, EvalServer, CellsState, CellsUpdate,
-  NodeList (..), NodeListUpdate (..), subscribeIO, cellsStateAsUpdate) where
+  watchAndEvalFile, EvalServer, CellState (..), CellUpdate (..), CellsState, CellsUpdate,
+  NodeList (..), NodeListUpdate (..), subscribeIO,
+  CellStatus (..), nodeListAsUpdate, NodeId) where
 
 import Control.Concurrent
 import Control.Monad
@@ -28,7 +29,6 @@ import Types.Source
 import TopLevel
 import ConcreteSyntax
 import MonadUtil
-import RenderHtml
 
 -- === Top-level interface ===
 
@@ -46,9 +46,6 @@ sourceBlockEvalFun :: EvalConfig -> Mailbox Outputs -> TopStateEx -> SourceBlock
 sourceBlockEvalFun cfg resultChan env block = do
   let cfg' = cfg { cfgLogAction = send resultChan }
   evalSourceBlockIO cfg' env block
-
-cellsStateAsUpdate :: CellsState -> CellsUpdate
-cellsStateAsUpdate = nodeListAsUpdate
 
 -- === DAG diff state ===
 
@@ -153,17 +150,6 @@ newtype EvaluatorM a =
   deriving (Functor, Applicative, Monad, MonadIO, Actor (EvaluatorMsg))
 deriving instance IncServer CellsState EvaluatorM
 
-instance Semigroup CellUpdate where
-  CellUpdate s o <> CellUpdate s' o' = CellUpdate (s<>s') (o<>o')
-
-instance Monoid CellUpdate where
-  mempty = CellUpdate mempty mempty
-
-instance IncState CellState where
-  type Delta CellState = CellUpdate
-  applyDiff (CellState source status result) (CellUpdate status' result') =
-    CellState source (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')
-
 instance DefuncState EvaluatorMUpdate EvaluatorM where
   update = \case
     UpdateDagEU dag     -> EvaluatorM $ update dag
@@ -215,7 +201,7 @@ data CellStatus =
   | Inert              -- doesn't require running at all
     deriving (Show, Generic)
 
-data CellState  = CellState SourceBlockWithId CellStatus Outputs
+data CellState  = CellState SourceBlock CellStatus Outputs
      deriving (Show, Generic)
 
 data CellUpdate = CellUpdate (Overwrite CellStatus) Outputs deriving (Show, Generic)
@@ -291,7 +277,7 @@ launchNextJob = do
     curEnv <- (!! cellIndex) <$> getl PrevEnvs
     let nodeId = nodeList !! cellIndex
     CellState source _ _ <- fromJust <$> getl (NodeInfo nodeId)
-    if isInert $ sourceBlockWithoutId source
+    if isInert source
       then do
         update $ AppendEnv curEnv
         launchNextJob
@@ -307,7 +293,7 @@ launchJob cellIndex nodeId env = do
     threadId <- myThreadId
     let jobId = (threadId, nodeId)
     let resultsMailbox = sliceMailbox (JobUpdate jobId . PartialJobUpdate) mailbox
-    finalEnv <- jobAction resultsMailbox env $ sourceBlockWithoutId source
+    finalEnv <- jobAction resultsMailbox env source
     send mailbox $ JobUpdate jobId $ JobComplete finalEnv
   let jobId = (threadId, nodeId)
   update $ UpdateCurJob (Just (jobId, cellIndex))
@@ -324,7 +310,7 @@ processDagUpdate (NodeListUpdate tailUpdate mapUpdate) = do
   envs <- getl PrevEnvs
   update $ UpdateEnvs $ take (nValid + 1) envs
   update $ UpdateDagEU $ NodeListUpdate tailUpdate $ mapUpdateMapWithKey mapUpdate
-    (\cellId (Unchanging source) -> initCellState cellId source)
+    (\_ (Unchanging source) -> initCellState source)
     (\_ () -> mempty)
   getl CurRunningJob >>= \case
     Nothing -> launchNextJob
@@ -351,16 +337,27 @@ isInert sb = case sbContents sb of
     EmptyLines    -> True
   UnParseable _ _ -> True
 
-initCellState :: NodeId -> SourceBlock -> CellState
-initCellState cellId source = do
+initCellState :: SourceBlock -> CellState
+initCellState source = do
   let status = if isInert source
         then Inert
         else Waiting
-  CellState (SourceBlockWithId cellId source) status mempty
+  CellState source status mempty
 
 -- === ToJSON ===
 
-instance ToJSON CellState where
 instance ToJSON CellStatus
-instance ToJSON CellUpdate
 instance (IncState s, ToJSON s, ToJSON (Delta s)) => ToJSON (NodeListUpdate s)
+
+-- === IncState and related instance ===
+
+instance Semigroup CellUpdate where
+  CellUpdate s o <> CellUpdate s' o' = CellUpdate (s<>s') (o<>o')
+
+instance Monoid CellUpdate where
+  mempty = CellUpdate mempty mempty
+
+instance IncState CellState where
+  type Delta CellState = CellUpdate
+  applyDiff (CellState source status result) (CellUpdate status' result') =
+    CellState source (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')

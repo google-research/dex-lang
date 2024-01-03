@@ -308,6 +308,7 @@ sourceRenameUBinder asUVar (WithSrcB sid ubinder) cont = case ubinder of
     when (not mayShadow && shadows) $ throw sid $ RepeatedVarErr $ pprint b
     withFreshM (getNameHint b) \name -> do
       Distinct <- getDistinct
+      emitNameInfo sid $ LocalBinder []
       extendSourceMap sid b (asUVar $ binderName name) $
         cont $ WithSrcB sid $ UBind b name
   UBind _ _ -> error "Shouldn't be source-renaming internal names"

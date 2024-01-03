@@ -8,11 +8,11 @@
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 module RenderHtml (
-  progHtml, pprintHtml, ToMarkup, renderSourceBlock,
-  RenderedSourceBlock, RenderedOutputs, SourceBlockWithId (..)) where
+  progHtml, pprintHtml, ToMarkup, renderSourceBlock, renderResults,
+  RenderedSourceBlock, RenderedOutputs) where
 
 import Text.Blaze.Internal (MarkupM)
-import Text.Blaze.Html5 as H hiding (map, b)
+import Text.Blaze.Html5 as H hiding (map, a, b)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
 import Data.Aeson (ToJSON (..))
@@ -32,22 +32,88 @@ import Err
 import Paths_dex (getDataFileName)
 import PPrint
 import Types.Source
-import Util (unsnoc)
+import Util (unsnoc, foldMapM)
 import IncState
+import Live.Eval
 
--- === rendering source blocks and results ===
+type RenderingState  = NodeList       RenderedCellState
+type RenderingUpdate = NodeListUpdate RenderedCellState
+
+data RenderedCellState = RenderedCellState RenderedSourceBlock CellStatus RenderedOutputs
+     deriving Generic
+
+data RenderedCellUpdate = RenderedCellUpdate (Overwrite CellStatus) RenderedOutputs
+     deriving Generic
+
+instance Semigroup RenderedCellUpdate where
+  RenderedCellUpdate s o <> RenderedCellUpdate s' o' = RenderedCellUpdate (s<>s') (o<>o')
+
+instance Monoid RenderedCellUpdate where
+  mempty = RenderedCellUpdate mempty mempty
+
+instance ToJSON RenderedCellState
+instance ToJSON RenderedCellUpdate
+
+instance IncState RenderedCellState where
+  type Delta RenderedCellState = RenderedCellUpdate
+  applyDiff (RenderedCellState sb status result) (RenderedCellUpdate status' result') =
+    RenderedCellState sb (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')
+
+renderResults :: CellsState -> IO (RenderingUpdate, CellsUpdate -> IO RenderingUpdate)
+renderResults initState = do
+  (initRender, updates) <- runIncM renderCells initState
+  return (nodeListAsUpdate initRender, updates)
 
 type BlockId = Int
-data SourceBlockWithId = SourceBlockWithId
-  { sourceBlockId        :: BlockId
-  , sourceBlockWithoutId :: SourceBlock }
-  deriving (Show, Generic)
 
-instance ToJSON SourceBlockWithId where
-  toJSON (SourceBlockWithId n b) = toJSON $ renderSourceBlock n b
+renderCells :: IncVar CellsState -> IncM (IncVar RenderingState)
+renderCells cells = fmapNodeList cells renderCell
 
-instance ToJSON Outputs where
-  toJSON x = toJSON $ renderOutputs x
+renderCell :: BlockId -> IncVar CellState -> IncM (IncVar RenderedCellState)
+renderCell blockId cellState = do
+  (sourceBlock, status, outputs) <- unpackCellStateInc cellState
+  sourceBlock' <- fmapAllOrNothing sourceBlock $ renderSourceBlock blockId
+  outputs' <- renderOutputs outputs
+  packRenderedCellState sourceBlock' status outputs'
+
+renderOutputs :: IncVar (MonoidState Outputs) -> IncM (IncVar (MonoidState RenderedOutputs))
+renderOutputs outputsVar = liftMonoidStateIncM outputsVar do
+  return \(Outputs outs) -> foldMapM renderOutput outs
+
+fmapNodeList :: IncVar (NodeList a) -> (BlockId -> IncVar a -> IncM (IncVar b)) -> IncM (IncVar (NodeList b))
+fmapNodeList nl f = do
+  (l, m) <- unpackNodeList nl
+  m' <- fmapIncMap m f
+  packNodeList l m'
+
+unpackCellStateInc
+  :: IncVar CellState -> IncM ( IncVar (Unchanging SourceBlock)
+                              , IncVar (Overwritable CellStatus)
+                              , IncVar (MonoidState Outputs) )
+unpackCellStateInc cellState = do
+  incUnzip3 =<< fmapIncVar cellState
+    (\(CellState sb s outs) -> (Unchanging sb, Overwritable s, MonoidState outs))
+    (\(CellUpdate s outs) -> ((), s, outs))
+
+packRenderedCellState
+  :: IncVar (Unchanging RenderedSourceBlock)
+  -> IncVar (Overwritable CellStatus)
+  -> IncVar (MonoidState RenderedOutputs)
+  -> IncM (IncVar RenderedCellState)
+packRenderedCellState sourceBlock status outputs = do
+  renderedCellState <- incZip3 sourceBlock status outputs
+  fmapIncVar renderedCellState
+    (\(Unchanging sb, Overwritable s, MonoidState outs) -> RenderedCellState sb s outs)
+    (\((), s, outs) -> RenderedCellUpdate s outs)
+
+unpackNodeList :: IncVar (NodeList a) -> IncM (IncVar [NodeId], IncVar (M.Map NodeId a))
+unpackNodeList nl = do
+  incUnzip2 =<< fmapIncVar nl (\(NodeList l m) -> (l, m)) (\(NodeListUpdate l m) -> (l, m))
+
+packNodeList :: IncVar [NodeId] -> IncVar (M.Map NodeId a) -> IncM (IncVar (NodeList a))
+packNodeList lv mv = do
+  nl <- incZip2 lv mv
+  fmapIncVar nl (\(l, m) -> NodeList l m) (\(l, m) -> NodeListUpdate l m)
 
 -- === rendering results ===
 
@@ -107,20 +173,19 @@ instance IncState TreeNodeState where
   applyDiff (TreeNodeState s h t) (TreeNodeUpdate h' t') =
     TreeNodeState s (h<>h') (t<>fold t')
 
-renderOutputs :: Outputs -> RenderedOutputs
-renderOutputs (Outputs outs) = foldMap renderOutput outs
-
-renderOutput :: Output -> [RenderedOutput]
+renderOutput :: Output -> IO [RenderedOutput]
 renderOutput = \case
-  TextOut s      -> pure $ RenderedTextOut s
-  HtmlOut s      -> pure $ RenderedHtmlOut s
+  TextOut s      -> emit $ RenderedTextOut s
+  HtmlOut s      -> emit $ RenderedHtmlOut s
   SourceInfo s   -> case s of
-    SIGroupingInfo  info -> renderGroupingInfo  info
-    SINamingInfo    info -> renderNamingInfo    info
-    SITypingInfo    info -> renderTypingInfo      info
-  PassResult n s -> pure $ RenderedPassResult n s
-  MiscLog s      -> pure $ RenderedMiscLog s
-  Error e        -> pure $ RenderedError (getErrSrcId e) (pprint e)
+    SIGroupingInfo  info -> return $ renderGroupingInfo  info
+    SINamingInfo    info -> return $ renderNamingInfo    info
+    SITypingInfo    info -> return $ renderTypingInfo    info
+  PassResult n s -> emit $ RenderedPassResult n s
+  MiscLog s      -> emit $ RenderedMiscLog s
+  Error e        -> emit $ RenderedError (getErrSrcId e) (pprint e)
+  where emit :: RenderedOutput -> IO [RenderedOutput]
+        emit x = return [x]
 
 renderSourceBlock :: BlockId -> SourceBlock -> RenderedSourceBlock
 renderSourceBlock n b = RenderedSourceBlock
@@ -166,15 +231,20 @@ renderFocus srcId node = case gtnChildren node of
 
 renderNamingInfo :: NamingInfo -> RenderedOutputs
 renderNamingInfo (NamingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]
-  where
-    treeNodeUpdate = M.toList m <&> \(sid, node) ->
-      (sid, Update $ renderNameInfo node)
+  where treeNodeUpdate = fold $ M.toList m <&> \(sid, node) -> renderNameInfo sid node
 
-renderNameInfo :: NameInfo -> TreeNodeUpdate
-renderNameInfo = \case
-  LocalOcc _ -> TreeNodeUpdate [] ["Local name"]
-  LocalBinder _ -> TreeNodeUpdate mempty mempty
-  TopOcc s -> TreeNodeUpdate [] [s]
+renderNameInfo :: SrcId -> NameInfo -> [(SrcId, MapEltUpdate TreeNodeState)]
+renderNameInfo sid = \case
+  LocalOcc binderSid -> do
+    let occUpdate = (sid, Update $ TreeNodeUpdate [(binderSid, HighlightBinder)] ["Local name"])
+    let binderUpdate = (binderSid, Update $ TreeNodeUpdate [(sid, HighlightOcc)] [])
+    [occUpdate, binderUpdate]
+  -- TODO: this path isn't exercised because we don't actually generate any
+  -- `LocalBinder` info in `SourceRename`
+  LocalBinder binderScope -> [(sid, Update $ TreeNodeUpdate (selfHighlight:scopeHighlights) mempty)]
+    where selfHighlight = (sid, HighlightBinder)
+          scopeHighlights = binderScope <&> \scopeSid -> (scopeSid, HighlightScope)
+  TopOcc s -> [(sid, Update $ TreeNodeUpdate [] [s])]
 
 renderTypingInfo :: TypingInfo -> RenderedOutputs
 renderTypingInfo (TypingInfo m) = [RenderedTreeNodeUpdate treeNodeUpdate]

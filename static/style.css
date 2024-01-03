@@ -80,6 +80,9 @@ body {
   text-decoration: red wavy underline;
   text-decoration-skip-ink: none;}
 .highlight-group { background-color: yellow; }
+.highlight-scope { background-color: lightyellow; }
+.highlight-binder { background-color: lightblue; }
+.highlight-occ    { background-color: yellow; }
 .highlight-leaf  { background-color: lightgray; }
 
 /* lexeme colors */

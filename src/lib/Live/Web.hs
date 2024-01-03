@@ -19,7 +19,7 @@ import Data.ByteString.Lazy (toStrict)
 import qualified Data.ByteString as BS
 
 -- import Paths_dex (getDataFileName)
-
+import RenderHtml
 import Live.Eval
 import TopLevel
 
@@ -52,8 +52,9 @@ resultStream :: EvalServer -> StreamingBody
 resultStream resultsServer write flush = do
   sendUpdate ("start"::String)
   (initResult, resultsChan) <- subscribeIO resultsServer
-  sendUpdate $ cellsStateAsUpdate initResult
-  forever $ readChan resultsChan >>= sendUpdate
+  (renderedInit, renderUpdateFun) <- renderResults initResult
+  sendUpdate renderedInit
+  forever $ readChan resultsChan >>= renderUpdateFun >>= sendUpdate
   where
     sendUpdate :: ToJSON a => a -> IO ()
     sendUpdate x = write (fromByteString $ encodePacket x) >> flush

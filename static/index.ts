@@ -18,7 +18,8 @@ type HTMLString = string
 type Div = Element
 type Status = "Waiting" | "Running" | "Complete" | "CompleteWithErrors" | "Inert"
 
-type HighlightType = "HighlightGroup" |  "HighlightLeaf" | "HighlightError"
+type HighlightType = "HighlightGroup" |  "HighlightLeaf" | "HighlightError" | "HighlightScope"
+                   | "HighlightBinder" | "HighlightOcc"
 type Highlight    = [SrcId, HighlightType]
 
 type HsMaybe<T> = {tag:"Just"; contents:T} | {tag: "Nothing"}
@@ -285,7 +286,7 @@ function applyTreeNodeUpdate(cell:Cell, srcId:SrcId, update:HsTreeNodeMapUpdate)
             const nodeUpdate : HsTreeNodeUpdate = update.contents
             const node : TreeNode = cell.treeMap.get(srcId) ?? oops()
             nodeUpdate.tnuText.forEach(      (t) => {node.text       = node.text.concat(t, "\n")})
-            nodeUpdate.tnuHighlights.forEach((h) => {node.highlights = node.highlights.concat(h)})}
+            node.highlights = node.highlights.concat(nodeUpdate.tnuHighlights)}
 }
 function computeRange(cell:Cell, l:SrcId, r:SrcId) : [Div, Div] | null {
     const lDiv = selectSpan(cell, l)
@@ -321,6 +322,12 @@ function computeHighlightClass(h:HighlightType) : string {
             return "highlight-leaf"
         case "HighlightError":
             return "highlight-error"
+        case "HighlightScope":
+            return "highlight-scope";
+        case "HighlightBinder":
+            return "highlight-binder";
+        case "HighlightOcc":
+            return "highlight-occ";
     }
 }
 function highlightTreeNode(isTemporary: boolean, node: TreeNode, highlightType:HighlightType) {
