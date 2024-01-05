@@ -412,6 +412,7 @@ bench-summary:
 # --- building docs ---
 
 slow-pages = pages/examples/mnist-nearest-neighbors.html
+static-names = dynamic.html index.js style.css
 
 doc-files = $(doc-names:%=doc/%.dx)
 pages-doc-files = $(doc-names:%=pages/%.html)
@@ -420,30 +421,35 @@ pages-example-files = $(example-names:%=pages/examples/%.html)
 
 lib-files = $(filter-out lib/prelude.dx,$(wildcard lib/*.dx))
 pages-lib-files = $(patsubst %.dx,pages/%.html,$(lib-files))
+static-files = $(static-names:%=pages/static/%)
 
-docs: pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
+docs: $(static-files) pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
+
+pages/static/%: static/%
+	mkdir -p pages/static
+	cp $^ $@
 
 pages-prelude: lib/prelude.dx
-	mkdir -p pages
-	$(dex) --prelude /dev/null script lib/prelude.dx --outfmt html > pages/prelude.html
+	mkdir -p pages/lib
+	$(dex) --prelude /dev/null generate-html lib/prelude.dx lib/prelude
 
 pages/examples/tutorial.html: tutorial-data
 pages/examples/dither.html: dither-data
 
 pages/examples/%.html: examples/%.dx
 	mkdir -p pages/examples
-	$(dex) script $< --outfmt html > $@
+	$(dex) generate-html $< examples/$*
 
 pages/lib/%.html: lib/%.dx
 	mkdir -p pages/lib
-	$(dex) script $^ --outfmt html > $@
+	$(dex) generate-html $^ lib/$*
 
 pages/index.md: $(doc-files) $(example-files) $(lib-files)
 	python3 misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
 
 ${pages-doc-files}:pages/%.html: doc/%.dx
 	mkdir -p pages
-	$(dex) script $^ --outfmt html > $@
+	$(dex) generate-html $^ $*
 
 clean:
 	$(STACK) clean

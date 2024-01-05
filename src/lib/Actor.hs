@@ -17,15 +17,14 @@ import Control.Concurrent
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import qualified Data.ByteString as BS
 import Data.IORef
-import Data.Text.Encoding qualified as T
 import Data.Text (Text)
 import System.Directory (getModificationTime)
 import GHC.Generics
 
 import IncState
 import MonadUtil
+import Util (readFileText)
 
 -- === Actor implementation ===
 
@@ -190,9 +189,6 @@ launchClock intervalMicroseconds mailbox =
 type SourceFileContents = Text
 type FileWatcher = StateServer (Overwritable SourceFileContents)
 
-readFileContents :: MonadIO m => FilePath -> m Text
-readFileContents path = liftIO $ T.decodeUtf8 <$> BS.readFile path
-
 data FileWatcherMsg =
    ClockSignal_FW ()
  | Subscribe_FW (SubscribeMsg (Overwritable Text))
@@ -203,7 +199,7 @@ launchFileWatcher path = sliceMailbox Subscribe_FW <$> launchActor (fileWatcherI
 
 fileWatcherImpl :: FilePath -> ActorM FileWatcherMsg ()
 fileWatcherImpl path = do
-  initContents <- readFileContents path
+  initContents <- readFileText path
   t0 <- liftIO $ getModificationTime path
   launchClock 100000 =<< selfMailbox ClockSignal_FW
   modTimeRef <- newRef t0
@@ -213,7 +209,7 @@ fileWatcherImpl path = do
       tOld <- readRef modTimeRef
       tNew <- liftIO $ getModificationTime path
       when (tNew /= tOld) do
-        newContents <- readFileContents path
+        newContents <- readFileText path
         update $ OverwriteWith newContents
         flushDiffs
         writeRef modTimeRef tNew

@@ -49,7 +49,7 @@ def main():
 
   print(""); print("## Libraries"); print("")
 
-  print("- [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)")
+  print("- [lib/prelude.dx](lib/prelude.html): The Dex Prelude (automatically imported)")
 
   file_block(libraries.split())
 

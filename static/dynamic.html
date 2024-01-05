@@ -4,29 +4,11 @@
   <meta charset="UTF-8">
   <title>Dex Output</title>
   <link rel="stylesheet" href="/style.css" type="text/css" />
-  <!-- KaTeX: LaTeX rendering -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css" integrity="sha384-AfEj0r4/OFrOo5t7NnNe46zW/tFgW6x/bCJG8FqQCEo3+Aro6EYUG4+cU+KJWu/X" crossorigin="anonymous">
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js" integrity="sha384-g7c+Jr9ZivxKLnZTDUhnkOnsh30B4H0rpLUpJ4jAIKs4fnJI+sEnkvrMWph2EDg4" crossorigin="anonymous"></script>
-  <!-- Do dynamic webpage rendering on-load. -->
-  <!-- The `onerror` attribute renders Dex output dynamically even if
-       KaTeX fails to load (e.g., if running dex web locally with no
-       network); the latex will just remain unrendered. -->
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js"
-          integrity="sha384-mll67QQFJfxn0IYznZYonOWZ644AWYC+Pt2cHqMaRhXVrursRwvLnLaebdGIlYNa"
-          onload="render('Dynamic');"
-          onerror="render('Dynamic');"
-          crossorigin="anonymous"></script>
-  <!-- jQuery -->
-  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
 </head>
-
-<body>
+<body onload="render('Dynamic');">
   <div id="minimap"> </div>
-  <div id="hover-info"> (hover over code for more information) </div>
+  <div id="hover-info">(hover over code for more information)</div>
   <main id="main-output"></main>
-
-<script src="/index.js""></script>
-
+  <script src="/index.js"></script>
 </body>
-
 </html>

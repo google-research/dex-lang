@@ -14,9 +14,9 @@ license-file:        LICENSE
 build-type:          Simple
 
 data-files:          lib/*.dx
-                   , static/*.css
-                   , static/*.html
-                   , static/*.js
+                   , static/dynamic.html
+                   , static/index.js
+                   , static/style.css
                    , src/lib/dexrt.bc
 
 flag cuda
@@ -26,10 +26,6 @@ flag cuda
 flag optimized
   description:         Enables GHC optimizations
   default:             False
-
-flag live
-  description:         Enables live-editing environments (web notebook and terminal)
-  default:             True
 
 flag llvm-head
   description:         Use the bleeding-edge version of LLVM
@@ -99,8 +95,7 @@ library
                      , QueryTypePure
                      , Util
                      , Vectorize
-  if flag(live)
-    exposed-modules:   Actor
+                     , Actor
                      , Live.Eval
                      , Live.Web
                      , RenderHtml
@@ -136,16 +131,13 @@ library
                      , time
                        -- Floating-point pedanticness (correcting for GHC < 9.2.2)
                      , floating-bits
-  if flag(live)
-    build-depends:     binary
+                     , binary
                      , blaze-html
                      , blaze-markup
                      , cmark
                      , http-types
                      , wai
                      , warp
-    cpp-options:       -DDEX_LIVE
-    cxx-options:       -DDEX_LIVE
   if flag(debug)
     cpp-options:       -DDEX_DEBUG
   default-language:    Haskell2010
@@ -252,6 +244,7 @@ executable dex
   ghc-options:         -threaded
                        -optP-Wno-nonportable-include-path
                        -rtsopts
+                       -Wall
                        "-with-rtsopts=-I0 -A16m"
   default-extensions:  CPP
                      , DeriveGeneric
@@ -260,8 +253,6 @@ executable dex
                      , BlockArguments
   if flag(cuda)
     cpp-options:       -DDEX_CUDA
-  if flag(live)
-    cpp-options:       -DDEX_LIVE
   if flag(optimized)
     ghc-options:       -O3
   else

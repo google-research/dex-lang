@@ -8,13 +8,12 @@
 
 module TopLevel (
   EvalConfig (..), Topper, TopperM, runTopperM,
-  evalSourceBlockRepl, OptLevel (..),
-  evalSourceText, TopStateEx (..), LibPath (..),
+  evalSourceBlockRepl, OptLevel (..), TopStateEx (..), LibPath (..),
   evalSourceBlockIO, initTopState, loadCache, storeCache, clearCache,
   ensureModuleLoaded, importModule, printCodegen,
   loadObject, toCFunction, packageLLVMCallable,
-  simpOptimizations, loweredOptimizations, compileTopLevelFun, ErrorHandling (..),
-  ExitStatus (..)) where
+  simpOptimizations, loweredOptimizations, compileTopLevelFun,
+  ExitStatus (..), parseSourceBlocks, captureLogs) where
 
 import Data.Functor
 import Data.Maybe (catMaybes)
@@ -23,7 +22,8 @@ import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import qualified Data.ByteString as BS
-import Data.Text (Text)
+import qualified Data.Text as T
+import Data.IORef
 import Data.Text.Prettyprint.Doc
 import Data.Store (encode, decode)
 import Data.String (fromString)
@@ -82,7 +82,6 @@ import Vectorize
 -- === top-level monad ===
 
 data LibPath = LibDirectory FilePath | LibBuiltinPath
-data ErrorHandling = HaltOnErr | ContinueOnErr
 
 data EvalConfig = EvalConfig
   { backendName   :: Backend
@@ -90,10 +89,9 @@ data EvalConfig = EvalConfig
   , preludeFile   :: Maybe FilePath
   , optLevel      :: OptLevel
   , printBackend  :: PrintBackend
-  , errorHandling :: ErrorHandling
-  , cfgLogLevel   :: LogLevel
-  , cfgLogAction  :: Outputs -> IO ()}
+  , cfgLogLevel   :: LogLevel }
 
+type LogAction = Outputs -> IO ()
 class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
@@ -114,6 +112,7 @@ class ( forall n. Fallible (m n)
 
 data TopperReaderData = TopperReaderData
   { topperEvalConfig :: EvalConfig
+  , topperLogAction  :: LogAction
   , topperRuntimeEnv :: RuntimeEnv }
 
 newtype TopperM (n::S) a = TopperM
@@ -132,12 +131,12 @@ data TopSerializedStateEx where
   TopSerializedStateEx :: Distinct n => SerializedEnv n -> TopSerializedStateEx
 
 runTopperM
-  :: EvalConfig -> TopStateEx
+  :: EvalConfig -> LogAction -> TopStateEx
   -> (forall n. Mut n => TopperM n a)
   -> IO (a, TopStateEx)
-runTopperM opts (TopStateEx env rtEnv) cont = do
+runTopperM opts logger (TopStateEx env rtEnv) cont = do
   Abs frag (LiftE result) <-
-    flip runReaderT (TopperReaderData opts rtEnv) $
+    flip runReaderT (TopperReaderData opts logger rtEnv) $
       runTopBuilderT env $ runTopperM' do
         localTopBuilder $ LiftE <$> cont
   return (result, extendTopEnv env rtEnv frag)
@@ -157,31 +156,22 @@ allocateDynamicVarKeyPtrs = do
   ptr <- createTLSKey
   return [(OutStreamDyvar, castPtr ptr)]
 
+captureLogs :: (LogAction -> IO a) -> IO (a, Outputs)
+captureLogs cont = do
+  ref <- newIORef mempty
+  ans <- cont \outs -> modifyIORef ref (<>outs)
+  finalOuts <- readIORef ref
+  return (ans, finalOuts)
+
 -- ======
 
-evalSourceBlockIO
-  :: EvalConfig -> TopStateEx -> SourceBlock -> IO (ExitStatus, TopStateEx)
-evalSourceBlockIO opts env block =
-  runTopperM opts env $ evalSourceBlockRepl block
+parseSourceBlocks :: T.Text -> [SourceBlock]
+parseSourceBlocks source = uModuleSourceBlocks $ parseUModule Main source
 
--- Used for the top-level source file (rather than imported modules)
-evalSourceText :: (Topper m, Mut n) => Text -> (SourceBlock -> IO ()) -> m n ()
-evalSourceText source logSourceBlock = do
-  let UModule mname deps sbs = parseUModule Main source
-  mapM_ ensureModuleLoaded deps
-  evalSourceBlocks mname sbs
-  where
-    evalSourceBlocks mname = \case
-      [] -> return ()
-      sb:rest -> do
-        liftIO $ logSourceBlock sb
-        evalSourceBlock mname sb >>= \case
-          Success () -> return ()
-          Failure e -> do
-            logTop $ Error e
-            (errorHandling <$> getConfig) >>= \case
-              HaltOnErr -> return ()
-              ContinueOnErr -> evalSourceBlocks mname rest
+evalSourceBlockIO
+  :: EvalConfig -> LogAction -> TopStateEx -> SourceBlock -> IO (ExitStatus, TopStateEx)
+evalSourceBlockIO opts logger env block =
+  runTopperM opts logger env $ evalSourceBlockRepl block
 
 data ExitStatus = ExitSuccess | ExitFailure  deriving (Show)
 
@@ -820,7 +810,7 @@ instance Logger Outputs (TopperM n) where
   getLogLevel = cfgLogLevel <$> getConfig
 
 instance HasIOLogger Outputs (TopperM n) where
-  getIOLogAction = cfgLogAction <$> getConfig
+  getIOLogAction = TopperM $ asks topperLogAction
 
 instance Generic TopStateEx where
   type Rep TopStateEx = Rep (Env UnsafeS, RuntimeEnv)

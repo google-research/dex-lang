@@ -343,11 +343,15 @@ function highlightTreeNode(isTemporary: boolean, node: TreeNode, highlightType:H
             }})}
 }
 type RenderMode = "Static" | "Dynamic"
-function render(renderMode:RenderMode) {
+function render(renderMode:RenderMode, jsonData:string) {
     switch (renderMode) {
         case "Static":
-            // For static pages, simply call rendering functions once.
-            // renderLaTeX(document);
+            const req = new XMLHttpRequest()
+            req.open('GET', jsonData, true)
+            req.responseType = 'json'
+            req.onload = function() {
+                processUpdates(req.response)}
+            req.send()
             break
         case "Dynamic":
           const source = new EventSource("/getnext");

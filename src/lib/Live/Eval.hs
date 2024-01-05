@@ -9,7 +9,7 @@
 module Live.Eval (
   watchAndEvalFile, EvalServer, CellState (..), CellUpdate (..), CellsState, CellsUpdate,
   NodeList (..), NodeListUpdate (..), subscribeIO,
-  CellStatus (..), nodeListAsUpdate, NodeId) where
+  CellStatus (..), nodeListAsUpdate, NodeId, evalFileNonInteractive) where
 
 import Control.Concurrent
 import Control.Monad
@@ -20,6 +20,7 @@ import Data.Aeson (ToJSON)
 import Data.Functor ((<&>))
 import Data.Maybe (fromJust)
 import Data.Text (Text)
+import Data.IORef
 import Prelude hiding (span)
 import GHC.Generics
 
@@ -29,6 +30,7 @@ import Types.Source
 import TopLevel
 import ConcreteSyntax
 import MonadUtil
+import Util (readFileText)
 
 -- === Top-level interface ===
 
@@ -43,9 +45,22 @@ watchAndEvalFile fname opts env = do
   launchDagEvaluator opts parser env
 
 sourceBlockEvalFun :: EvalConfig -> Mailbox Outputs -> TopStateEx -> SourceBlock -> IO (ExitStatus, TopStateEx)
-sourceBlockEvalFun cfg resultChan env block = do
-  let cfg' = cfg { cfgLogAction = send resultChan }
-  evalSourceBlockIO cfg' env block
+sourceBlockEvalFun cfg resultChan env block =
+  evalSourceBlockIO cfg (send resultChan) env block
+
+-- === Evaluating non-interactively to produce a standalone HTML page ===
+
+evalFileNonInteractive :: FilePath -> EvalConfig -> TopStateEx -> IO CellsState
+evalFileNonInteractive fname cfg initEnv = do
+  envRef <- newIORef initEnv
+  blocks <- parseSourceBlocks <$> readFileText fname
+  cellStates <- forM blocks \block -> do
+    env <- readIORef envRef
+    ((exitStatus, newEnv), outs) <- captureLogs \logger ->
+      evalSourceBlockIO cfg logger env block
+    writeIORef envRef newEnv
+    return $ CellState block (exitStatusAsCellStatus exitStatus) outs
+  runFreshNameT $ buildNodeList cellStates
 
 -- === DAG diff state ===
 
@@ -253,9 +268,7 @@ processJobUpdate jobId jobUpdate = do
       let nodeId = snd jobId
       case jobUpdate of
         JobComplete (exitStatus, newEnv) -> do
-          let newStatus = case exitStatus of
-                ExitSuccess -> Complete
-                ExitFailure -> CompleteWithErrors
+          let newStatus = exitStatusAsCellStatus exitStatus
           update $ UpdateCellState nodeId $ CellUpdate (OverwriteWith newStatus) mempty
           update $ UpdateCurJob Nothing
           update $ AppendEnv newEnv
@@ -263,6 +276,11 @@ processJobUpdate jobId jobUpdate = do
           flushDiffs
         PartialJobUpdate result -> update $ UpdateCellState nodeId $ CellUpdate NoChange result
     Nothing -> return () -- this job is a zombie
+
+exitStatusAsCellStatus :: ExitStatus -> CellStatus
+exitStatusAsCellStatus = \case
+  ExitSuccess -> Complete
+  ExitFailure -> CompleteWithErrors
 
 nextCellIndex :: EvaluatorM Int
 nextCellIndex = do

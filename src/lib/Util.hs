@@ -23,6 +23,8 @@ import Data.Maybe (catMaybes, mapMaybe)
 import Data.List (sort)
 import Data.Hashable (Hashable)
 import Data.Store (Store)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
@@ -359,6 +361,9 @@ instance Pretty a => Pretty (Tree a) where
   pretty = \case
     Leaf x -> pretty x
     Branch xs -> pretty xs
+
+readFileText :: MonadIO m => FilePath -> m T.Text
+readFileText fname = liftIO $ T.decodeUtf8 <$> BS.readFile fname
 
 -- === bytestrings paired with their hash digest ===
 

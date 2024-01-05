@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Live.Web (runWeb) where
+module Live.Web (runWeb, generateHTML) where
 
 import Control.Concurrent (readChan)
 import Control.Monad (forever)
@@ -17,6 +17,7 @@ import Data.Aeson (ToJSON, encode)
 import Data.Binary.Builder (fromByteString)
 import Data.ByteString.Lazy (toStrict)
 import qualified Data.ByteString as BS
+import System.Directory (withCurrentDirectory)
 
 -- import Paths_dex (getDataFileName)
 import RenderHtml
@@ -28,6 +29,16 @@ runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   putStrLn "Streaming output to http://localhost:8000/"
   run 8000 $ serveResults resultsChan
+
+pagesDir :: FilePath
+pagesDir = "pages"
+
+generateHTML :: FilePath -> FilePath -> EvalConfig -> TopStateEx -> IO ()
+generateHTML sourcePath destPath cfg env = do
+  finalState <- evalFileNonInteractive sourcePath cfg env
+  results <- renderResults finalState
+  withCurrentDirectory pagesDir do
+    renderStandaloneHTML destPath results
 
 serveResults :: EvalServer -> Application
 serveResults resultsSubscribe request respond = do
@@ -52,7 +63,7 @@ resultStream :: EvalServer -> StreamingBody
 resultStream resultsServer write flush = do
   sendUpdate ("start"::String)
   (initResult, resultsChan) <- subscribeIO resultsServer
-  (renderedInit, renderUpdateFun) <- renderResults initResult
+  (renderedInit, renderUpdateFun) <- renderResultsInc initResult
   sendUpdate renderedInit
   forever $ readChan resultsChan >>= renderUpdateFun >>= sendUpdate
   where

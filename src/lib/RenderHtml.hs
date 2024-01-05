@@ -7,15 +7,15 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
-module RenderHtml (
-  progHtml, pprintHtml, ToMarkup, renderSourceBlock, renderResults,
-  RenderedSourceBlock, RenderedOutputs) where
+module RenderHtml (renderResults, renderResultsInc, renderStandaloneHTML) where
 
 import Text.Blaze.Internal (MarkupM)
 import Text.Blaze.Html5 as H hiding (map, a, b)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
-import Data.Aeson (ToJSON (..))
+import Data.ByteString.Lazy (toStrict)
+import qualified Data.ByteString as BS
+import Data.Aeson (ToJSON (..), encode)
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
 import Data.Foldable (fold)
@@ -23,13 +23,10 @@ import Data.Maybe (fromJust)
 import Data.Functor ((<&>))
 import Data.String (fromString)
 import Data.Text    qualified as T
-import Data.Text.IO qualified as T
 import CMark (commonmarkToHtml)
-import System.IO.Unsafe
 import GHC.Generics
 
 import Err
-import Paths_dex (getDataFileName)
 import PPrint
 import Types.Source
 import Util (unsnoc, foldMapM)
@@ -59,8 +56,11 @@ instance IncState RenderedCellState where
   applyDiff (RenderedCellState sb status result) (RenderedCellUpdate status' result') =
     RenderedCellState sb (fromOverwritable (applyDiff (Overwritable status) status')) (result <> result')
 
-renderResults :: CellsState -> IO (RenderingUpdate, CellsUpdate -> IO RenderingUpdate)
-renderResults initState = do
+renderResults :: CellsState -> IO RenderingUpdate
+renderResults cellsState = fst <$> renderResultsInc cellsState
+
+renderResultsInc :: CellsState -> IO (RenderingUpdate, CellsUpdate -> IO RenderingUpdate)
+renderResultsInc initState = do
   (initRender, updates) <- runIncM renderCells initState
   return (nodeListAsUpdate initRender, updates)
 
@@ -265,38 +265,26 @@ instance ToJSON HighlightType
 
 -- -----------------
 
-cssSource :: T.Text
-cssSource = unsafePerformIO $
-  T.readFile =<< getDataFileName "static/style.css"
-{-# NOINLINE cssSource #-}
+renderStandaloneHTML :: FilePath -> RenderingUpdate -> IO ()
+renderStandaloneHTML pagePath renderingInfo = do
+  let jsonPath = pagePath ++ ".json"
+  let htmlPath = pagePath ++ ".html"
+  BS.writeFile jsonPath $ toStrict $ encode renderingInfo
+  writeFile htmlPath $ renderHtml $ buildMainHtml jsonPath
 
-javascriptSource :: T.Text
-javascriptSource = unsafePerformIO $
-  T.readFile =<< getDataFileName "static/index.js"
-{-# NOINLINE javascriptSource #-}
-
-pprintHtml :: ToMarkup a => a -> String
-pprintHtml x = renderHtml $ toMarkup x
-
-progHtml :: (ToMarkup a, ToMarkup b) => [(a, b)] -> String
-progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
-  where toHtmlBlock (block,outputs) = toMarkup block <> toMarkup outputs
-
-wrapBody :: [Html] -> Html
-wrapBody blocks = docTypeHtml $ do
-  H.head $ do
+buildMainHtml :: FilePath -> Html
+buildMainHtml jsonPath = docTypeHtml $ do
+  H.head do
     H.meta ! charset "UTF-8"
-    -- Base CSS stylesheet.
-    H.style ! type_ "text/css" $ toHtml cssSource
-    -- KaTeX CSS and JavaScript.
-    H.link ! rel "stylesheet" ! href "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.css"
-    H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/katex.min.js" $ mempty
-    H.script ! defer "" ! src "https://cdn.jsdelivr.net/npm/katex@0.12.0/dist/contrib/auto-render.min.js"
-             ! onload jsSource $ mempty
-  H.body $ H.div inner ! At.id "main-output"
+    H.link ! rel "stylesheet" ! type_ "text/css" ! href "/static/style.css"
+  H.body ! onload (textValue $ fromString jsSource) $ do
+    H.div mempty ! At.id "minimap"
+    H.div "(hover over code for more information)" ! At.id "hover-info"
+    H.div mempty ! At.id "main-output"
+    H.script ! src "/static/index.js" $ mempty
   where
-    inner = foldMap (cdiv "cell") blocks
-    jsSource = textValue $ javascriptSource <> "render(RENDER_MODE.STATIC);"
+    jsSource :: String
+    jsSource = "render('Static', '/" ++ jsonPath ++ "');"
 
 mdToHtml :: T.Text -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] s

@@ -12,7 +12,7 @@ To learn more, check out our
 our [tutorial](https://google-research.github.io/dex-lang/examples/tutorial.html)
 or these example programs:
 
-  * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
+  * [Dex prelude](https://google-research.github.io/dex-lang/lib/prelude.html)
   * [Mandelbrot set](https://google-research.github.io/dex-lang/examples/mandelbrot.html)
   * [Ray tracer](https://google-research.github.io/dex-lang/examples/raytrace.html)
   * [Estimating pi](https://google-research.github.io/dex-lang/examples/pi.html)
