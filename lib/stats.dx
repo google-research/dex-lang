@@ -20,10 +20,10 @@ actual value being represented (the raw probability) can be computed with
  use `ls_sum`, which applies the standard max-sweep log-sum-exp trick directly,
 rather than relying on monoid reduction using `add`.
 
-struct LogSpace(a) =
+struct LogSpace(a:Type) =
   log : a
 
-def Exp(x:a) -> LogSpace a given (a) = LogSpace x
+def Exp(x:a) -> LogSpace a given (a:Type) = LogSpace x
 
 instance Mul(LogSpace f) given (f|Add)
   def (*)(x, y) = Exp $ x.log + y.log
@@ -38,14 +38,14 @@ instance Arbitrary(LogSpace Float)
 def is_infinite(x:f) -> Bool given (f|Fractional|Sub|Mul|Ord) =
   # Note: According to this function, nan is not infinite.
   # Todo: Make polymorphic versions of these and put them in the prelude.
-  infinity = divide one zero
-  neg_infinity = zero - infinity
+  infinity     : f = divide one zero
+  neg_infinity : f = zero - infinity
   x == infinity || x == neg_infinity
 
 def log_add_exp(la:f, lb:f) -> f
     given (f|Floating|Add|Sub|Mul|Fractional|Ord) =
-  infinity = (divide one zero)
-  neg_infinity = zero - infinity
+  infinity     : f = divide(one, zero)
+  neg_infinity : f = zero - infinity
   if la == infinity && lb == infinity
     then infinity
     else if la == neg_infinity && lb == neg_infinity
@@ -66,27 +66,29 @@ def ln(x:LogSpace f) -> f given (f|Floating) = x.log
 
 def log_sum_exp(xs:n=>f) -> f
     given(n|Ix, f|Fractional|Sub|Floating|Mul|Ord) =
-  m_raw = maximum xs
-  m = case is_infinite m_raw of
+  m_raw = maximum(xs)
+  m = case is_infinite(m_raw) of
     False -> m_raw
     True  -> zero
-  m + (log $ sum for i. exp (xs[i] - m))
+  m + (log $ sum $ each xs \x. exp(x) - m)
 
 def ls_sum(x:n=>LogSpace f) -> LogSpace f
     given (n|Ix, f|Fractional|Sub|Floating|Mul|Ord) =
-  lx = map ln x
+  lx = each(x, ln)
   Exp $ log_sum_exp lx
 
 '## Probability distributions
 Simulation and evaluation of [probability distributions](https://en.wikipedia.org/wiki/Probability_distribution). Probability distributions which can be sampled should implement `Random`, and those which can be evaluated should implement the `Dist` interface. Distributions over an ordered space (such as typical *univariate* distributions) should also implement `OrderedDist`.
 
-interface Random(d, a)
+# TODO: use an associated type for the `a` parameter
+interface Random(d:Type, a:Type)
   draw : (d, Key) -> a                # function for random draws
 
-interface Dist(d, a, f)
+# TODO: use an associated type for the `a` parameter
+interface Dist(d:Type, a:Type, f:Type)
   density : (d, a) -> LogSpace f      # either the density function or mass function
 
-interface OrderedDist(d, a, f, given () (Dist d a f))
+interface OrderedDist(d:Type, a:Type, f:Type, given () (Dist d a f))
   cumulative : (d, a) -> LogSpace f   # the cumulative distribution function (CDF)
   survivor   : (d, a) -> LogSpace f   # the survivor function (complement of CDF)
   quantile   : (d, f) -> a            # the quantile function (inverse CDF)
@@ -131,7 +133,7 @@ struct Binomial =
 
 instance Random(Binomial, Nat)
   def draw(d, k) =
-    sum $ map b_to_n (rand_vec d.trials (\k_. draw(Bernoulli(d.prob), k_)) k)
+    sum $ each (rand_vec d.trials (\k_. draw(a=Bool, Bernoulli(d.prob), k_)) k) b_to_n
 
 instance Dist(Binomial, Nat, Float)
   def density(d, x) =
@@ -157,13 +159,13 @@ instance Dist(Binomial, Nat, Float)
 instance OrderedDist(Binomial, Nat, Float)
   def cumulative(d, x) =
     xp1:Nat = x + 1
-    ls_sum $ for i:(Fin xp1). density d (ordinal i)
+    ls_sum $ for i:(Fin xp1). density(f=Float, d, ordinal i)
   def survivor(d, x) =
     tmx = d.trials -| x
-    ls_sum $ for i:(Fin tmx). density d (x + 1 + ordinal i)
+    ls_sum $ for i:(Fin tmx). density(f=Float, d, x + 1 + ordinal i)
   def quantile(d, q) =
     tp1:Nat = d.trials + 1
-    lpdf = for i:(Fin tp1). ln $ density d (ordinal i)
+    lpdf = for i:(Fin tp1). ln $ density(f=Float, d, ordinal i)
     cdf = cdf_for_categorical lpdf
     mi = search_sorted cdf q
     ordinal $ from_just $ left_fence mi
@@ -257,13 +259,13 @@ struct Poisson =
 instance Random(Poisson, Nat)
   def draw(d, k) =
     exp_neg_rate = exp (-d.rate)
-    [current_k, next_k] = split_key k
+    [current_k, next_k] = split_key(n=2, k)
     yield_state 0 \ans.
       with_state (rand current_k) \p. with_state next_k \k'.
         while \.
           if get p > exp_neg_rate
             then
-              [ck, nk] = split_key (get k')
+              [ck, nk] = split_key(n=2, get k')
               p := (get p) * rand ck
               ans := (get ans) + 1
               k' := nk
@@ -283,16 +285,16 @@ instance Dist(Poisson, Nat, Float)
 instance OrderedDist(Poisson, Nat, Float)
   def cumulative(d, x) =
     xp1:Nat = x + 1
-    ls_sum $ for i:(Fin xp1). density d (ordinal i)
+    ls_sum $ for i:(Fin xp1). density(f=Float, d, ordinal i)
   def survivor(d, x) =
     xp1:Nat = x + 1
-    cdf = ls_sum $ for i:(Fin xp1). density d (ordinal i)
+    cdf = ls_sum $ for i:(Fin xp1). density(f=Float, d, ordinal i)
     Exp $ log1p (-ls_to_f cdf)
   def quantile(d, q) =
     yield_state (0::Nat) \x.
       with_state 0.0 \cdf.
         while \.
-          cdf := (get cdf) + ls_to_f (density d (get x))
+          cdf := (get cdf) + ls_to_f (density(f=Float, d ,get x))
           if (get cdf) > q
             then
               False
@@ -340,7 +342,7 @@ Some data summary functions. Note that `mean` is provided by the prelude.
 
 def mean_and_variance(xs:n=>a) -> (a, a) given (n|Ix, a|VSpace|Mul) =
   m = mean xs
-  ss = sum for i. sq (xs[i] - m)
+  ss = sum $ each xs \x. sq(x - m)
   v = ss / (n_to_f (size n) - 1)
   (m, v)
 
@@ -353,7 +355,7 @@ def std_dev(xs:n=>a) -> a given (n|Ix, a|VSpace|Mul|Floating) =
 def covariance(xs:n=>a, ys:n=>a) -> a given (n|Ix, a|VSpace|Mul) =
   xm = mean xs
   ym = mean ys
-  ss = sum for i. (xs[i] - xm) * (ys[i] - ym)
+  ss = sum for i:n. (xs[i] - xm) * (ys[i] - ym)
   ss / (n_to_f (size n) - 1)
 
 def correlation(xs:n=>a, ys:n=>a) -> a
@@ -364,8 +366,8 @@ def correlation(xs:n=>a, ys:n=>a) -> a
 
 def mean_and_variance_matrix(xs:n=>d=>a) -> (d=>a, d=>d=>a)
     given (n|Ix, d|Ix, a|Mul|VSpace) =
-  xsMean:d=>a = (for i. sum for j. xs[j,i]) / n_to_f (size n)
-  xsCov:d=>d=>a = (for i i'. sum for j.
+  xsMean:d=>a = (for i:d. sum for j:n. xs[j,i]) / n_to_f (size n)
+  xsCov:d=>d=>a = (for i:d i':d. sum for j:n.
                          (xs[j,i'] - xsMean[i']) *
                          (xs[j,i]  - xsMean[i] ) ) / (n_to_f (size n) - 1)
   (xsMean, xsCov)

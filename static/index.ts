@@ -22,7 +22,7 @@ type HighlightType = "HighlightGroup" |  "HighlightLeaf" | "HighlightError" | "H
                    | "HighlightBinder" | "HighlightOcc"
 type Highlight    = [SrcId, HighlightType]
 
-type HsMaybe<T> = {tag:"Just"; contents:T} | {tag: "Nothing"}
+type HsMaybe<T> = T | null
 type HsOverwrite<T> = {tag:"OverwriteWith"; contents:T} | {tag: "NoChange"}
 
 type FocusMap = Map<LexemeId, SrcId>
@@ -249,8 +249,8 @@ function extendCellOutput(cell: Cell, outputs:HsRenderedOutput[]) {
                 break
             case "RenderedError":
                 const [maybeSrcId, errMsg] = output.contents
-                if (maybeSrcId.tag == "Just") {
-                    const node : TreeNode = cell.treeMap.get(maybeSrcId.contents) ?? oops()
+                if (maybeSrcId !== null) {
+                    const node : TreeNode = cell.treeMap.get(maybeSrcId) ?? oops()
                     highlightTreeNode(false, node, "HighlightError")}
                 addErrResult(cell, errMsg)
                 break

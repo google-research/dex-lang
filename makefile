@@ -215,11 +215,13 @@ example-names := \
   regression brownian_motion particle-swarm-optimizer \
   ode-integrator mcmc ctc raytrace particle-filter \
   fluidsim \
-  sgd psd kernelregression nn \
+  sgd nn \
   quaternions manifold-gradients schrodinger tutorial \
-  latex linear-maps dither mcts md bfgs
+  latex dither mcts md bfgs
+
 # TODO: re-enable
 # fft vega-plotting
+# examples depending on linalg: linear-maps, psd, kernelregression
 
 # Only test levenshtein-distance on Linux, because MacOS ships with a
 # different (apparently _very_ different) word list.
@@ -422,6 +424,9 @@ pages-example-files = $(example-names:%=pages/examples/%.html)
 lib-files = $(filter-out lib/prelude.dx,$(wildcard lib/*.dx))
 pages-lib-files = $(patsubst %.dx,pages/%.html,$(lib-files))
 static-files = $(static-names:%=pages/static/%)
+
+serve-docs:
+	cd pages && python3 -m http.server
 
 docs: $(static-files) pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
 
