@@ -276,12 +276,12 @@ buildMainHtml :: FilePath -> Html
 buildMainHtml jsonPath = docTypeHtml $ do
   H.head do
     H.meta ! charset "UTF-8"
-    H.link ! rel "stylesheet" ! type_ "text/css" ! href "/static/style.css"
+    H.link ! rel "stylesheet" ! type_ "text/css" ! href "/dex-lang/static/style.css"
   H.body ! onload (textValue $ fromString jsSource) $ do
     H.div mempty ! At.id "minimap"
     H.div "(hover over code for more information)" ! At.id "hover-info"
     H.div mempty ! At.id "main-output"
-    H.script ! src "/static/index.js" $ mempty
+    H.script ! src "/dex-lang/static/index.js" $ mempty
   where
     jsSource :: String
     jsSource = "render('Static', '/" ++ jsonPath ++ "');"

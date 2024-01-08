@@ -45,6 +45,6 @@ jobs:
       with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: gh-pages # The branch the action should deploy to.
-          folder: pages    # The folder the action should deploy.
+          folder: pages/dex-lang # The folder the action should deploy.
           clean: false     # If true, automatically remove deleted files from the deploy branch.
           commit-message: Updating gh-pages from ${{ github.sha }}

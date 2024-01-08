@@ -413,48 +413,48 @@ bench-summary:
 
 # --- building docs ---
 
-slow-pages = pages/examples/mnist-nearest-neighbors.html
+slow-pages = pages/dex-lang/examples/mnist-nearest-neighbors.html
 static-names = dynamic.html index.js style.css
 
 doc-files = $(doc-names:%=doc/%.dx)
-pages-doc-files = $(doc-names:%=pages/%.html)
+pages-doc-files = $(doc-names:%=pages/dex-lang/%.html)
 example-files = $(example-names:%=examples/%.dx)
-pages-example-files = $(example-names:%=pages/examples/%.html)
+pages-example-files = $(example-names:%=pages/dex-lang/examples/%.html)
 
 lib-files = $(filter-out lib/prelude.dx,$(wildcard lib/*.dx))
-pages-lib-files = $(patsubst %.dx,pages/%.html,$(lib-files))
-static-files = $(static-names:%=pages/static/%)
+pages-lib-files = $(patsubst %.dx,pages/dex-lang/%.html,$(lib-files))
+static-files = $(static-names:%=pages/dex-lang/static/%)
 
 serve-docs:
 	cd pages && python3 -m http.server
 
-docs: $(static-files) pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/index.md
+docs: $(static-files) pages-prelude $(pages-doc-files) $(pages-example-files) $(pages-lib-files) $(slow-pages) pages/dex-lang/index.md
 
-pages/static/%: static/%
-	mkdir -p pages/static
+pages/dex-lang/static/%: static/%
+	mkdir -p pages/dex-lang/static
 	cp $^ $@
 
 pages-prelude: lib/prelude.dx
-	mkdir -p pages/lib
-	$(dex) --prelude /dev/null generate-html lib/prelude.dx lib/prelude
+	mkdir -p pages/dex-lang/lib
+	$(dex) --prelude /dev/null generate-html lib/prelude.dx dex-lang/lib/prelude
 
-pages/examples/tutorial.html: tutorial-data
-pages/examples/dither.html: dither-data
+pages/dex-lang/examples/tutorial.html: tutorial-data
+pages/dex-lang/examples/dither.html: dither-data
 
-pages/examples/%.html: examples/%.dx
-	mkdir -p pages/examples
-	$(dex) generate-html $< examples/$*
+pages/dex-lang/examples/%.html: examples/%.dx
+	mkdir -p pages/dex-lang/examples
+	$(dex) generate-html $< dex-lang/examples/$*
 
-pages/lib/%.html: lib/%.dx
-	mkdir -p pages/lib
-	$(dex) generate-html $^ lib/$*
+pages/dex-lang/lib/%.html: lib/%.dx
+	mkdir -p pages/dex-lang/lib
+	$(dex) generate-html $^ dex-lang/lib/$*
 
-pages/index.md: $(doc-files) $(example-files) $(lib-files)
+pages/dex-lang/index.md: $(doc-files) $(example-files) $(lib-files)
 	python3 misc/build-web-index "$(doc-files)" "$(example-files)" "$(lib-files)" > $@
 
-${pages-doc-files}:pages/%.html: doc/%.dx
-	mkdir -p pages
-	$(dex) generate-html $^ $*
+${pages-doc-files}:pages/dex-lang/%.html: doc/%.dx
+	mkdir -p pages/dex-lang
+	$(dex) generate-html $^ dex-lang/$*
 
 clean:
 	$(STACK) clean
