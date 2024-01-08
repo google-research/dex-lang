@@ -103,6 +103,7 @@ type TopLogger m = (MonadIO m, Logger Outputs m)
 class ( forall n. Fallible (m n)
       , forall n. Logger Outputs (m n)
       , forall n. HasIOLogger Outputs (m n)
+      , forall n. CanSetIOLogger Outputs (m n)
       , forall n. Catchable (m n)
       , forall n. ConfigReader (m n)
       , forall n. RuntimeEnvReader (m n)
@@ -421,13 +422,24 @@ evalPartiallyParsedUModule partiallyParsed = do
 
 -- Assumes all module dependencies have been loaded already
 evalUModule :: (Topper m, Mut n) => UModule -> m n (Module n)
-evalUModule (UModule name _ blocks) = do
+evalUModule (UModule name _ blocks) = dropSourceInfoLogging do
   Abs topFrag UnitE <- localTopBuilder $ mapM_ (evalSourceBlock' name) blocks >> return UnitE
   TopEnvFrag envFrag moduleEnvFrag otherUpdates <- return topFrag
   ModuleEnv (ImportStatus directDeps transDeps) sm scs <- return moduleEnvFrag
   let fragToReEmit = TopEnvFrag envFrag mempty otherUpdates
   let evaluatedModule = Module name directDeps transDeps sm scs
   emitEnv $ Abs fragToReEmit evaluatedModule
+
+dropSourceInfoLogging :: Topper m => m n a -> m n a
+dropSourceInfoLogging cont = do
+  (ans, Outputs logs) <- captureIOLogs cont
+  let logs' = filter isNotSourceInfo logs
+  emitLog $ Outputs logs'
+  return ans
+  where
+    isNotSourceInfo = \case
+      SourceInfo _ -> False
+      _ -> True
 
 importModule :: (Mut n, TopBuilder m, Fallible1 m) => ModuleSourceName -> m n ()
 importModule name = do
@@ -811,6 +823,10 @@ instance Logger Outputs (TopperM n) where
 
 instance HasIOLogger Outputs (TopperM n) where
   getIOLogAction = TopperM $ asks topperLogAction
+
+instance CanSetIOLogger Outputs (TopperM n) where
+  withIOLogAction logger (TopperM m) = TopperM do
+    local (\r -> r { topperLogAction = logger }) m
 
 instance Generic TopStateEx where
   type Rep TopStateEx = Rep (Env UnsafeS, RuntimeEnv)

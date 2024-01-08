@@ -8,12 +8,14 @@
 
 module MonadUtil (
   DefuncState (..), LabelReader (..), SingletonLabel (..), FreshNames (..),
-  runFreshNameT, FreshNameT (..), Logger (..), LogLevel (..), getIOLogger,
-  IOLoggerT (..), runIOLoggerT, LoggerT (..), runLoggerT, IOLogger (..), HasIOLogger (..)) where
+  runFreshNameT, FreshNameT (..), Logger (..), LogLevel (..), getIOLogger, CanSetIOLogger (..),
+  IOLoggerT (..), runIOLoggerT, LoggerT (..), runLoggerT,
+  IOLogger (..), HasIOLogger (..), captureIOLogs) where
 
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict
+import Data.IORef
 
 import Err
 
@@ -70,8 +72,15 @@ newtype IOLoggerT w m a = IOLoggerT { runIOLoggerT' :: ReaderT (IOLogger w) m a 
 class Monad m => HasIOLogger w m | m -> w where
   getIOLogAction :: Monad m => m (w -> IO ())
 
+class Monad m => CanSetIOLogger w m | m -> w where
+  withIOLogAction :: Monad m => (w -> IO ()) -> m a -> m a
+
 instance (Monoid w, MonadIO m) => HasIOLogger w (IOLoggerT w m) where
   getIOLogAction = IOLoggerT $ asks ioLogAction
+
+instance (Monoid w, MonadIO m) => CanSetIOLogger w (IOLoggerT w m) where
+  withIOLogAction logger (IOLoggerT m) = IOLoggerT do
+    local (\r -> r { ioLogAction = logger }) m
 
 instance (Monoid w, MonadIO m) => Logger w (IOLoggerT w m) where
   emitLog w = do
@@ -94,3 +103,13 @@ instance (Monoid w, Monad m) => Logger w (LoggerT w m) where
 
 runLoggerT :: (Monoid w, Monad m) => LoggerT w m a -> m (a, w)
 runLoggerT cont = runWriterT (runLoggerT' cont)
+
+captureIOLogs
+  :: forall w m a. (Monoid w, MonadIO m, HasIOLogger w m, CanSetIOLogger w m)
+  => m a -> m (a, w)
+captureIOLogs cont = do
+  ref <- liftIO $ newIORef (mempty :: w)
+  ans <- withIOLogAction (\w -> modifyIORef ref (<> w)) cont
+  w <- liftIO $ readIORef ref
+  return (ans, w)
+
