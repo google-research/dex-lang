@@ -21,15 +21,12 @@
 - [examples/particle-filter.dx](examples/particle-filter.html) Particle Filter
 - [examples/fluidsim.dx](examples/fluidsim.html) Fluid Simulation
 - [examples/sgd.dx](examples/sgd.html) Stochastic Gradient Descent with Momentum
-- [examples/psd.dx](examples/psd.html) PSD Solver Based on Cholesky Decomposition
-- [examples/kernelregression.dx](examples/kernelregression.html) Kernel Regression
 - [examples/nn.dx](examples/nn.html) Neural Networks
 - [examples/quaternions.dx](examples/quaternions.html) Rotations with quaternions
 - [examples/manifold-gradients.dx](examples/manifold-gradients.html) Gradients on manifolds
 - [examples/schrodinger.dx](examples/schrodinger.html) 2D Time-Dependent Schrodinger Equation
 - [examples/tutorial.dx](examples/tutorial.html) Introduction to Dex
 - [examples/latex.dx](examples/latex.html) $\href{https://katex.org/}{\KaTeX}$ Rendering Examples
-- [examples/linear-maps.dx](examples/linear-maps.html) Polymorphic Operations on Linear Maps
 - [examples/dither.dx](examples/dither.html) Dither.dx
 - [examples/mcts.dx](examples/mcts.html) Monte Carlo Tree Search
 - [examples/md.dx](examples/md.html) Molecular Dynamics in Dex
@@ -38,7 +35,7 @@
 
 ## Libraries
 
-- [lib/prelude.dx](prelude.html): The Dex Prelude (automatically imported)
+- [lib/prelude.dx](lib/prelude.html): The Dex Prelude (automatically imported)
 - [lib/netpbm.dx](lib/netpbm.html) Netpbm
 - [lib/sort.dx](lib/sort.html) Monoidal Merge Sort
 - [lib/parser.dx](lib/parser.html) Parser Combinators

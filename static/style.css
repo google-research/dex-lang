@@ -1,0 +1,98 @@
+/* Copyright 2019 Google LLC                              */
+/*                                                        */
+/* Use of this source code is governed by a BSD-style     */
+/* license that can be found in the LICENSE file or at    */
+/* https://developers.google.com/open-source/licenses/bsd */
+
+body {
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  color: #333;
+  overflow-x: hidden;
+  padding-bottom:50vw;
+}
+
+#main-output {
+  margin-left: 20px;
+}
+#minimap {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0em;
+  left: 0em;
+  height: 85vh;
+  width: 32px;
+  overflow: hidden;
+}
+.status {
+  flex: 1;
+  width  : 30px;
+  border-top: 1px solid;
+  border-color: lightgray;
+  margin-left: 1px;
+}
+#hover-info {
+  position: fixed;
+  height: 15vh;
+  bottom: 0em;
+  width: 100vw;
+  overflow: hidden;
+  background-color: white;
+  border-top: 1px solid firebrick;
+  font-family: monospace;
+  white-space: pre;
+}
+/* cell structure */
+.cell {
+  margin-left: 5px;
+  display: flex;
+}
+.line-nums {
+  flex: 0 0 3em;
+  height: 100%;
+  text-align: right;
+  color: #808080;
+  font-family: monospace;
+  white-space: pre;
+}
+.contents {
+  margin-left: 1em;
+  font-family: monospace;
+  white-space: pre;
+}
+
+/* special results */
+.err-result {
+  font-weight: bold;
+  color: #B22222;
+}
+
+/* status colors */
+.status-inert   {}
+.status-waiting {background-color: gray;}
+.status-running {background-color: lightblue;}
+.status-err     {background-color: red;}
+.status-success {background-color: white;}
+
+/* span highlighting */
+.highlight-error {
+  text-decoration: red underline;
+  text-decoration-thickness: 5px;
+  text-decoration-skip-ink: none;}
+.highlight-group { background-color: yellow; }
+.highlight-scope { background-color: lightyellow; }
+.highlight-binder { background-color: lightblue; }
+.highlight-occ    { background-color: yellow; }
+.highlight-leaf  { background-color: lightgray; }
+
+/* lexeme colors */
+.comment   {color: gray;}
+.keyword   {color: #0000DD;}
+.command   {color: #A80000;}
+.symbol    {color: #E07000;}
+.type-name {color: #A80000;}
+
+.status-hover {
+  background-color: yellow;
+}
