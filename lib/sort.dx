@@ -12,7 +12,7 @@ it's doing bubble / insertion sort with quadratic time cost.
 However, if it breaks the list in half recursively, it'll be doing parallel mergesort.
 Currently the Dex compiler will do the quadratic-time version.
 
-def concat_table(leftin: a=>v, rightin: b=>v) -> (Either a b=>v) given (a|Ix, b|Ix, v) =
+def concat_table(leftin: a=>v, rightin: b=>v) -> (Either a b=>v) given (a|Ix, b|Ix, v:Type) =
   for idx. case idx of
     Left i  -> leftin[i]
     Right i -> rightin[i]
@@ -50,17 +50,11 @@ def merge_sorted_lists(lx: List a, ly: List a) -> List a given (a|Ord) =
   newsize = nx + ny
   AsList _ $ unsafe_cast_table(to=Fin newsize, sorted)
 
+# Warning: Has quadratic runtime cost for now.
 def sort(xs: n=>a) -> n=>a given (n|Ix, a|Ord) =
-  # Warning: Has quadratic runtime cost for now.
-
-  xlists = for i:n. (AsList 1 [xs[i]])
-
-  # Merge sort monoid:
-  mempty = AsList 0 []
-  mcombine = merge_sorted_lists
-
+  xlists = each xs \x. to_list([x])
   # reduce might someday recursively subdivide the problem.
-  AsList(_, r) = reduce mempty mcombine xlists
+  AsList(_, r) = reduce xlists mempty merge_sorted_lists
   unsafe_cast_table(to=n, r)
 
 def (+|)(i:n, delta:Nat) -> n  given (n|Ix) =
@@ -68,4 +62,4 @@ def (+|)(i:n, delta:Nat) -> n  given (n|Ix) =
   from_ordinal $ select (i' >= size n) (size n -| 1) i'
 
 def is_sorted(xs:n=>a) -> Bool given (a|Ord, n|Ix) =
-  all for i. xs[i] <= xs[i +| 1]
+  all for i:n. xs[i] <= xs[i +| 1]

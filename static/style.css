@@ -77,7 +77,8 @@ body {
 
 /* span highlighting */
 .highlight-error {
-  text-decoration: red wavy underline;
+  text-decoration: red underline;
+  text-decoration-thickness: 5px;
   text-decoration-skip-ink: none;}
 .highlight-group { background-color: yellow; }
 .highlight-scope { background-color: lightyellow; }

@@ -358,39 +358,19 @@ function render(renderMode:RenderMode, jsonData:string) {
           source.onmessage = function(event) {
               const msg = JSON.parse(event.data);
               if (msg == "start") {
-                  body.innerHTML = ""
-                  cells.clear()
-                  return
+                  resetState()
               } else {
                   processUpdates(msg)
               }};}
 }
-const katexOptions = {
-    delimiters: [
-        {left: "$$", right: "$$", display: true},
-        {left: "\\[", right: "\\]", display: true},
-        {left: "$", right: "$", display: false},
-        {left: "\\(", right: "\\)", display: false}
-    ],
-    // Enable commands that load resources or change HTML attributes
-    // (e.g. hyperlinks): https://katex.org/docs/security.html.
-    trust: true
-};
-
-function renderLaTeX(root:Div) {
-    // // Render LaTeX equations in prose blocks via KaTeX, if available.
-    // // Skip rendering if KaTeX is unavailable.
-    // let renderMathInElement: any
-    // if (typeof renderMathInElement == 'undefined') {
-    //     return;
-    // }
-    // // Render LaTeX equations in prose blocks via KaTeX.
-    // const proseBlocks = root.querySelectorAll(".prose-block");
-    // Array.from(proseBlocks).map((proseBlock) =>
-    //     renderMathInElement(proseBlock, katexOptions)
-    // );
+function resetState() {
+    body.innerHTML = ""
+    hoverInfoDiv.innerHTML = ""
+    minimap.innerHTML = ""
+    orderedCells.length = 0
+    curHighlights.length = 0
+    cells.clear()
 }
-
 // === hover system ===
 
 const curHighlights : [Div, string][] = []  // HTML elements currently highlighted
