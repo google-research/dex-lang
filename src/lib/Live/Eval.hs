@@ -55,12 +55,16 @@ evalFileNonInteractive fname cfg initEnv = do
   envRef <- newIORef initEnv
   blocks <- parseSourceBlocks <$> readFileText fname
   cellStates <- forM blocks \block -> do
-    env <- readIORef envRef
-    ((exitStatus, newEnv), outs) <- captureLogs \logger ->
-      evalSourceBlockIO cfg logger env block
-    writeIORef envRef newEnv
-    return $ CellState block (exitStatusAsCellStatus exitStatus) outs
+    if isInert block
+      then return $ CellState block Inert mempty
+      else do
+        env <- readIORef envRef
+        ((exitStatus, newEnv), outs) <- captureLogs \logger ->
+          evalSourceBlockIO cfg logger env block
+        writeIORef envRef newEnv
+        return $ CellState block (exitStatusAsCellStatus exitStatus) outs
   runFreshNameT $ buildNodeList cellStates
+
 
 -- === DAG diff state ===
 
