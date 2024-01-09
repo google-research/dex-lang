@@ -50,6 +50,7 @@ library
                      , Core
                      , Err
                      , Export
+                     , Futhark.IR
                      , Generalize
                      , Imp
                      , ImpToLLVM
@@ -105,6 +106,7 @@ library
                      , containers
                      , cryptonite
                      , exceptions
+                     , half
                      , hashable
                      , llvm-hs
                      , llvm-hs-pure
