@@ -3,25 +3,28 @@
 import complex
 import plot
 
-'Escape time algorithm
+# Escape time algorithm
 
 def update(c:Complex, z:Complex) -> Complex = c + (z * z)
 
 tol = 2.0
-def inBounds(z:Complex) -> Bool = complex_abs z < tol
+def inBounds(z:Complex) -> Bool = complex_abs(z) < tol
 
-def escapeTime(c:Complex) -> Float =
-  fst $ fold (0.0, zero) $ \i:(Fin 1000) s.
-    (n, z) = s
-    z' = update c z
-    (n + b_to_f (inBounds z'), z')
+def escapeTime(c:Complex) -> Nat =
+  z <- with_state(zero :: Complex)
+  bounded_iter(1000, 1000) \i.
+    case inBounds(get(z)) of
+      False -> Done(i)
+      True ->
+        z := update(c, get(z))
+        Continue
 
-'Evaluate on a grid and plot the results
+# Evaluate on a grid and plot the results
 
-xs = linspace (Fin 300) (-2.0) 1.0
-ys = linspace (Fin 200) (-1.0) 1.0
+xs = linspace(Fin 300, -2.0, 1.0)
+ys = linspace(Fin 200, -1.0, 1.0)
 
-escapeGrid = for j i. escapeTime (Complex xs[i] ys[j])
+escapeGrid = each(ys) \y. each xs \x. n_to_f(escapeTime(Complex(x, y)))
 
-:html matshow (-escapeGrid)
+:html matshow(-escapeGrid)
 > <html output>

@@ -13,7 +13,7 @@
 'To compute $\pi$, randomly sample points in the first quadrant unit square to estimate the $\frac{A_{quadrant}}{A_{square}}$ ratio. Then, multiply by $4$.
 
 def estimatePiArea(key:Key) -> Float =
-  [k1, k2] = split_key key
+  [k1, k2] = split_key(n=2, key)
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0

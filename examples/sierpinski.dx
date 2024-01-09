@@ -7,19 +7,19 @@ def update(points:n=>Point, key:Key, p:Point) -> Point given (n|Ix) =
   p' = points[rand_idx key]
   Point(0.5 * (p.x + p'.x), 0.5 * (p.y + p'.y))
 
-def runChain(n:Nat, f:(Key, a) -> a, key:Key, x0:a) -> Fin n => a given (a|Data) =
+def runChain(n:Nat, key:Key, x0:a, f:(Key, a) -> a) -> Fin n => a given (a|Data) =
   ref <- with_state x0
   for i:(Fin n).
-    prev = get ref
     new = ixkey key i | f(get ref)
     ref := new
     new
 
 trianglePoints : (Fin 3)=>Point = [Point(0.0, 0.0), Point(1.0, 0.0), Point(0.5, sqrt 0.75)]
 
-points = runChain 3000 (\k p. update trianglePoints k p) (new_key 0) (Point 0.0 0.0)
+n = 3000
+points = runChain n (new_key 0) (Point 0.0 0.0) \k p. update trianglePoints k p
 
-(xs, ys) = unzip for i. (points[i].x, points[i].y)
+(xs, ys) = unzip for i:(Fin n). (points[i].x, points[i].y)
 
 :html show_plot $ xy_plot xs ys
 > <html output>
