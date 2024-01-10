@@ -123,6 +123,21 @@ fun = \y. sum (map n_to_f arr) + y
 :p f_to_i $ round 3.6
 > 4
 
+:p erfinv(f_to_f64 0.84270079294971486934)
+> 1.
+
+:p erfinv 1.0
+> inf
+
+-- TODO: This should actually be an error since it's outside of the domain of the function
+:p erfinv 2.0
+> nan
+
+:p
+    xs = each [-0.99, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 0.99] f_to_f64
+    erf(erfinv xs) ~~ erfinv(erf xs) && erfinv(xs) ~~ each xs \x. zero - erfinv(zero - x)
+> True
+
 s = 1.0
 
 :p s

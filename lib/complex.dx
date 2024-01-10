@@ -100,6 +100,9 @@ def complex_erf(x:Complex) -> Complex =
 def complex_erfc(x:Complex) -> Complex =
   todo
 
+def complex_erfinv(x:Complex) -> Complex =
+  todo
+
 def complex_log1p(x:Complex) -> Complex =
   case x.re == 0.0 of
     True -> x
@@ -130,3 +133,4 @@ instance Floating(Complex)
   def lgamma(x) = complex_lgamma(x)
   def erf(x)    = complex_erf(x)
   def erfc(x)   = complex_erfc(x)
+  def erfinv(x) = complex_erfinv(x)
