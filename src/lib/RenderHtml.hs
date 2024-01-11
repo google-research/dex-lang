@@ -196,6 +196,9 @@ renderSourceBlock n b = RenderedSourceBlock
   , rsbText = T.unpack $ sbText b
   , rsbHtml = renderHtml case sbContents b of
       Misc (ProseBlock s) -> cdiv "prose-block" $ mdToHtml s
+      UnParseable _ e -> do
+        cdiv "code-block" (toHtml $ sbText b)
+        cdiv "err-result" (toHtml e)
       _ -> renderSpans n (sbLexemeInfo b) (sbText b)
   }
 
