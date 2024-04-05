@@ -115,7 +115,7 @@ data Expr r n where
  TabApp :: Type r n -> Atom r n -> Atom r n                    -> Expr r n
  Case   :: Atom r n -> [Alt r n] -> EffTy r n                  -> Expr r n
  Atom   :: Atom r n                                            -> Expr r n
- TabCon :: Maybe (WhenCore r (Dict CoreIR) n) -> Type r n -> [Atom r n] -> Expr r n
+ TabCon :: Type r n -> [Atom r n] -> Expr r n
  PrimOp :: PrimOp r n                                          -> Expr r n
  Project     :: Type r n -> Int -> Atom r n                    -> Expr r n
  App         :: EffTy CoreIR n -> CAtom n -> [CAtom n]         -> Expr CoreIR n
@@ -470,7 +470,7 @@ data ClassDef (n::S) where
     ->   [CorePiType n3]     -- method types
     -> ClassDef n1
 
-data BuiltinClassName = Data | Ix  deriving (Show, Generic, Eq)
+data BuiltinClassName = Ix  deriving (Show, Generic, Eq)
 
 data InstanceDef (n::S) where
   InstanceDef
@@ -490,13 +490,10 @@ data InstanceBody (n::S) =
 data DictType (n::S) =
    DictType SourceName (ClassName n) [CAtom n]
  | IxDictType   (CType n)
- | DataDictType (CType n)
    deriving (Show, Generic)
 
 data DictCon (r::IR) (n::S) where
  InstanceDict  :: CType n -> InstanceName n -> [CAtom n] -> DictCon CoreIR n
- -- Special case for `Data <something that is actually data>`
- DataData      :: CType n -> DictCon CoreIR n
  IxFin         :: CAtom n -> DictCon CoreIR n
  -- IxRawFin is like `Fin`, but it's parameterized by a newtyped-stripped
  -- `IxRepVal` instead of `Nat`, and it describes indices of type `IxRepVal`.
@@ -1230,7 +1227,7 @@ instance IRRep r => GenericE (Expr r) where
  {- Block -}  (EffTy r `PairE` Block r)
     )
     ( EitherE5
- {- TabCon -}          (MaybeE (WhenCore r (Dict CoreIR)) `PairE` Type r `PairE` ListE (Atom r))
+ {- TabCon -}          (Type r `PairE` ListE (Atom r))
  {- PrimOp -}          (PrimOp r)
  {- ApplyMethod -}     (WhenCore r (EffTy r `PairE` Atom r `PairE` LiftE Int `PairE` ListE (Atom r)))
  {- Project -}         (Type r `PairE` LiftE Int `PairE` Atom r)
@@ -1242,7 +1239,7 @@ instance IRRep r => GenericE (Expr r) where
     Atom x             -> Case0 $ Case3 (x)
     TopApp et f xs     -> Case0 $ Case4 (WhenIRE (et `PairE` f `PairE` ListE xs))
     Block et block     -> Case0 $ Case5 (et `PairE` block)
-    TabCon d ty xs        -> Case1 $ Case0 (toMaybeE d `PairE` ty `PairE` ListE xs)
+    TabCon ty xs          -> Case1 $ Case0 (ty `PairE` ListE xs)
     PrimOp op             -> Case1 $ Case1 op
     ApplyMethod et d i xs -> Case1 $ Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs))
     Project ty i x        -> Case1 $ Case3 (ty `PairE` LiftE i `PairE` x)
@@ -1258,7 +1255,7 @@ instance IRRep r => GenericE (Expr r) where
       Case5 (et `PairE` block)                            -> Block et block
       _ -> error "impossible"
     Case1 case1 -> case case1 of
-      Case0 (d `PairE` ty `PairE` ListE xs) -> TabCon (fromMaybeE d) ty xs
+      Case0 (ty `PairE` ListE xs) -> TabCon ty xs
       Case1 op -> PrimOp op
       Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod et d i xs
       Case3 (ty `PairE` LiftE i `PairE` x) -> Project ty i x
@@ -1586,18 +1583,15 @@ instance AlphaHashableE InstanceBody
 instance RenameE     InstanceBody
 
 instance GenericE DictType where
-  type RepE DictType = EitherE3
+  type RepE DictType = EitherE2
    {- DictType -}     (LiftE SourceName `PairE` ClassName `PairE` ListE CAtom)
    {- IxDictType -}   CType
-   {- DataDictType -} CType
   fromE = \case
     DictType sourceName className params -> Case0 $ LiftE sourceName `PairE` className `PairE` ListE params
     IxDictType   ty -> Case1 ty
-    DataDictType ty -> Case2 ty
   toE = \case
     Case0 (LiftE sourceName `PairE` className `PairE` ListE params) -> DictType sourceName className params
     Case1 ty -> IxDictType   ty
-    Case2 ty -> DataDictType ty
     _ -> error "impossible"
 
 instance SinkableE      DictType
@@ -1624,24 +1618,21 @@ instance IRRep r => AlphaHashableE (Dict r)
 instance IRRep r => RenameE        (Dict r)
 
 instance IRRep r => GenericE (DictCon r) where
-  type RepE (DictCon r) = EitherE5
+  type RepE (DictCon r) = EitherE4
  {- InstanceDict -}      (WhenCore r (CType `PairE` PairE InstanceName (ListE CAtom)))
  {- IxFin -}             (WhenCore r CAtom)
- {- DataData -}          (WhenCore r CType)
  {- IxRawFin      -}     (Atom r)
  {- IxSpecialized -}     (WhenSimp r (SpecDictName `PairE` ListE SAtom))
   fromE = \case
     InstanceDict t v args -> Case0 $ WhenIRE $ t `PairE` PairE v (ListE args)
     IxFin x               -> Case1 $ WhenIRE $ x
-    DataData ty           -> Case2 $ WhenIRE $ ty
-    IxRawFin n            -> Case3 $ n
-    IxSpecialized d xs    -> Case4 $ WhenIRE $ d `PairE` ListE xs
+    IxRawFin n            -> Case2 $ n
+    IxSpecialized d xs    -> Case3 $ WhenIRE $ d `PairE` ListE xs
   toE = \case
     Case0 (WhenIRE (t `PairE` (PairE v (ListE args)))) -> InstanceDict t v args
     Case1 (WhenIRE x)                                  -> IxFin x
-    Case2 (WhenIRE ty)                                 -> DataData ty
-    Case3 n                                            -> IxRawFin n
-    Case4 (WhenIRE (d `PairE` ListE xs))               -> IxSpecialized d xs
+    Case2 n                                            -> IxRawFin n
+    Case3 (WhenIRE (d `PairE` ListE xs))               -> IxSpecialized d xs
     _ -> error "impossible"
 
 instance IRRep r => SinkableE      (DictCon r)
@@ -2111,7 +2102,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
     TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TabApp _ f x -> atPrec AppPrec $ pApp f <> brackets (p x)
     Case e alts (EffTy effs _) -> prettyPrecCase "case" e alts effs
-    TabCon _ _ es -> atPrec ArgPrec $ list $ pApp <$> es
+    TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
     PrimOp op -> prettyPrec op
     ApplyMethod _ d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
     Project _ i x -> atPrec AppPrec $ "Project" <+> p i <+> p x
@@ -2164,7 +2155,6 @@ instance IRRep r => Pretty (DictCon r n) where
   pretty = \case
     InstanceDict _ name args -> "Instance" <+> pretty name <+> pretty args
     IxFin n -> "Ix (Fin" <+> pretty n <> ")"
-    DataData a -> "Data " <+> pretty a
     IxRawFin n -> "Ix (RawFin " <> pretty n <> ")"
     IxSpecialized d xs -> pretty d <+> pretty xs
 
@@ -2172,7 +2162,6 @@ instance Pretty (DictType n) where
   pretty = \case
     DictType classSourceName _ params -> pretty classSourceName <+> spaced params
     IxDictType ty -> "Ix" <+> pretty ty
-    DataDictType ty -> "Data" <+> pretty ty
 
 instance IRRep r => Pretty (DepPairType r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DepPairType r n) where

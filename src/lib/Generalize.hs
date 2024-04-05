@@ -131,7 +131,6 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
       params' <- traverseRoleBinders f paramRoles params
       return $ DictType sn name params'
     IxDictType   t -> IxDictType   <$> f' TypeParam TyKind t
-    DataDictType t -> DataDictType <$> f' TypeParam TyKind t
   TabPi (TabPiType d (b:>iTy) resultTy) -> do
     iTy' <- f' TypeParam TyKind iTy
     let dictTy = toType $ IxDictType iTy'

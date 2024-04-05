@@ -5,7 +5,7 @@
 '## Essentials
 ### Primitive Types
 
-Type = %TyKind()
+Type = %DataTyKind()
 Heap = %HeapType()
 Effects = %EffKind()
 
@@ -27,17 +27,14 @@ Float = Float32
 
 def the(a:Type, x:a) -> a = x
 
-interface Data(a:Type)
-  do_not_implement_this_interface_for_the_compiler_relies_on_the_invariant_it_protects : (a) -> a
-
 '### Casting
 
 @inline
-def internal_cast(x:from) -> to given (from:Type, to:Type) =
+def internal_cast(x:from) -> to given (from, to) =
   %cast(to, x)
 
-def unsafe_coerce(x:from) -> to given (from|Data, to|Data) = %unsafeCoerce(to, x)
-def uninitialized_value() -> a given (a|Data) = %garbageVal(a)
+def unsafe_coerce(x:from) -> to given (from, to) = %unsafeCoerce(to, x)
+def uninitialized_value() -> a given (a) = %garbageVal(a)
 
 def f64_to_f(x: Float64) -> Float   = internal_cast x
 def f32_to_f(x: Float32) -> Float   = internal_cast x
@@ -162,7 +159,7 @@ def high_word(x : Word64) -> Word32 = internal_cast(x)
 Things that can be added.
 This defines the `Add` [group](https://en.wikipedia.org/wiki/Group_(mathematics)) and its operators.
 
-interface Add(a|Data)
+interface Add(a)
   (+) : (a, a) -> a
   zero : a
 
@@ -226,7 +223,7 @@ instance Sub(())
 Things that can be multiplied.
 This defines the `Mul` [Monoid](https://en.wikipedia.org/wiki/Monoid), and its operator.
 
-interface Mul(a|Data)
+interface Mul(a)
   (*) : (a, a) -> a
   one : a
 
@@ -312,7 +309,7 @@ instance Fractional(Float32)
 
 '## Index set interface and instances
 
-interface Ix(n|Data)
+interface Ix(n)
   size' : () -> Nat
   ordinal : (n) -> Nat
   unsafe_from_ordinal : (Nat) -> n
@@ -598,7 +595,7 @@ It includes:
  - Concatenation of Lists (including strings)
 Monoids support `fold` operations, and similar.
 
-interface Monoid(a|Data)
+interface Monoid(a)
   mempty : a
   (<>) : (a, a) -> a
 
@@ -624,11 +621,11 @@ named-instance MulMonoid(a|Mul) -> Monoid(a)
 
 '## Effects
 
-def Ref(r:Heap, a:Type|Data) -> Type = %Ref(r, a)
-def get(ref:Ref h s)       -> {State h} s  given (h:Heap, s|Data) = %get(ref)
-def (:=)(ref:Ref h s, x:s) -> {State h} () given (h:Heap, s|Data) = %put(ref, x)
+def Ref(r:Heap, a:Type) -> Type = %Ref(r, a)
+def get(ref:Ref h s)       -> {State h} s  given (h:Heap, s) = %get(ref)
+def (:=)(ref:Ref h s, x:s) -> {State h} () given (h:Heap, s) = %put(ref, x)
 
-def ask(ref:Ref h r) -> {Read h} r given (h:Heap, r|Data) = %ask(ref)
+def ask(ref:Ref h r) -> {Read h} r given (h:Heap, r) = %ask(ref)
 
 enum AccumMonoidData(h:Heap, w:Type) = UnsafeMkAccumMonoidData(b:Type, Monoid b)
 
@@ -641,26 +638,26 @@ instance AccumMonoid(h, n=>w) given (n|Ix, h:Heap, w:Type) (am:AccumMonoid(h, w)
     UnsafeMkAccumMonoidData(b, bm)
 
 def (+=)(ref:Ref h w, x:w) -> {Accum h} ()
-  given (h:Heap, w|Data) (am:AccumMonoid(h, w)) =
+  given (h:Heap, w) (am:AccumMonoid(h, w)) =
   UnsafeMkAccumMonoidData(b, bm) = %applyMethod0(am)
   empty = %applyMethod0(bm)
   %mextend(ref, empty, \x:b y:b. %applyMethod1(bm, x, y), x)
 
-def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a|Data, h:Heap) = %indexRef(ref, i)
-def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b|Data, a|Data, h:Heap) = ref.0
-def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a|Data, b|Data, h:Heap) = ref.1
+def (!)(ref: Ref h (n=>a), i:n) -> Ref h a given (n|Ix, a, h:Heap) = %indexRef(ref, i)
+def fst_ref(ref: Ref h (a,b)) -> Ref h a given (b, a, h:Heap) = ref.0
+def snd_ref(ref: Ref h (a,b)) -> Ref h b given (a, b, h:Heap) = ref.1
 
 def run_reader(
     init:r,
     action:(given (h:Heap), Ref h r) -> {Read h|eff} a
-    ) -> {|eff} a  given (r|Data, a:Type, eff:Effects) =
+    ) -> {|eff} a  given (r, a:Type, eff:Effects) =
   def explicitAction(h':Heap, ref:Ref h' r) -> {Read h'|eff} a = action ref
   %runReader(init, explicitAction)
 
 def with_reader(
     init:r,
     action: (given (h:Heap), Ref(h,r)) -> {Read h|eff} a
-    ) -> {|eff} a  given (r|Data, a:Type, eff:Effects) =
+    ) -> {|eff} a  given (r, a:Type, eff:Effects) =
   run_reader(init, action)
 
 def MonoidLifter(b:Type, w:Type) -> Type =
@@ -672,7 +669,7 @@ named-instance mk_accum_monoid (given (h:Heap, w:Type), d:AccumMonoidData(h, w))
 def run_accum(
     bm:Monoid b,
     action: (given (h:Heap) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
-    ) -> {|eff} (a, w)  given (a:Type, b:Type, w|Data, eff:Effects) (MonoidLifter(b,w)) =
+    ) -> {|eff} (a, w)  given (a:Type, b:Type, w, eff:Effects) (MonoidLifter(b,w)) =
   empty = %applyMethod0(bm)
   def explicitAction(h':Heap, ref:Ref h' w) -> {Accum h'|eff} a =
     accumMonoidData : AccumMonoidData h' b = UnsafeMkAccumMonoidData b bm
@@ -683,26 +680,26 @@ def run_accum(
 def yield_accum(
     m:Monoid b,
     action: (given (h:Heap) (AccumMonoid(h, b)), Ref h w) -> {Accum h|eff} a
-    ) -> {|eff} w  given (a:Type, b:Type, w|Data, eff:Effects) (MonoidLifter b w) =
+    ) -> {|eff} w  given (a:Type, b:Type, w, eff:Effects) (MonoidLifter b w) =
   snd $ run_accum(m, action)
 
 def run_state(
     init:s,
     action: (given (h:Heap), Ref h s) -> {State h |eff} a
-    ) -> {|eff} (a,s)  given (a:Type, s|Data, eff:Effects) =
+    ) -> {|eff} (a,s)  given (a:Type, s, eff:Effects) =
   def explicitAction(h':Heap, ref:Ref h' s) -> {State h'|eff} a = action ref
   %runState(init, explicitAction)
 
 def with_state(
     init:s,
     action: (given (h:Heap), Ref h s) -> {State h |eff} a
-    ) -> {|eff} a  given (a:Type, s|Data, eff:Effects) =
+    ) -> {|eff} a  given (a:Type, s, eff:Effects) =
   fst $ run_state(init, action)
 
 def yield_state(
     init:s,
     action: (given (h:Heap), Ref h s) -> {State h |eff} a
-    ) -> {|eff} s  given (a:Type, s|Data, eff:Effects) =
+    ) -> {|eff} s  given (a:Type, s, eff:Effects) =
   snd $ run_state(init, action)
 
 def unsafe_io(
@@ -711,7 +708,7 @@ def unsafe_io(
   f' : (() -> {IO|eff} a) = \. f()
   %runIO(f')
 
-def unreachable() -> a given (a|Data) = unsafe_io \. %throwError(a)
+def unreachable() -> a given (a) = unsafe_io \. %throwError(a)
 
 '## Type classes
 
@@ -721,7 +718,7 @@ def unreachable() -> a given (a|Data) = unsafe_io \. %throwError(a)
 Equatable.
 Things that we can tell if they are equal or not to other things.
 
-interface Eq(a|Data)
+interface Eq(a)
   (==) : (a, a) -> Bool
 
 def (/=)(x:a, y:a) -> Bool given (a|Eq) = not $ x == y
@@ -1117,7 +1114,7 @@ struct Ptr(a:Type) =
 
 def cast_ptr(ptr: Ptr from) -> Ptr to given (from:Type, to:Type) = Ptr(ptr.val)
 
-interface Storable(a|Data)
+interface Storable(a)
   store : (Ptr a, a) -> {IO} ()
   load  : (Ptr a)    -> {IO} a
   storage_size : () -> Nat
@@ -1256,19 +1253,19 @@ def scan(
     init:c,
     xs: n=>a,
     body:(n, a, c)->(b, c)
-    ) -> (n=>b, c)  given (a:Type, b:Type, c|Data, n|Ix) =
+    ) -> (n=>b, c)  given (a:Type, b:Type, c, n|Ix) =
   run_state(init) \ref. for i:n.
     carry = get ref
     (y, carry') = body(i, xs[i], carry)
     ref := carry'
     y
 
-def fold(init:c, xs:n=>a, body:(n, a, c)-> c) -> c  given (a:Type, n|Ix, c|Data) =
+def fold(init:c, xs:n=>a, body:(n, a, c)-> c) -> c  given (a:Type, n|Ix, c) =
   snd $ scan(init, xs) \i x carry. ((), body(i, x, carry))
 
 # `combine` should be a commutative and associative, and form a
 # commutative monoid with `identity`
-def reduce(xs:n=>a, identity:a, combine:(a,a)->a) -> a given (a|Data, n|Ix) =
+def reduce(xs:n=>a, identity:a, combine:(a,a)->a) -> a given (a, n|Ix) =
   # TODO: implement with the accumulator effect
   fold(identity, xs) \i x c. combine(c, x)
 
@@ -1283,7 +1280,7 @@ def all(xs:n=>Bool) -> Bool given (n|Ix) = reduce(xs, True , (&&))
 
 '### apply_n
 
-def apply_n(n:Nat, x:a, f:(a) -> a) -> a given (a|Data) =
+def apply_n(n:Nat, x:a, f:(a) -> a) -> a given (a) =
   yield_state x \ref. for _:(Fin n).
     ref := f (get ref)
 
@@ -1417,7 +1414,7 @@ def to_list(xs:n=>a) -> List a given (n|Ix, a:Type) =
   n' = size n
   AsList(n', unsafe_cast_table(to=Fin n', xs))
 
-instance Monoid(List a) given (a|Data)
+instance Monoid(List a) given (a)
   mempty = to_list([] :: Fin 0 => a)
   def (<>)(x, y) =
     AsList(nx,xs) = x
@@ -1429,14 +1426,14 @@ instance Monoid(List a) given (a|Data)
         True  -> xs[unsafe_from_ordinal i']
         False -> ys[unsafe_from_ordinal $ unsafe_nat_diff(i', nx)]
 
-named-instance ListMonoid (a|Data) -> Monoid(List a)
+named-instance ListMonoid (a) -> Monoid(List a)
   mempty = mempty
   def (<>)(x, y) = x <> y
 
 # TODO Eliminate or reimplement this operation, since it costs O(n)
 # where n is the length of the list held in the reference.
 def append(list: Ref(h, List a), x:a) -> {Accum h} ()
-      given (a|Data, h:Heap) (AccumMonoid(h, List a)) =
+      given (a, h:Heap) (AccumMonoid(h, List a)) =
   list += to_list [x]
 
 # TODO: replace `slice` with this?
@@ -1629,12 +1626,12 @@ def while(body: () -> {|eff} Bool) -> {|eff} () given (eff:Effects) =
   body' : () -> {|eff} Word8 = \. b_to_w8 $ body()
   %while(body')
 
-enum IterResult(a|Data) =
+enum IterResult(a) =
   Continue
   Done(a)
 
 # A little iteration combinator
-def iter(body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a|Data, eff:Effects) =
+def iter(body: (Nat) -> {|eff} IterResult a) -> {|eff} a given (a, eff:Effects) =
   result = yield_state (Nothing::Maybe a) \resultRef.
     i <- with_state (0::Nat)
     while \.
@@ -1652,7 +1649,7 @@ def bounded_iter(
     maxIters:Nat,
     fallback:a,
     body:(Nat) -> {|eff} IterResult a
-    ) -> {|eff} a given (a|Data, eff:Effects) = iter \i.
+    ) -> {|eff} a given (a, eff:Effects) = iter \i.
   if i >= maxIters
     then Done fallback
     else body i
@@ -1676,11 +1673,11 @@ Not to be confused with a partially applied function
 '### Error throwing
 
 @noinline
-def error(s:String) -> a given (a|Data) = unsafe_io \.
+def error(s:String) -> a given (a) = unsafe_io \.
   print s
   %throwError(a)
 
-def todo() ->> a given (a|Data) = error "TODO: implement it!"
+def todo() ->> a given (a) = error "TODO: implement it!"
 
 '### Table operations
 
@@ -1701,7 +1698,7 @@ def to_ix(i:Nat) -> Maybe n  given (n|Ix) =
 
 # TODO: could make an `unsafeCastIndex` and this could avoid the runtime copy
 # TODO: safe (runtime-checked) and unsafe versions
-def cast_table(xs:to=>a) -> from=>a given (from|Ix, to|Ix, a|Data) =
+def cast_table(xs:to=>a) -> from=>a given (from|Ix, to|Ix, a) =
   case size from == size to of
      True  -> unsafe_cast_table xs
      False -> error $
@@ -1907,9 +1904,9 @@ def max_by(f:(a)->o, x:a, y:a) -> a given (o|Ord, a:Type) = select(f x > f y, x,
 def min(x1: o, x2: o) -> o given (o|Ord) = min_by(id, x1, x2)
 def max(x1: o, x2: o) -> o given (o|Ord) = max_by(id, x1, x2)
 
-def minimum_by(xs:n=>a, f:(a)->o) -> a given (a|Data, o|Ord, n|Ix) =
+def minimum_by(xs:n=>a, f:(a)->o) -> a given (a, o|Ord, n|Ix) =
   reduce(xs, xs[0@_], \x y. min_by(f, x, y))
-def maximum_by(xs:n=>a, f:(a)->o) -> a given (a|Data, o|Ord, n|Ix) =
+def maximum_by(xs:n=>a, f:(a)->o) -> a given (a, o|Ord, n|Ix) =
   reduce(xs, xs[0@_], \x y. max_by(f, x, y))
 
 def minimum(xs:n=>o) -> o given (n|Ix, o|Ord) = minimum_by(xs, id)
@@ -2083,7 +2080,7 @@ def general_integer_power(
     times:(a,a)->a,
     one:a, base:a,
     power:Nat
-    ) -> a given (a|Data) =
+    ) -> a given (a) =
   iters : Nat = if power == 0 then 0 else 1 + natlog2 power
   # Implements exponentiation by squaring.
   # This could be nicer if there were a way to explicitly
@@ -2141,7 +2138,7 @@ def concat(lists:n=>(List a)) -> List a given (a:Type, n|Ix) =
       eltIdx := eltIdxVal + 1
       xs[eltIdxVal@_]
 
-def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
+def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a) =
   StateTy : Type = (Nat, n=>Maybe n)
   init_state : StateTy = (0, for i. Nothing)
   (num_res, res_inds) = yield_state init_state \ref.
@@ -2158,10 +2155,10 @@ def cat_maybes(xs:n=>Maybe a) -> List a given (n|Ix, a|Data) =
         Nothing -> todo # Impossible
       Nothing -> todo # Impossible
 
-def filter(xs:n=>a, condition:(a)->Bool) -> List a given (a|Data, n|Ix) =
+def filter(xs:n=>a, condition:(a)->Bool) -> List a given (a, n|Ix) =
   cat_maybes $ for i:n. if condition xs[i] then Just xs[i] else Nothing
 
-def arg_filter(xs:n=>a, condition:(a)->Bool) -> List n given (a|Data, n|Ix) =
+def arg_filter(xs:n=>a, condition:(a)->Bool) -> List n given (a, n|Ix) =
   cat_maybes $ for i:n. if condition xs[i] then Just i else Nothing
 
 # TODO: use `ix_offset : [Ix n] -> n -> Int -> Maybe n` instead
@@ -2241,7 +2238,7 @@ def assert(b:Bool) -> {Except} () =
 
 '### Misc instances that require `error`
 
-instance Subset(a, Either(a,b)) given (a|Data, b|Data)
+instance Subset(a, Either(a,b)) given (a, b)
   def inject'(x) = Left x
   def project'(x) = case x of
     Left( y) -> Just y
@@ -2250,7 +2247,7 @@ instance Subset(a, Either(a,b)) given (a|Data, b|Data)
     Left( x) -> x
     Right(x) -> error "Can't project Right branch to Left branch"
 
-instance Subset(b, Either(a,b)) given (a|Data, b|Data)
+instance Subset(b, Either(a,b)) given (a, b)
   def inject'(x) =  Right x
   def project'(x) = case x of
     Left( x) -> Nothing
@@ -2288,7 +2285,7 @@ instance NonEmpty(a=>b) given (a|Ix, b|NonEmpty)
 
 '### Stack
 
-struct Stack(h:Heap, a|Data) =
+struct Stack(h:Heap, a) =
   size_ref : Ref h Nat
   buf_ref  : Ref h (List a)
 
@@ -2348,7 +2345,7 @@ struct Stack(h:Heap, a|Data) =
 stack_init_size : Nat = 16
 
 def with_stack(
-    a|Data,
+    a:Type,
     action:(given (h:Heap), Stack(h, a)) -> {State h|eff} r
     ) -> {|eff} r  given (eff:Effects, r:Type) =
   init_stack = to_list for i:(Fin stack_init_size). uninitialized_value() :: a
@@ -2383,7 +2380,7 @@ def from_c_string(s:CString) -> {IO} (Maybe String) =
 
 def show_any(x:a) -> String given (a:Type) = unsafe_coerce(to=String, %showAny(x))
 
-def coerce_table(m|Ix, x:n=>a) -> m => a given (n|Ix, a|Data) =
+def coerce_table(m|Ix, x:n=>a) -> m => a given (n|Ix, a) =
   if size m == size n
     then unsafe_coerce(to=m=>a, x)
     else error "mismatched sizes in table coercion"
@@ -2453,7 +2450,7 @@ def with_file(
     f:FilePath,
     mode:StreamMode,
     action:(Stream mode) -> {IO} a
-    ) -> {IO} a  given (a|Data) =
+    ) -> {IO} a  given (a) =
   stream = fopen(f, mode)
   if is_null_raw_ptr stream.ptr
     then

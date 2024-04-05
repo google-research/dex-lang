@@ -192,7 +192,6 @@ getMethodType dict i = do
       1 -> mkCorePiType [ixTy]  NatTy -- ordinal : (n) -> Nat
       2 -> mkCorePiType [NatTy] ixTy  -- unsafe_from_ordinal : (Nat) -> n
       _ -> error "Ix only has three methods"
-    DataDictType _ -> error "Data class has no methods"
 
 mkCorePiType :: EnvReader m => [CType n] -> CType n -> m n (CorePiType n)
 mkCorePiType argTys resultTy = liftEnvReaderM $ withFreshBinders argTys \bs _ -> do
@@ -256,7 +255,6 @@ dictType className params = do
   ClassDef sourceName builtinName _ _ _ _ _ _ <- lookupClassDef className
   return case builtinName of
     Just Ix   -> IxDictType   singleTyParam
-    Just Data -> DataDictType singleTyParam
     Nothing   -> DictType sourceName className params
     where singleTyParam = case params of
             [p] -> fromJust $ toMaybeType p
@@ -312,8 +310,7 @@ getSuperclassTys = \case
     ClassDef _ _ _ _ _ bs superclasses _ <- lookupClassDef className
     forM [0 .. nestLength superclasses - 1] \i -> do
       instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
-  DataDictType _ -> return []
-  IxDictType ty -> return [toType $ DataDictType ty]
+  IxDictType _ -> return []
 
 getTypeTopFun :: EnvReader m => TopFunName n -> m n (PiType SimpIR n)
 getTypeTopFun f = lookupTopFun f >>= \case

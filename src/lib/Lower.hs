@@ -248,7 +248,7 @@ lowerExpr dest expr = case expr of
                   SubstVal a -> return a
                 place d x
               withSubst s' (substM result) >>= emit
-  TabCon Nothing ty els -> lowerTabCon dest ty els
+  TabCon ty els -> lowerTabCon dest ty els
   PrimOp (Hof (TypedHof (EffTy _ ansTy) (For dir ixDict body))) -> do
     ansTy' <- substM ansTy
     lowerFor ansTy' dest dir ixDict body

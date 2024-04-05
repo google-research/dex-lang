@@ -53,7 +53,7 @@ instance PeepholeOpt (Expr r) r where
     Case _ _ _   -> Nothing
     TopApp _ _ _ -> Nothing
     Block _ _    -> Nothing
-    TabCon _ _ _ -> Nothing
+    TabCon _ _   -> Nothing
     ApplyMethod _ _ _ _ -> Nothing
   {-# INLINE peephole #-}
 

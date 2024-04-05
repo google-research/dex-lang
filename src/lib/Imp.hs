@@ -319,7 +319,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
                  extendSubst (b @> SubstVal (sink xs)) $
                    void $ translateExpr body
             return UnitVal
-  TabCon _ _ _ -> error "Unexpected `TabCon` in Imp pass."
+  TabCon _ _ -> error "Unexpected `TabCon` in Imp pass."
   Project _ i x -> reduceProj i =<< substM x
 
 toImpRefOp :: Emits o

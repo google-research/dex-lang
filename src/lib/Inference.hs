@@ -836,7 +836,6 @@ applySigmaAtom appSrcId (SigmaUVar _ _ f) args = case f of
     ClassDef sourceName builtinName _ _ _ _ _ _ <- lookupClassDef f'
     return $ toAtom case builtinName of
       Just Ix   -> IxDictType   singleTyParam
-      Just Data -> DataDictType singleTyParam
       Nothing   -> DictType sourceName f' args
       where singleTyParam = case args of
               [p] -> fromJust $ toMaybeType p
@@ -1293,7 +1292,6 @@ inferClassDef className methodNames paramBs methodTys = do
       -- TODO: this is hacky. Let's just make the Ix class, including its
       -- methods, fully built-in instead of prelude-defined.
       "Ix"   -> return $ Just Ix
-      "Data" -> return $ Just Data
       _      -> return Nothing
     return $ ClassDef className builtinName methodNames paramNames roleExpls' paramBs''' superclassBs methodTys'
 
@@ -1641,9 +1639,7 @@ inferTabCon sid xs = do
   ixTy <- asIxType sid finTy
   let tabTy = ixTy ==> elemTy
   xs' <- forM xs \x -> topDown elemTy x
-  let dTy = toType $ DataDictType elemTy
-  Just dataDict <- toMaybeDict <$> trySynthTerm sid dTy Full
-  emit $ TabCon (Just $ WhenIRE dataDict) tabTy xs'
+  emit $ TabCon tabTy xs'
 
 checkTabCon :: forall i o. Emits o => TabPiType CoreIR o -> SrcId -> [UExpr i] -> InfererM i o (CAtom o)
 checkTabCon tabTy@(TabPiType _ b elemTy) sid xs = do
@@ -1654,15 +1650,7 @@ checkTabCon tabTy@(TabPiType _ b elemTy) sid xs = do
     let i' = toAtom (NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i)) :: CAtom o
     elemTy' <- applySubst (b@>SubstVal i') elemTy
     topDown elemTy' x
-  dTy <- case hoist b elemTy of
-    HoistSuccess elemTy' -> return $ toType $ DataDictType elemTy'
-    HoistFailure _ -> ignoreExcept <$> liftEnvReaderT do
-      withFreshBinder noHint finTy \b' ->  do
-        elemTy' <- applyRename (b@>binderName b') elemTy
-        let dTy = toType $ DataDictType elemTy'
-        return $ toType $ CorePiType ImplicitApp [Inferred Nothing Unify] (UnaryNest b') (EffTy Pure dTy)
-  Just dataDict <- toMaybeDict <$> trySynthTerm sid dTy Full
-  emit $ TabCon (Just $ WhenIRE dataDict) (TyCon (TabPi tabTy)) xs'
+  emit $ TabCon (TyCon (TabPi tabTy)) xs'
 
 addEffects :: SrcId -> EffectRow CoreIR o -> InfererM i o ()
 addEffects _ Pure = return ()
@@ -1837,8 +1825,6 @@ instance Unifiable DictType where
     { DictType _ c' params' <- matchit; guard (c == c'); unifyLists params params'}
     ( IxDictType t ) -> do
     { IxDictType t' <- matchit; unify t t'}
-    ( DataDictType t ) -> do
-    { DataDictType t' <- matchit; unify t t'}
     where matchit = return d2
   {-# INLINE unify #-}
 
@@ -2047,9 +2033,6 @@ generalizeDictRec targetTy (DictCon dict) = case dict of
   IxFin _ -> do
     TyCon (DictTy (IxDictType (TyCon (NewtypeTyCon (Fin n))))) <- return targetTy
     return $ DictCon $ IxFin n
-  DataData _ -> do
-    TyCon (DictTy (DataDictType t')) <- return targetTy
-    return $ DictCon $ DataData t'
   IxRawFin _ -> error "not a simplified dict"
 generalizeDictRec _ _ = error "not a simplified dict"
 
@@ -2193,9 +2176,6 @@ synthTerm sid targetTy reqMethodAccess = confuseGHC >>= \_ -> case targetTy of
     return $ toAtom $ Lam $ CoreLamExpr piTy lamExpr
   SynthDictType dictTy -> case dictTy of
     IxDictType (TyCon (NewtypeTyCon (Fin n))) -> return $ toAtom $ IxFin n
-    DataDictType t -> do
-      void (synthDictForData sid dictTy <|> synthDictFromGiven sid dictTy)
-      return $ toAtom $ DataData t
     _ -> do
       dict <- synthDictFromInstance sid dictTy <|> synthDictFromGiven sid dictTy
       case dict of
@@ -2243,14 +2223,12 @@ getInstanceDicts dictTy = do
   case dictTy of
     DictType _ name _ -> return $ M.findWithDefault [] name $ instanceDicts env
     IxDictType _      -> return $ ixInstances env
-    DataDictType _    -> return []
 
 addInstanceSynthCandidate :: TopBuilder m => ClassName n -> Maybe BuiltinClassName -> InstanceName n  -> m n ()
 addInstanceSynthCandidate className maybeBuiltin instanceName = do
   sc <- return case maybeBuiltin of
     Nothing   -> mempty {instanceDicts = M.singleton className [instanceName] }
     Just Ix   -> mempty {ixInstances   = [instanceName]}
-    Just Data -> mempty
   emitLocalModuleEnv $ mempty {envSynthCandidates = sc}
 
 instantiateSynthArgs :: SrcId -> DictType n -> SynthPiType n -> InfererM i n [CAtom n]
@@ -2267,36 +2245,6 @@ typeErrAsSearchFailure :: InfererM i n a -> InfererM i n a
 typeErrAsSearchFailure cont = cont `catchErr` \case
   TypeErr _ _ -> empty
   e -> throwErr e
-
-synthDictForData :: forall i n. SrcId -> DictType n -> InfererM i n (SynthAtom n)
-synthDictForData sid dictTy@(DataDictType ty) = case ty of
-  -- TODO Deduplicate vs CheckType.checkDataLike
-  -- The "Stuck" case is different
-  StuckTy _ _ -> synthDictFromGiven sid dictTy
-  TyCon con -> case con of
-    TabPi (TabPiType _ b eltTy) -> recurBinder (Abs b eltTy) >> success
-    DepPairTy (DepPairType _ b@(_:>l) r) -> do
-     recur l >> recurBinder (Abs b r) >> success
-    NewtypeTyCon nt -> do
-      (_, ty') <- unwrapNewtypeType nt
-      recur ty' >> success
-    BaseType _  -> success
-    ProdType as -> mapM_ recur as >> success
-    SumType  cs -> mapM_ recur cs >> success
-    RefType _ _ -> success
-    HeapType    -> success
-    _   -> notData
-  where
-    recur ty' = synthDictForData sid $ DataDictType ty'
-    recurBinder :: Abs CBinder CType n -> InfererM i n (SynthAtom n)
-    recurBinder (Abs b body) =
-      withFreshBinderInf noHint Explicit (binderType b) \b' -> do
-        body' <- applyRename (b@>binderName b') body
-        ans <- synthDictForData sid $ DataDictType (toType body')
-        return $ ignoreHoistFailure $ hoist b' ans
-    notData = empty
-    success = return $ toAtom $ DataData ty
-synthDictForData _ dictTy = error $ "Malformed Data dictTy " ++ pprint dictTy
 
 instance GenericE Givens where
   type RepE Givens = HashMapE (EKey SynthType) SynthAtom

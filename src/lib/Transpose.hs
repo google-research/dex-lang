@@ -171,7 +171,7 @@ transposeExpr expr ct = case expr of
       extendSubst (b @> RenameNonlin (atomVarName v')) do
         transposeExpr body (sink ct)
       return UnitVal
-  TabCon _ ty es -> do
+  TabCon ty es -> do
     TabTy d b _ <- return ty
     idxTy <- substNonlin $ IxType (binderType b) d
     forM_ (enumerate es) \(ordinalIdx, e) -> do

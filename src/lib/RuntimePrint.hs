@@ -200,7 +200,7 @@ pushBuffer buf x = do
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do
   t <- finTabTyCore (NatVal $ fromIntegral $ length s) CharRepTy
-  emit $ TabCon Nothing t (map charRepVal s)
+  emit $ TabCon t (map charRepVal s)
 
 finTabTyCore :: (Fallible1 m, EnvReader m) => CAtom n -> CType n -> m n (CType n)
 finTabTyCore n eltTy = return $ IxType (FinTy n) (DictCon $ IxFin n) ==> eltTy

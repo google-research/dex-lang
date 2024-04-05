@@ -416,10 +416,10 @@ linearizeExpr expr = case expr of
             residuals' <- unpackTelescope bs residuals
             withSubstReaderT $ extendSubst (bs @@> (SubstVal <$> residuals')) do
               applyLinLam linLam
-  TabCon _ ty xs -> do
+  TabCon ty xs -> do
     ty' <- renameM ty
     pt <- seqLin (map linearizeAtom xs)
-    emitBoth pt \(ComposeE xs') -> return $ TabCon Nothing (sink ty') xs'
+    emitBoth pt \(ComposeE xs') -> return $ TabCon (sink ty') xs'
   TabApp _ x i -> do
     pt <- zipLin <$> linearizeAtom x <*> pureLin i
     emitBoth pt \(PairE x' i') -> mkTabApp x' i'

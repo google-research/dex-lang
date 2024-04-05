@@ -82,7 +82,7 @@ ulExpr expr = case expr of
               getLamExprType body' >>= \case
                 PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
                   let tabTy = toType $ TabPiType (DictCon $ IxRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
-                  emit $ TabCon Nothing tabTy vals
+                  emit $ TabCon tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
             _ -> error "Expected `for` body to be a lambda expression"
           False -> do
@@ -91,7 +91,7 @@ ulExpr expr = case expr of
             emitHof $ For Fwd ixTy' body'
       _ -> nothingSpecial
   -- Avoid unrolling loops with large table literals
-  TabCon _ _ els -> inc (length els) >> nothingSpecial
+  TabCon _ els -> inc (length els) >> nothingSpecial
   Block _ (Abs decls body) -> visitDeclsEmits decls $ ulExpr body
   _ -> nothingSpecial
   where

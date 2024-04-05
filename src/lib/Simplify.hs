@@ -396,11 +396,11 @@ simplifyExpr expr = confuseGHC >>= \_ -> case expr of
     xs' <- mapM simplifyAtom xs
     Just dict' <- toMaybeDict <$> simplifyAtom dict
     applyDictMethod ty' dict' i xs'
-  TabCon _ ty xs -> do
+  TabCon ty xs -> do
     ty' <- substM ty
     tySimp <- getRepType ty
     xs' <- forM xs \x -> toDataAtom x
-    liftSimpAtom ty' =<< emit (TabCon Nothing tySimp xs')
+    liftSimpAtom ty' =<< emit (TabCon tySimp xs')
   Case scrut alts (EffTy _ resultTy) -> do
     scrut' <- simplifyAtom scrut
     resultTy' <- substM resultTy
@@ -601,7 +601,6 @@ simplifyIxDict (DictCon con) = case con of
     params' <- dropSubst $ mapM toDataAtomAssumeNoDecls params
     sdName <- requireIxDictCache dictAbs
     return $ DictCon $ IxSpecialized sdName params'
-  DataData _ -> error "not an Ix dict"
 
 requireIxDictCache
   :: (HoistingTopBuilder TopEnvFrag m) => AbsDict n -> m n (Name SpecializedDictNameC n)

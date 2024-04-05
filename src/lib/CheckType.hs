@@ -248,16 +248,15 @@ instance IRRep r => CheckableWithEffects r (Expr r) where
       effTy'' <- checkInstantiation methodTy args'
       checkAlphaEq  effTy' effTy''
       return $ ApplyMethod effTy' (toAtom dict') i args'
-    TabCon maybeD ty xs -> do
+    TabCon ty xs -> do
       ty'@(TyCon (TabPi (TabPiType _ b restTy))) <- checkE ty
-      maybeD' <- mapM renameM maybeD -- TODO: check
       xs' <- case fromConstAbs (Abs b restTy) of
         HoistSuccess elTy -> forM xs (|: elTy)
         -- XXX: in the dependent case we don't check that the element types
         -- match the annotation because that would require concretely evaluating
         -- each index from the ix dict.
         HoistFailure _    -> forM xs checkE
-      return $ TabCon maybeD' ty' xs'
+      return $ TabCon ty' xs'
     Project resultTy i x -> do
       x' <-checkE x
       resultTy' <- checkE resultTy
@@ -325,7 +324,6 @@ instance IRRep r => CheckableE r (DictCon r) where
       void $ checkInstantiation instanceDef args'
       return $ InstanceDict ty' instanceName' args'
     IxFin n -> IxFin <$> n |: NatTy
-    DataData dataTy -> DataData <$> checkE dataTy
     IxRawFin n -> IxRawFin <$> n |: IdxRepTy
     IxSpecialized v params -> IxSpecialized <$> renameM v <*> mapM checkE params
 
@@ -399,7 +397,6 @@ instance CheckableE CoreIR DictType where
       void $ checkInstantiation (Abs paramBs UnitE) params'
       return $ DictType sn className' params'
     IxDictType   t -> IxDictType   <$> checkE t
-    DataDictType t -> DataDictType <$> checkE t
 
 instance IRRep r => CheckableE r (Con r) where
   checkE = \case

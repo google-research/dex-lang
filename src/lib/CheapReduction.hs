@@ -128,7 +128,7 @@ reduceExprM = \case
    reduceTabAppM tab' x'
  TopApp _ _ _ -> empty
  Case _ _ _   -> empty
- TabCon _ _ _ -> empty
+ TabCon _ _   -> empty
  PrimOp _     -> empty
 
 reduceApp :: CAtom i -> [CAtom o] -> ReducerM i o (CAtom o)
@@ -222,7 +222,6 @@ superclassProjType i (TyCon (DictTy dictTy)) = case dictTy of
   DictType _ className params -> do
     ClassDef _ _ _ _ _ bs superclasses _ <- lookupClassDef className
     instantiate (Abs bs $ getSuperclassType REmpty superclasses i) params
-  IxDictType t | i == 0 -> return $ toType $ DataDictType t
   _ -> error "bad superclass projection"
 superclassProjType _ _ = error "bad superclass projection"
 
@@ -417,8 +416,7 @@ instance IRRep r => VisitGeneric (Expr r) r where
       effTy' <- visitGeneric effTy
       return $ Case x' alts' effTy'
     Atom x -> Atom <$> visitGeneric x
-    TabCon Nothing t xs -> TabCon Nothing <$> visitGeneric t <*> mapM visitGeneric xs
-    TabCon (Just (WhenIRE d)) t xs -> TabCon <$> (Just . WhenIRE <$> visitGeneric d) <*> visitGeneric t <*> mapM visitGeneric xs
+    TabCon t xs -> TabCon <$> visitGeneric t <*> mapM visitGeneric xs
     PrimOp op -> PrimOp <$> visitGeneric op
     App et fAtom xs -> App <$> visitGeneric et <*> visitGeneric fAtom <*> mapM visitGeneric xs
     ApplyMethod et m i xs -> ApplyMethod <$> visitGeneric et <*> visitGeneric m <*> pure i <*> mapM visitGeneric xs
@@ -485,7 +483,6 @@ instance IRRep r => VisitGeneric (DictCon r) r where
   visitGeneric = \case
     InstanceDict t v xs  -> InstanceDict  <$> visitGeneric t <*> renameN v <*> mapM visitGeneric xs
     IxFin x              -> IxFin         <$> visitGeneric x
-    DataData dataTy      -> DataData      <$> visitGeneric dataTy
     IxRawFin x           -> IxRawFin      <$> visitGeneric x
     IxSpecialized v xs   -> IxSpecialized <$> renameN v <*> mapM visitGeneric xs
 
@@ -530,7 +527,6 @@ instance VisitGeneric DictType CoreIR where
   visitGeneric = \case
     DictType n v xs -> DictType n <$> renameN v <*> mapM visitGeneric xs
     IxDictType   t -> IxDictType   <$> visitGeneric t
-    DataDictType t -> DataDictType <$> visitGeneric t
 
 instance VisitGeneric CoreLamExpr CoreIR where
   visitGeneric (CoreLamExpr t lam) = CoreLamExpr <$> visitGeneric t <*> visitGeneric lam

@@ -85,7 +85,6 @@ instance HasType CoreIR (Dict CoreIR) where
 instance HasType CoreIR (DictCon CoreIR) where
   getType = \case
     InstanceDict t _ _ -> t
-    DataData t -> toType $ DataDictType t
     IxFin n -> toType $ IxDictType (FinTy n)
     IxRawFin _ -> toType $ IxDictType IdxRepTy
 
@@ -129,7 +128,7 @@ instance IRRep r => HasType r (Expr r) where
     TabApp t _ _ -> t
     Atom x   -> getType x
     Block (EffTy _ ty) _ -> ty
-    TabCon _ ty _ -> ty
+    TabCon ty _ -> ty
     PrimOp op -> getType op
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
@@ -262,7 +261,7 @@ instance IRRep r => HasEffects (Expr r) r where
     TopApp (EffTy eff _) _ _ -> eff
     TabApp _ _ _ -> Pure
     Case _ _ (EffTy effs _) -> effs
-    TabCon _ _ _      -> Pure
+    TabCon _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
     PrimOp primOp -> getEffects primOp
     Project _ _ _ -> Pure
