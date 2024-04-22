@@ -181,7 +181,6 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Emits o => PrimOp SimpIR i -> SAtom o -> TransposeM i o ()
 transposeOp op ct = case op of
-  DAMOp _        -> error "unreachable" -- TODO: rule out statically
   RefOp refArg m   -> do
     refArg' <- substNonlin refArg
     let emitEff = emitLin . RefOp refArg'

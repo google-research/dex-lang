@@ -136,16 +136,6 @@ instance IRRep r => HasType r (Expr r) where
 instance HasType SimpIR RepVal where
   getType (RepVal ty _) = ty
 
-instance IRRep r => HasType r (DAMOp r) where
-  getType = \case
-    AllocDest ty -> RawRefTy ty
-    Place _ _ -> UnitTy
-    Freeze ref -> case getType ref of
-      RawRefTy ty -> ty
-      ty -> error $ "Not a reference type: " ++ show ty
-    Seq _ _ _ cinit _ -> getType cinit
-    RememberDest _ d _ -> getType d
-
 instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
     BinOp op x _ -> TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
@@ -154,7 +144,6 @@ instance IRRep r => HasType r (PrimOp r) where
     MemOp op -> getType op
     MiscOp op -> getType op
     VectorOp op -> getType op
-    DAMOp           op -> getType op
     RefOp ref m -> case getType ref of
       TyCon (RefType _ s) -> case m of
         MGet        -> s
@@ -301,11 +290,5 @@ instance IRRep r => HasEffects (PrimOp r) r where
         IndexRef _ _ -> Pure
         ProjRef _ _  -> Pure
       _ -> error "not a ref"
-    DAMOp op -> case op of
-      Place    _ _  -> Effectful
-      Seq eff _ _ _ _        -> eff
-      RememberDest eff _ _ -> eff
-      AllocDest _ -> Pure -- is this correct?
-      Freeze _    -> Pure -- is this correct?
     Hof (TypedHof (EffTy eff _) _) -> eff
   {-# INLINE getEffects #-}

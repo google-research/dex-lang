@@ -56,7 +56,6 @@ import Imp
 import ImpToLLVM
 import Inference
 import Inline
-import Lower
 import MonadUtil
 import MTL1
 import Subst
@@ -479,8 +478,7 @@ evalBlock typed = do
   simpResult <- case opt of
     TopLam _ _ (LamExpr Empty (Atom result)) -> return result
     _ -> do
-      lowered <- checkPass LowerPass $ lowerFullySequential True opt
-      lOpt <- checkPass OptPass $ loweredOptimizations lowered
+      lOpt <- checkPass OptPass $ loweredOptimizations opt
       cc <- getEntryFunCC
       impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt
@@ -539,8 +537,7 @@ evalDictSpecializations ds = do
     SpecializedDict _ (Just fs) <- lookupSpecDict dName
     fs' <- forM fs \lam -> do
       opt <- simpOptimizations lam
-      lowered <- checkPass LowerPass $ lowerFullySequential False opt
-      loweredOptimizationsNoDest lowered
+      loweredOptimizationsNoDest opt
     updateTopEnv $ LowerDictSpecialization dName fs'
   return ()
 
@@ -573,8 +570,7 @@ compileTopLevelFun :: (Topper m, Mut n)
   => CallingConvention -> STopLam n -> m n (ImpFunction n)
 compileTopLevelFun cc fSimp = do
   fOpt <- simpOptimizations fSimp
-  fLower <- checkPass LowerPass $ lowerFullySequential True fOpt
-  flOpt <- loweredOptimizations fLower
+  flOpt <- loweredOptimizations fOpt
   checkPass ImpPass $ toImpFunction cc flOpt
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String

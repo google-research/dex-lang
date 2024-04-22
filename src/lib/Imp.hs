@@ -374,30 +374,6 @@ toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
   Hof hof -> toImpTypedHof hof
   RefOp refDest eff -> toImpRefOp refDest eff
-  DAMOp damOp -> case damOp of
-    Seq _ d ixTy' carry f -> do
-      UnaryLamExpr b body <- return f
-      ixTy <- substM ixTy'
-      carry' <- substM carry
-      n <- indexSetSizeImp ixTy
-      emitLoop (getNameHint b) d n \i -> do
-        idx <- unsafeFromOrdinalImp (sink ixTy) i
-        void $ extendSubst (b @> SubstVal (PairVal idx (sink carry'))) $
-          translateExpr body
-      return carry'
-    RememberDest _ d f -> do
-      UnaryLamExpr b body <- return f
-      d' <- substM d
-      void $ extendSubst (b @> SubstVal d') $ translateExpr body
-      return d'
-    Place ref val -> do
-      val' <- substM val
-      refDest <- atomToDest =<< substM ref
-      storeAtom refDest val' >> return UnitVal
-    Freeze ref -> loadAtom =<< atomToDest =<< substM ref
-    AllocDest ty  -> do
-      d <- liftM destToAtom $ allocDest =<< substM ty
-      return d
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
   MemOp    op' -> toImpMemOp    =<< substM op'

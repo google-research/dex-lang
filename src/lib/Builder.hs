@@ -752,28 +752,6 @@ buildMap xs f = do
   buildFor noHint Fwd (tabIxType t) \i ->
     tabApp (sink xs) (toAtom i) >>= f
 
-emitSeq :: (Emits n, ScopableBuilder SimpIR m)
-        => Direction -> IxType SimpIR n -> Atom SimpIR n -> LamExpr SimpIR n
-        -> m n (Atom SimpIR n)
-emitSeq d t x f = do
-  op <- mkSeq d t x f
-  emit $ PrimOp $ DAMOp op
-
-mkSeq :: EnvReader m
-      => Direction -> IxType SimpIR n -> Atom SimpIR n -> LamExpr SimpIR n
-      -> m n (DAMOp SimpIR n)
-mkSeq d t x f = do
-  return $ Seq undefined d t x f
-
-buildRememberDest :: (Emits n, ScopableBuilder SimpIR m)
-  => NameHint -> SAtom n
-  -> (forall l. (Emits l, Distinct l, DExt n l) => SAtomVar l -> m l (SAtom l))
-  -> m n (SAtom n)
-buildRememberDest hint dest cont = do
-  ty <- return $ getType dest
-  doit <- buildUnaryLamExpr hint ty cont
-  emit $ PrimOp $ DAMOp $ RememberDest undefined dest doit
-
 -- === vector space (ish) type class ===
 
 emitLin :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (Atom r n)

@@ -320,7 +320,6 @@ data PrimOp (r::IR) (n::S) where
  MiscOp   :: MiscOp r n                      -> PrimOp r n
  Hof      :: TypedHof r n                    -> PrimOp r n
  RefOp    :: Atom r n -> RefOp r n           -> PrimOp r n
- DAMOp    :: DAMOp SimpIR n              -> PrimOp SimpIR n
 
 deriving instance IRRep r => Show (PrimOp r n)
 deriving via WrapE (PrimOp r) n instance IRRep r => Generic (PrimOp r n)
@@ -373,15 +372,6 @@ data Hof r n where
 
 deriving instance IRRep r => Show (Hof r n)
 deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
-
--- Ops for "Dex Abstract Machine"
-data DAMOp r n =
-   Seq (Effects r n) Direction (IxType r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
- | RememberDest (Effects r n) (Atom r n) (LamExpr r n)
- | AllocDest (Type r n)        -- type
- | Place (Atom r n) (Atom r n) -- reference, value
- | Freeze (Atom r n)           -- reference
-   deriving (Show, Generic)
 
 data RefOp r n =
    MAsk
@@ -595,7 +585,6 @@ instance ToExpr (MiscOp   r) r where toExpr = PrimOp . MiscOp
 instance ToExpr (MemOp    r) r where toExpr = PrimOp . MemOp
 instance ToExpr (VectorOp r) r where toExpr = PrimOp . VectorOp
 instance ToExpr (TypedHof r) r where toExpr = PrimOp . Hof
-instance ToExpr (DAMOp SimpIR) SimpIR where toExpr = PrimOp . DAMOp
 
 -- === Pattern synonyms ===
 
@@ -853,35 +842,6 @@ instance IRRep r => RenameE        (BaseMonoid r)
 instance IRRep r => AlphaEqE       (BaseMonoid r)
 instance IRRep r => AlphaHashableE (BaseMonoid r)
 
-instance IRRep r => GenericE (DAMOp r) where
-  type RepE (DAMOp r) = EitherE5
-  {- Seq -}            (Effects r `PairE` LiftE Direction `PairE` IxType r `PairE` Atom r `PairE` LamExpr r)
-  {- RememberDest -}   (Effects r `PairE` Atom r `PairE` LamExpr r)
-  {- AllocDest -}      (Type r)
-  {- Place -}          (Atom r `PairE` Atom r)
-  {- Freeze -}         (Atom r)
-  fromE = \case
-    Seq e d x y z      -> Case0 $ e `PairE` LiftE d `PairE` x `PairE` y `PairE` z
-    RememberDest e x y -> Case1 (e `PairE` x `PairE` y)
-    AllocDest x      -> Case2 x
-    Place x y        -> Case3 (x `PairE` y)
-    Freeze x         -> Case4 x
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 (e `PairE` LiftE d `PairE` x `PairE` y `PairE` z) -> Seq e d x y z
-    Case1 (e `PairE` x `PairE` y)                           -> RememberDest e x y
-    Case2 x                                       -> AllocDest x
-    Case3 (x `PairE` y)                           -> Place x y
-    Case4 x                                       -> Freeze x
-    _ -> error "impossible"
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (DAMOp r)
-instance IRRep r => HoistableE     (DAMOp r)
-instance IRRep r => RenameE        (DAMOp r)
-instance IRRep r => AlphaEqE       (DAMOp r)
-instance IRRep r => AlphaHashableE (DAMOp r)
-
 instance IRRep r => GenericE (TypedHof r) where
   type RepE (TypedHof r) = EffTy r `PairE` Hof r
   fromE (TypedHof effTy hof) = effTy `PairE` hof
@@ -1134,10 +1094,9 @@ instance IRRep r => GenericE (PrimOp r) where
  {- MemOp -} (MemOp r)
  {- VectorOp -} (VectorOp r)
  {- MiscOp -}   (MiscOp r)
-   ) (EitherE3
+   ) (EitherE2
  {- Hof -}           (TypedHof r)
  {- RefOp -}         (Atom r `PairE` RefOp r)
- {- DAMOp -}         (WhenSimp r (DAMOp SimpIR))
              )
   fromE = \case
     UnOp  op x   -> Case0 $ Case0 $ LiftE op `PairE` x
@@ -1147,7 +1106,6 @@ instance IRRep r => GenericE (PrimOp r) where
     MiscOp op    -> Case0 $ Case4 op
     Hof op          -> Case1 $ Case0 op
     RefOp r op      -> Case1 $ Case1 $ r `PairE` op
-    DAMOp op        -> Case1 $ Case2 $ WhenIRE op
   {-# INLINE fromE #-}
 
   toE = \case
@@ -1161,7 +1119,6 @@ instance IRRep r => GenericE (PrimOp r) where
     Case1 rep -> case rep of
       Case0 op -> Hof op
       Case1 (r `PairE` op) -> RefOp r op
-      Case2 (WhenIRE op)   -> DAMOp op
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1723,7 +1680,6 @@ instance IRRep r => Store (TypedHof r n)
 instance IRRep r => Store (Hof r n)
 instance IRRep r => Store (RefOp r n)
 instance IRRep r => Store (BaseMonoid r n)
-instance IRRep r => Store (DAMOp r n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
 instance Store (DotMethods n)
@@ -1737,18 +1693,6 @@ instance IRRep r => PrettyPrec (Hof r n) where
     While body    -> "while" <+> pArg body
     Linearize body x    -> "linearize" <+> pArg body <+> pArg x
     Transpose body x    -> "transpose" <+> pArg body <+> pArg x
-
-instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (DAMOp r n) where
-  prettyPrec op = atPrec LowestPrec case op of
-    Seq _ ann _ c lamExpr -> case lamExpr of
-      UnaryLamExpr b body -> do
-        "seq" <+> pApp ann <+> pApp c <+> prettyLam (pretty b <> ".") body
-      _ -> pretty (show op) -- shouldn't happen, but crashing pretty printers make debugging hard
-    RememberDest _ x y    -> "rememberDest" <+> pArg x <+> pArg y
-    Place r v -> pApp r <+> "r:=" <+> pApp v
-    Freeze r  -> "freeze" <+> pApp r
-    AllocDest ty -> "alloc" <+> pApp ty
 
 instance IRRep r => Pretty (TyCon r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (TyCon r n) where
@@ -1818,7 +1762,6 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
   prettyPrec = \case
     MemOp    op -> prettyPrec op
     VectorOp op -> prettyPrec op
-    DAMOp op -> prettyPrec op
     Hof (TypedHof _ hof) -> prettyPrec hof
     RefOp ref eff -> atPrec LowestPrec case eff of
       MAsk        -> "ask" <+> pApp ref

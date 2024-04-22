@@ -430,7 +430,6 @@ instance IRRep r => VisitGeneric (PrimOp r) r where
     VectorOp     op -> VectorOp     <$> visitGeneric op
     MiscOp       op -> MiscOp       <$> visitGeneric op
     Hof          op -> Hof          <$> visitGeneric op
-    DAMOp        op -> DAMOp        <$> visitGeneric op
     RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
 
 instance IRRep r => VisitGeneric (TypedHof r) r where
@@ -445,14 +444,6 @@ instance IRRep r => VisitGeneric (Hof r) r where
 
 instance IRRep r => VisitGeneric (BaseMonoid r) r where
   visitGeneric (BaseMonoid x lam) = BaseMonoid <$> visitGeneric x <*> visitGeneric lam
-
-instance IRRep r => VisitGeneric (DAMOp r) r where
-  visitGeneric = \case
-    Seq eff dir d x lam -> Seq <$> visitGeneric eff <*> pure dir <*> visitGeneric d <*> visitGeneric x <*> visitGeneric lam
-    RememberDest eff x lam -> RememberDest <$> visitGeneric eff <*> visitGeneric x <*> visitGeneric lam
-    AllocDest t -> AllocDest <$> visitGeneric t
-    Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
-    Freeze x  -> Freeze <$> visitGeneric x
 
 instance IRRep r => VisitGeneric (Effects r) r where
   visitGeneric = \case
@@ -696,7 +687,6 @@ instance SubstE AtomSubstVal RepVal
 instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
-instance IRRep r => SubstE AtomSubstVal (DAMOp r)
 instance IRRep r => SubstE AtomSubstVal (TypedHof r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (TyCon r)

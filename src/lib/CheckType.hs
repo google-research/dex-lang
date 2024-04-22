@@ -462,7 +462,6 @@ instance IRRep r => CheckableE r (PrimOp r) where
       return $ UnOp unop x'
     MiscOp op -> MiscOp <$> checkE op
     MemOp  op -> MemOp  <$> checkE op
-    DAMOp  op -> DAMOp  <$> checkE op
     RefOp ref m -> do
       (ref', TyCon (RefType h s)) <- checkAndGetType ref
       m' <- case m of
@@ -628,38 +627,6 @@ checkHof (EffTy _ reqTy) = \case
       body' <- body |: sink xTy
       checkTypesEq (sink $ binderType b') (sink reqTy)
       return $ Transpose (LamExpr (UnaryNest b') body') x'
-
-instance IRRep r => CheckableE r (DAMOp r) where
-  checkE = \case
-    Seq effAnn dir ixTy carry lam -> do
-      LamExpr (UnaryNest b) body <- return lam
-      effAnn' <- checkE effAnn
-      ixTy' <- checkE ixTy
-      (carry', carryTy') <- checkAndGetType carry
-      let badCarry = throwInternal $ "Seq carry should be a product of raw references, got: " ++ pprint carryTy'
-      case carryTy' of
-        TyCon (ProdType refTys) -> forM_ refTys \case RawRefTy _ -> return (); _ -> badCarry
-        _ -> badCarry
-      let binderReqTy = PairTy (ixTypeType ixTy') carryTy'
-      checkBinderType binderReqTy b \b' -> do
-        body' <- checkE body
-        return $ Seq effAnn' dir ixTy' carry' $ LamExpr (UnaryNest b') body'
-    RememberDest effAnn d lam -> do
-      LamExpr (UnaryNest b) body <- return lam
-      effAnn' <- checkE effAnn
-      (d', dTy@(RawRefTy _)) <- checkAndGetType d
-      checkBinderType dTy b \b' -> do
-        body' <- checkE body
-        return $ RememberDest effAnn' d' $ LamExpr (UnaryNest b') body'
-    AllocDest ty -> AllocDest <$> checkE ty
-    Place ref val -> do
-      val' <- checkE val
-      ref' <- ref |: RawRefTy (getType val')
-      return $ Place ref' val'
-    Freeze ref -> do
-      ref' <- checkE ref
-      RawRefTy _ <- return $ getType ref'
-      return $ Freeze ref'
 
 checkLamExpr :: IRRep r => PiType r o -> LamExpr r i -> TyperM r i o (LamExpr r o)
 checkLamExpr piTy (LamExpr bs body) =

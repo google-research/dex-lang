@@ -19,7 +19,6 @@ import Core
 import Err
 import CheapReduction
 import IRVariants
-import Lower (DestBlock)
 import MTL1
 import Name
 import Subst
@@ -93,14 +92,15 @@ newtype TopVectorizeM (i::S) (o::S) (a:: *) = TopVectorizeM
            , SubstReader Name)
 
 vectorizeLoops :: EnvReader m => Word32 -> STopLam n -> m n (STopLam n, [Err])
-vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
-  case popNest bsDestB of
-    Just (PairB bs b) ->
-      refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
-        (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
-        return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
-    Nothing -> error "expected a trailing dest binder"
-{-# SCC vectorizeLoops #-}
+vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = undefined
+-- vectorizeLoops width (TopLam d ty (LamExpr bsDestB body)) = liftEnvReaderM do
+--   case popNest bsDestB of
+--     Just (PairB bs b) ->
+--       refreshAbs (Abs bs (Abs b body)) \bs' body' -> do
+--         (Abs b'' body'', errs) <- liftTopVectorizeM width $ vectorizeLoopsDestBlock body'
+--         return $ (TopLam d ty (LamExpr (bs' >>> UnaryNest b'') body''), errs)
+--     Nothing -> error "expected a trailing dest binder"
+-- {-# SCC vectorizeLoops #-}
 
 liftTopVectorizeM :: (EnvReader m)
   => Word32 -> TopVectorizeM i i a -> m i (a, [Err])
@@ -124,14 +124,6 @@ askVectorByteWidth = TopVectorizeM $ liftSubstReaderT $ lift11 (fromLiftE <$> as
 
 extendCommuteMap :: AtomName SimpIR o -> MonoidCommutes -> TopVectorizeM i o a -> TopVectorizeM i o a
 extendCommuteMap name commutativity = local $ insertNameMapE name $ LiftE commutativity
-
-vectorizeLoopsDestBlock :: DestBlock i
-  -> TopVectorizeM i o (DestBlock o)
-vectorizeLoopsDestBlock (Abs (destb:>destTy) body) = do
-  destTy' <- renameM destTy
-  withFreshBinder (getNameHint destb) destTy' \destb' -> do
-    extendRenamer (destb @> binderName destb') do
-      Abs destb' <$> buildBlock (vectorizeLoopsExpr body)
 
 vectorizeLoopsDecls :: (Emits o)
   => Nest SDecl i i' -> TopVectorizeM i' o a -> TopVectorizeM i o a
@@ -289,21 +281,6 @@ vectorizeBlock (Abs (Nest (Let b (DeclBinding _ rhs)) rest) body) = do
   v <- vectorizeExpr rhs
   extendSubst (b @> v) $ vectorizeBlock (Abs rest body)
 
-vectorizeDAMOp :: Emits o => DAMOp SimpIR i -> VectorizeM i o (VAtom o)
-vectorizeDAMOp op =
-  case op of
-    Place ref' val' -> do
-      VVal vref ref <- vectorizeAtom ref'
-      sval@(VVal vval val) <- vectorizeAtom val'
-      VVal Uniform <$> case (vref, vval) of
-        (Uniform   , Uniform   ) -> emit $ Place ref val
-        (Uniform   , _         ) -> throwVectErr "Write conflict? This should never happen!"
-        (Varying   , _         ) -> throwVectErr "Vector scatter not implemented"
-        (Contiguous, Varying   ) -> emit $ Place ref val
-        (Contiguous, Contiguous) -> emit . Place ref =<< ensureVarying sval
-        _ -> throwVectErr "Not implemented yet"
-    _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
-
 vectorizeRefOp :: Emits o => SAtom i -> RefOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeRefOp ref' op =
   case op of
@@ -384,7 +361,6 @@ vectorizePrimOp op = case op of
       Contiguous -> return ty
       ProdStability _ -> throwVectErr "Unexpected cast of product type"
     VVal vx <$> emit (CastOp ty' x)
-  DAMOp op' -> vectorizeDAMOp op'
   RefOp ref op' -> vectorizeRefOp ref op'
   MemOp (PtrOffset arg1 arg2) -> do
     VVal Uniform ptr    <- vectorizeAtom arg1
@@ -492,7 +468,6 @@ instance Visitor (CalcWidthM i o) SimpIR i o where
 instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
   visitExprNoEmits expr = case expr of
     PrimOp (Hof     _) -> fallback
-    PrimOp (DAMOp _  ) -> fallback
     PrimOp (RefOp _ _) -> fallback
     PrimOp _ -> do
       expr' <- renameM expr

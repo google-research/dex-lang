@@ -409,7 +409,6 @@ linearizeExpr expr = case expr of
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
   Hof (TypedHof _ e) -> linearizeHof e
-  DAMOp _        -> error "shouldn't occur here"
   RefOp ref m -> do
     ref' <- linearizeAtom ref
     case m of
