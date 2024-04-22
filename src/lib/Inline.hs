@@ -199,7 +199,7 @@ data Context (from::E) (to::E) (o::S) where
   Stop :: Context e e o
   TabAppCtx :: SAtom i -> Subst InlineSubstVal i o
             -> Context SExpr e o -> Context SExpr e o
-  CaseCtx :: [SAlt i] -> SType i -> EffectRow SimpIR i
+  CaseCtx :: [SAlt i] -> SType i -> Effects SimpIR i
           -> Subst InlineSubstVal i o
           -> Context SExpr e o -> Context SExpr e o
   EmitToAtomCtx :: Context SAtom e o -> Context SExpr e o
@@ -327,7 +327,7 @@ reconstructTabApp ctx expr i = case expr of
     reconstruct ctx =<< mkTabApp array' i'
 
 reconstructCase :: Emits o
-  => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> EffectRow SimpIR i
+  => Context SExpr e o -> SExpr o -> [SAlt i] -> SType i -> Effects SimpIR i
   -> InlineM i o (e o)
 reconstructCase ctx scrutExpr alts resultTy effs =
   case scrutExpr of
@@ -360,8 +360,8 @@ reconstructCase ctx scrutExpr alts resultTy effs =
           effs' <- inline Stop effs
           reconstruct ctx $ Case scrut alts' (EffTy effs' resultTy')
 
-instance Inlinable (EffectRow SimpIR)
-instance Inlinable (EffTy     SimpIR)
+instance Inlinable (Effects SimpIR)
+instance Inlinable (EffTy   SimpIR)
 
 -- === NoteReconstructTabAppDecisions ===
 

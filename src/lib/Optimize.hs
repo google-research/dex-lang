@@ -80,7 +80,7 @@ ulExpr expr = case expr of
                 extendSubst (b' @> SubstVal (IdxRepVal i)) $ ulExpr block'
               inc $ fromIntegral n  -- To account for the TabCon we emit below
               getLamExprType body' >>= \case
-                PiType (UnaryNest (tb:>_)) (EffTy _ valTy) -> do
+                PiType (UnaryNest (tb:>_)) valTy -> do
                   let tabTy = toType $ TabPiType (DictCon $ IxRawFin (IdxRepVal n)) (tb:>IdxRepTy) valTy
                   emit $ TabCon tabTy vals
                 _ -> error "Expected `for` body to have a Pi type"
@@ -336,5 +336,5 @@ dceBlock (Abs decls ans) = case decls of
         modify (<>FV (freeVarsB b'))
         return $ Abs (Nest (Let b' (DeclBinding ann expr')) bs'') ans''
 
-instance HasDCE (EffectRow   SimpIR)
-instance HasDCE (EffTy       SimpIR)
+instance HasDCE (Effects SimpIR)
+instance HasDCE (EffTy   SimpIR)

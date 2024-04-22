@@ -160,53 +160,7 @@ vectorizeLoopsExpr expr = do
   let loopWidth = vectorByteWidth `div` narrowestTypeByteWidth
   case expr of
     Block _ (Abs decls body) -> vectorizeLoopsDecls decls $ vectorizeLoopsExpr body
-    PrimOp (DAMOp (Seq effs dir ixty dest body)) -> do
-      sz <- simplifyIxSize =<< renameM ixty
-      case sz of
-        Just n | n `mod` loopWidth == 0 -> (do
-            safe <- vectorSafeEffect effs
-            if safe
-              then (do
-                Distinct <- getDistinct
-                let vn = n `div` loopWidth
-                body' <- vectorizeSeq loopWidth ixty body
-                dest' <- renameM dest
-                emit =<< mkSeq dir (IxType IdxRepTy (DictCon (IxRawFin (IdxRepVal vn)))) dest' body')
-              else renameM expr >>= emit)
-          `catchErr` \err -> do
-              modify (\(LiftE errs) -> LiftE (err:errs))
-              recurSeq expr
-        _ -> recurSeq expr
-    PrimOp (Hof (TypedHof _ (RunReader item (BinaryLamExpr hb' refb' body)))) -> do
-      item' <- renameM item
-      itemTy <- return $ getType item'
-      lam <- buildEffLam noHint itemTy \hb refb ->
-        extendRenamer (hb' @> atomVarName hb) do
-          extendRenamer (refb' @> atomVarName refb) do
-            vectorizeLoopsExpr body
-      emit =<< mkTypedHof (RunReader item' lam)
-    PrimOp (Hof (TypedHof (EffTy _ ty)
-                 (RunWriter (Just dest) monoid (BinaryLamExpr hb' refb' body)))) -> do
-      dest' <- renameM dest
-      monoid' <- renameM monoid
-      commutativity <- monoidCommutativity monoid'
-      PairTy _ accTy <- renameM ty
-      lam <- buildEffLam noHint accTy \hb refb ->
-        extendRenamer (hb' @> atomVarName hb) do
-          extendRenamer (refb' @> atomVarName refb) do
-            extendCommuteMap (atomVarName hb) commutativity do
-              vectorizeLoopsExpr body
-      emit =<< mkTypedHof (RunWriter (Just dest') monoid' lam)
     _ -> renameM expr >>= emit
-  where
-    recurSeq :: (Emits o) => SExpr i -> TopVectorizeM i o (SAtom o)
-    recurSeq (PrimOp (DAMOp (Seq effs dir ixty dest body))) = do
-      effs' <- renameM effs
-      ixty' <- renameM ixty
-      dest' <- renameM dest
-      body' <- vectorizeLoopsLamExpr body
-      emit $ Seq effs' dir ixty' dest' body'
-    recurSeq _ = error "Impossible"
 
 simplifyIxSize :: (EnvReader m, ScopableBuilder SimpIR m)
   => IxType SimpIR n -> m n (Maybe Word32)
@@ -268,58 +222,6 @@ _isZeroLit = \case
   Float32Lit 0.0 -> True
   Float64Lit 0.0 -> True
   _ -> False
-
--- Vectorizing a loop with an effect is safe when the operation reordering
--- produced by vectorization doesn't change the semantics.  This is guaranteed
--- to happen when:
--- - It's the Init effect (because the writes are non-aliasing), or
--- - It's the Reader effect, or
--- - Every reference in the effect is accessed in non-aliasing
---   fashion across iterations (e.g., for i. ... ref!i ...), or
--- - It's a Writer effect with a commutative monoid, or
--- - It's a Writer effect and the body writes to each set of
---   potentially overlapping references in scope at most once
---   (and the vector operations have in-order reductions
---   available)
--- - The Exception effect should have been transformed away by now
--- - The IO effect is in general not safe
--- This check doesn't have enough information to test the above,
--- but we crudely approximate for now.
-vectorSafeEffect :: EffectRow SimpIR i -> TopVectorizeM i o Bool
-vectorSafeEffect (EffectRow effs NoTail) = allM safe $ eSetToList effs where
-  safe :: Effect SimpIR i -> TopVectorizeM i o Bool
-  safe InitEffect = return True
-  safe (RWSEffect Reader _) = return True
-  safe (RWSEffect Writer (Stuck _ (Var h))) = do
-    h' <- renameM $ atomVarName h
-    commuteMap <- ask
-    case lookupNameMapE h' commuteMap of
-      Just (LiftE Commutes) -> return True
-      Just (LiftE DoesNotCommute) -> return False
-      Nothing -> error $ "Handle " ++ pprint h ++ " not present in commute map?"
-  safe _ = return False
-
-vectorizeSeq :: Word32 -> IxType SimpIR i -> LamExpr SimpIR i
-  -> TopVectorizeM i o (LamExpr SimpIR o)
-vectorizeSeq loopWidth ixty (UnaryLamExpr (b:>ty) body) = do
-  newLoopTy <- case ty of
-    TyCon (ProdType [_ixType, ref]) -> do
-      ref' <- renameM ref
-      return $ TyCon $ ProdType [IdxRepTy, ref']
-    _ -> error "Unexpected seq binder type"
-  ixty' <- renameM ixty
-  liftVectorizeM loopWidth $
-    buildUnaryLamExpr (getNameHint b) newLoopTy \ci -> do
-      -- The per-tile loop iterates on `Fin`
-      (viOrd, dest) <- fromPair $ toAtom ci
-      iOrd <- imul viOrd $ IdxRepVal loopWidth
-      -- TODO: It would be nice to cancel this UnsafeFromOrdinal with the
-      -- Ordinal that will be taken later when indexing, but that should
-      -- probably be a separate pass.
-      i <- applyIxMethod (sink $ ixTypeDict ixty') UnsafeFromOrdinal [iOrd]
-      extendSubst (b @> VVal (ProdStability [Contiguous, ProdStability [Uniform]]) (PairVal i dest)) $
-        vectorizeExpr body $> UnitVal
-vectorizeSeq _ _ _ = error "expected a unary lambda expression"
 
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
@@ -494,16 +396,6 @@ vectorizePrimOp op = case op of
     BaseTy av <- getVectorType $ BaseTy a
     ptr' <- emit $ CastOp (BaseTy $ PtrType (addrSpace, av)) ptr
     VVal Varying <$> emit (PtrLoad ptr')
-  -- Vectorizing IO might not always be safe! Here, we depend on vectorizeOp
-  -- being picky about the IO-inducing ops it supports, and expect it to
-  -- complain about FFI calls and the like.
-  Hof (TypedHof _ (RunIO body)) -> do
-  -- TODO: buildBlockAux?
-    Abs decls (LiftE vy `PairE` y) <- buildScoped do
-      VVal vy y <- vectorizeExpr body
-      return $ PairE (LiftE vy) y
-    block <- mkBlock (Abs decls y)
-    VVal vy <$> emitHof (RunIO block)
   _ -> throwVectErr $ "Can't vectorize op: " ++ pprint op
 
 vectorizeType :: SType i -> VectorizeM i o (SType o)

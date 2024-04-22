@@ -24,11 +24,10 @@ import Data.Aeson (ToJSON (..))
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
-import qualified Data.Set              as S
 import qualified Data.Text             as T
 import Data.Text (Text)
 import Data.Word
-import Data.Text.Prettyprint.Doc (line, group, parens, nest, align, punctuate, hsep)
+import Data.Text.Prettyprint.Doc (line, group, parens, nest, align)
 import Data.Text (snoc, unsnoc)
 import Data.Tuple (swap)
 
@@ -199,7 +198,6 @@ data CSDecl
   | CPass
     deriving (Show, Generic)
 
-type CEffs = WithSrcs ([GroupW], Maybe GroupW)
 data CDef = CDef
   SourceNameW
   ExplicitParams
@@ -208,7 +206,7 @@ data CDef = CDef
   CSBlock
   deriving (Show, Generic)
 
-type CDefRhs = (AppExplicitness, Maybe CEffs, GroupW)
+type CDefRhs = (AppExplicitness, GroupW)
 
 data CInstanceDef = CInstanceDef
   SourceNameW -- interface name
@@ -232,7 +230,7 @@ data Group
   | CCase GroupW [CaseAlt] -- scrutinee, alternatives
   | CIf GroupW CSBlock (Maybe CSBlock)
   | CDo CSBlock
-  | CArrow GroupW (Maybe CEffs) GroupW
+  | CArrow GroupW GroupW
   | CWith GroupW WithClause
     deriving (Show, Generic)
 
@@ -280,20 +278,6 @@ data CSBlock =
 
 -- === Untyped IR ===
 -- The AST of Dex surface language.
-
-data UEffect (n::S) =
-   URWSEffect RWS (SourceOrInternalName (AtomNameC CoreIR) n)
- | UExceptionEffect
- | UIOEffect
- deriving (Generic)
-
-data UEffectRow (n::S) =
-  UEffectRow (S.Set (UEffect n)) (Maybe (SourceOrInternalName (AtomNameC CoreIR) n))
-  deriving (Generic)
-
-pattern UPure :: UEffectRow n
-pattern UPure <- ((\(UEffectRow effs t) -> (S.null effs, t)) -> (True, Nothing))
-  where UPure = UEffectRow mempty Nothing
 
 data UVar (n::S) =
    UAtomVar     (Name (AtomNameC CoreIR) n)
@@ -361,13 +345,12 @@ data ULamExpr (n::S) where
   ULamExpr
     :: Nest UAnnBinder n l  -- args
     -> AppExplicitness
-    -> Maybe (UEffectRow l)               -- optional effect
     -> Maybe (UType l)                    -- optional result type
     -> UBlock l                           -- body
     -> ULamExpr n
 
 data UPiExpr (n::S) where
-  UPiExpr :: Nest UAnnBinder n l -> AppExplicitness -> UEffectRow l -> UType l -> UPiExpr n
+  UPiExpr :: Nest UAnnBinder n l -> AppExplicitness -> UType l -> UPiExpr n
 
 data UTabPiExpr (n::S) where
   UTabPiExpr :: UAnnBinder n l -> UType l -> UTabPiExpr n
@@ -669,7 +652,6 @@ data PrimName =
  | UBinOp    BinOp
  | UMAsk | UMExtend | UMGet | UMPut
  | UWhile | ULinearize | UTranspose
- | URunReader | URunWriter | URunState | URunIO | UCatchException
  | UProjNewtype | UExplicitApply | UMonoLiteral
  | UIndexRef | UApplyMethod Int
  | UNat | UNatCon | UFin | UEffectRowKind
@@ -696,8 +678,6 @@ primNames = M.fromList
   , ("get"      , UMGet), ("put"    , UMPut)
   , ("while"    , UWhile)
   , ("linearize", ULinearize), ("linearTranspose", UTranspose)
-  , ("runReader", URunReader), ("runWriter"      , URunWriter), ("runState", URunState)
-  , ("runIO"    , URunIO    ), ("catchException" , UCatchException)
   , ("iadd" , binary IAdd),  ("isub"  , binary ISub)
   , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
   , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
@@ -736,8 +716,7 @@ primNames = M.fromList
   , ("Fin"           , UFin)
   , ("EffKind"       , UEffectRowKind)
   , ("NatCon"        , UNatCon)
-  , ("Ref"       , UPrimTC $ P.RefType)
-  , ("HeapType"  , UPrimTC $ P.HeapType)
+  , ("Ref"        , UPrimTC $ P.RefType)
   , ("indexRef"   , UIndexRef)
   , ("alloc"    , memOp $ P.IOAlloc)
   , ("free"     , memOp $ P.IOFree)
@@ -745,7 +724,6 @@ primNames = M.fromList
   , ("ptrLoad"  , memOp $ P.PtrLoad)
   , ("ptrStore" , memOp $ P.PtrStore)
   , ("throwError"    , miscOp $ P.ThrowError)
-  , ("throwException", miscOp $ P.ThrowException)
   , ("dataConTag"    , miscOp $ P.SumTag)
   , ("toEnum"        , miscOp $ P.ToEnum)
   , ("outputStream"  , miscOp $ P.OutputStream)
@@ -980,14 +958,6 @@ deriving instance Show (UBlock' n)
 deriving instance Show (UForExpr n)
 deriving instance Show (UAlt n)
 
-deriving instance Show (UEffect n)
-deriving instance Eq   (UEffect n)
-deriving instance Ord  (UEffect n)
-
-deriving instance Show (UEffectRow n)
-deriving instance Eq   (UEffectRow n)
-deriving instance Ord  (UEffectRow n)
-
 instance ToJSON LexemeType
 instance ToJSON PassName
 
@@ -1116,10 +1086,6 @@ instance Pretty (UDecl' n l) where
     UExprDecl expr -> pretty expr
     UPass -> "pass"
 
-instance Pretty (UEffectRow n) where
-  pretty (UEffectRow x Nothing) = encloseSep "<" ">" "," $ (pretty <$> toList x)
-  pretty (UEffectRow x (Just y)) = "{" <> (hsep $ punctuate "," (pretty <$> toList x)) <+> "|" <+> pretty y <> "}"
-
 instance Pretty e => Pretty (WithSrcs e) where pretty (WithSrcs _ _ x) = pretty x
 instance PrettyPrec e => PrettyPrec (WithSrcs e) where prettyPrec (WithSrcs _ _ x) = prettyPrec x
 
@@ -1141,15 +1107,13 @@ instance Pretty (SourceOrInternalName c n) where
 
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
-  prettyPrec (ULamExpr bs _ _ _ body) = atPrec LowestPrec $
+  prettyPrec (ULamExpr bs _ _ body) = atPrec LowestPrec $
     "\\" <> pretty bs <+> "." <+> indented (pretty body)
 
 instance Pretty (UPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UPiExpr n) where
-  prettyPrec (UPiExpr pats appExpl UPure ty) = atPrec LowestPrec $ align $
+  prettyPrec (UPiExpr pats appExpl ty) = atPrec LowestPrec $ align $
     pretty pats <+> pretty appExpl <+> pLowest ty
-  prettyPrec (UPiExpr pats appExpl eff ty) = atPrec LowestPrec $ align $
-    pretty pats <+> pretty appExpl <+> pretty eff <+> pLowest ty
 
 instance Pretty (UTabPiExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (UTabPiExpr n) where
@@ -1232,12 +1196,6 @@ instance Pretty FieldName' where
   pretty = \case
     FieldName s -> pretty s
     FieldNum n  -> pretty n
-
-instance Pretty (UEffect n) where
-  pretty eff = case eff of
-    URWSEffect rws h -> pretty rws <+> pretty h
-    UExceptionEffect -> "Except"
-    UIOEffect        -> "IO"
 
 prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
 prettyOpDefault name args =

@@ -16,8 +16,8 @@ import Data.Store (Store (..))
 
 import PPrint
 
-data TC = ProdType | SumType | RefType | TypeKind | HeapType
-data Con = ProdCon | SumCon Int | HeapVal
+data TC = ProdType | SumType | RefType | TypeKind
+data Con = ProdCon | SumCon Int
 
 data BinOp =
    IAdd | ISub | IMul | IDiv | ICmp CmpOp | FAdd | FSub | FMul

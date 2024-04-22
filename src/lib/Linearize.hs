@@ -33,11 +33,10 @@ import Util (enumerate)
 -- === linearization monad ===
 
 data ActivePrimals (n::S) = ActivePrimals
-  { activeVars    :: [AtomVar SimpIR n]  -- includes refs and regions
-  , activeEffs    :: EffectRow SimpIR n }
+  { activeVars    :: [AtomVar SimpIR n] }  -- includes refs
 
 emptyActivePrimals :: ActivePrimals n
-emptyActivePrimals = ActivePrimals [] Pure
+emptyActivePrimals = ActivePrimals []
 
 data TangentArgs (n::S) = TangentArgs [SAtomVar n]
 
@@ -72,10 +71,6 @@ extendActiveSubst
   => b i i' -> SAtomVar o -> PrimalM i' o a -> PrimalM i o a
 extendActiveSubst b v cont = extendSubst (b@>atomVarName v) $ extendActivePrimals v cont
 
-extendActiveEffs :: Effect SimpIR o -> PrimalM i o a -> PrimalM i o a
-extendActiveEffs eff = local \primals ->
-  primals { activeEffs = extendEffRow (eSetSingleton eff) (activeEffs primals)}
-
 extendActivePrimals :: SAtomVar o -> PrimalM i o a -> PrimalM i o a
 extendActivePrimals v = extendActivePrimalss [v]
 
@@ -88,9 +83,6 @@ getTangentArg idx = asks \(TangentArgs vs) -> toAtom $ vs !! idx
 
 extendTangentArgs :: SAtomVar n -> TangentM n a -> TangentM n a
 extendTangentArgs v m = local (\(TangentArgs vs) -> TangentArgs $ vs ++ [v]) m
-
-extendTangentArgss :: [SAtomVar n] -> TangentM n a -> TangentM n a
-extendTangentArgss vs' m = local (\(TangentArgs vs) -> TangentArgs $ vs ++ vs') m
 
 getTangentArgs :: TangentM o (TangentArgs o)
 getTangentArgs = ask
@@ -167,39 +159,26 @@ tangentFunAsLambda
   => (forall o'. (DExt o o', Emits o') => TangentM o' (Atom SimpIR o'))
   -> PrimalM i o (SLam o)
 tangentFunAsLambda cont = do
-  ActivePrimals primalVars _ <- getActivePrimals
+  ActivePrimals primalVars <- getActivePrimals
   tangentTys <- getTangentArgTys primalVars
   buildLamExpr tangentTys \tangentVars -> do
     liftTangentM (TangentArgs $ map sink tangentVars) cont
 
 getTangentArgTys :: (Fallible1 m, EnvExtender m) => [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
-getTangentArgTys topVs = go mempty topVs where
-  go :: (Fallible1 m, EnvExtender m)
-     => EMap SAtomName SAtomVar n -> [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
-  go _ [] = return $ EmptyAbs Empty
-  go heapMap (v:vs) = case getType v of
-    -- This is a hack to handle heaps/references. They normally come in pairs
-    -- like this, but there's nothing to prevent users writing programs that
-    -- sling around heap variables by themselves. We should try to do something
-    -- better...
-    TyCon HeapType -> do
-      withFreshBinder (getNameHint v) (TyCon HeapType) \hb -> do
-        let newHeapMap = sink heapMap <> eMapSingleton (sink (atomVarName v)) (binderVar hb)
-        Abs bs UnitE <- go newHeapMap $ sinkList vs
-        return $ EmptyAbs $ Nest hb bs
-    RefTy (Stuck _ (Var h)) referentTy -> do
-      case lookupEMap heapMap (atomVarName h) of
-        Nothing -> error "shouldn't happen?"
-        Just h' -> do
-          tt <- tangentType referentTy
-          let refTy = RefTy (toAtom h') tt
-          withFreshBinder (getNameHint v) refTy \refb -> do
-            Abs bs UnitE <- go (sink heapMap) $ sinkList vs
-            return $ EmptyAbs $ Nest refb bs
+getTangentArgTys topVs = go topVs where
+  go :: (Fallible1 m, EnvExtender m) => [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
+  go [] = return $ EmptyAbs Empty
+  go (v:vs) = case getType v of
+    RefTy rws referentTy -> do
+      tt <- tangentType referentTy
+      let refTy = RefTy rws tt
+      withFreshBinder (getNameHint v) refTy \refb -> do
+        Abs bs UnitE <- go $ sinkList vs
+        return $ EmptyAbs $ Nest refb bs
     ty -> do
       tt <- tangentType ty
       withFreshBinder (getNameHint v) tt \b -> do
-        Abs bs UnitE <- go (sink heapMap) $ sinkList vs
+        Abs bs UnitE <- go $ sinkList vs
         return $ EmptyAbs $ Nest b bs
 
 class ReconFunctor (f :: E -> E) where
@@ -487,7 +466,6 @@ linearizeMiscOp op = case op of
   BitcastOp _ _    -> notImplemented
   UnsafeCoerce _ _ -> notImplemented
   GarbageVal _     -> notImplemented
-  ThrowException _ -> notImplemented
   ThrowError _     -> zero
   OutputStream     -> zero
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
@@ -597,7 +575,6 @@ linearizePrimCon con = case con of
   Lit _ -> zero
   ProdCon xs -> fmapLin (Con . ProdCon . fromComposeE) $ seqLin (fmap linearizeAtom xs)
   SumCon  _ _ _ -> notImplemented
-  HeapVal -> zero
   DepPair _ _ _     -> notImplemented
   where zero = emitZeroT con
 
@@ -625,71 +602,7 @@ linearizeHof hof = case hof of
               residuals' <- tabApp (sink primalsAux) (toAtom i') >>= getSnd >>= unpackTelescope bs
               extendSubst (bs @@> (SubstVal <$> residuals')) $
                 applyLinLam linLam'
-  RunReader r lam -> do
-    WithTangent r' rLin <- linearizeAtom r
-    (lam', recon) <- linearizeEffectFun Reader lam
-    primalAux <- emitHof $ RunReader r' lam'
-    referentTy <- renameM $ getType r
-    (primal, linLam) <- reconstruct primalAux recon
-    return $ WithTangent primal do
-      rLin' <- rLin
-      tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam noHint tt \h ref ->
-        extendTangentArgss [h, ref] do
-          withSubstReaderT $ applyLinLam $ sink linLam
-      emitHofLin $ RunReader rLin' tanEffLam
-  RunState Nothing sInit lam -> do
-    WithTangent sInit' sLin <- linearizeAtom sInit
-    (lam', recon) <- linearizeEffectFun State lam
-    (primalAux, sFinal) <- fromPair =<< emitHof (RunState Nothing sInit' lam')
-    referentTy <- snd <$> getTypeRWSAction lam'
-    (primal, linLam) <- reconstruct primalAux recon
-    return $ WithTangent (PairVal primal sFinal) do
-      sLin' <- sLin
-      tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam noHint tt \h ref ->
-        extendTangentArgss [h, ref] do
-          withSubstReaderT $ applyLinLam $ sink linLam
-      emitHofLin $ RunState Nothing sLin' tanEffLam
-  RunWriter Nothing bm lam -> do
-    -- TODO: check it's actually the 0/+ monoid (or should we just build that in?)
-    bm' <- renameM bm
-    (lam', recon) <- linearizeEffectFun Writer lam
-    (primalAux, wFinal) <- fromPair =<< emitHof (RunWriter Nothing bm' lam')
-    (primal, linLam) <- reconstruct primalAux recon
-    referentTy <- snd <$> getTypeRWSAction lam'
-    return $ WithTangent (PairVal primal wFinal) do
-      bm'' <- sinkM bm'
-      tt <- tangentType $ sink referentTy
-      tanEffLam <- buildEffLam noHint tt \h ref ->
-        extendTangentArgss [h, ref] do
-          withSubstReaderT $ applyLinLam $ sink linLam
-      emitHofLin $ RunWriter Nothing bm'' tanEffLam
-  RunIO body -> do
-    (body', recon) <- linearizeExprDefunc body
-    primalAux <- emitHof $ RunIO body'
-    (primal, linLam) <- reconstruct primalAux recon
-    return $ WithTangent primal do
-      withSubstReaderT $ applyLinLam $ sink linLam
   _ -> error $ "not implemented: " ++ pprint hof
-
-linearizeEffectFun :: RWS -> SLam i -> PrimalM i o (SLam o, LinLamAbs o)
-linearizeEffectFun rws (BinaryLamExpr hB refB body) = do
-  withFreshBinder noHint (TyCon HeapType) \h -> do
-    bTy <- extendSubst (hB@>binderName h) $ renameM $ binderType refB
-    withFreshBinder noHint bTy \b -> do
-      let ref = binderVar b
-      hVar <- sinkM $ binderVar h
-      (body', linLam) <- extendActiveSubst hB hVar $ extendActiveSubst refB ref $
-        -- TODO: maybe we should check whether we need to extend the active effects
-        extendActiveEffs (RWSEffect rws (toAtom hVar)) do
-          linearizeExprDefunc body
-      -- TODO: this assumes that references aren't returned. Our type system
-      -- ensures that such references can never be *used* once the effect runner
-      -- returns, but technically it's legal to return them.
-      let linLam' = ignoreHoistFailure $ hoist (PairB h b) linLam
-      return (BinaryLamExpr h b body', linLam')
-linearizeEffectFun _ _ = error "expect effect function to be a binary lambda"
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"
@@ -697,10 +610,10 @@ notImplemented = error "Not implemented"
 -- === boring instances ===
 
 instance GenericE ActivePrimals where
-  type RepE ActivePrimals = PairE (ListE SAtomVar) (EffectRow SimpIR)
-  fromE (ActivePrimals vs effs) = ListE vs `PairE` effs
+  type RepE ActivePrimals = ListE SAtomVar
+  fromE (ActivePrimals vs) = ListE vs
   {-# INLINE fromE #-}
-  toE   (ListE vs `PairE` effs) = ActivePrimals vs effs
+  toE   (ListE vs) = ActivePrimals vs
   {-# INLINE toE #-}
 
 instance SinkableE   ActivePrimals

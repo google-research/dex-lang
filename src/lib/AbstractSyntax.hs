@@ -165,15 +165,14 @@ aInstanceDef (CInstanceDef (WithSrc clNameId clName) args givens methods instNam
 aDef :: CDef -> SyntaxM (SourceNameW, ULamExpr VoidS)
 aDef (CDef name params optRhs optGivens body) = do
   explicitParams <- explicitBindersOptAnn params
-  let rhsDefault = (ExplicitApp, Nothing, Nothing)
-  (expl, effs, resultTy) <- fromMaybeM optRhs rhsDefault \(expl, optEffs, resultTy) -> do
-    effs <- fromMaybeM optEffs UPure aEffects
+  let rhsDefault = (ExplicitApp, Nothing)
+  (expl, resultTy) <- fromMaybeM optRhs rhsDefault \(expl, resultTy) -> do
     resultTy' <- expr resultTy
-    return (expl, Just effs, Just resultTy')
+    return (expl, Just resultTy')
   implicitParams <- aOptGivens optGivens
   let allParams = implicitParams >>> explicitParams
   body' <- block body
-  return (name, ULamExpr allParams expl effs resultTy body')
+  return (name, ULamExpr allParams expl resultTy body')
 
 stripParens :: GroupW -> GroupW
 stripParens (WithSrcs _ _ (CParens [g])) = stripParens g
@@ -356,26 +355,6 @@ identifier ctx (WithSrcs sid _ g) = case g of
   CLeaf (CIdentifier name) -> return $ WithSrc sid name
   _ -> throw sid $ ExpectedIdentifier ctx
 
-aEffects :: WithSrcs ([GroupW], Maybe GroupW) -> SyntaxM (UEffectRow VoidS)
-aEffects (WithSrcs _ _ (effs, optEffTail)) = do
-  lhs <- mapM effect effs
-  rhs <- forM optEffTail \effTail ->
-    fromSourceNameW <$> identifier "effect row remainder variable" effTail
-  return $ UEffectRow (S.fromList lhs) rhs
-
-effect :: GroupW -> SyntaxM (UEffect VoidS)
-effect (WithSrcs grpSid _ grp) = case grp of
-  CParens [g] -> effect g
-  CJuxtapose True (Identifier "Read" ) (WithSrcs sid _ (CLeaf (CIdentifier h))) ->
-    return $ URWSEffect Reader $ fromSourceNameW (WithSrc sid h)
-  CJuxtapose True (Identifier "Accum") (WithSrcs sid _ (CLeaf (CIdentifier h))) ->
-    return $ URWSEffect Writer $ fromSourceNameW (WithSrc sid h)
-  CJuxtapose True (Identifier "State") (WithSrcs sid _ (CLeaf (CIdentifier h))) ->
-    return $ URWSEffect State $ fromSourceNameW (WithSrc sid h)
-  CLeaf (CIdentifier "Except") -> return UExceptionEffect
-  CLeaf (CIdentifier "IO"    ) -> return UIOEffect
-  _ -> throw grpSid UnexpectedEffectForm
-
 aMethod :: CSDeclW -> SyntaxM (Maybe (UMethodDef VoidS))
 aMethod (WithSrcs _ _ CPass) = return Nothing
 aMethod (WithSrcs sid _ d) = Just . WithSrcE sid <$> case d of
@@ -383,7 +362,7 @@ aMethod (WithSrcs sid _ d) = Just . WithSrcE sid <$> case d of
     (WithSrc nameSid name, lam) <- aDef def
     return $ UMethodDef (SourceName nameSid name) lam
   CLet (WithSrcs lhsSid _ (CLeaf (CIdentifier name))) rhs -> do
-    rhs' <- ULamExpr Empty ImplicitApp Nothing Nothing <$> block rhs
+    rhs' <- ULamExpr Empty ImplicitApp Nothing <$> block rhs
     return $ UMethodDef (fromSourceNameW (WithSrc lhsSid name)) rhs'
   _ -> throw sid UnexpectedMethodDef
 
@@ -407,7 +386,7 @@ blockDecls (WithSrcs sid _ (CBind b rhs):ds) = do
   b' <- binderOptTy Explicit b
   rhs' <- asExpr <$> block rhs
   body <- block $ IndentedBlock sid ds -- Not really the right SrcId
-  let lam = ULam $ ULamExpr (UnaryNest b') ExplicitApp Nothing Nothing body
+  let lam = ULam $ ULamExpr (UnaryNest b') ExplicitApp Nothing body
   return (Empty, WithSrcE sid $ extendAppRight rhs' (WithSrcE sid lam))
 blockDecls (d:ds) = do
   d' <- decl PlainLet d
@@ -428,13 +407,12 @@ expr (WithSrcs sid sids grp) = WithSrcE sid <$> case grp of
   -- should be detected upstream, before calling expr.
   CBrackets gs -> UTabCon <$> mapM expr gs
   CGivens _ -> throw sid UnexpectedGivenClause
-  CArrow lhs effs rhs -> do
+  CArrow lhs rhs -> do
     case lhs of
       WithSrcs _ _ (CParens gs) -> do
         bs <- aPiBinders gs
-        effs' <- fromMaybeM effs UPure aEffects
         resultTy <- expr rhs
-        return $ UPi $ UPiExpr bs ExplicitApp effs' resultTy
+        return $ UPi $ UPiExpr bs ExplicitApp resultTy
       WithSrcs lhsSid _ _ -> throw lhsSid ArgsShouldHaveParens
   CDo b -> UDo <$> block b
   CJuxtapose hasSpace lhs rhs -> case hasSpace of
@@ -476,7 +454,7 @@ expr (WithSrcs sid sids grp) = WithSrcE sid <$> case grp of
       WithSrcs _ _ (CParens gs) -> do
         bs <- aPiBinders gs
         resultTy <- expr rhs
-        return $ UPi $ UPiExpr bs ImplicitApp UPure resultTy
+        return $ UPi $ UPiExpr bs ImplicitApp resultTy
       WithSrcs lhsSid _ _ -> throw lhsSid ArgsShouldHaveParens
     FatArrow      -> do
       lhs' <- tyOptPat lhs
@@ -501,7 +479,7 @@ expr (WithSrcs sid sids grp) = WithSrcE sid <$> case grp of
   CLambda params body -> do
     params' <- explicitBindersOptAnn $ WithSrcs sid [] $ map stripParens params
     body' <- block body
-    return $ ULam $ ULamExpr params' ExplicitApp Nothing Nothing body'
+    return $ ULam $ ULamExpr params' ExplicitApp Nothing body'
   CFor kind indices body -> do
     let (dir, trailingUnit) = case kind of
           KFor  -> (Fwd, False)

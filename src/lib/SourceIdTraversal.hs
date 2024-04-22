@@ -73,7 +73,7 @@ instance IsTree Group where
     CCase scrut alts -> visit scrut >> visit alts
     CIf scrut ifTrue ifFalse -> visit scrut >> visit ifTrue >> visit ifFalse
     CDo body -> visit body
-    CArrow l effs r -> visit l >> visit effs >> visit r
+    CArrow l r -> visit l >> visit r
     CWith b body -> visit b >> visit body
 
 instance IsTree Bin where

@@ -232,7 +232,7 @@ typeOfTabApp _ _ = error "expected a TabPi type"
 
 typeOfApp  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)
 typeOfApp (TyCon (Pi piTy)) xs = withSubstReaderT $
-  withInstantiated piTy xs \(EffTy _ ty) -> substM ty
+  withInstantiated piTy xs \ty -> substM ty
 typeOfApp _ _ = error "expected a pi type"
 
 repValAtom :: EnvReader m => RepVal n -> m n (SAtom n)
@@ -277,7 +277,6 @@ unwrapNewtypeType = \case
     def <- lookupTyCon defName
     ty' <- dataDefRep <$> instantiateTyConDef def params
     return (UserADTData sn defName params, ty')
-  ty -> error $ "Shouldn't be projecting: " ++ pprint ty
 {-# INLINE unwrapNewtypeType #-}
 
 instantiateTyConDef :: EnvReader m => TyConDef n -> TyConParams n -> m n (DataConDefs n)
@@ -440,13 +439,7 @@ instance IRRep r => VisitGeneric (TypedHof r) r where
 instance IRRep r => VisitGeneric (Hof r) r where
   visitGeneric = \case
     For ann d lam -> For ann <$> visitGeneric d <*> visitGeneric lam
-    RunReader x body -> RunReader <$> visitGeneric x <*> visitGeneric body
-    RunWriter dest bm body -> RunWriter <$> mapM visitGeneric dest <*> visitGeneric bm <*> visitGeneric body
-    RunState  dest s body ->  RunState  <$> mapM visitGeneric dest <*> visitGeneric s <*> visitGeneric body
     While          b -> While          <$> visitBlock b
-    RunIO          b -> RunIO          <$> visitBlock b
-    RunInit        b -> RunInit        <$> visitBlock b
-    CatchException t b -> CatchException <$> visitType t <*> visitBlock b
     Linearize      lam x -> Linearize <$> visitGeneric lam <*> visitGeneric x
     Transpose      lam x -> Transpose <$> visitGeneric lam <*> visitGeneric x
 
@@ -461,23 +454,10 @@ instance IRRep r => VisitGeneric (DAMOp r) r where
     Place x y -> Place  <$> visitGeneric x <*> visitGeneric y
     Freeze x  -> Freeze <$> visitGeneric x
 
-instance IRRep r => VisitGeneric (Effect r) r where
+instance IRRep r => VisitGeneric (Effects r) r where
   visitGeneric = \case
-    RWSEffect rws h    -> RWSEffect rws <$> visitGeneric h
-    ExceptionEffect    -> pure ExceptionEffect
-    IOEffect           -> pure IOEffect
-    InitEffect         -> pure InitEffect
-
-instance IRRep r => VisitGeneric (EffectRow r) r where
-  visitGeneric (EffectRow effs tailVar) = do
-    effs' <- eSetFromList <$> mapM visitGeneric (eSetToList effs)
-    tailEffRow <- case tailVar of
-      NoTail -> return $ EffectRow mempty NoTail
-      EffectRowTail v -> visitGeneric (toAtom v) <&> \case
-        Stuck _ (Var v') -> EffectRow mempty (EffectRowTail v')
-        Con (Eff r)  -> r
-        _ -> error "Not a valid effect substitution"
-    return $ extendEffRow effs' tailEffRow
+    Pure      -> return Pure
+    Effectful -> return Effectful
 
 instance IRRep r => VisitGeneric (DictCon r) r where
   visitGeneric = \case
@@ -491,14 +471,12 @@ instance IRRep r => VisitGeneric (Con r) r where
     Lit l -> return $ Lit l
     ProdCon xs -> ProdCon <$> mapM visitGeneric xs
     SumCon ty con arg -> SumCon <$> mapM visitGeneric ty <*> return con <*> visitGeneric arg
-    HeapVal -> return HeapVal
     DepPair x y t -> do
       x' <- visitGeneric x
       y' <- visitGeneric y
       ~(DepPairTy t') <- visitGeneric $ DepPairTy t
       return $ DepPair x' y' t'
     Lam lam          -> Lam         <$> visitGeneric lam
-    Eff eff          -> Eff         <$> visitGeneric eff
     DictConAtom d    -> DictConAtom <$> visitGeneric d
     TyConAtom   t    -> TyConAtom   <$> visitGeneric t
     NewtypeCon con x -> NewtypeCon  <$> visitGeneric con <*> visitGeneric x
@@ -513,7 +491,6 @@ instance VisitGeneric NewtypeTyCon CoreIR where
   visitGeneric = \case
     Nat -> return Nat
     Fin x -> Fin <$> visitGeneric x
-    EffectRowKind -> return EffectRowKind
     UserADTType n v params -> UserADTType n <$> renameN v <*> visitGeneric params
 
 instance VisitGeneric TyConParams CoreIR where
@@ -539,14 +516,14 @@ instance VisitGeneric CorePiType CoreIR where
 instance IRRep r => VisitGeneric (TabPiType r) r where
   visitGeneric (TabPiType d b eltTy) = do
     d' <- visitGeneric d
-    visitGeneric (PiType (UnaryNest b) (EffTy Pure eltTy)) <&> \case
-      PiType (UnaryNest b') (EffTy Pure eltTy') -> TabPiType d' b' eltTy'
+    visitGeneric (PiType (UnaryNest b) eltTy) <&> \case
+      PiType (UnaryNest b') eltTy' -> TabPiType d' b' eltTy'
       _ -> error "not a table pi type"
 
 instance IRRep r => VisitGeneric (DepPairType r) r where
   visitGeneric (DepPairType expl b ty) = do
-    visitGeneric (PiType (UnaryNest b) (EffTy Pure ty)) <&> \case
-      PiType (UnaryNest b') (EffTy Pure ty') -> DepPairType expl b' ty'
+    visitGeneric (PiType (UnaryNest b) ty) <&> \case
+      PiType (UnaryNest b') ty' -> DepPairType expl b' ty'
       _ -> error "not a dependent pair type"
 
 instance VisitGeneric RepVal SimpIR where
@@ -573,7 +550,7 @@ instance VisitGeneric DataConDefs CoreIR where
 
 instance VisitGeneric DataConDef CoreIR where
   visitGeneric (DataConDef sn (Abs bs UnitE) repTy ps) = do
-    PiType bs' _  <- visitGeneric $ PiType bs $ EffTy Pure UnitTy
+    PiType bs' _  <- visitGeneric $ PiType bs UnitTy
     repTy' <- visitGeneric repTy
     return $ DataConDef sn (Abs bs' UnitE) repTy' ps
 
@@ -582,8 +559,7 @@ instance IRRep r => VisitGeneric (TyCon r) r where
     BaseType bt    -> return $ BaseType bt
     ProdType tys   -> ProdType <$> mapM visitGeneric tys
     SumType  tys   -> SumType  <$> mapM visitGeneric tys
-    RefType h t    -> RefType  <$> visitGeneric h <*> visitGeneric t
-    HeapType       -> return HeapType
+    RefType h t    -> RefType  h <$> visitGeneric t
     TabPi t        -> TabPi     <$> visitGeneric t
     DepPairTy t    -> DepPairTy <$> visitGeneric t
     TypeKind       -> return TypeKind
@@ -702,22 +678,6 @@ liftSimpAtom ty@(TyCon tyCon) simpAtom = case simpAtom of
     rec = liftSimpAtom
 {-# INLINE liftSimpAtom #-}
 
-instance IRRep r => SubstE AtomSubstVal (EffectRow r) where
-  substE env (EffectRow effs tailVar) = do
-    let effs' = eSetFromList $ map (substE env) (eSetToList effs)
-    let tailEffRow = case tailVar of
-          NoTail -> EffectRow mempty NoTail
-          EffectRowTail (AtomVar v _) -> case snd env ! v of
-            Rename        v'  -> do
-              let v'' = runEnvReaderM (fst env) $ toAtomVar v'
-              EffectRow mempty (EffectRowTail v'')
-            SubstVal (Stuck _ (Var v')) -> EffectRow mempty (EffectRowTail v')
-            SubstVal (Con (Eff r))  -> r
-            _ -> error "Not a valid effect substitution"
-    extendEffRow effs' tailEffRow
-
-instance IRRep r => SubstE AtomSubstVal (Effect r)
-
 instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization (AtomVar f _) ab) = do
     let f' = case snd env ! f of
@@ -726,8 +686,11 @@ instance SubstE AtomSubstVal SpecializationSpec where
                _ -> error "bad substitution"
     AppSpecialization f' (substE env ab)
 
-instance SubstE AtomSubstVal EffectDef
-instance SubstE AtomSubstVal EffectOpType
+instance SubstE AtomSubstVal (Effects r) where
+  substE _ = \case
+    Pure -> Pure
+    Effectful -> Effectful
+
 instance SubstE AtomSubstVal IExpr
 instance SubstE AtomSubstVal RepVal
 instance SubstE AtomSubstVal TyConParams

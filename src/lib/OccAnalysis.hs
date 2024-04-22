@@ -203,10 +203,7 @@ summary atom = case atom of
     Lit _ -> return $ Deterministic []
     ProdCon elts -> Product <$> mapM summary elts
     SumCon _ tag payload -> Inject tag <$> summary payload
-    HeapVal -> invalid "HeapVal"
     DepPair _ _ _ -> error "not implemented"
-  where
-    invalid tag = error $ "Unexpected indexing by " ++ tag
 
 unknown :: HoistableE e => e n -> OCCM n (IxExpr n)
 unknown _ = return IxAll
@@ -417,7 +414,7 @@ instance HasOCC (TypedHof SimpIR) where
   occ a (TypedHof effTy hof) = TypedHof <$> occ a effTy <*> occ a hof
 
 instance HasOCC (Hof SimpIR) where
-  occ a hof = case hof of
+  occ _ hof = case hof of
     For ann ixDict (UnaryLamExpr b body) -> do
       ixDict' <- inlinedLater ixDict
       occWithBinder (Abs b body) \b' body' -> do
@@ -426,47 +423,6 @@ instance HasOCC (Hof SimpIR) where
           return $ For ann ixDict' (UnaryLamExpr b' body'')
     For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> censored useManyTimes (occ accessOnce body)
-    RunReader ini bd -> do
-      iniIx <- summary ini
-      bd' <- oneShot a [Deterministic [], iniIx] bd
-      ini' <- occ accessOnce ini
-      return $ RunReader ini' bd'
-    RunWriter Nothing (BaseMonoid empty combine) bd -> do
-      -- There is no way to read from the reference in a Writer, so the only way
-      -- an indexing expression can depend on it is by referring to the
-      -- reference itself.  One way to so refer that is opaque to occurrence
-      -- analysis would be to pass the reference to a standalone function which
-      -- returns an index (presumably without actually reading any information
-      -- from said reference).
-      --
-      -- To cover this case, we write `Deterministic []` here.  This is correct,
-      -- because RunWriter creates the reference without reading any external
-      -- names.  In particular, in the event of `RunWriter` in a loop, the
-      -- different references across loop iterations are not distinguishable.
-      -- The same argument holds for the heap parameter.
-      bd' <- oneShot a [Deterministic [], Deterministic []] bd
-      -- We will process the combining function when we meet it in MExtend ops
-      -- (but we won't attempt to eliminate dead code in it).
-      empty' <- occ accessOnce empty
-      return $ RunWriter Nothing (BaseMonoid empty' combine) bd'
-    RunWriter (Just _) _ _ ->
-      error "Expecting to do occurrence analysis before destination passing."
-    RunState Nothing ini bd -> do
-      -- If we wanted to be more precise, the summary for the reference should
-      -- be something about the stuff that might flow into the `put` operations
-      -- affecting that reference.  Using `IxAll` is a conservative
-      -- approximation (in downstream analysis it means "assume I touch every
-      -- value").
-      bd' <- oneShot a [Deterministic [], IxAll] bd
-      ini' <- occ accessOnce ini
-      return $ RunState Nothing ini' bd'
-    RunState (Just _) _ _ ->
-      error "Expecting to do occurrence analysis before destination passing."
-    RunIO bd -> RunIO <$> occ a bd
-    RunInit _ ->
-      -- Though this is probably not too hard to implement.  Presumably
-      -- the lambda is one-shot.
-      error "Expecting to do occurrence analysis before lowering."
 
 oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
 oneShot acc [] (LamExpr Empty body) =

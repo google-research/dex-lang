@@ -143,11 +143,9 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
   RefType _ _ -> error "not implemented" -- how should we handle the ParamRole for the heap parameter?
   SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
   TypeKind     -> return TypeKind
-  HeapType     -> return HeapType
   NewtypeTyCon con -> NewtypeTyCon <$> case con of
     Nat -> return Nat
     Fin n -> Fin <$> f DataParam NatTy n
-    EffectRowKind    -> return EffectRowKind
     UserADTType sn def (TyConParams infs params) -> do
       Abs roleBinders UnitE <- getDataDefRoleBinders def
       params' <- traverseRoleBinders f roleBinders params

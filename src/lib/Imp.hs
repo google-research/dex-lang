@@ -118,18 +118,18 @@ getNaryLamImpArgTypes :: EnvReader m
   => PiType SimpIR n -> m n ([[BaseType]], [BaseType])
 getNaryLamImpArgTypes t = liftEnvReaderM $ go t where
   go :: PiType SimpIR n -> EnvReaderM n ([[BaseType]], [BaseType])
-  go (PiType bs effTy) = case bs of
+  go (PiType bs resultTy) = case bs of
     Nest piB rest -> do
       ts <- getRepBaseTypes $ binderType piB
-      refreshAbs (Abs piB (PiType rest effTy)) \_ restPi -> do
+      refreshAbs (Abs piB (PiType rest resultTy)) \_ restPi -> do
         (argTys, resultTys) <- go restPi
         return (ts:argTys, resultTys)
-    Empty -> ([],) <$> getDestBaseTypes (etTy effTy)
+    Empty -> ([],) <$> getDestBaseTypes resultTy
 
 interpretImpArgsWithDest :: EnvReader m
   => PiType SimpIR n -> [IExpr n] -> m n ([SAtom n], Dest n)
 interpretImpArgsWithDest t xs = do
-  (PiType bs (EffTy _ resultTy)) <- return t
+  (PiType bs resultTy) <- return t
   (args, xsLeft) <- _interpretImpArgs (EmptyAbs bs) xs
   resultTy' <- applySubst (bs @@> (SubstVal <$> args)) resultTy
   (destTree, xsRest) <- listToTree resultTy' xsLeft
@@ -423,7 +423,7 @@ toImpVectorOp = \case
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fromScalarAtom refi
     resultVal <- castPtrToVectorType refi' (toIVectorType vty)
-    repValAtom $ RepVal (RefTy (Con HeapVal) vty) (Leaf resultVal)
+    repValAtom $ RepVal (RefTy State vty) (Leaf resultVal)
   where
     returnIExprVal x = return $ toScalarAtom x
 
@@ -470,7 +470,6 @@ toImpMiscOp op = case op of
       return $ toAtom $ RepVal ty $ Branch $ Leaf i' : map (const (Branch [])) cases
     _ -> error $ "Not an enum: " ++ pprint ty
   OutputStream -> returnIExprVal =<< emitInstr IOutputStream
-  ThrowException _ -> error "shouldn't have ThrowException left" -- also, should be replaced with user-defined errors
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
     resultTy <- return $ getType $ PrimOp $ MiscOp op
@@ -514,71 +513,14 @@ toImpMemOp op = case op of
     returnIExprVal x = return $ toScalarAtom x
 
 toImpTypedHof :: Emits o => TypedHof SimpIR i -> SubstImpM i o (SAtom o)
-toImpTypedHof (TypedHof (EffTy _ resultTy') hof) = do
-  resultTy <- substM resultTy'
-  case hof of
-    For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
-    While body -> do
-      body' <- buildBlockImp do
-        ans <- fromScalarAtom =<< translateExpr body
-        return [ans]
-      emitStatement $ IWhile body'
-      return UnitVal
-    RunReader r f -> do
-      BinaryLamExpr h ref body <- return f
-      r' <- substM r
-      rDest <- allocDest $ getType r'
-      storeAtom rDest r'
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom rDest)) $
-        translateExpr body
-    RunWriter d (BaseMonoid e _) f -> do
-      BinaryLamExpr h ref body <- return f
-      let PairTy ansTy accTy = resultTy
-      (aDest, wDest) <- case d of
-        Nothing -> destPairUnpack <$> allocDest resultTy
-        Just d' -> do
-          aDest <- allocDest ansTy
-          wDest <- atomToDest =<< substM d'
-          return (aDest, wDest)
-      e' <- substM e
-      PairE accTy' e'' <- sinkM $ PairE accTy e'
-      liftMonoidEmpty wDest accTy' e''
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom wDest)) $
-        translateExpr body >>= storeAtom aDest
-      PairVal <$> loadAtom aDest <*> loadAtom wDest
-    RunState d s f -> do
-      BinaryLamExpr h ref body <- return f
-      let PairTy ansTy _ = resultTy
-      (aDest, sDest) <- case d of
-        Nothing -> destPairUnpack <$> allocDest resultTy
-        Just d' -> do
-          aDest <- allocDest ansTy
-          sDest <- atomToDest =<< substM d'
-          return (aDest, sDest)
-      storeAtom sDest =<< substM s
-      extendSubst (h @> SubstVal (Con HeapVal) <.> ref @> SubstVal (destToAtom sDest)) $
-        translateExpr body >>= storeAtom aDest
-      PairVal <$> loadAtom aDest <*> loadAtom sDest
-    RunIO body -> translateExpr body
-    RunInit body -> translateExpr body
-    where
-      liftMonoidEmpty :: Emits n => Dest n -> SType n -> SAtom n -> SubstImpM i n ()
-      liftMonoidEmpty accDest accTy x = do
-        xTy <- return $ getType x
-        alphaEq xTy accTy >>= \case
-          True -> storeAtom accDest x
-          False -> case accTy of
-            TyCon (TabPi t) -> do
-              let ixTy = tabIxType t
-              n <- indexSetSizeImp ixTy
-              emitLoop noHint Fwd n \i -> do
-                idx <- unsafeFromOrdinalImp (sink ixTy) i
-                x' <- sinkM x
-                eltTy <- instantiate (sink t) [idx]
-                ithDest <- indexDest (sink accDest) idx
-                liftMonoidEmpty ithDest eltTy x'
-            _ -> error $ "Base monoid type mismatch: can't lift " ++
-                  pprint xTy ++ " to " ++ pprint accTy
+toImpTypedHof (TypedHof _ hof) = case hof of
+  For _ _ _ -> error $ "Unexpected `for` in Imp pass " ++ pprint hof
+  While body -> do
+    body' <- buildBlockImp do
+      ans <- fromScalarAtom =<< translateExpr body
+      return [ans]
+    emitStatement $ IWhile body'
+    return UnitVal
 
 -- === Runtime representation of values and refs ===
 
@@ -697,7 +639,6 @@ typeToTree tyTop = return $ go REmpty tyTop
       let tag = rec TagRepTy
       let xs = map rec ts
       Branch $ tag:xs
-    HeapType -> Branch []
     where rec = go ctx
 
 traverseScalarRepTys :: EnvReader m => SType n -> (LeafType n -> m n a) -> m n (Tree a)
@@ -746,7 +687,6 @@ valueToTree (RepVal tyTop valTop) = do
         results <- zipWithM rec ts vals
         return $ Branch $ tag : results
       _ -> error "expected a branch"
-    _ -> error $ "not implemented " ++ pprint ty
     where rec = go ctx
 {-# INLINE valueToTree #-}
 
@@ -857,7 +797,6 @@ atomToRepVal x = RepVal (getType x) <$> go x where
         then go payload
         else buildGarbageVal t <&> \(Stuck _ (RepValAtom (RepVal _ tree))) -> tree
       return $ Branch $ tag':xs
-    HeapVal -> return $ Branch []
   go (Stuck _ stuck) = case stuck of
     Var v -> lookupAtomName (atomVarName v) >>= \case
       TopDataBound (RepVal _ tree) -> return tree
@@ -880,7 +819,7 @@ atomToRepVal x = RepVal (getType x) <$> go x where
 -- from the dest. This version is not that. It just lifts a dest into an atom of
 -- type `Ref _`.
 destToAtom :: Dest n -> SAtom n
-destToAtom (Dest valTy tree) = toAtom $ RepVal (RefTy (Con HeapVal) valTy) tree
+destToAtom (Dest valTy tree) = toAtom $ RepVal (RefTy State valTy) tree
 
 atomToDest :: EnvReader m => SAtom n -> m n (Dest n)
 atomToDest (Stuck _ (RepValAtom val)) = do
@@ -1039,12 +978,6 @@ projectDest i (Dest (TyCon (ProdType tys)) (Branch ds)) =
   Dest (tys!!i) (ds!!i)
 projectDest _ (Dest ty _) = error $ "Can't project dest: " ++ pprint ty
 
-destPairUnpack :: Dest n -> (Dest n, Dest n)
-destPairUnpack (Dest (PairTy t1 t2) (Branch [d1, d2])) =
-  ( Dest t1 d1, Dest t2 d2 )
-destPairUnpack (Dest ty tree) =
-  error $ "Can't unpack dest: " ++ pprint ty ++ "\n" ++ show tree
-
 -- === Determining buffer sizes and offsets using polynomials ===
 
 type SBuilderM = BuilderM SimpIR
@@ -1185,7 +1118,7 @@ withFreshIBinder hint ty cont = do
 emitCall
   :: Emits n => PiType SimpIR n
   -> ImpFunName n -> [SAtom n] -> SubstImpM i n (SAtom n)
-emitCall (PiType bs (EffTy _ resultTy)) f xs = do
+emitCall (PiType bs resultTy) f xs = do
   resultTy' <- applySubst (bs @@> map SubstVal xs) resultTy
   dest <- allocDest resultTy'
   argsImp <- forM xs \x -> repValToList <$> atomToRepVal x

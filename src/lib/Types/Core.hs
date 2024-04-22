@@ -52,10 +52,8 @@ data Con (r::IR) (n::S) where
   Lit     :: LitVal                                  -> Con r n
   ProdCon :: [Atom r n]                              -> Con r n
   SumCon  :: [Type r n] -> Int -> Atom r n           -> Con r n -- type, tag, payload
-  HeapVal ::                                            Con r n
   DepPair :: Atom r n -> Atom r n -> DepPairType r n -> Con r n
   Lam        :: CoreLamExpr n                 -> Con CoreIR n
-  Eff        :: EffectRow CoreIR n            -> Con CoreIR n
   NewtypeCon :: NewtypeCon n -> Atom CoreIR n -> Con CoreIR n
   DictConAtom :: DictCon CoreIR n             -> Con CoreIR n
   TyConAtom   :: TyCon CoreIR n               -> Con CoreIR n
@@ -80,8 +78,7 @@ data TyCon (r::IR) (n::S) where
   BaseType :: BaseType             -> TyCon r n
   ProdType :: [Type r n]           -> TyCon r n
   SumType  :: [Type r n]           -> TyCon r n
-  RefType  :: Atom r n -> Type r n -> TyCon r n
-  HeapType     ::                     TyCon r n
+  RefType  :: RWS -> Type r n -> TyCon r n
   TabPi        :: TabPiType r n    -> TyCon r n
   DepPairTy    :: DepPairType r n  -> TyCon r n
   TypeKind     ::                     TyCon CoreIR n
@@ -108,7 +105,6 @@ deriving via WrapE (TyCon    r) n instance IRRep r => Generic (TyCon    r n)
 deriving via WrapE (Type     r) n instance IRRep r => Generic (Type     r n)
 deriving via WrapE (Stuck    r) n instance IRRep r => Generic (Stuck    r n)
 
--- TODO: factor out the EffTy and maybe merge with PrimOp
 data Expr r n where
  Block  :: EffTy r n -> Block r n -> Expr r n
  TopApp :: EffTy SimpIR n -> TopFunName n -> [SAtom n]         -> Expr SimpIR n
@@ -149,7 +145,6 @@ type AtomNameBinder (r::IR) = NameBinder (AtomNameC r)
 type ClassName    = Name ClassNameC
 type TyConName    = Name TyConNameC
 type DataConName  = Name DataConNameC
-type EffectName   = Name EffectNameC
 type InstanceName = Name InstanceNameC
 type MethodName   = Name MethodNameC
 type ModuleName   = Name ModuleNameC
@@ -216,10 +211,10 @@ data TabPiType (r::IR) (n::S) where
   TabPiType :: IxDict r n -> Binder r n l -> Type r l -> TabPiType r n
 
 data PiType (r::IR) (n::S) where
-  PiType :: Nest (Binder r) n l -> EffTy r l -> PiType r n
+  PiType :: Nest (Binder r) n l -> Type r l -> PiType r n
 
 data CorePiType (n::S) where
-  CorePiType :: AppExplicitness -> [Explicitness] -> Nest CBinder n l -> EffTy CoreIR l -> CorePiType n
+  CorePiType :: AppExplicitness -> [Explicitness] -> Nest CBinder n l -> CType l -> CorePiType n
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
@@ -239,8 +234,8 @@ data NonDepNest r ann n l = NonDepNest (Nest (AtomNameBinder r) n l) [ann n]
 class ToBindersAbs (e::E) (body::E) (r::IR) | e -> body, e -> r where
   toAbs :: e n -> Abs (Nest (Binder r)) body n
 
-instance ToBindersAbs CorePiType (EffTy CoreIR) CoreIR where
-  toAbs (CorePiType _ _ bs effTy) = Abs bs effTy
+instance ToBindersAbs CorePiType (Type CoreIR) CoreIR where
+  toAbs (CorePiType _ _ bs ty) = Abs bs ty
 
 instance ToBindersAbs CoreLamExpr (Expr CoreIR) CoreIR where
   toAbs (CoreLamExpr _ lam) = toAbs lam
@@ -248,8 +243,8 @@ instance ToBindersAbs CoreLamExpr (Expr CoreIR) CoreIR where
 instance ToBindersAbs (Abs (Nest (Binder r)) body) body r where
   toAbs = id
 
-instance ToBindersAbs (PiType r) (EffTy r) r where
-  toAbs (PiType bs effTy) = Abs bs effTy
+instance ToBindersAbs (PiType r) (Type r) r where
+  toAbs (PiType bs ty) = Abs bs ty
 
 instance ToBindersAbs (LamExpr r) (Expr r) r where
   toAbs (LamExpr bs body) = Abs bs body
@@ -344,9 +339,7 @@ data MiscOp (r::IR) (n::S) =
  | BitcastOp (Type r n) (Atom r n)                -- (2) Type, then value. See CheckType.hs for valid coercions.
  | UnsafeCoerce (Type r n) (Atom r n)             -- type, then value. Assumes runtime representation is the same.
  | GarbageVal (Type r n)                 -- type of value (assume `Data` constraint)
- -- Effects
  | ThrowError (Type r n)                 -- (1) Hard error (parameterized by result type)
- | ThrowException (Type r n)             -- (1) Catchable exceptions (unlike `ThrowError`)
  -- Tag of a sum type
  | SumTag (Atom r n)
  -- Create an enum (payload-free ADT) from a Word8
@@ -375,22 +368,16 @@ data TypedHof r n = TypedHof (EffTy r n) (Hof r n)
 data Hof r n where
  For       :: ForAnn -> IxType r n -> LamExpr r n -> Hof r n
  While     :: Expr r n -> Hof r n
- RunReader :: Atom r n -> LamExpr r n -> Hof r n
- RunWriter :: Maybe (Atom r n) -> BaseMonoid r n -> LamExpr r n -> Hof r n
- RunState  :: Maybe (Atom r n) -> Atom r n -> LamExpr r n -> Hof r n  -- dest, initial value, body lambda
- RunIO     :: Expr r n -> Hof r n
- RunInit   :: Expr r n -> Hof r n
- CatchException :: CType n -> Expr   CoreIR n -> Hof CoreIR n
- Linearize      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
- Transpose      :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
+ Linearize :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
+ Transpose :: LamExpr CoreIR n -> Atom CoreIR n -> Hof CoreIR n
 
 deriving instance IRRep r => Show (Hof r n)
 deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
 
 -- Ops for "Dex Abstract Machine"
 data DAMOp r n =
-   Seq (EffectRow r n) Direction (IxType r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
- | RememberDest (EffectRow r n) (Atom r n) (LamExpr r n)
+   Seq (Effects r n) Direction (IxType r n) (Atom r n) (LamExpr r n)   -- ix dict, carry dests, body lambda
+ | RememberDest (Effects r n) (Atom r n) (LamExpr r n)
  | AllocDest (Type r n)        -- type
  | Place (Atom r n) (Atom r n) -- reference, value
  | Freeze (Atom r n)           -- reference
@@ -445,7 +432,6 @@ data NewtypeCon (n::S) =
 data NewtypeTyCon (n::S) =
    Nat
  | Fin (Atom CoreIR n)
- | EffectRowKind
  | UserADTType SourceName (TyConName n) (TyConParams n)
    deriving (Show, Generic)
 
@@ -501,119 +487,20 @@ data DictCon (r::IR) (n::S) where
  IxRawFin      :: Atom r n -> DictCon r n
  IxSpecialized :: SpecDictName n -> [SAtom n] -> DictCon SimpIR n
 
-
-data EffectOpDef (n::S) where
-  EffectOpDef :: EffectName n  -- name of associated effect
-              -> EffectOpIdx   -- index in effect definition
-              -> EffectOpDef n
-  deriving (Show, Generic)
-
-instance GenericE EffectOpDef where
-  type RepE EffectOpDef =
-    EffectName `PairE` LiftE EffectOpIdx
-  fromE (EffectOpDef name idx) = name `PairE` LiftE idx
-  toE (name `PairE` LiftE idx) = EffectOpDef name idx
-
-instance SinkableE   EffectOpDef
-instance HoistableE  EffectOpDef
-instance RenameE     EffectOpDef
-
-data EffectOpIdx = ReturnOp | OpIdx Int
-  deriving (Show, Eq, Generic)
-
-data EffectDef (n::S) where
-  EffectDef :: SourceName
-            -> [(SourceName, EffectOpType n)]
-            -> EffectDef n
-
-instance GenericE EffectDef where
-  type RepE EffectDef =
-    LiftE SourceName `PairE` ListE (LiftE SourceName `PairE` EffectOpType)
-  fromE (EffectDef name ops) =
-    LiftE name `PairE` ListE (map (\(x, y) -> LiftE x `PairE` y) ops)
-  toE (LiftE name `PairE` ListE ops) =
-    EffectDef name (map (\(LiftE x `PairE` y)->(x,y)) ops)
-
-instance SinkableE EffectDef
-instance HoistableE  EffectDef
-instance AlphaEqE EffectDef
-instance AlphaHashableE EffectDef
-instance RenameE     EffectDef
-deriving instance Show (EffectDef n)
-deriving via WrapE EffectDef n instance Generic (EffectDef n)
-
-data EffectOpType (n::S) where
-  EffectOpType :: UResumePolicy -> CType n -> EffectOpType n
-
-instance GenericE EffectOpType where
-  type RepE EffectOpType =
-    LiftE UResumePolicy `PairE` CType
-  fromE (EffectOpType pol ty) = LiftE pol `PairE` ty
-  toE (LiftE pol `PairE` ty) = EffectOpType pol ty
-
-instance SinkableE EffectOpType
-instance HoistableE  EffectOpType
-instance AlphaEqE EffectOpType
-instance AlphaHashableE EffectOpType
-instance RenameE     EffectOpType
-deriving instance Show (EffectOpType n)
-deriving via WrapE EffectOpType n instance Generic (EffectOpType n)
-
--- === effects ===
-
-data Effect (r::IR) (n::S) =
-   RWSEffect RWS (Atom r n)
- | ExceptionEffect
- | IOEffect
- | InitEffect  -- Internal effect modeling writing to a destination.
- deriving (Generic, Show)
-
-data EffectRow (r::IR) (n::S) =
-  EffectRow (ESet (Effect r) n) (EffectRowTail r n)
-  deriving (Generic)
-
-data EffectRowTail (r::IR) (n::S) where
-  EffectRowTail :: AtomVar CoreIR n -> EffectRowTail CoreIR n
-  NoTail        ::                     EffectRowTail r n
-deriving instance IRRep r => Show (EffectRowTail r n)
-deriving instance IRRep r => Eq   (EffectRowTail r n)
-deriving via WrapE (EffectRowTail r) n instance IRRep r => Generic (EffectRowTail r n)
-
-data EffTy (r::IR) (n::S) =
-  EffTy { etEff :: EffectRow r n
-        , etTy  :: Type r n }
+data Effects (r::IR) (n::S) = Pure | Effectful
      deriving (Generic, Show)
 
-deriving instance IRRep r => Show (EffectRow r n)
+instance Semigroup (Effects r n) where
+  Pure <> Pure = Pure
+  _ <> _ = Effectful
 
-pattern Pure :: IRRep r => EffectRow r n
-pattern Pure <- ((\(EffectRow effs t) -> (eSetToList effs, t)) -> ([], NoTail))
-  where Pure = EffectRow mempty NoTail
+instance Monoid (Effects r n) where
+  mempty = Pure
 
-pattern OneEffect :: IRRep r => Effect r n -> EffectRow r n
-pattern OneEffect eff <- ((\(EffectRow effs t) -> (eSetToList effs, t)) -> ([eff], NoTail))
-  where OneEffect eff = EffectRow (eSetSingleton eff) NoTail
-
-instance IRRep r => Semigroup (EffectRow r n) where
-  EffectRow effs t <> EffectRow effs' t' =
-    EffectRow (effs <> effs') newTail
-    where
-      newTail = case (t, t') of
-        (NoTail, effTail) -> effTail
-        (effTail, NoTail) -> effTail
-        _ | t == t' -> t
-          | otherwise -> error "Can't combine effect rows with mismatched tails"
-
-instance IRRep r => Monoid (EffectRow r n) where
-  mempty = EffectRow mempty NoTail
-
-extendEffRow :: IRRep r => ESet (Effect r) n -> EffectRow r n -> EffectRow r n
-extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
-{-# INLINE extendEffRow #-}
-
-instance IRRep r => Store (EffectRowTail r n)
-instance IRRep r => Store (EffectRow     r n)
-instance IRRep r => Store (Effect        r n)
+data EffTy (r::IR) (n::S) =
+  EffTy { etEff :: Effects r n
+        , etTy  :: Type r n }
+     deriving (Generic, Show)
 
 -- === Binder utils ===
 
@@ -639,7 +526,6 @@ instance ToAtom (Atom r) r where toAtom = id
 instance ToAtom (Con  r) r where toAtom = Con
 instance ToAtom (TyCon     CoreIR) CoreIR where toAtom = Con . TyConAtom
 instance ToAtom (DictCon   CoreIR) CoreIR where toAtom = Con . DictConAtom
-instance ToAtom (EffectRow CoreIR) CoreIR where toAtom = Con . Eff
 instance ToAtom CoreLamExpr  CoreIR where toAtom = Con . Lam
 instance ToAtom DictType     CoreIR where toAtom = Con . TyConAtom . DictTy
 instance ToAtom NewtypeTyCon CoreIR where toAtom = Con . TyConAtom . NewtypeTyCon
@@ -763,11 +649,11 @@ pattern BaseTy b = TyCon (BaseType b)
 pattern PtrTy :: PtrType -> Type r n
 pattern PtrTy ty = TyCon (BaseType (PtrType ty))
 
-pattern RefTy :: Atom r n -> Type r n -> Type r n
+pattern RefTy :: RWS -> Type r n -> Type r n
 pattern RefTy r a = TyCon (RefType r a)
 
 pattern RawRefTy :: Type r n -> Type r n
-pattern RawRefTy a = TyCon (RefType (Con HeapVal) a)
+pattern RawRefTy a = TyCon (RefType State a)
 
 pattern TabTy :: IxDict r n -> Binder r n l -> Type r l -> Type r n
 pattern TabTy d b body = TyCon (TabPi (TabPiType d b body))
@@ -783,9 +669,6 @@ pattern NatVal n = Con (NewtypeCon NatCon (IdxRepVal n))
 
 pattern TyKind :: Kind CoreIR n
 pattern TyKind = TyCon TypeKind
-
-pattern EffKind :: Kind CoreIR n
-pattern EffKind = TyCon (NewtypeTyCon EffectRowKind)
 
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = TyCon (NewtypeTyCon (Fin (NatVal n)))
@@ -934,23 +817,20 @@ instance AlphaHashableE NewtypeCon
 instance RenameE        NewtypeCon
 
 instance GenericE NewtypeTyCon where
-  type RepE NewtypeTyCon = EitherE4
+  type RepE NewtypeTyCon = EitherE3
     {- Nat -}              UnitE
     {- Fin -}              CAtom
-    {- EffectRowKind -}    UnitE
     {- UserADTType -}      (LiftE SourceName `PairE` TyConName `PairE` TyConParams)
   fromE = \case
     Nat               -> Case0 UnitE
     Fin n             -> Case1 n
-    EffectRowKind     -> Case2 UnitE
-    UserADTType s d p -> Case3 (LiftE s `PairE` d `PairE` p)
+    UserADTType s d p -> Case2 (LiftE s `PairE` d `PairE` p)
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 UnitE -> Nat
     Case1 n     -> Fin n
-    Case2 UnitE -> EffectRowKind
-    Case3 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
+    Case2 (LiftE s `PairE` d `PairE` p) -> UserADTType s d p
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -975,8 +855,8 @@ instance IRRep r => AlphaHashableE (BaseMonoid r)
 
 instance IRRep r => GenericE (DAMOp r) where
   type RepE (DAMOp r) = EitherE5
-  {- Seq -}            (EffectRow r `PairE` LiftE Direction `PairE` IxType r `PairE` Atom r `PairE` LamExpr r)
-  {- RememberDest -}   (EffectRow r `PairE` Atom r `PairE` LamExpr r)
+  {- Seq -}            (Effects r `PairE` LiftE Direction `PairE` IxType r `PairE` Atom r `PairE` LamExpr r)
+  {- RememberDest -}   (Effects r `PairE` Atom r `PairE` LamExpr r)
   {- AllocDest -}      (Type r)
   {- Place -}          (Atom r `PairE` Atom r)
   {- Freeze -}         (Atom r)
@@ -1016,47 +896,23 @@ instance IRRep r => AlphaEqE       (TypedHof r)
 instance IRRep r => AlphaHashableE (TypedHof r)
 
 instance IRRep r => GenericE (Hof r) where
-  type RepE (Hof r) = EitherE2
-    (EitherE6
+  type RepE (Hof r) = EitherE4
   {- For -}       (LiftE ForAnn `PairE` IxType r `PairE` LamExpr r)
   {- While -}     (Expr r)
-  {- RunReader -} (Atom r `PairE` LamExpr r)
-  {- RunWriter -} (MaybeE (Atom r) `PairE` BaseMonoid r `PairE` LamExpr r)
-  {- RunState -}  (MaybeE (Atom r) `PairE` Atom r `PairE` LamExpr r)
-  {- RunIO -}     (Expr r)
-    ) (EitherE4
-  {- RunInit -}        (Expr r)
-  {- CatchException -} (WhenCore r (Type r `PairE` Expr r))
-  {- Linearize -}      (WhenCore r (LamExpr r `PairE` Atom r))
-  {- Transpose -}      (WhenCore r (LamExpr r `PairE` Atom r)))
+  {- Linearize -} (WhenCore r (LamExpr r `PairE` Atom r))
+  {- Transpose -} (WhenCore r (LamExpr r `PairE` Atom r))
 
   fromE = \case
-    For ann d body      -> Case0 (Case0 (LiftE ann `PairE` d `PairE` body))
-    While body          -> Case0 (Case1 body)
-    RunReader x body    -> Case0 (Case2 (x `PairE` body))
-    RunWriter d bm body -> Case0 (Case3 (toMaybeE d `PairE` bm `PairE` body))
-    RunState  d x body  -> Case0 (Case4 (toMaybeE d `PairE` x `PairE` body))
-    RunIO body          -> Case0 (Case5 body)
-    RunInit body        -> Case1 (Case0 body)
-    CatchException ty body -> Case1 (Case1 (WhenIRE (ty `PairE` body)))
-    Linearize body x    -> Case1 (Case2 (WhenIRE (PairE body x)))
-    Transpose body x    -> Case1 (Case3 (WhenIRE (PairE body x)))
+    For ann d body      -> Case0 (LiftE ann `PairE` d `PairE` body)
+    While body          -> Case1 body
+    Linearize body x    -> Case2 (WhenIRE (PairE body x))
+    Transpose body x    -> Case3 (WhenIRE (PairE body x))
   {-# INLINE fromE #-}
   toE = \case
-    Case0 hof -> case hof of
-      Case0 (LiftE ann `PairE` d `PairE` body) -> For ann d body
-      Case1 body                        -> While body
-      Case2 (x `PairE` body)            -> RunReader x body
-      Case3 (d `PairE` bm `PairE` body) -> RunWriter (fromMaybeE d) bm body
-      Case4 (d `PairE` x `PairE` body)  -> RunState  (fromMaybeE d) x body
-      Case5 body                        -> RunIO     body
-      _ -> error "impossible"
-    Case1 hof -> case hof of
-      Case0 body -> RunInit body
-      Case1 (WhenIRE (ty `PairE` body)) -> CatchException ty body
-      Case2 (WhenIRE (PairE body x)) -> Linearize body x
-      Case3 (WhenIRE (PairE body x)) -> Transpose body x
-      _ -> error "impossible"
+    Case0 (LiftE ann `PairE` d `PairE` body) -> For ann d body
+    Case1 body                        -> While body
+    Case2 (WhenIRE (PairE body x)) -> Linearize body x
+    Case3 (WhenIRE (PairE body x)) -> Transpose body x
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1380,7 +1236,6 @@ instance GenericOp MiscOp where
     UnsafeCoerce t x -> GenericOpRep P.UnsafeCoerce   [t] [x]     []
     GarbageVal t     -> GenericOpRep P.GarbageVal     [t] []      []
     ThrowError t     -> GenericOpRep P.ThrowError     [t] []      []
-    ThrowException t -> GenericOpRep P.ThrowException [t] []      []
     SumTag x         -> GenericOpRep P.SumTag         []  [x]     []
     ToEnum t x       -> GenericOpRep P.ToEnum         [t] [x]     []
     OutputStream     -> GenericOpRep P.OutputStream   []  []      []
@@ -1394,7 +1249,6 @@ instance GenericOp MiscOp where
     GenericOpRep P.UnsafeCoerce   [t] [x]     [] -> Just $ UnsafeCoerce t x
     GenericOpRep P.GarbageVal     [t] []      [] -> Just $ GarbageVal t
     GenericOpRep P.ThrowError     [t] []      [] -> Just $ ThrowError t
-    GenericOpRep P.ThrowException [t] []      [] -> Just $ ThrowException t
     GenericOpRep P.SumTag         []  [x]     [] -> Just $ SumTag x
     GenericOpRep P.ToEnum         [t] [x]     [] -> Just $ ToEnum t x
     GenericOpRep P.OutputStream   []  []      [] -> Just $ OutputStream
@@ -1415,15 +1269,13 @@ instance IRRep r => RenameE        (MiscOp r)
 
 instance IRRep r => GenericE (Con r) where
   type RepE (Con r) = EitherE2
-    (EitherE5
+    (EitherE4
   {- Lit -}      (LiftE LitVal)
   {- ProdCon -}  (ListE (Atom r))
   {- SumCon -}   (ListE (Type r) `PairE` LiftE Int `PairE` Atom r)
-  {- HeapVal -}  UnitE
   {- DepPair -}  (Atom r `PairE` Atom r `PairE` DepPairType r))
-    (WhenCore r (EitherE5
+    (WhenCore r (EitherE4
   {- Lam -}         CoreLamExpr
-  {- Eff -}         (EffectRow CoreIR)
   {- NewtypeCon -}  (NewtypeCon `PairE` CAtom)
   {- DictConAtom -} (DictCon CoreIR)
   {- TyConAtom -}   (TyCon CoreIR)))
@@ -1431,28 +1283,24 @@ instance IRRep r => GenericE (Con r) where
     Lit l         -> Case0 $ Case0 $ LiftE l
     ProdCon xs    -> Case0 $ Case1 $ ListE xs
     SumCon ts i x -> Case0 $ Case2 $ ListE ts `PairE` LiftE i `PairE` x
-    HeapVal       -> Case0 $ Case3 $ UnitE
-    DepPair x y t -> Case0 $ Case4 $ x `PairE` y `PairE` t
+    DepPair x y t -> Case0 $ Case3 $ x `PairE` y `PairE` t
     Lam lam          -> Case1 $ WhenIRE $ Case0 lam
-    Eff effs         -> Case1 $ WhenIRE $ Case1 effs
-    NewtypeCon con x -> Case1 $ WhenIRE $ Case2 $ con `PairE` x
-    DictConAtom con  -> Case1 $ WhenIRE $ Case3 con
-    TyConAtom tc     -> Case1 $ WhenIRE $ Case4 tc
+    NewtypeCon con x -> Case1 $ WhenIRE $ Case1 $ con `PairE` x
+    DictConAtom con  -> Case1 $ WhenIRE $ Case2 con
+    TyConAtom tc     -> Case1 $ WhenIRE $ Case3 tc
   {-# INLINE fromE #-}
   toE = \case
     Case0 con -> case con of
       Case0 (LiftE l) -> Lit l
       Case1 (ListE xs) -> ProdCon xs
       Case2 (ListE ts `PairE` LiftE i `PairE` x) -> SumCon ts i x
-      Case3 UnitE   -> HeapVal
-      Case4 (x `PairE` y `PairE` t) -> DepPair x y t
+      Case3 (x `PairE` y `PairE` t) -> DepPair x y t
       _ -> error "impossible"
     Case1 (WhenIRE con) -> case con of
       Case0 lam             -> Lam lam
-      Case1 effs            -> Eff effs
-      Case2 (con' `PairE` x) -> NewtypeCon con' x
-      Case3 con'             -> DictConAtom con'
-      Case4 tc              -> TyConAtom tc
+      Case1 (con' `PairE` x) -> NewtypeCon con' x
+      Case2 con'             -> DictConAtom con'
+      Case3 tc              -> TyConAtom tc
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1469,9 +1317,8 @@ instance IRRep r => GenericE (TyCon r) where
   {- BaseType -}        (LiftE BaseType)
   {- ProdType -}        (ListE (Type r))
   {- SumType -}         (ListE (Type r))
-  {- RefType -}         (Atom r `PairE` Type r))
-                     (EitherE4
-  {- HeapType -}      UnitE
+  {- RefType -}         (LiftE RWS `PairE` Type r))
+                     (EitherE3
   {- TabPi -}         (TabPiType r)
   {- DepPairTy -}     (DepPairType r)
   {- TypeKind -}      (WhenCore r UnitE))
@@ -1483,11 +1330,10 @@ instance IRRep r => GenericE (TyCon r) where
     BaseType b     -> Case0 (Case0 (LiftE b))
     ProdType ts    -> Case0 (Case1 (ListE ts))
     SumType  ts    -> Case0 (Case2 (ListE ts))
-    RefType h t    -> Case0 (Case3 (h `PairE` t))
-    HeapType       -> Case1 (Case0 UnitE)
-    TabPi t        -> Case1 (Case1 t)
-    DepPairTy t    -> Case1 (Case2 t)
-    TypeKind       -> Case1 (Case3 (WhenIRE UnitE))
+    RefType h t    -> Case0 (Case3 (LiftE h `PairE` t))
+    TabPi t        -> Case1 (Case0 t)
+    DepPairTy t    -> Case1 (Case1 t)
+    TypeKind       -> Case1 (Case2 (WhenIRE UnitE))
     DictTy    t    -> Case2 (Case0 (WhenIRE t))
     Pi        t    -> Case2 (Case1 (WhenIRE t))
     NewtypeTyCon t -> Case2 (Case2 (WhenIRE t))
@@ -1497,13 +1343,12 @@ instance IRRep r => GenericE (TyCon r) where
       Case0 (LiftE b ) -> BaseType b
       Case1 (ListE ts) -> ProdType ts
       Case2 (ListE ts) -> SumType ts
-      Case3 (h `PairE` t) -> RefType h t
+      Case3 (LiftE h `PairE` t) -> RefType h t
       _ -> error "impossible"
     Case1 c -> case c of
-      Case0 UnitE -> HeapType
-      Case1 t -> TabPi t
-      Case2 t -> DepPairTy t
-      Case3 (WhenIRE UnitE) -> TypeKind
+      Case0 t -> TabPi t
+      Case1 t -> DepPairTy t
+      Case2 (WhenIRE UnitE) -> TypeKind
       _ -> error "impossible"
     Case2 c -> case c of
       Case0 (WhenIRE t) -> DictTy       t
@@ -1670,7 +1515,7 @@ instance AlphaHashableE CoreLamExpr
 instance RenameE        CoreLamExpr
 
 instance GenericE CorePiType where
-  type RepE CorePiType = LiftE (AppExplicitness, [Explicitness]) `PairE` Abs (Nest CBinder) (EffTy CoreIR)
+  type RepE CorePiType = LiftE (AppExplicitness, [Explicitness]) `PairE` Abs (Nest CBinder) (Type CoreIR)
   fromE (CorePiType ex exs b effTy) = LiftE (ex, exs) `PairE` Abs b effTy
   {-# INLINE fromE #-}
   toE   (LiftE (ex, exs) `PairE` Abs b effTy) = CorePiType ex exs b effTy
@@ -1725,7 +1570,7 @@ deriving instance IRRep r => Show (TabPiType r n)
 deriving via WrapE (TabPiType r) n instance IRRep r => Generic (TabPiType r n)
 
 instance GenericE (PiType r) where
-  type RepE (PiType r) = Abs (Nest (Binder r)) (EffTy r)
+  type RepE (PiType r) = Abs (Nest (Binder r)) (Type r)
   fromE (PiType bs effTy) = Abs bs effTy
   {-# INLINE fromE #-}
   toE   (Abs bs effTy) = PiType bs effTy
@@ -1768,6 +1613,36 @@ instance RenameE        DotMethods
 instance AlphaEqE       DotMethods
 instance AlphaHashableE DotMethods
 
+instance IRRep r => GenericE (Effects r) where
+  type RepE (Effects r) = EitherE UnitE UnitE
+  fromE = \case
+    Pure -> LeftE UnitE
+    Effectful -> RightE UnitE
+  {-# INLINE fromE #-}
+  toE = \case
+    LeftE UnitE -> Pure
+    RightE UnitE -> Effectful
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (Effects r)
+instance IRRep r => HoistableE     (Effects r)
+instance IRRep r => RenameE        (Effects r)
+instance IRRep r => AlphaEqE       (Effects r)
+instance IRRep r => AlphaHashableE (Effects r)
+
+instance IRRep r => GenericE (EffTy r) where
+  type RepE (EffTy r) = PairE (Effects r) (Type r)
+  fromE (EffTy eff ty) = eff `PairE` ty
+  {-# INLINE fromE #-}
+  toE   (eff `PairE` ty) = EffTy eff ty
+  {-# INLINE toE #-}
+
+instance IRRep r => SinkableE      (EffTy r)
+instance IRRep r => HoistableE     (EffTy r)
+instance IRRep r => RenameE        (EffTy r)
+instance IRRep r => AlphaEqE       (EffTy r)
+instance IRRep r => AlphaHashableE (EffTy r)
+
 instance IRRep r => GenericE (DeclBinding r) where
   type RepE (DeclBinding r) = LiftE LetAnn `PairE` Expr r
   fromE (DeclBinding ann expr) = LiftE ann `PairE` expr
@@ -1796,74 +1671,6 @@ instance IRRep r => AlphaHashableB (Decl r)
 instance IRRep r => ProvesExt      (Decl r)
 instance IRRep r => BindsNames     (Decl r)
 
-instance IRRep r => GenericE (Effect r) where
-  type RepE (Effect r) =
-    EitherE3 (PairE (LiftE RWS) (Atom r))
-             (LiftE (Either () ()))
-             UnitE
-  fromE = \case
-    RWSEffect rws h    -> Case0 (PairE (LiftE rws) h)
-    ExceptionEffect    -> Case1 (LiftE (Left  ()))
-    IOEffect           -> Case1 (LiftE (Right ()))
-    InitEffect         -> Case2 UnitE
-  {-# INLINE fromE #-}
-  toE = \case
-    Case0 (PairE (LiftE rws) h) -> RWSEffect rws h
-    Case1 (LiftE (Left  ())) -> ExceptionEffect
-    Case1 (LiftE (Right ())) -> IOEffect
-    Case2 UnitE -> InitEffect
-    _ -> error "unreachable"
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (Effect r)
-instance IRRep r => HoistableE     (Effect r)
-instance IRRep r => AlphaEqE       (Effect r)
-instance IRRep r => AlphaHashableE (Effect r)
-instance IRRep r => RenameE        (Effect r)
-
-instance IRRep r => GenericE (EffectRow r) where
-  type RepE (EffectRow r) = PairE (ListE (Effect r)) (EffectRowTail r)
-  fromE (EffectRow effs ext) = ListE (eSetToList effs) `PairE` ext
-  {-# INLINE fromE #-}
-  toE (ListE effs `PairE` ext) = EffectRow (eSetFromList effs) ext
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (EffectRow r)
-instance IRRep r => HoistableE     (EffectRow r)
-instance IRRep r => RenameE        (EffectRow r)
-instance IRRep r => AlphaEqE       (EffectRow r)
-instance IRRep r => AlphaHashableE (EffectRow r)
-
-instance IRRep r => GenericE (EffectRowTail r) where
-  type RepE (EffectRowTail r) = EitherE (WhenCore r (AtomVar CoreIR)) UnitE
-  fromE = \case
-    EffectRowTail v -> LeftE (WhenIRE v)
-    NoTail          -> RightE UnitE
-  {-# INLINE fromE #-}
-  toE = \case
-    LeftE (WhenIRE v) -> EffectRowTail v
-    RightE UnitE    -> NoTail
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (EffectRowTail r)
-instance IRRep r => HoistableE     (EffectRowTail r)
-instance IRRep r => RenameE        (EffectRowTail r)
-instance IRRep r => AlphaEqE       (EffectRowTail r)
-instance IRRep r => AlphaHashableE (EffectRowTail r)
-
-instance IRRep r => GenericE (EffTy r) where
-  type RepE (EffTy r) = PairE (EffectRow r) (Type r)
-  fromE (EffTy eff ty) = eff `PairE` ty
-  {-# INLINE fromE #-}
-  toE   (eff `PairE` ty) = EffTy eff ty
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (EffTy r)
-instance IRRep r => HoistableE     (EffTy r)
-instance IRRep r => RenameE        (EffTy r)
-instance IRRep r => AlphaEqE       (EffTy r)
-instance IRRep r => AlphaHashableE (EffTy r)
-
 instance IRRep r => BindsAtMostOneName (Decl r) (AtomNameC r) where
   Let b _ @> x = b @> x
   {-# INLINE (@>) #-}
@@ -1884,6 +1691,7 @@ instance IRRep r => Store (Con r n)
 instance IRRep r => Store (PrimOp r n)
 instance Store (RepVal n)
 instance IRRep r => Store (Type r n)
+instance IRRep r => Store (Effects r n)
 instance IRRep r => Store (EffTy r n)
 instance IRRep r => Store (Stuck r n)
 instance IRRep r => Store (Atom r n)
@@ -1907,10 +1715,6 @@ instance Store (InstanceDef  n)
 instance Store (InstanceBody n)
 instance Store (DictType n)
 instance IRRep r => Store (DictCon r n)
-instance Store (EffectDef n)
-instance Store (EffectOpDef n)
-instance Store (EffectOpType n)
-instance Store (EffectOpIdx)
 instance Store (ann n) => Store (NonDepNest r ann n l)
 instance Store IxMethod
 instance Store ParamRole
@@ -1931,17 +1735,8 @@ instance IRRep r => PrettyPrec (Hof r n) where
   prettyPrec hof = atPrec LowestPrec case hof of
     For _ _ lam -> "for" <+> pLowest lam
     While body    -> "while" <+> pArg body
-    RunReader x body    -> "runReader" <+> pArg x <> nest 2 (line <> p body)
-    RunWriter _ bm body -> "runWriter" <+> pArg bm <> nest 2 (line <> p body)
-    RunState  _ x body  -> "runState"  <+> pArg x <> nest 2 (line <> p body)
-    RunIO body          -> "runIO" <+> pArg body
-    RunInit body        -> "runInit" <+> pArg body
-    CatchException _ body -> "catchException" <+> pArg body
     Linearize body x    -> "linearize" <+> pArg body <+> pArg x
     Transpose body x    -> "transpose" <+> pArg body <+> pArg x
-    where
-      p :: Pretty a => a -> Doc ann
-      p = pretty
 
 instance IRRep r => Pretty (DAMOp r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (DAMOp r n) where
@@ -1964,9 +1759,8 @@ instance IRRep r => PrettyPrec (TyCon r n) where
       encloseSep "(" ")" ", " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h] <+> p a
+    RefType _ a -> atPrec AppPrec $ "Ref" <+> p a
     TypeKind -> atPrec ArgPrec "Type"
-    HeapType -> atPrec ArgPrec "Heap"
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty
@@ -1986,7 +1780,6 @@ instance PrettyPrec (NewtypeTyCon n) where
   prettyPrec = \case
     Nat   -> atPrec ArgPrec $ "Nat"
     Fin n -> atPrec AppPrec $ "Fin" <+> pArg n
-    EffectRowKind -> atPrec ArgPrec "EffKind"
     UserADTType name _ (TyConParams infs params) -> case (infs, params) of
       ([], []) -> atPrec ArgPrec $ pretty name
       ([Explicit, Explicit], [l, r])
@@ -2010,11 +1803,9 @@ instance IRRep r => PrettyPrec (Con r n) where
       encloseSep "(" ")" ", " $ fmap pLowest xs
     SumCon _ tag payload -> atPrec ArgPrec $
       "(" <> p tag <> "|" <+> pApp payload <+> "|)"
-    HeapVal -> atPrec ArgPrec "HeapValue"
     Lam lam   -> atPrec LowestPrec $ p lam
     DepPair x y _ -> atPrec ArgPrec $ align $ group $
         parens $ p x <+> ",>" <+> p y
-    Eff e -> atPrec ArgPrec $ p e
     DictConAtom d -> atPrec LowestPrec $ p d
     NewtypeCon con x -> prettyPrecNewtype con x
     TyConAtom ty -> prettyPrec ty
@@ -2101,7 +1892,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
     App _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TopApp _ f xs -> atPrec AppPrec $ pApp f <+> spaced (toList xs)
     TabApp _ f x -> atPrec AppPrec $ pApp f <> brackets (p x)
-    Case e alts (EffTy effs _) -> prettyPrecCase "case" e alts effs
+    Case e alts _ -> prettyPrecCase "case" e alts
     TabCon _ es -> atPrec ArgPrec $ list $ pApp <$> es
     PrimOp op -> prettyPrec op
     ApplyMethod _ d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
@@ -2111,15 +1902,10 @@ instance IRRep r => PrettyPrec (Expr r n) where
       p :: Pretty a => a -> Doc ann
       p = pretty
 
-prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> EffectRow r n -> DocPrec ann
-prettyPrecCase name e alts effs = atPrec LowestPrec $
+prettyPrecCase :: IRRep r => Doc ann -> Atom r n -> [Alt r n] -> DocPrec ann
+prettyPrecCase name e alts = atPrec LowestPrec $
   name <+> pApp e <+> "of" <>
-  nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts
-          <> effectLine effs)
-  where
-    effectLine :: IRRep r => EffectRow r n -> Doc ann
-    effectLine Pure = ""
-    effectLine row = hardline <> "case annotated with effects" <+> pretty row
+  nest 2 (foldMap (\alt -> hardline <> prettyAlt alt) alts)
 
 prettyAlt :: IRRep r => Alt r n -> Doc ann
 prettyAlt (Abs b body) = prettyBinderNoAnn b <+> "->" <> nest 2 (pretty body)
@@ -2136,8 +1922,8 @@ instance IRRep r => Pretty (Decl r n l) where
     where annDoc = case ann of NoInlineLet -> pretty ann <> " "; _ -> pretty ann
 
 instance IRRep r => Pretty (PiType r n) where
-  pretty (PiType bs (EffTy effs resultTy)) =
-    (spaced $ unsafeFromNest $ bs) <+> "->" <+> "{" <> pretty effs <> "}" <+> pretty resultTy
+  pretty (PiType bs resultTy) =
+    (spaced $ unsafeFromNest $ bs) <+> "->" <+> pretty resultTy
 
 instance IRRep r => Pretty (LamExpr r n) where pretty = prettyFromPrettyPrec
 instance IRRep r => PrettyPrec (LamExpr r n) where
@@ -2206,21 +1992,6 @@ instance PrettyPrec (AtomVar r n) where
   prettyPrec (AtomVar v _) = prettyPrec v
 instance Pretty (AtomVar r n) where pretty = prettyFromPrettyPrec
 
-instance IRRep r => Pretty (EffectRow r n) where
-  pretty (EffectRow effs t) = braces $ hsep (punctuate "," (map pretty (eSetToList effs))) <> pretty t
-
-instance IRRep r => Pretty (EffectRowTail r n) where
-  pretty = \case
-    NoTail -> mempty
-    EffectRowTail v  -> "|" <> pretty v
-
-instance IRRep r => Pretty (Effect r n) where
-  pretty eff = case eff of
-    RWSEffect rws h -> pretty rws <+> pretty h
-    ExceptionEffect -> "Except"
-    IOEffect        -> "IO"
-    InitEffect      -> "Init"
-
 prettyLam :: Pretty a => Doc ann -> a -> Doc ann
 prettyLam binders body = group $ group (nest 4 $ binders) <> group (nest 2 $ pretty body)
 
@@ -2245,12 +2016,8 @@ prettyBinderHelper (b:>ty) body =
     else pretty ty
 
 instance Pretty (CorePiType n) where
-  pretty (CorePiType appExpl expls bs (EffTy eff resultTy)) =
-    prettyBindersWithExpl expls bs <+> pretty appExpl <> prettyEff <> pretty resultTy
-    where
-      prettyEff = case eff of
-        Pure -> space
-        _    -> space <> pretty eff <> space
+  pretty (CorePiType appExpl expls bs resultTy) =
+    prettyBindersWithExpl expls bs <+> pretty appExpl <> pretty resultTy
 
 prettyBindersWithExpl :: forall b n l ann. PrettyB b
   => [Explicitness] -> Nest b n l -> Doc ann

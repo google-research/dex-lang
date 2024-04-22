@@ -13,7 +13,6 @@ import GHC.Stack
 
 import Builder
 import Core
-import Imp
 import IRVariants
 import Name
 import PPrint
@@ -49,7 +48,7 @@ transposeTopFun (TopLam False _ lam) = liftBuilder $ runTransposeM do
         withAccumulator inTy \refSubstVal ->
           extendSubst (bLin @> refSubstVal) $
             transposeExpr body (sink ct)
-      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (EffTy Pure (getType body'))
+      let piTy = PiType  (bsNonlin' >>> UnaryNest bCT) (getType body')
       let lamT = LamExpr (bsNonlin' >>> UnaryNest bCT) body'
       return $ TopLam False piTy lamT
 transposeTopFun (TopLam True _ _) = error "shouldn't be transposing in destination passing style"
@@ -61,7 +60,7 @@ unpackLinearLamExpr
 unpackLinearLamExpr lam@(LamExpr bs body) = do
   let numNonlin = nestLength bs - 1
   PairB bsNonlin (UnaryNest bLin) <- return $ splitNestAt numNonlin bs
-  PiType bsTy (EffTy _ resultTy) <- getLamExprType lam
+  PiType bsTy resultTy <- getLamExprType lam
   PairB bsNonlinTy (UnaryNest bLinTy) <- return $ splitNestAt numNonlin bsTy
   let resultTy' = ignoreHoistFailure $ hoist bLinTy resultTy
   return ( Abs bsNonlin $ Abs bLin body
@@ -91,19 +90,19 @@ withAccumulator
   => SType o
   -> (forall o'. (Emits o', DExt o o') => TransposeSubstVal (AtomNameC SimpIR) o' -> TransposeM i o' ())
   -> TransposeM i o (SAtom o)
-withAccumulator ty cont = do
-  singletonTypeVal ty >>= \case
-    Nothing -> do
-      baseMonoid <- tangentBaseMonoidFor ty
-      getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
-                   cont (LinRef $ toAtom ref) >> return UnitVal
-    Just val -> do
-      -- If the accumulator's type is inhabited by just one value, we
-      -- don't need any actual accumulation, and can just return that
-      -- value.  (We still run `cont` because it may emit decls that
-      -- have effects.)
-      Distinct <- getDistinct
-      cont LinTrivial >> return val
+withAccumulator ty cont = undefined
+  -- singletonTypeVal ty >>= \case
+  --   Nothing -> do
+  --     baseMonoid <- tangentBaseMonoidFor ty
+  --     getSnd =<< emitRunWriter noHint ty baseMonoid \_ ref ->
+  --                  cont (LinRef $ toAtom ref) >> return UnitVal
+  --   Just val -> do
+  --     -- If the accumulator's type is inhabited by just one value, we
+  --     -- don't need any actual accumulation, and can just return that
+  --     -- value.  (We still run `cont` because it may emit decls that
+  --     -- have effects.)
+  --     Distinct <- getDistinct
+  --     cont LinTrivial >> return val
 
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
 emitCTToRef ref ct = do
@@ -228,7 +227,6 @@ transposeMiscOp op _ = case op of
   ThrowError   _        -> notLinear
   SumTag _              -> notLinear
   ToEnum _ _            -> notLinear
-  ThrowException _      -> notLinear
   OutputStream          -> notLinear
   Select       _ _ _    -> notImplemented
   CastOp       _ _      -> notImplemented
@@ -263,28 +261,6 @@ transposeHof hof ct = case hof of
       ctElt <- tabApp (sink ct) (toAtom i)
       extendSubst (b@>RenameNonlin (atomVarName i)) $ transposeExpr body ctElt
       return UnitVal
-  RunState Nothing s (BinaryLamExpr hB refB body) -> do
-    (ctBody, ctState) <- fromPair ct
-    (_, cts) <- (fromPair =<<) $ emitRunState noHint ctState \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
-         transposeExpr body (sink ctBody)
-      return UnitVal
-    transposeAtom s cts
-  RunReader r (BinaryLamExpr hB refB body) -> do
-    accumTy <- substNonlin $ getType r
-    baseMonoid <- tangentBaseMonoidFor accumTy
-    (_, ct') <- (fromPair =<<) $ emitRunWriter noHint accumTy baseMonoid \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
-        transposeExpr body (sink ct)
-      return UnitVal
-    transposeAtom r ct'
-  RunWriter Nothing _ (BinaryLamExpr hB refB body)-> do
-    -- TODO: check we have the 0/+ monoid
-    (ctBody, ctEff) <- fromPair ct
-    void $ emitRunReader noHint ctEff \h ref -> do
-      extendSubst (hB@>RenameNonlin (atomVarName h)) $ extendSubst (refB@>RenameNonlin (atomVarName ref)) $
-        transposeExpr body (sink ctBody)
-      return UnitVal
   _ -> notImplemented
 
 transposeCon :: Emits o => Con SimpIR i -> SAtom o -> TransposeM i o ()
@@ -293,9 +269,7 @@ transposeCon con ct = case con of
   ProdCon []        -> return ()
   ProdCon xs -> forM_ (enumerate xs) \(i, x) -> proj i ct >>= transposeAtom x
   SumCon _ _ _      -> notImplemented
-  HeapVal -> notTangent
   DepPair _ _ _   -> notImplemented
-  where notTangent = error $ "Not a tangent atom: " ++ pprint (Con con)
 
 notImplemented :: HasCallStack => a
 notImplemented = error "Not implemented"

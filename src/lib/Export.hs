@@ -102,18 +102,12 @@ liftExportSigM cont = do
 
 corePiToExportSig :: CallingConvention
   -> CorePiType i -> ExportSigM CoreIR i o (ExportedSignature o)
-corePiToExportSig cc (CorePiType _ expls tbs (EffTy effs resultTy)) = do
-    case effs of
-      Pure -> return ()
-      _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
+corePiToExportSig cc (CorePiType _ expls tbs resultTy) = do
     goArgs cc Empty [] (zipAttrs expls tbs) resultTy
 
 simpPiToExportSig :: CallingConvention
   -> PiType SimpIR i -> ExportSigM SimpIR i o (ExportedSignature o)
-simpPiToExportSig cc (PiType bs (EffTy effs resultTy)) = do
-  case effs of
-    Pure -> return ()
-    _    -> throwErr $ MiscErr $ MiscMiscErr "Only pure functions can be exported"
+simpPiToExportSig cc (PiType bs resultTy) = do
   bs' <- return $ fmapNest (\b -> WithAttrB Explicit b) bs
   goArgs cc Empty [] bs' resultTy
 

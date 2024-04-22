@@ -67,7 +67,7 @@ lowerFullySequential wantDestStyle (TopLam False piTy (LamExpr bs body)) = liftE
     liftAtomSubstBuilder case wantDestStyle of
       True -> do
         xs <- bindersToAtoms bs'
-        EffTy _ resultTy <- instantiate (sink piTy) xs
+        resultTy <- instantiate (sink piTy) xs
         let resultDestTy = RawRefTy resultTy
         withFreshBinder "ans" resultDestTy \destBinder -> do
           let dest = toAtom $ binderVar destBinder
@@ -252,16 +252,6 @@ lowerExpr dest expr = case expr of
   PrimOp (Hof (TypedHof (EffTy _ ansTy) (For dir ixDict body))) -> do
     ansTy' <- substM ansTy
     lowerFor ansTy' dest dir ixDict body
-  PrimOp (Hof (TypedHof (EffTy _ ty) (RunWriter Nothing m body))) -> do
-    PairTy _ ansTy <- visitType ty
-    traverseRWS ansTy body \ref' body' -> do
-      m' <- visitGeneric m
-      emitHof $ RunWriter ref' m' body'
-  PrimOp (Hof (TypedHof (EffTy _ ty) (RunState Nothing s body))) -> do
-    PairTy _ ansTy <- visitType ty
-    traverseRWS ansTy body \ref' body' -> do
-      s' <- visitAtom s
-      emitHof $ RunState ref' s' body'
   -- this case is important because this pass changes effects
   PrimOp (Hof (TypedHof _ hof)) -> do
     hof' <- emit =<< (visitGeneric hof >>= mkTypedHof)
@@ -279,27 +269,6 @@ lowerExpr dest expr = case expr of
         Just d  -> do
           place d e
           return e
-
-    traverseRWS
-      :: SType o -> LamExpr SimpIR i
-      -> (OptDest o -> LamExpr SimpIR o -> LowerM i o (SAtom o))
-      -> LowerM i o (SAtom o)
-    traverseRWS referentTy (LamExpr (BinaryNest hb rb) body) cont = do
-      unpackRWSDest dest >>= \case
-        Nothing -> generic
-        Just (bodyDest, refDest) -> do
-          cont refDest =<<
-            buildEffLam (getNameHint rb) referentTy \hb' rb' ->
-              extendRenamer (hb@>atomVarName hb' <.> rb@>atomVarName rb') do
-                lowerExpr (sink <$> bodyDest) body
-    traverseRWS _ _ _ = error "Expected a binary lambda expression"
-
-    unpackRWSDest = \case
-      Nothing -> return Nothing
-      Just d -> do
-        bd <- getProjRef (ProjectProduct 0) d
-        rd <- getProjRef (ProjectProduct 1) d
-        return $ Just (Just bd, Just rd)
 
 place :: Emits o => Dest o -> SAtom o -> LowerM i o ()
 place d x = void $ emit $ Place d x

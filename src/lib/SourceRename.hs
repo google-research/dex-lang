@@ -170,9 +170,9 @@ instance SourceRenamableE UExpr where
     UVar v -> UVar <$> sourceRenameE v
     ULit l -> return $ ULit l
     ULam lam -> ULam <$> sourceRenameE lam
-    UPi (UPiExpr pats appExpl eff body) ->
+    UPi (UPiExpr pats appExpl body) ->
       sourceRenameB pats \pats' ->
-        UPi <$> (UPiExpr pats' <$> pure appExpl <*> sourceRenameE eff <*> sourceRenameE body)
+        UPi <$> (UPiExpr pats' <$> pure appExpl <*> sourceRenameE body)
     UApp f xs ys -> UApp <$> sourceRenameE f
        <*> forM xs sourceRenameE
        <*> forM ys (\(name, y) -> (name,) <$> sourceRenameE y)
@@ -204,16 +204,6 @@ instance SourceRenamableE UAlt where
   sourceRenameE (UAlt pat body) =
     sourceRenameB pat \pat' ->
       UAlt pat' <$> sourceRenameE body
-
-instance SourceRenamableE UEffectRow where
-  sourceRenameE (UEffectRow row tailVar) =
-    UEffectRow <$> row' <*> mapM sourceRenameE tailVar
-    where row' = S.fromList <$> traverse sourceRenameE (S.toList row)
-
-instance SourceRenamableE UEffect where
-  sourceRenameE (URWSEffect rws name) = URWSEffect rws <$> sourceRenameE name
-  sourceRenameE UExceptionEffect = return UExceptionEffect
-  sourceRenameE UIOEffect = return UIOEffect
 
 instance SourceRenamableB UTopDecl where
   sourceRenameB decl cont = case decl of
@@ -255,10 +245,9 @@ instance SourceRenamableB UDecl where
     UPass -> cont $ WithSrcB sid UPass
 
 instance SourceRenamableE ULamExpr where
-  sourceRenameE (ULamExpr args expl effs resultTy body) =
+  sourceRenameE (ULamExpr args expl resultTy body) =
     sourceRenameB args \args' -> ULamExpr args'
       <$> pure expl
-      <*> mapM sourceRenameE effs
       <*> mapM sourceRenameE resultTy
       <*> sourceRenameE body
 

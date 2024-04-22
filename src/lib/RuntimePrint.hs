@@ -76,7 +76,6 @@ showAnyTyCon tyCon atom = case tyCon of
   -- aren't user-facing.
   SumType _ -> printAsConstant
   RefType _ _ -> printTypeOnly "reference"
-  HeapType    -> printAsConstant
   ProdType _ -> do
     xs <- getUnpacked atom
     parens $ sepBy ", " $ map rec xs
@@ -94,7 +93,6 @@ showAnyTyCon tyCon atom = case tyCon of
       -- Cast to Int so that it prints in decimal instead of hex
       let intTy = toType $ BaseType (Scalar Int64Type)
       emit (CastOp intTy n) >>= rec
-    EffectRowKind    -> printAsConstant
     -- hack to print strings nicely. TODO: make `Char` a newtype
     UserADTType "List" _ (TyConParams [Explicit] [Con (TyConAtom (BaseType (Scalar (Word8Type))))]) -> do
       charTab <- applyProjections [ProjectProduct 1, UnwrapNewtype] atom
@@ -164,38 +162,33 @@ withBuffer
   => (forall l . (Emits l, DExt n l) => CAtom l -> BuilderM CoreIR l ())
   -> BuilderM CoreIR n (CAtom n)
 withBuffer cont = do
-  lam <- withFreshBinder "h" (TyCon HeapType) \h -> do
-    bufTy <- bufferTy (toAtom $ binderVar h)
-    withFreshBinder "buf" bufTy \b -> do
-      let eff = OneEffect (RWSEffect State (toAtom $ sink $ binderVar h))
-      body <- buildBlock do
-        cont $ sink $ toAtom $ binderVar b
-        return UnitVal
-      let binders = BinaryNest h b
-      let expls = [Inferred Nothing Unify, Explicit]
-      let piTy = CorePiType ExplicitApp expls binders $ EffTy eff UnitTy
-      let lam = LamExpr (BinaryNest h b) body
-      return $ toAtom $ CoreLamExpr piTy lam
+  bufTy <- bufferTy
+  lam <- withFreshBinder "buf" bufTy \b -> do
+    body <- buildBlock do
+      cont $ sink $ toAtom $ binderVar b
+      return UnitVal
+    let binders = UnaryNest b
+    let expls = [Inferred Nothing Unify, Explicit]
+    let piTy = CorePiType ExplicitApp expls binders UnitTy
+    let lam = LamExpr (UnaryNest b) body
+    return $ toAtom $ CoreLamExpr piTy lam
   applyPreludeFunction "with_stack_internal" [lam]
 
-bufferTy :: EnvReader m => CAtom n -> m n (CType n)
-bufferTy h = do
+bufferTy :: EnvReader m => m n (CType n)
+bufferTy = do
   t <- strType
-  return $ RefTy h (PairTy NatTy t)
+  return $ RefTy State (PairTy NatTy t)
 
 -- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
 extendBuffer buf tab = do
-  RefTy h _ <- return $ getType buf
   TyCon (TabPi t) <- return $ getType tab
   n <- applyIxMethodCore Size (tabIxType t) []
-  void $ applyPreludeFunction "stack_extend_internal" [n, h, buf, tab]
+  void $ applyPreludeFunction "stack_extend_internal" [n, buf, tab]
 
 -- argument has type `Word8`
 pushBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()
-pushBuffer buf x = do
-  RefTy h _ <- return $ getType buf
-  void $ applyPreludeFunction "stack_push_internal" [h, buf, x]
+pushBuffer buf x = void $ applyPreludeFunction "stack_push_internal" [buf, x]
 
 stringLitAsCharTab :: (Emits n, CBuilder m) => String -> m n (CAtom n)
 stringLitAsCharTab s = do

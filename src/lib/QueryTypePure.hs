@@ -16,15 +16,15 @@ class HasType (r::IR) (e::E) | e -> r where
   getType :: e n -> Type r n
 
 class HasEffects (e::E) (r::IR) | e -> r where
-  getEffects :: e n -> EffectRow r n
+  getEffects :: e n -> Effects r n
 
 getTyCon :: HasType SimpIR e => e n -> TyCon SimpIR n
 getTyCon e = con where TyCon con = getType e
 
 isPure :: (IRRep r, HasEffects e r) => e n -> Bool
 isPure e = case getEffects e of
-  Pure -> True
-  _    -> False
+  Pure      -> True
+  Effectful -> False
 
 -- === querying types implementation ===
 
@@ -107,10 +107,8 @@ instance IRRep r => HasType r (Con r) where
     Lit l          -> toType $ BaseType $ litType l
     ProdCon xs     -> toType $ ProdType $ map getType xs
     SumCon tys _ _ -> toType $ SumType tys
-    HeapVal        -> toType HeapType
     Lam (CoreLamExpr piTy _) -> toType $ Pi piTy
     DepPair _ _ ty -> toType $ DepPairTy ty
-    Eff _ -> EffKind
     DictConAtom d -> getType d
     NewtypeCon con _ -> getNewtypeType con
     TyConAtom _ -> TyKind
@@ -195,7 +193,6 @@ instance IRRep r => HasType r (MiscOp r) where
   getType = \case
     Select _ x _ -> getType x
     ThrowError t     -> t
-    ThrowException t -> t
     CastOp t _       -> t
     BitcastOp t _    -> t
     UnsafeCoerce t _ -> t
@@ -225,11 +222,11 @@ typesAsBinderNest
   => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
 typesAsBinderNest types body = toConstBinderNest types body
 
-nonDepPiType :: [CType n] -> EffectRow CoreIR n -> CType n -> CorePiType n
-nonDepPiType argTys eff resultTy = case typesAsBinderNest argTys (PairE eff resultTy) of
-  Abs bs (PairE eff' resultTy') -> do
+nonDepPiType :: [CType n] -> CType n -> CorePiType n
+nonDepPiType argTys resultTy = case typesAsBinderNest argTys resultTy of
+  Abs bs resultTy' -> do
     let expls = nestToList (const Explicit) bs
-    CorePiType ExplicitApp expls bs $ EffTy eff' resultTy'
+    CorePiType ExplicitApp expls bs resultTy'
 
 nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
 nonDepTabPiType (IxType t d) resultTy =
@@ -277,13 +274,12 @@ instance IRRep r => HasEffects (PrimOp r) r where
     BinOp _ _ _ -> Pure
     VectorOp _  -> Pure
     MemOp op -> case op of
-      IOAlloc  _    -> OneEffect IOEffect
-      IOFree   _    -> OneEffect IOEffect
-      PtrLoad  _    -> OneEffect IOEffect
-      PtrStore _ _  -> OneEffect IOEffect
+      IOAlloc  _    -> Effectful
+      IOFree   _    -> Effectful
+      PtrLoad  _    -> Effectful
+      PtrStore _ _  -> Effectful
       PtrOffset _ _ -> Pure
     MiscOp op -> case op of
-      ThrowException _ -> OneEffect ExceptionEffect
       Select _ _ _     -> Pure
       ThrowError _     -> Pure
       CastOp _ _       -> Pure
@@ -296,17 +292,17 @@ instance IRRep r => HasEffects (PrimOp r) r where
       ShowAny _        -> Pure
       ShowScalar _     -> Pure
     RefOp ref m -> case getType ref of
-      TyCon (RefType h _) -> case m of
-        MGet      -> OneEffect (RWSEffect State  h)
-        MPut    _ -> OneEffect (RWSEffect State  h)
-        MAsk      -> OneEffect (RWSEffect Reader h)
+      TyCon (RefType _ _) -> case m of
+        MGet      -> Effectful
+        MPut    _ -> Effectful
+        MAsk      -> Effectful
         -- XXX: We don't verify the base monoid. See note about RunWriter.
-        MExtend _ _ -> OneEffect (RWSEffect Writer h)
+        MExtend _ _ -> Effectful
         IndexRef _ _ -> Pure
         ProjRef _ _  -> Pure
       _ -> error "not a ref"
     DAMOp op -> case op of
-      Place    _ _  -> OneEffect InitEffect
+      Place    _ _  -> Effectful
       Seq eff _ _ _ _        -> eff
       RememberDest eff _ _ -> eff
       AllocDest _ -> Pure -- is this correct?

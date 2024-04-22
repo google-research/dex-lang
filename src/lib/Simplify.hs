@@ -30,7 +30,6 @@ import QueryType
 import RuntimePrint
 import Transpose
 import Types.Core
-import Types.Source
 import Types.Top
 import Types.Primitives
 import Util (enumerate)
@@ -196,8 +195,7 @@ getRepType (TyCon con) = case con of
   BaseType b  -> return $ toType $ BaseType b
   ProdType ts -> toType . ProdType <$> mapM getRepType ts
   SumType  ts -> toType . SumType  <$> mapM getRepType ts
-  RefType h a -> toType <$> (RefType <$> toDataAtomAssumeNoDecls h <*> getRepType a)
-  HeapType    -> return $ toType HeapType
+  RefType h a -> toType <$> (RefType h <$> getRepType a)
   DepPairTy (DepPairType expl b r) -> do
     withSimplifiedBinder b \b' -> do
       r' <- getRepType r
@@ -220,14 +218,12 @@ toDataAtom (Con con) = case con of
   Lit v -> return $ toAtom $ Lit v
   ProdCon xs -> toAtom . ProdCon <$> mapM rec xs
   SumCon  tys tag x -> toAtom <$> (SumCon <$> mapM getRepType tys <*> pure tag <*> rec x)
-  HeapVal           -> return $ toAtom HeapVal
   DepPair x y ty -> do
     TyCon (DepPairTy ty') <- getRepType $ TyCon $ DepPairTy ty
     toAtom <$> (DepPair <$> rec x <*> rec y <*> pure ty')
   NewtypeCon _ x  -> rec x
   Lam _         -> notData
   DictConAtom _ -> notData
-  Eff _         -> notData
   TyConAtom _   -> notData
   where
     rec = toDataAtom
@@ -632,9 +628,9 @@ simplifyDictMethod absDict@(Abs bs dict) method = do
 ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType CoreIR n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
-    CorePiType _ _ methodArgs (EffTy _ resultTy) <- getMethodType dict (fromEnum method)
+    CorePiType _ _ methodArgs resultTy <- getMethodType dict (fromEnum method)
     let allBs = extraArgBs >>> methodArgs
-    return $ PiType allBs (EffTy Pure resultTy)
+    return $ PiType allBs resultTy
 
 simplifyAtom :: CAtom i -> SimplifyM i o (CAtom o)
 simplifyAtom = substM
@@ -790,43 +786,6 @@ simplifyHof resultTy = \case
     SimplifiedBlock body' (CoerceRecon _) <- buildSimplifiedBlock $ simplifyExpr body
     result <- emitHof $ While body'
     liftSimpAtom resultTy result
-  RunReader r lam -> do
-    r' <- toDataAtom r
-    (lam', Abs b recon) <- simplifyLam lam
-    ans <- emitHof $ RunReader r' lam'
-    let recon' = ignoreHoistFailure $ hoist b recon
-    applyRecon recon' ans
-  RunWriter Nothing (BaseMonoid e combine) lam -> do
-    LamExpr (BinaryNest h (_:>RefTy _ wTy)) _ <- return lam
-    wTy' <- substM $ ignoreHoistFailure $ hoist h wTy
-    e' <- toDataAtom e
-    (combine', CoerceReconAbs) <- simplifyLam combine
-    (lam', Abs b recon) <- simplifyLam lam
-    (ans, w) <- fromPair =<< emitHof (RunWriter Nothing (BaseMonoid e' combine') lam')
-    let recon' = ignoreHoistFailure $ hoist b recon
-    ans' <- applyRecon recon' ans
-    w' <- liftSimpAtom wTy' w
-    return $ PairVal ans' w'
-  RunWriter _ _ _ -> error "Shouldn't see a RunWriter with a dest in Simplify"
-  RunState Nothing s lam -> do
-    s' <- toDataAtom s
-    sTy <- substM $ getType s
-    (lam', Abs b recon) <- simplifyLam lam
-    resultPair <- emitHof $ RunState Nothing s' lam'
-    (ans, sOut) <- fromPair resultPair
-    let recon' = ignoreHoistFailure $ hoist b recon
-    ans' <- applyRecon recon' ans
-    sOut' <- liftSimpAtom sTy sOut
-    return $ PairVal ans' sOut'
-  RunState _ _ _ -> error "Shouldn't see a RunState with a dest in Simplify"
-  RunIO body -> do
-    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyExpr body
-    ans <- emitHof $ RunIO body'
-    applyRecon recon ans
-  RunInit body -> do
-    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyExpr body
-    ans <- emitHof $ RunInit body'
-    applyRecon recon ans
   Linearize lam x -> do
     x' <- toDataAtom x
     -- XXX: we're ignoring the result type here, which only makes sense if we're
@@ -843,52 +802,6 @@ simplifyHof resultTy = \case
     x' <- toDataAtom x
     result <- transpose lam' x'
     liftSimpAtom resultTy result
-  CatchException _ body-> do
-    SimplifiedBlock body' recon <- buildSimplifiedBlock $ simplifyExpr body
-    block <- liftBuilder $ runSubstReaderT idSubst $ buildBlock $
-      exceptToMaybeExpr body'
-    result <- emit block
-    case recon of
-      CoerceRecon ty -> do
-        maybeTy <- makePreludeMaybeTy ty
-        liftSimpAtom maybeTy result
-      LamRecon reconAbs -> fmapMaybe result (applyReconAbs $ sink reconAbs)
-
--- takes an internal SimpIR Maybe to a CoreIR "prelude Maybe"
-fmapMaybe
-  :: SAtom n -> (forall l. DExt n l => SAtom l -> SimplifyM i l (CAtom l))
-  -> SimplifyM i n (CAtom n)
-fmapMaybe scrut f = do
-  ~(MaybeTy justTy) <- return $ getType scrut
-  (justAlt, resultJustTy) <- withFreshBinder noHint justTy \b -> do
-    result <- f (toAtom $ binderVar b)
-    resultTy <- return $ ignoreHoistFailure $ hoist b (getType result)
-    result' <- preludeJustVal result
-    return (Abs b result', resultTy)
-  nothingAlt <- buildAbs noHint UnitTy \_ -> preludeNothingVal $ sink resultJustTy
-  resultMaybeTy <- makePreludeMaybeTy resultJustTy
-  reduceACase scrut [nothingAlt, justAlt] resultMaybeTy
-
--- This is wrong! The correct implementation is below. And yet there's some
--- compensatory bug somewhere that means that the wrong answer works and the
--- right answer doesn't. Need to investigate.
-preludeJustVal :: EnvReader m => CAtom n -> m n (CAtom n)
-preludeJustVal x = return x
-  -- xTy <- getType x
-  -- con <- preludeMaybeNewtypeCon xTy
-  -- return $ NewtypeCon con (JustAtom xTy x)
-
-preludeNothingVal :: EnvReader m => CType n -> m n (CAtom n)
-preludeNothingVal ty = do
-  con <- preludeMaybeNewtypeCon ty
-  return $ Con $ NewtypeCon con (NothingAtom ty)
-
-preludeMaybeNewtypeCon :: EnvReader m => CType n -> m n (NewtypeCon n)
-preludeMaybeNewtypeCon ty = do
-  ~(Just (UTyConVar tyConName)) <- lookupSourceMap "Maybe"
-  TyConDef sn _ _ _ <- lookupTyCon tyConName
-  let params = TyConParams [Explicit] [toAtom ty]
-  return $ UserADTData sn tyConName params
 
 liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (CAtom n)
 liftSimpFun (TyCon (Pi piTy)) f = mkStuck $ LiftSimpFun piTy f
@@ -1018,85 +931,6 @@ defuncLinearized ab = liftBuilder $ refreshAbs ab \bs ab' -> do
     applyRename (tangentBs' @@> (atomVarName <$> tangents)) body >>= emit
   let tangentFun = LamExpr (bs >>> residualAndTangentBs) tangentBody
   return $ PairE primalFun tangentFun
-
--- === exception-handling pass ===
-
-type HandlerM = SubstReaderT AtomSubstVal (BuilderM SimpIR)
-
-exceptToMaybeBlock :: Emits o => SType o -> SBlock i -> HandlerM i o (SAtom o)
-exceptToMaybeBlock ty (Abs Empty result) = do
-  result' <- exceptToMaybeExpr result
-  return $ JustAtom ty result'
-exceptToMaybeBlock resultTy (Abs (Nest (Let b (DeclBinding _ rhs)) decls) finalResult) = do
-  maybeResult <- exceptToMaybeExpr rhs
-  case maybeResult of
-    -- This case is just an optimization (but an important one!)
-    JustAtom _ x  ->
-      extendSubst (b@> SubstVal x) $ exceptToMaybeBlock resultTy (Abs decls finalResult)
-    _ -> emitMaybeCase maybeResult (MaybeTy resultTy)
-          (return $ NothingAtom $ sink resultTy)
-          (\v -> extendSubst (b@> SubstVal v) $
-                   exceptToMaybeBlock (sink resultTy) (Abs decls finalResult))
-
-exceptToMaybeExpr :: Emits o => SExpr i -> HandlerM i o (SAtom o)
-exceptToMaybeExpr expr = case expr of
-  Block (EffTy _ ty) body -> do
-    ty' <- substM ty
-    exceptToMaybeBlock ty' body
-  Case e alts (EffTy _ resultTy) -> do
-    e' <- substM e
-    resultTy' <- substM $ MaybeTy resultTy
-    buildCase e' resultTy' \i v -> do
-      Abs b body <- return $ alts !! i
-      extendSubst (b @> SubstVal v) do
-        exceptToMaybeExpr body
-  Atom x -> do
-    x' <- substM x
-    let ty = getType x'
-    return $ JustAtom ty x'
-  PrimOp (Hof (TypedHof _ (For ann ixTy' (UnaryLamExpr b body)))) -> do
-    ixTy <- substM ixTy'
-    maybes <- buildFor (getNameHint b) ann ixTy \i -> do
-      extendSubst (b@>Rename (atomVarName i)) $ exceptToMaybeExpr body
-    catMaybesE maybes
-  PrimOp (MiscOp (ThrowException _)) -> do
-    ty <- substM $ getType expr
-    return $ NothingAtom ty
-  PrimOp (Hof (TypedHof _ (RunState Nothing s lam))) -> do
-    s' <- substM s
-    BinaryLamExpr h ref body <- return lam
-    result  <- emitRunState noHint s' \h' ref' ->
-      extendSubst (h @> Rename (atomVarName h') <.> ref @> Rename (atomVarName ref')) do
-        exceptToMaybeExpr body
-    (maybeAns, newState) <- fromPair result
-    a <- substM $ getType expr
-    emitMaybeCase maybeAns (MaybeTy a)
-       (return $ NothingAtom $ sink a)
-       (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink newState))
-  PrimOp (Hof (TypedHof (EffTy _ resultTy) (RunWriter Nothing monoid (BinaryLamExpr h ref body)))) -> do
-    monoid' <- substM monoid
-    PairTy _ accumTy <- substM resultTy
-    result <- emitRunWriter noHint accumTy monoid' \h' ref' ->
-      extendSubst (h @> Rename (atomVarName h') <.> ref @> Rename (atomVarName ref')) do
-        exceptToMaybeExpr body
-    (maybeAns, accumResult) <- fromPair result
-    a <- substM $ getType expr
-    emitMaybeCase maybeAns (MaybeTy a)
-      (return $ NothingAtom $ sink a)
-      (\ans -> return $ JustAtom (sink a) $ PairVal ans (sink accumResult))
-  PrimOp (Hof (TypedHof _ (While body))) -> runMaybeWhile $ exceptToMaybeExpr body
-  _ -> do
-    expr' <- substM expr
-    case hasExceptions expr' of
-      True -> error $ "Unexpected exception-throwing expression: " ++ pprint expr
-      False -> do
-        v <- emit expr'
-        let ty = getType v
-        return $ JustAtom ty v
-
-hasExceptions :: SExpr n -> Bool
-hasExceptions expr = case getEffects expr of
-  EffectRow effs NoTail -> ExceptionEffect `eSetMember` effs
 
 -- === instances ===
 

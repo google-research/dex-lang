@@ -74,7 +74,6 @@ interpOperator sid = \case
   "."   -> atomic Dot
   ",>"  -> atomic DepComma
   ":"   -> atomic Colon
-  "|"   -> atomic Pipe
   "::"  -> atomic DoubleColon
   "$"   -> atomic Dollar
   "->>" -> atomic ImplicitArrow
@@ -328,9 +327,8 @@ funDefLet = label "function definition" do
     params <- explicitParams
     rhs    <- optional do
       expl     <- explicitness
-      effs     <- optional cEffs
       resultTy <- cGroupNoEqual
-      return (expl, effs, resultTy)
+      return (expl, resultTy)
     givens <- optional givenClause
     mayNotBreak do
       sym "="
@@ -387,12 +385,6 @@ givenClause = do
 withClause :: Parser WithClause
 withClause = keyWord WithKW >> parenList cGroup
 
-cEffs :: Parser CEffs
-cEffs = withSrcs $ braces do
-  effs <- commaSep cGroupNoPipe
-  effTail <- optional $ sym "|" >> cGroup
-  return (effs, effTail)
-
 commaSep :: Parser a -> Parser [a]
 commaSep p = sepBy p (sym ",")
 
@@ -409,10 +401,6 @@ cGroupNoJuxt = makeExprParser leafGroup $
 cGroupNoEqual :: Parser GroupW
 cGroupNoEqual = makeExprParser leafGroup $
   withoutOp "=" ops
-
-cGroupNoPipe :: Parser GroupW
-cGroupNoPipe = makeExprParser leafGroup $
-  withoutOp "|" ops
 
 cGroupNoArrow :: Parser GroupW
 cGroupNoArrow = makeExprParser leafGroup $
@@ -672,8 +660,7 @@ symOp s = binApp do
 arrowOp :: Parser (GroupW -> GroupW -> GroupW)
 arrowOp = addSrcIdToBinOp do
   sid <- symWithId "->"
-  optEffs <- optional cEffs
-  return \lhs rhs -> ([sid], CArrow lhs optEffs rhs)
+  return \lhs rhs -> ([sid], CArrow lhs rhs)
 
 unOpPre :: String -> (SourceName, Expr.Operator Parser GroupW)
 unOpPre s = (fromString s, Expr.Prefix $ prefixOp s)
