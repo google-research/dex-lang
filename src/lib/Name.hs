@@ -1710,9 +1710,6 @@ instance Color TopFunNameC     where getColorRep = TopFunNameC
 instance Color FunObjCodeNameC where getColorRep = FunObjCodeNameC
 instance Color ModuleNameC     where getColorRep = ModuleNameC
 instance Color PtrNameC        where getColorRep = PtrNameC
-instance Color EffectNameC     where getColorRep = EffectNameC
-instance Color EffectOpNameC   where getColorRep = EffectOpNameC
-instance Color HandlerNameC    where getColorRep = HandlerNameC
 instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
 instance Color ImpNameC        where getColorRep = ImpNameC
 -- The instance for Color UnsafeC is purposefully missing! UnsafeC is
@@ -1732,9 +1729,6 @@ interpretColor c cont = case c of
   FunObjCodeNameC -> cont $ ColorProxy @FunObjCodeNameC
   ModuleNameC     -> cont $ ColorProxy @ModuleNameC
   PtrNameC        -> cont $ ColorProxy @PtrNameC
-  EffectNameC     -> cont $ ColorProxy @EffectNameC
-  EffectOpNameC   -> cont $ ColorProxy @EffectOpNameC
-  HandlerNameC    -> cont $ ColorProxy @HandlerNameC
   SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
   ImpNameC        -> cont $ ColorProxy @ImpNameC
   UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
@@ -2401,9 +2395,6 @@ data C =
   | FunObjCodeNameC
   | ModuleNameC
   | PtrNameC
-  | EffectNameC
-  | EffectOpNameC
-  | HandlerNameC
   | SpecializedDictNameC
   | UnsafeC
   | ImpNameC

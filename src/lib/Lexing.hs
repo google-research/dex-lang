@@ -91,7 +91,6 @@ data KeyWord = DefKW | ForKW | For_KW | RofKW | Rof_KW | CaseKW | OfKW
              | InstanceKW | GivenKW | WithKW | SatisfyingKW
              | IfKW | ThenKW | ElseKW | DoKW
              | ImportKW | ForeignKW | NamedInstanceKW
-             | EffectKW | HandlerKW | JmpKW | CtlKW | ReturnKW | ResumeKW
              | CustomLinearizationKW | CustomLinearizationSymbolicKW | PassKW
   deriving (Enum)
 
@@ -118,12 +117,6 @@ keyWordToken = \case
   DoKW            -> "do"
   ImportKW        -> "import"
   ForeignKW       -> "foreign"
-  EffectKW        -> "effect"
-  HandlerKW       -> "handler"
-  JmpKW           -> "jmp"
-  CtlKW           -> "ctl"
-  ReturnKW        -> "return"
-  ResumeKW        -> "resume"
   CustomLinearizationKW -> "custom-linearization"
   CustomLinearizationSymbolicKW -> "custom-linearization-symbolic"
   PassKW          -> "pass"

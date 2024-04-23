@@ -50,8 +50,6 @@ instance Eq (AlwaysEqual a) where
 data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
 type ForAnn = Direction
 
-data RWS = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
-
 -- TODO: add optional argument
 data InferenceMechanism = Unify | Synth RequiredMethodAccess deriving (Show, Eq, Ord, Generic)
 data Explicitness =
@@ -198,7 +196,6 @@ instance IsString SourceName where
 instance Store SourceName
 instance Store RequiredMethodAccess
 instance Store LetAnn
-instance Store RWS
 instance Store Direction
 instance Store BaseType
 instance Store LitVal
@@ -210,7 +207,6 @@ instance Store DepPairExplicitness
 instance Store InferenceMechanism
 
 instance Hashable SourceName
-instance Hashable RWS
 instance Hashable Direction
 instance Hashable BaseType
 instance Hashable PtrLitVal
@@ -230,12 +226,6 @@ instance Hashable RequiredMethodAccess
 instance Pretty AppExplicitness where
   pretty ExplicitApp = "->"
   pretty ImplicitApp = "->>"
-
-instance Pretty RWS where
-  pretty eff = case eff of
-    Reader -> "Read"
-    Writer -> "Accum"
-    State  -> "State"
 
 instance Pretty LetAnn where
   pretty ann = case ann of

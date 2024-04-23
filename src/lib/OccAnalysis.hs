@@ -424,15 +424,15 @@ instance HasOCC (Hof SimpIR) where
     For _ _ _ -> error "For body should be a unary lambda expression"
     While body -> While <$> censored useManyTimes (occ accessOnce body)
 
-oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
-oneShot acc [] (LamExpr Empty body) =
+_oneShot :: Access n -> [IxExpr n] -> LamExpr SimpIR n -> OCCM n (LamExpr SimpIR n)
+_oneShot acc [] (LamExpr Empty body) =
   LamExpr Empty <$> occ acc body
-oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
+_oneShot acc (ix:ixs) (LamExpr (Nest b bs) body) = do
   occWithBinder (Abs b (LamExpr bs body)) \b' restLam ->
     extend b' (sink ix) do
-      LamExpr bs' body' <- oneShot (sink acc) (map sink ixs) restLam
+      LamExpr bs' body' <- _oneShot (sink acc) (map sink ixs) restLam
       return $ LamExpr (Nest b' bs') body'
-oneShot _ _ _ = error "zip error"
+_oneShot _ _ _ = error "zip error"
 
 -- Going under a lambda binder.
 occWithBinder
@@ -449,23 +449,10 @@ occWithBinder (Abs (b:>ty) body) cont = do
 
 instance HasOCC (RefOp SimpIR) where
   occ _ = \case
-    MExtend (BaseMonoid empty combine) val -> do
-      valIx <- summary val
-      -- Treat the combining function as inlined here and called once
-      combine' <- oneShot accessOnce [Deterministic [], valIx] combine
-      val' <- occ accessOnce val
-      -- TODO(precision) The empty value of the monoid is presumably dead here,
-      -- but we pretend like it's not to make sure that occurrence analysis
-      -- results mention every free variable in the traversed expression.  This
-      -- may lead to missing an opportunity to inline something into the empty
-      -- value of the given monoid, since references thereto will be overcounted.
-      empty' <- occ accessOnce empty
-      return $ MExtend (BaseMonoid empty' combine') val'
     -- I'm pretty sure the others are all strict, and not usefully analyzable
     -- for what they do to the incoming access pattern.
     MPut x -> MPut <$> occ accessOnce x
     MGet -> return MGet
-    MAsk -> return MAsk
     IndexRef t i -> IndexRef <$> occTy t <*> occ accessOnce i
     ProjRef t i -> ProjRef <$> occTy t <*> pure i
   {-# INLINE occ #-}

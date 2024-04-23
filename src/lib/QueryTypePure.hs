@@ -145,11 +145,9 @@ instance IRRep r => HasType r (PrimOp r) where
     MiscOp op -> getType op
     VectorOp op -> getType op
     RefOp ref m -> case getType ref of
-      TyCon (RefType _ s) -> case m of
+      TyCon (RefType s) -> case m of
         MGet        -> s
         MPut _      -> UnitTy
-        MAsk        -> s
-        MExtend _ _ -> UnitTy
         IndexRef t _ -> t
         ProjRef t _ -> t
       _ -> error "not a reference type"
@@ -175,7 +173,7 @@ instance IRRep r => HasType r (VectorOp r) where
     VectorIota vty -> vty
     VectorIdx _ _ vty -> vty
     VectorSubref ref _ vty -> case getType ref of
-      TyCon (RefType h _) -> TyCon $ RefType h vty
+      TyCon (RefType _) -> TyCon $ RefType vty
       ty -> error $ "Not a reference type: " ++ show ty
 
 instance IRRep r => HasType r (MiscOp r) where
@@ -280,15 +278,10 @@ instance IRRep r => HasEffects (PrimOp r) r where
       OutputStream     -> Pure
       ShowAny _        -> Pure
       ShowScalar _     -> Pure
-    RefOp ref m -> case getType ref of
-      TyCon (RefType _ _) -> case m of
-        MGet      -> Effectful
-        MPut    _ -> Effectful
-        MAsk      -> Effectful
-        -- XXX: We don't verify the base monoid. See note about RunWriter.
-        MExtend _ _ -> Effectful
-        IndexRef _ _ -> Pure
-        ProjRef _ _  -> Pure
-      _ -> error "not a ref"
+    RefOp _ m -> case m of
+      MGet      -> Effectful
+      MPut    _ -> Effectful
+      IndexRef _ _ -> Pure
+      ProjRef _ _  -> Pure
     Hof (TypedHof (EffTy eff _) _) -> eff
   {-# INLINE getEffects #-}

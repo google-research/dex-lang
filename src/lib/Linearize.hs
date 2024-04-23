@@ -169,10 +169,9 @@ getTangentArgTys topVs = go topVs where
   go :: (Fallible1 m, EnvExtender m) => [SAtomVar n] -> m n (EmptyAbs (Nest SBinder) n)
   go [] = return $ EmptyAbs Empty
   go (v:vs) = case getType v of
-    RefTy rws referentTy -> do
+    RefTy referentTy -> do
       tt <- tangentType referentTy
-      let refTy = RefTy rws tt
-      withFreshBinder (getNameHint v) refTy \refb -> do
+      withFreshBinder (getNameHint v) (RefTy tt) \refb -> do
         Abs bs UnitE <- go $ sinkList vs
         return $ EmptyAbs $ Nest refb bs
     ty -> do
@@ -412,13 +411,6 @@ linearizeOp op = case op of
   RefOp ref m -> do
     ref' <- linearizeAtom ref
     case m of
-      MAsk -> emitBoth ref' \ref'' -> return $ RefOp ref'' MAsk
-      MExtend monoid x -> do
-        -- TODO: check that we're dealing with a +/0 monoid
-        monoid' <- renameM monoid
-        x' <- linearizeAtom x
-        emitBoth (zipLin ref' x') \(PairE ref'' x'') ->
-          return $ RefOp ref'' $ MExtend (sink monoid') x''
       MGet -> emitBoth ref' \ref'' -> return $ RefOp ref'' MGet
       MPut x -> do
         x' <- linearizeAtom x

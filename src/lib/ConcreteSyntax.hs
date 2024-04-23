@@ -301,7 +301,6 @@ simpleLet = do
   next <- nextChar
   case next of
     '=' -> sym  "=" >> CLet  lhs <$> cBlock
-    '<' -> sym "<-" >> CBind lhs <$> cBlock
     _   -> return $ CExpr lhs
 
 instanceDef :: Bool -> Parser CInstanceDef

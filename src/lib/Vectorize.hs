@@ -163,58 +163,6 @@ simplifyIxSize ixty = do
     _ -> return Nothing
 {-# INLINE simplifyIxSize #-}
 
--- Really we should check this by seeing whether there is an instance for a
--- `Commutative` class, or something like that, but for now just pattern-match
--- to detect scalar addition as the only monoid we recognize as commutative.
--- Potentially relevant ideas:
--- - Store commutativity or lack of it as a bit on the BaseMonoid object (but
---   get the bit from where?)
--- - Paramterize runWriter by a user-specified flag saying whether the monoid is
---   to be commutative; record that on the RunWriter Hof, and enforce it by
---   type-checking.
--- - Is there a way to automate checking for commutativity via the typeclass
---   system so the user doesn't have to keep writing "commutative" all the time?
--- - Or maybe make commutativity the default, and require an explicit annotation
---   to opt out?  (Which mention in the type error)
--- - Alternately, is there a way to parameterize the BaseMonoid class by a
---   Commutativity bit, such that commutative instances implement the class
---   parametrically in that bit, while not-known-to-be-commutative ones only
---   implement the non-commutative version?
---   - Will that bit be visible enough to the compiler to be picked up here?
-monoidCommutativity :: (EnvReader m) => BaseMonoid SimpIR n -> m n MonoidCommutes
-monoidCommutativity monoid = case isAdditionMonoid monoid of
-  Just () -> return Commutes
-  Nothing -> return DoesNotCommute
-{-# INLINE monoidCommutativity #-}
-
-isAdditionMonoid :: BaseMonoid SimpIR n -> Maybe ()
-isAdditionMonoid monoid = do
-  BaseMonoid { baseEmpty = (Con (Lit l))
-             , baseCombine = BinaryLamExpr (b1:>_) (b2:>_) body } <- Just monoid
-  unless (_isZeroLit l) Nothing
-  PrimOp (BinOp op (Stuck _ (Var b1')) (Stuck _ (Var b2'))) <- return body
-  unless (op `elem` [P.IAdd, P.FAdd]) Nothing
-  case (binderName b1, atomVarName b1', binderName b2, atomVarName b2') of
-    -- Checking the raw names here because (i) I don't know how to convince the
-    -- name system to let me check the well-typed names (which is because b2
-    -- might shadow b1), and (ii) there are so few patterns that I can just
-    -- enumerate them.
-    (UnsafeMakeName n1, UnsafeMakeName n1', UnsafeMakeName n2, UnsafeMakeName n2') -> do
-      when (n1 == n2) Nothing
-      unless ((n1 == n1' && n2 == n2') || (n1 == n2' && n2 == n1')) Nothing
-      Just ()
-
-_isZeroLit :: LitVal -> Bool
-_isZeroLit = \case
-  Int64Lit 0 -> True
-  Int32Lit 0 -> True
-  Word8Lit 0 -> True
-  Word32Lit 0 -> True
-  Word64Lit 0 -> True
-  Float32Lit 0.0 -> True
-  Float64Lit 0.0 -> True
-  _ -> False
-
 newtype VectorizeM i o a =
   VectorizeM { runVectorizeM ::
     SubstReaderT VSubstValC (BuilderT SimpIR (ReaderT Word32 Except)) i o a }
@@ -284,33 +232,11 @@ vectorizeBlock (Abs (Nest (Let b (DeclBinding _ rhs)) rest) body) = do
 vectorizeRefOp :: Emits o => SAtom i -> RefOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizeRefOp ref' op =
   case op of
-    MAsk -> do
-      -- TODO A contiguous reference becomes a vector load producing a varying
-      -- result.
-      VVal Uniform ref <- vectorizeAtom ref'
-      VVal Uniform <$> emit (RefOp ref MAsk)
-    MExtend basemonoid' x' -> do
-      VVal refStab ref <- vectorizeAtom ref'
-      VVal xStab x <- vectorizeAtom x'
-      basemonoid <- case refStab of
-        Uniform -> case xStab of
-          Uniform -> do
-            vectorizeBaseMonoid basemonoid' Uniform Uniform
-          -- This case represents accumulating something loop-varying into a
-          -- loop-invariant accumulator, as e.g. sum.  We can implement that for
-          -- commutative monoids, but we would want to have started with private
-          -- accumulators (one per lane), and then reduce them with an
-          -- appropriate sequence of vector reduction intrinsics at the end.
-          _ -> throwVectErr $ "Vectorizing non-sliced accumulation not implemented"
-        Contiguous -> do
-          vectorizeBaseMonoid basemonoid' Varying xStab
-        s -> throwVectErr $ "Cannot vectorize reference with loop-varying stability " ++ show s
-      VVal Uniform <$> emit (RefOp ref $ MExtend basemonoid x)
     IndexRef _ i' -> do
       VVal Uniform ref <- vectorizeAtom ref'
       VVal Contiguous i <- vectorizeAtom i'
       case getType ref of
-        TyCon (RefType _ (TabTy _ tb a)) -> do
+        TyCon (RefType (TabTy _ tb a)) -> do
           vty <- getVectorType =<< case hoist tb a of
             HoistSuccess a' -> return a'
             HoistFailure _  -> throwVectErr "Can't vectorize dependent table application"
@@ -319,20 +245,6 @@ vectorizeRefOp ref' op =
           throwVectErr do
             "bad type: " ++ pprint refTy ++ "\nref' : " ++ pprint ref'
     _ -> throwVectErr $ "Can't vectorize op: " ++ pprint (RefOp ref' op)
-
-vectorizeBaseMonoid :: Emits o => BaseMonoid SimpIR i -> Stability -> Stability
-  -> VectorizeM i o (BaseMonoid SimpIR o)
-vectorizeBaseMonoid (BaseMonoid empty combine) accStab xStab = do
-  -- TODO: This will probably create lots of vector broadcast of 0 instructions,
-  -- which will often be dead code because only the combine operation is
-  -- actually needed in that place.  We can (i) rely on LLVM to get rid of them,
-  -- (ii) get rid of them ourselves by running DCE on Imp (which is problematic
-  -- because we don't have the effect system at that point), or (iii) change the
-  -- IR to not require the empty element for MExtend operations, since they
-  -- don't use it.
-  empty' <- ensureVarying =<< vectorizeAtom empty
-  combine' <- vectorizeLamExpr combine [accStab, xStab]
-  return $ BaseMonoid empty' combine'
 
 vectorizePrimOp :: Emits o => PrimOp SimpIR i -> VectorizeM i o (VAtom o)
 vectorizePrimOp op = case op of

@@ -806,13 +806,6 @@ maybeTangentType' ty = case ty of
   _ -> empty
   where rec = maybeTangentType'
 
-tangentBaseMonoidFor :: (Emits n, SBuilder m) => SType n -> m n (BaseMonoid SimpIR n)
-tangentBaseMonoidFor ty = do
-  zero <- zeroAt ty
-  adder <- liftBuilder $ buildBinaryLamExpr (noHint, ty) (noHint, ty) \x y ->
-    addTangent (toAtom x) (toAtom y)
-  return $ BaseMonoid zero adder
-
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getTyCon x of
@@ -934,7 +927,7 @@ projectStruct i x = do
 
 projectStructRef :: (Builder CoreIR m, Emits n) => Int -> CAtom n -> m n (CAtom n)
 projectStructRef i x = do
-  RefTy _ valTy <- return $ getType x
+  RefTy valTy <- return $ getType x
   projs <- getStructProjections i valTy
   applyProjectionsRef projs x
 {-# INLINE projectStructRef #-}
@@ -973,16 +966,15 @@ mkBlock (Abs decls body) = do
   return $ Block effTy block
 
 blockEffTy :: (EnvReader m, IRRep r) => Block r n -> m n (EffTy r n)
-blockEffTy _ = undefined
--- blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
---   effs <- declsEffects decls mempty
---   return $ ignoreHoistFailure $ hoist decls $ EffTy effs $ getType result
---   where
---     declsEffects :: IRRep r => Nest (Decl r) n l -> EffectRow r l -> EnvReaderM l (EffectRow r l)
---     declsEffects Empty !acc = return acc
---     declsEffects n@(Nest (Let _ (DeclBinding _ expr)) rest) !acc = withExtEvidence n do
---       expr' <- sinkM expr
---       declsEffects rest $ acc <> getEffects expr'
+blockEffTy block = liftEnvReaderM $ refreshAbs block \decls result -> do
+  effs <- declsEffects decls mempty
+  return $ ignoreHoistFailure $ hoist decls $ EffTy effs $ getType result
+  where
+    declsEffects :: IRRep r => Nest (Decl r) n l -> Effects r l -> EnvReaderM l (Effects r l)
+    declsEffects Empty !acc = return acc
+    declsEffects n@(Nest (Let _ (DeclBinding _ expr)) rest) !acc = withExtEvidence n do
+      expr' <- sinkM expr
+      declsEffects rest $ acc <> getEffects expr'
 
 mkApp :: EnvReader m => CAtom n -> [CAtom n] -> m n (CExpr n)
 mkApp f xs = do

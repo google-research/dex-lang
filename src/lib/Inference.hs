@@ -701,8 +701,8 @@ getFieldDefs sid ty = case ty of
                 (FieldName field, FieldDotMethod f params)
           return $ M.fromList $ concat projFields ++ methodFields
         ADTCons _ -> noFields
-    RefType _ valTy -> case valTy of
-      RefTy _ _ -> noFields
+    RefType valTy -> case valTy of
+      RefTy _ -> noFields
       _ -> do
         valFields <- getFieldDefs sid valTy
         return $ M.filter isProj valFields
@@ -720,7 +720,7 @@ projectField i x = case getType x of
   TyCon con -> case con of
     ProdType _ -> proj i x
     NewtypeTyCon _ -> projectStruct i x
-    RefType _ valTy -> case valTy of
+    RefType valTy -> case valTy of
       TyCon (ProdType _) -> getProjRef (ProjectProduct i) x
       TyCon (NewtypeTyCon _) -> projectStructRef i x
       _ -> bad
@@ -1029,14 +1029,12 @@ matchPrimApp = \case
  UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
  UBinOp op -> \case ~[x, y] -> emit $ BinOp op x y
  UUnOp  op -> \case ~[x]    -> emit $ UnOp  op x
- UMAsk      -> \case ~[r]    -> emit $ RefOp r MAsk
  UMGet      -> \case ~[r]    -> emit $ RefOp r MGet
  UMPut      -> \case ~[r, x] -> emit $ RefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> indexRef r i
  UApplyMethod i -> \case ~(d:args) -> emit =<< mkApplyMethod (fromJust $ toMaybeDict d) i args
  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
- UMExtend   -> \case ~[r, z, f, x] -> do f' <- lam2 f; emit $ RefOp r $ MExtend (BaseMonoid z f') x
  p -> \case xs -> throwInternal $ "Bad primitive application: " ++ show (p, xs)
  where
    lam2 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)
@@ -1704,8 +1702,8 @@ instance Unifiable (TyCon CoreIR) where
     { SumType ts' <- matchit; unifyLists ts ts'}
     ( ProdType ts ) -> do
     { ProdType ts' <- matchit; unifyLists ts ts'}
-    ( RefType h  t ) -> do
-    { RefType h' t' <- matchit; guard (h == h'); unify t t'}
+    ( RefType t ) -> do
+    { RefType t' <- matchit; unify t t'}
     ( DepPairTy t ) -> do
     { DepPairTy t' <- matchit; unify t t'}
     where matchit = return t2

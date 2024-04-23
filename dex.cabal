@@ -49,7 +49,6 @@ library
                      , ConcreteSyntax
                      , Core
                      , Err
-                     , Export
                      , Generalize
                      , Imp
                      , ImpToLLVM

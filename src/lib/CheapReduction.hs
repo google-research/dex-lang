@@ -442,9 +442,6 @@ instance IRRep r => VisitGeneric (Hof r) r where
     Linearize      lam x -> Linearize <$> visitGeneric lam <*> visitGeneric x
     Transpose      lam x -> Transpose <$> visitGeneric lam <*> visitGeneric x
 
-instance IRRep r => VisitGeneric (BaseMonoid r) r where
-  visitGeneric (BaseMonoid x lam) = BaseMonoid <$> visitGeneric x <*> visitGeneric lam
-
 instance IRRep r => VisitGeneric (Effects r) r where
   visitGeneric = \case
     Pure      -> return Pure
@@ -550,7 +547,7 @@ instance IRRep r => VisitGeneric (TyCon r) r where
     BaseType bt    -> return $ BaseType bt
     ProdType tys   -> ProdType <$> mapM visitGeneric tys
     SumType  tys   -> SumType  <$> mapM visitGeneric tys
-    RefType h t    -> RefType  h <$> visitGeneric t
+    RefType t      -> RefType  <$> visitGeneric t
     TabPi t        -> TabPi     <$> visitGeneric t
     DepPairTy t    -> DepPairTy <$> visitGeneric t
     TypeKind       -> return TypeKind
@@ -686,7 +683,6 @@ instance SubstE AtomSubstVal IExpr
 instance SubstE AtomSubstVal RepVal
 instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
-instance IRRep r => SubstE AtomSubstVal (BaseMonoid r)
 instance IRRep r => SubstE AtomSubstVal (TypedHof r)
 instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (TyCon r)

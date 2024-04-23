@@ -139,7 +139,6 @@ decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
   CLet binder rhs -> do
     (p, ty) <- patOptAnn binder
     ULet ann p ty <$> asExpr <$> block rhs
-  CBind _ _ -> throw sid TopLevelArrowBinder
   CDefDecl def -> do
     (name, lam) <- aDef def
     return $ ULet ann (fromSourceNameW name) Nothing (WithSrcE sid (ULam lam))
@@ -382,12 +381,6 @@ blockDecls [] = error "shouldn't have empty list of decls"
 blockDecls [WithSrcs sid _ d] = case d of
   CExpr g -> (Empty,) <$> expr g
   _ -> throw sid BlockWithoutFinalExpr
-blockDecls (WithSrcs sid _ (CBind b rhs):ds) = do
-  b' <- binderOptTy Explicit b
-  rhs' <- asExpr <$> block rhs
-  body <- block $ IndentedBlock sid ds -- Not really the right SrcId
-  let lam = ULam $ ULamExpr (UnaryNest b') ExplicitApp Nothing body
-  return (Empty, WithSrcE sid $ extendAppRight rhs' (WithSrcE sid lam))
 blockDecls (d:ds) = do
   d' <- decl PlainLet d
   (ds', e) <- blockDecls ds

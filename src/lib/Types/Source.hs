@@ -194,7 +194,6 @@ data CSDecl
   = CLet GroupW CSBlock
   | CDefDecl CDef
   | CExpr GroupW
-  | CBind GroupW CSBlock -- Arrow binder <-
   | CPass
     deriving (Show, Generic)
 
@@ -407,15 +406,6 @@ data UTopDecl (n::S) (l::S) where
 
 type UType = UExpr
 type UConstraint = UExpr
-
-data UResumePolicy =
-    UNoResume
-  | ULinearResume
-  | UAnyResume
-  deriving (Show, Eq, Generic)
-
-instance Hashable UResumePolicy
-instance Store UResumePolicy
 
 data UForExpr (n::S) where
   UForExpr :: UAnnBinder n l -> UBlock l -> UForExpr n
@@ -650,7 +640,7 @@ data PrimName =
  | UMiscOp   P.MiscOp
  | UUnOp     UnOp
  | UBinOp    BinOp
- | UMAsk | UMExtend | UMGet | UMPut
+ | UMGet | UMPut
  | UWhile | ULinearize | UTranspose
  | UProjNewtype | UExplicitApply | UMonoLiteral
  | UIndexRef | UApplyMethod Int
@@ -674,8 +664,7 @@ showPrimName prim = primNameToStr prim
 
 primNames :: M.Map String PrimName
 primNames = M.fromList
-  [ ("ask"      , UMAsk), ("mextend", UMExtend)
-  , ("get"      , UMGet), ("put"    , UMPut)
+  [ ("get"      , UMGet), ("put"    , UMPut)
   , ("while"    , UWhile)
   , ("linearize", ULinearize), ("linearTranspose", UTranspose)
   , ("iadd" , binary IAdd),  ("isub"  , binary ISub)
@@ -1011,7 +1000,6 @@ instance Pretty CTopDecl where
 instance Pretty CSDecl where
   pretty = undefined
   -- pretty (CLet pat blk) = pArg pat <+> "=" <+> p blk
-  -- pretty (CBind pat blk) = pArg pat <+> "<-" <+> p blk
   -- pretty (CDefDecl (CDef name args maybeAnn blk)) =
   --   "def " <> fromString name <> " " <> prettyParamGroups args <+> annDoc
   --     <> nest 2 (hardline <> p blk)

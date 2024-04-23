@@ -45,7 +45,7 @@ caseAltsBinderTys ty = case ty of
 piTypeWithoutDest :: PiType SimpIR n -> PiType SimpIR n
 piTypeWithoutDest (PiType bsRefB _) =
   case popNest bsRefB of
-    Just (PairB bs (_:>RawRefTy ansTy)) -> PiType bs ansTy
+    Just (PairB bs (_:>RefTy ansTy)) -> PiType bs ansTy
     _ -> error "expected trailing dest binder"
 
 typeOfTabApp :: (IRRep r, EnvReader m) => Type r n -> Atom r n -> m n (Type r n)
@@ -64,15 +64,15 @@ typeOfTopApp f xs = do
   return $ EffTy undefined ty  -- TODO
 
 typeOfIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Type r n -> Atom r n -> m n (Type r n)
-typeOfIndexRef (TyCon (RefType h s)) i = do
+typeOfIndexRef (TyCon (RefType s)) i = do
   TyCon (TabPi tabPi) <- return s
   eltTy <- instantiate tabPi [i]
-  return $ toType $ RefType h eltTy
+  return $ toType $ RefType eltTy
 typeOfIndexRef _ _ = error "expected a ref type"
 
 typeOfProjRef :: EnvReader m => Type r n -> Projection -> m n (Type r n)
-typeOfProjRef (TyCon (RefType h s)) p = do
-  toType . RefType h <$> case p of
+typeOfProjRef (TyCon (RefType s)) p = do
+  toType . RefType <$> case p of
     ProjectProduct i -> do
       ~(TyCon (ProdType tys)) <- return s
       return $ tys !! i
@@ -307,7 +307,7 @@ isData ty = do
         BaseType _  -> return ()
         ProdType as -> mapM_ go as
         SumType  cs -> mapM_ go cs
-        RefType _ _ -> return ()
+        RefType _ -> return ()
         TypeKind -> notData
         DictTy _ -> notData
         Pi _     -> notData

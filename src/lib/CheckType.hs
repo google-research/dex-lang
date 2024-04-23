@@ -273,7 +273,7 @@ instance IRRep r => CheckableE r (Stuck r) where
     Var name -> do
       name' <- checkE name
       case getType name' of
-        RawRefTy _ -> affineUsed $ atomVarName name'
+        RefTy _ -> affineUsed $ atomVarName name'
         _ -> return ()
       return $ Var name'
     StuckUnwrap x -> do
@@ -372,7 +372,7 @@ instance IRRep r => CheckableE r (TyCon r) where
     BaseType b       -> return $ BaseType b
     ProdType tys     -> ProdType <$> mapM checkE tys
     SumType  cs      -> SumType  <$> mapM checkE cs
-    RefType r a      -> RefType r <$> checkE a
+    RefType a        -> RefType  <$> checkE a
     TypeKind         -> return TypeKind
     Pi t           -> Pi           <$> checkE t
     TabPi t        -> TabPi        <$> checkE t
@@ -463,23 +463,18 @@ instance IRRep r => CheckableE r (PrimOp r) where
     MiscOp op -> MiscOp <$> checkE op
     MemOp  op -> MemOp  <$> checkE op
     RefOp ref m -> do
-      (ref', TyCon (RefType h s)) <- checkAndGetType ref
+      (ref', TyCon (RefType s)) <- checkAndGetType ref
       m' <- case m of
         MGet -> return MGet
         MPut x -> do
           x' <- x|:s
           return $ MPut x'
-        MAsk -> return MAsk
-        MExtend b x -> do
-          b' <- checkE b
-          x' <- x|:s
-          return $ MExtend b' x'
         IndexRef givenTy i -> do
           givenTy' <- checkE givenTy
           TyCon (TabPi tabTy) <- return s
           i' <- checkE i
           eltTy' <- checkInstantiation tabTy [i']
-          checkTypesEq givenTy' (TyCon $ RefType h eltTy')
+          checkTypesEq givenTy' (TyCon $ RefType eltTy')
           return $ IndexRef givenTy' i'
         ProjRef givenTy p -> do
           givenTy' <- checkE givenTy
@@ -490,15 +485,12 @@ instance IRRep r => CheckableE r (PrimOp r) where
             UnwrapNewtype -> do
               TyCon (NewtypeTyCon tc) <- return s
               snd <$> unwrapNewtypeType tc
-          checkTypesEq givenTy' (TyCon $ RefType h resultEltTy)
+          checkTypesEq givenTy' (TyCon $ RefType resultEltTy)
           return $ ProjRef givenTy' p
       return $ RefOp ref' m'
 
 instance IRRep r => CheckableE r (EffTy r) where
   checkE (EffTy effs ty) = EffTy <$> checkE effs <*> checkE ty
-
-instance IRRep r => CheckableE r (BaseMonoid r) where
-  checkE = renameM -- TODO: check
 
 instance IRRep r => CheckableE r (MemOp r) where
   checkE = \case
@@ -592,7 +584,7 @@ instance IRRep r => CheckableE r (VectorOp r) where
       return $ VectorIdx tbl' i' ty'
     VectorSubref ref i ty -> do
       ref' <- checkE ref
-      RefTy _ (TabTy _ b (BaseTy (Scalar sbt))) <- return $ getType ref'
+      RefTy (TabTy _ b (BaseTy (Scalar sbt))) <- return $ getType ref'
       i' <- i |: binderType b
       ty'@(BaseTy (Vector _ sbt')) <- checkE ty
       unless (sbt == sbt') $ throwInternal "Scalar type mismatch"

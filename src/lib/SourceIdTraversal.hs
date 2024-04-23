@@ -91,7 +91,6 @@ instance IsTree CSDecl where
     CLet v rhs -> visit v >> visit rhs
     CDefDecl def -> visit def
     CExpr g -> visit g
-    CBind v body -> visit v >> visit body
     CPass -> return ()
 
 instance IsTree CTopDecl where

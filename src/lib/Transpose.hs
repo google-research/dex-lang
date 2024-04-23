@@ -105,9 +105,9 @@ withAccumulator ty cont = undefined
   --     cont LinTrivial >> return val
 
 emitCTToRef :: (Emits n, Builder SimpIR m) => SAtom n -> SAtom n -> m n ()
-emitCTToRef ref ct = do
-  baseMonoid <- tangentBaseMonoidFor (getType ct)
-  void $ emitLin $ RefOp ref $ MExtend baseMonoid ct
+emitCTToRef ref ct = undefined
+  -- baseMonoid <- tangentBaseMonoidFor (getType ct)
+  -- void $ emitLin $ RefOp ref $ MExtend baseMonoid ct
 
 -- === actual pass ===
 
@@ -185,12 +185,6 @@ transposeOp op ct = case op of
     refArg' <- substNonlin refArg
     let emitEff = emitLin . RefOp refArg'
     case m of
-      MAsk -> do
-        baseMonoid <- tangentBaseMonoidFor (getType ct)
-        void $ emitEff $ MExtend baseMonoid ct
-      -- XXX: This assumes that the update function uses a tangent (0, +) monoid
-      --      rule for RunWriter.
-      MExtend _ x -> transposeAtom x =<< emitEff MAsk
       MGet -> void $ emitEff . MPut =<< addTangent ct =<< emitEff MGet
       MPut x -> do
         ct' <- emitEff MGet

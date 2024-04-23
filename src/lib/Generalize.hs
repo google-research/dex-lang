@@ -140,7 +140,7 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
       return $ TabPi $ TabPiType d' (b':>iTy') resultTy'
   BaseType b -> return $ BaseType b
   ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam TyKind t
-  RefType _ _ -> error "not implemented" -- how should we handle the ParamRole for the heap parameter?
+  RefType _ -> error "not implemented"
   SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
   TypeKind     -> return TypeKind
   NewtypeTyCon con -> NewtypeTyCon <$> case con of

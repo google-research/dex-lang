@@ -60,7 +60,7 @@ toImpFunction cc (TopLam True destTy lam) = do
         argAtoms <- interpretImpArgs (sink $ EmptyAbs bs) vs
         extendSubst (bs @@> (SubstVal <$> argAtoms)) do
           dest <- case binderType destB of
-            RefTy _ ansTy -> allocDestUnmanaged =<< substM ansTy
+            RefTy ansTy -> allocDestUnmanaged =<< substM ansTy
             _ -> error "Expected a reference type for body destination"
           extendSubst (destB @> SubstVal (destToAtom dest)) do
             void $ translateExpr body
@@ -327,12 +327,6 @@ toImpRefOp :: Emits o
 toImpRefOp refDest' m = do
   refDest <- atomToDest =<< substM refDest'
   substM m >>= \case
-    MAsk -> loadAtom refDest
-    MExtend (BaseMonoid _ combine) x -> do
-      xTy <- return $ getType x
-      refVal <- loadAtom refDest
-      liftMonoidCombine refDest xTy combine refVal x
-      return UnitVal
     MPut x -> storeAtom refDest x >> return UnitVal
     MGet -> do
       Dest resultTy _ <- return refDest
@@ -343,32 +337,6 @@ toImpRefOp refDest' m = do
       loadAtom dest
     IndexRef _ i -> destToAtom <$> indexDest refDest i
     ProjRef  _ ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
-  where
-    liftMonoidCombine :: Emits o
-      => (Dest o) -> SType o -> LamExpr SimpIR o
-      -> SAtom o -> SAtom o -> SubstImpM n o ()
-    liftMonoidCombine accDest accTy bc x y = do
-      LamExpr (Nest (_:>baseTy) _) _ <- return bc
-      alphaEq accTy baseTy >>= \case
-        -- Immediately beta-reduce, beacuse Imp doesn't reduce non-table applications.
-        True -> do
-          BinaryLamExpr xb yb body <- return bc
-          body' <- applySubst (xb @> SubstVal x <.> yb @> SubstVal y) body
-          ans <- liftBuilderImp $ emit (sink body')
-          storeAtom accDest ans
-        False -> case accTy of
-          TyCon (TabPi t) -> do
-            let ixTy = tabIxType t
-            n <- indexSetSizeImp ixTy
-            emitLoop noHint Fwd n \i -> do
-              idx <- unsafeFromOrdinalImp (sink ixTy) i
-              xElt <- liftBuilderImp $ tabApp (sink x) (sink idx)
-              yElt <- liftBuilderImp $ tabApp (sink y) (sink idx)
-              eltTy <- instantiate (sink t) [idx]
-              ithDest <- indexDest (sink accDest) idx
-              liftMonoidCombine ithDest eltTy (sink bc) xElt yElt
-          _ -> error $ "Base monoid type mismatch: can't lift " ++
-                 pprint baseTy ++ " to " ++ pprint accTy
 
 toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
@@ -399,7 +367,7 @@ toImpVectorOp = \case
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fromScalarAtom refi
     resultVal <- castPtrToVectorType refi' (toIVectorType vty)
-    repValAtom $ RepVal (RefTy State vty) (Leaf resultVal)
+    repValAtom $ RepVal (RefTy vty) (Leaf resultVal)
   where
     returnIExprVal x = return $ toScalarAtom x
 
@@ -605,7 +573,7 @@ typeToTree tyTop = return $ go REmpty tyTop
   go ctx (TyCon con) = case con of
     BaseType b -> Leaf $ LeafType (unRNest ctx) b
     TabPi (TabPiType d b bodyTy) -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy
-    RefType _ t -> go (RNest ctx RefCtx) t
+    RefType t -> go (RNest ctx RefCtx) t
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> do
       let tree1 = rec t1
       let tree2 = go (RNest ctx (DepPairCtx (JustB (b:>t1)))) t2
@@ -639,7 +607,7 @@ valueToTree (RepVal tyTop valTop) = do
   go ctx (TyCon ty) val = case ty of
     BaseType b -> return $ Leaf $ LeafType (unRNest ctx) b
     TabPi (TabPiType d b bodyTy) -> go (RNest ctx (TabCtx (PairB (LiftB d) b))) bodyTy val
-    RefType _ t -> go (RNest ctx RefCtx) t val
+    RefType t -> go (RNest ctx RefCtx) t val
     DepPairTy (DepPairType _ (b:>t1) (t2)) -> case val of
       Branch [v1, v2] -> do
         case allDepPairCtxs (unRNest ctx) of
@@ -795,11 +763,11 @@ atomToRepVal x = RepVal (getType x) <$> go x where
 -- from the dest. This version is not that. It just lifts a dest into an atom of
 -- type `Ref _`.
 destToAtom :: Dest n -> SAtom n
-destToAtom (Dest valTy tree) = toAtom $ RepVal (RefTy State valTy) tree
+destToAtom (Dest valTy tree) = toAtom $ RepVal (RefTy valTy) tree
 
 atomToDest :: EnvReader m => SAtom n -> m n (Dest n)
 atomToDest (Stuck _ (RepValAtom val)) = do
-  (RepVal ~(RefTy _ valTy) valTree) <- return val
+  (RepVal ~(RefTy valTy) valTree) <- return val
   return $ Dest valTy valTree
 atomToDest atom = error $ "Expected a non-var atom of type `RawRef _`, got: " ++ pprint atom
 {-# INLINE atomToDest #-}
@@ -1275,21 +1243,6 @@ ordinalImp (IxType _ (DictCon dict)) i = fromScalarAtom =<< case dict of
   IxRawFin _ -> return i
   IxSpecialized d params -> do
     appSpecializedIxMethod d Ordinal (params ++ [i])
-
-unsafeFromOrdinalImp :: Emits n => IxType SimpIR n -> IExpr n -> SubstImpM i n (SAtom n)
-unsafeFromOrdinalImp (IxType _ (DictCon dict)) i = do
-  let i' = toScalarAtom i
-  case dict of
-    IxRawFin _ -> return i'
-    IxSpecialized d params ->
-      appSpecializedIxMethod d UnsafeFromOrdinal (params ++ [i'])
-
-indexSetSizeImp :: Emits n => IxType SimpIR n -> SubstImpM i n (IExpr n)
-indexSetSizeImp (IxType _ (DictCon dict)) = do
-  fromScalarAtom =<< case dict of
-    IxRawFin n -> return n
-    IxSpecialized d params ->
-      appSpecializedIxMethod d Size (params ++ [])
 
 appSpecializedIxMethod :: Emits n => SpecDictName n -> IxMethod -> [SAtom n] -> SubstImpM i n (SAtom n)
 appSpecializedIxMethod d method args = do

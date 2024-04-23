@@ -195,7 +195,7 @@ getRepType (TyCon con) = case con of
   BaseType b  -> return $ toType $ BaseType b
   ProdType ts -> toType . ProdType <$> mapM getRepType ts
   SumType  ts -> toType . SumType  <$> mapM getRepType ts
-  RefType h a -> toType <$> (RefType h <$> getRepType a)
+  RefType a -> toType <$> (RefType <$> getRepType a)
   DepPairTy (DepPairType expl b r) -> do
     withSimplifiedBinder b \b' -> do
       r' <- getRepType r
@@ -418,16 +418,10 @@ requireReduced expr = reduceExpr expr >>= \case
 
 simplifyRefOp :: Emits o => RefOp CoreIR i -> SAtom o -> SimplifyM i o (SAtom o)
 simplifyRefOp op ref = case op of
-  MExtend (BaseMonoid em cb) x -> do
-    em'  <- toDataAtom em
-    x'   <- toDataAtom x
-    (cb', CoerceReconAbs) <- simplifyLam cb
-    emitRefOp $ MExtend (BaseMonoid em' cb') x'
   MGet   -> emit $ RefOp ref MGet
   MPut x -> do
     x' <- toDataAtom x
     emitRefOp $ MPut x'
-  MAsk   -> emitRefOp MAsk
   IndexRef _ x -> do
     x' <- toDataAtom x
     emit =<< mkIndexRef ref x'

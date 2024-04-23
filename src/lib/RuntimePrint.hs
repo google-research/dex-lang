@@ -75,7 +75,7 @@ showAnyTyCon tyCon atom = case tyCon of
   -- TODO: we could do better than this but it's not urgent because raw sum types
   -- aren't user-facing.
   SumType _ -> printAsConstant
-  RefType _ _ -> printTypeOnly "reference"
+  RefType _ -> printTypeOnly "reference"
   ProdType _ -> do
     xs <- getUnpacked atom
     parens $ sepBy ", " $ map rec xs
@@ -177,7 +177,7 @@ withBuffer cont = do
 bufferTy :: EnvReader m => m n (CType n)
 bufferTy = do
   t <- strType
-  return $ RefTy State (PairTy NatTy t)
+  return $ RefTy (PairTy NatTy t)
 
 -- argument has type `Fin n => Word8`
 extendBuffer :: (Emits n, CBuilder m) => CAtom n -> CAtom n -> m n ()

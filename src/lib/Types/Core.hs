@@ -78,7 +78,7 @@ data TyCon (r::IR) (n::S) where
   BaseType :: BaseType             -> TyCon r n
   ProdType :: [Type r n]           -> TyCon r n
   SumType  :: [Type r n]           -> TyCon r n
-  RefType  :: RWS -> Type r n -> TyCon r n
+  RefType  :: Type r n             -> TyCon r n
   TabPi        :: TabPiType r n    -> TyCon r n
   DepPairTy    :: DepPairType r n  -> TyCon r n
   TypeKind     ::                     TyCon CoreIR n
@@ -120,11 +120,6 @@ data Expr r n where
 
 deriving instance IRRep r => Show (Expr r n)
 deriving via WrapE (Expr r) n instance IRRep r => Generic (Expr r n)
-
-data BaseMonoid r n =
-  BaseMonoid { baseEmpty   :: Atom r n
-             , baseCombine :: LamExpr r n }
-  deriving (Show, Generic)
 
 data RepVal (n::S) = RepVal (SType n) (Tree (IExpr n))
      deriving (Show, Generic)
@@ -374,9 +369,7 @@ deriving instance IRRep r => Show (Hof r n)
 deriving via WrapE (Hof r) n instance IRRep r => Generic (Hof r n)
 
 data RefOp r n =
-   MAsk
- | MExtend (BaseMonoid r n) (Atom r n)
- | MGet
+   MGet
  | MPut (Atom r n)
  | IndexRef (Type r n) (Atom r n)
  | ProjRef (Type r n) Projection
@@ -638,11 +631,8 @@ pattern BaseTy b = TyCon (BaseType b)
 pattern PtrTy :: PtrType -> Type r n
 pattern PtrTy ty = TyCon (BaseType (PtrType ty))
 
-pattern RefTy :: RWS -> Type r n -> Type r n
-pattern RefTy r a = TyCon (RefType r a)
-
-pattern RawRefTy :: Type r n -> Type r n
-pattern RawRefTy a = TyCon (RefType State a)
+pattern RefTy :: Type r n -> Type r n
+pattern RefTy a = TyCon (RefType a)
 
 pattern TabTy :: IxDict r n -> Binder r n l -> Type r l -> Type r n
 pattern TabTy d b body = TyCon (TabPi (TabPiType d b body))
@@ -829,19 +819,6 @@ instance AlphaEqE       NewtypeTyCon
 instance AlphaHashableE NewtypeTyCon
 instance RenameE        NewtypeTyCon
 
-instance IRRep r => GenericE (BaseMonoid r) where
-  type RepE (BaseMonoid r) = PairE (Atom r) (LamExpr r)
-  fromE (BaseMonoid x f) = PairE x f
-  {-# INLINE fromE #-}
-  toE   (PairE x f) = BaseMonoid x f
-  {-# INLINE toE #-}
-
-instance IRRep r => SinkableE      (BaseMonoid r)
-instance IRRep r => HoistableE     (BaseMonoid r)
-instance IRRep r => RenameE        (BaseMonoid r)
-instance IRRep r => AlphaEqE       (BaseMonoid r)
-instance IRRep r => AlphaHashableE (BaseMonoid r)
-
 instance IRRep r => GenericE (TypedHof r) where
   type RepE (TypedHof r) = EffTy r `PairE` Hof r
   fromE (TypedHof effTy hof) = effTy `PairE` hof
@@ -885,16 +862,12 @@ instance IRRep r => AlphaHashableE (Hof r)
 instance GenericOp RefOp where
   type OpConst RefOp r = P.RefOp
   fromOp = \case
-    MAsk                       -> GenericOpRep P.MAsk        [] [] []
-    MExtend (BaseMonoid z f) x -> GenericOpRep P.MExtend     [] [z, x] [f]
     MGet                       -> GenericOpRep P.MGet        [] []  []
     MPut x                     -> GenericOpRep P.MPut        [] [x] []
     IndexRef t x               -> GenericOpRep P.IndexRef    [t] [x] []
     ProjRef t p                -> GenericOpRep (P.ProjRef p) [t] []  []
   {-# INLINE fromOp #-}
   toOp = \case
-    GenericOpRep P.MAsk        [] []     []  -> Just $ MAsk
-    GenericOpRep P.MExtend     [] [z, x] [f] -> Just $ MExtend (BaseMonoid z f) x
     GenericOpRep P.MGet        [] []     []  -> Just $ MGet
     GenericOpRep P.MPut        [] [x]    []  -> Just $ MPut x
     GenericOpRep P.IndexRef    [t] [x]   []  -> Just $ IndexRef t x
@@ -1274,7 +1247,7 @@ instance IRRep r => GenericE (TyCon r) where
   {- BaseType -}        (LiftE BaseType)
   {- ProdType -}        (ListE (Type r))
   {- SumType -}         (ListE (Type r))
-  {- RefType -}         (LiftE RWS `PairE` Type r))
+  {- RefType -}         (Type r))
                      (EitherE3
   {- TabPi -}         (TabPiType r)
   {- DepPairTy -}     (DepPairType r)
@@ -1287,7 +1260,7 @@ instance IRRep r => GenericE (TyCon r) where
     BaseType b     -> Case0 (Case0 (LiftE b))
     ProdType ts    -> Case0 (Case1 (ListE ts))
     SumType  ts    -> Case0 (Case2 (ListE ts))
-    RefType h t    -> Case0 (Case3 (LiftE h `PairE` t))
+    RefType t      -> Case0 (Case3 t)
     TabPi t        -> Case1 (Case0 t)
     DepPairTy t    -> Case1 (Case1 t)
     TypeKind       -> Case1 (Case2 (WhenIRE UnitE))
@@ -1300,7 +1273,7 @@ instance IRRep r => GenericE (TyCon r) where
       Case0 (LiftE b ) -> BaseType b
       Case1 (ListE ts) -> ProdType ts
       Case2 (ListE ts) -> SumType ts
-      Case3 (LiftE h `PairE` t) -> RefType h t
+      Case3 t -> RefType t
       _ -> error "impossible"
     Case1 c -> case c of
       Case0 t -> TabPi t
@@ -1679,7 +1652,6 @@ instance IRRep r => Store (Dict r n)
 instance IRRep r => Store (TypedHof r n)
 instance IRRep r => Store (Hof r n)
 instance IRRep r => Store (RefOp r n)
-instance IRRep r => Store (BaseMonoid r n)
 instance Store (NewtypeCon n)
 instance Store (NewtypeTyCon n)
 instance Store (DotMethods n)
@@ -1703,7 +1675,7 @@ instance IRRep r => PrettyPrec (TyCon r n) where
       encloseSep "(" ")" ", " $ fmap pApp as
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
-    RefType _ a -> atPrec AppPrec $ "Ref" <+> p a
+    RefType a -> atPrec AppPrec $ "Ref" <+> p a
     TypeKind -> atPrec ArgPrec "Type"
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabPi piType -> atPrec LowestPrec $ align $ p piType
@@ -1764,8 +1736,6 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
     VectorOp op -> prettyPrec op
     Hof (TypedHof _ hof) -> prettyPrec hof
     RefOp ref eff -> atPrec LowestPrec case eff of
-      MAsk        -> "ask" <+> pApp ref
-      MExtend _ x -> "extend" <+> pApp ref <+> pApp x
       MGet        -> "get" <+> pApp ref
       MPut x      -> pApp ref <+> ":=" <+> pApp x
       IndexRef _ i -> pApp ref <+> "!" <+> pApp i
@@ -1989,8 +1959,3 @@ prettyBlock :: (IRRep r, PrettyPrec (e l)) => Nest (Decl r) n l -> e l -> Doc an
 prettyBlock Empty expr = group $ line <> pLowest expr
 prettyBlock decls expr = prettyLines decls' <> hardline <> pLowest expr
     where decls' = unsafeFromNest decls
-
-instance IRRep r => Pretty (BaseMonoid r n) where pretty = prettyFromPrettyPrec
-instance IRRep r => PrettyPrec (BaseMonoid r n) where
-  prettyPrec (BaseMonoid x f) =
-    atPrec LowestPrec $ "baseMonoid" <+> pArg x <> nest 2 (line <> pArg f)
