@@ -332,7 +332,8 @@ data MiscOp (r::IR) (n::S) =
  | CastOp (Type r n) (Atom r n)                   -- (2) Type, then value. See CheckType.hs for valid coercions.
  | BitcastOp (Type r n) (Atom r n)                -- (2) Type, then value. See CheckType.hs for valid coercions.
  | UnsafeCoerce (Type r n) (Atom r n)             -- type, then value. Assumes runtime representation is the same.
- | GarbageVal (Type r n)                 -- type of value (assume `Data` constraint)
+ | GarbageVal (Type r n)                 -- type of value (assume `Data` constraint) (TODO: redundant with NewRef)
+ | NewRef (Type r n)
  | ThrowError (Type r n)                 -- (1) Hard error (parameterized by result type)
  -- Tag of a sum type
  | SumTag (Atom r n)
@@ -1165,6 +1166,7 @@ instance GenericOp MiscOp where
     BitcastOp t x    -> GenericOpRep P.BitcastOp      [t] [x]     []
     UnsafeCoerce t x -> GenericOpRep P.UnsafeCoerce   [t] [x]     []
     GarbageVal t     -> GenericOpRep P.GarbageVal     [t] []      []
+    NewRef t         -> GenericOpRep P.NewRef         [t] []      []
     ThrowError t     -> GenericOpRep P.ThrowError     [t] []      []
     SumTag x         -> GenericOpRep P.SumTag         []  [x]     []
     ToEnum t x       -> GenericOpRep P.ToEnum         [t] [x]     []
@@ -1178,6 +1180,7 @@ instance GenericOp MiscOp where
     GenericOpRep P.BitcastOp      [t] [x]     [] -> Just $ BitcastOp t x
     GenericOpRep P.UnsafeCoerce   [t] [x]     [] -> Just $ UnsafeCoerce t x
     GenericOpRep P.GarbageVal     [t] []      [] -> Just $ GarbageVal t
+    GenericOpRep P.NewRef         [t] []      [] -> Just $ NewRef t
     GenericOpRep P.ThrowError     [t] []      [] -> Just $ ThrowError t
     GenericOpRep P.SumTag         []  [x]     [] -> Just $ SumTag x
     GenericOpRep P.ToEnum         [t] [x]     [] -> Just $ ToEnum t x

@@ -36,7 +36,7 @@ import Types.Imp
 import Types.Primitives
 import Types.Source
 import Types.Top
-import Util (enumerate, transitiveClosureM, bindM2, toSnocList)
+import Util (enumerate, transitiveClosureM, bindM2, toSnocList, popList)
 
 -- === Ordinary (local) builder class ===
 
@@ -661,6 +661,16 @@ buildTopLamFromPi
 buildTopLamFromPi piTy@(PiType bs _) cont =
   TopLam False piTy <$> buildLamExpr (EmptyAbs bs) cont
 
+buildTopDestLamFromPi
+  :: ScopableBuilder r m
+  => PiType r n
+  -> (forall l. (Emits l, Distinct l, DExt n l) => [AtomVar r l] -> AtomVar r l -> m l (Atom r l))
+  -> m n (TopLam r n)
+buildTopDestLamFromPi piTy@(PiType bs _) cont =
+  TopLam True piTy <$> buildLamExpr (EmptyAbs bs) \argsAndDest -> do
+    let (args, dest) = popList argsAndDest
+    cont args dest
+
 buildAlt
   :: ScopableBuilder r m
   => Type r n
@@ -878,6 +888,9 @@ applyProjectionsRef (i:is) ref = getProjRef i =<< applyProjectionsRef is ref
 getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emit =<< mkProjRef r i
 
+newUninitializedRef :: (SBuilder m, Emits o) => SType o -> m o (SAtom o)
+newUninitializedRef ty = emit $ NewRef ty
+
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
 -- equivalent types spelled differently).
@@ -1020,17 +1033,17 @@ naryApp :: (CBuilder m, Emits n) => CAtom n -> [CAtom n] -> m n (CAtom n)
 naryApp f xs= mkApp f xs >>= emit
 {-# INLINE naryApp #-}
 
-naryTopApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
-naryTopApp f xs = emit =<< mkTopApp f xs
-{-# INLINE naryTopApp #-}
+topApp :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
+topApp f xs = emit =<< mkTopApp f xs
+{-# INLINE topApp #-}
 
-naryTopAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
-naryTopAppInlined f xs = do
+topAppInlined :: (Builder SimpIR m, Emits n) => TopFunName n -> [SAtom n] -> m n (SAtom n)
+topAppInlined f xs = do
   TopFunBinding f' <- lookupEnv f
   case f' of
     DexTopFun _ lam _ -> instantiate lam xs >>= emit
-    _ -> naryTopApp f xs
-{-# INLINE naryTopAppInlined #-}
+    _ -> topApp f xs
+{-# INLINE topAppInlined #-}
 
 tabApp :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 tabApp x i = mkTabApp x i >>= emit

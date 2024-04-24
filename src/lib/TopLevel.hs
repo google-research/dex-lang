@@ -50,6 +50,7 @@ import CheckType (checkTypes)
 import Core
 import ConcreteSyntax
 import CheapReduction
+import DPS
 import Err
 import IRVariants
 import Imp
@@ -478,7 +479,8 @@ evalBlock typed = do
   simpResult <- case opt of
     TopLam _ _ (LamExpr Empty (Atom result)) -> return result
     _ -> do
-      lOpt <- checkPass OptPass $ loweredOptimizations opt
+      dps <- checkPass LowerPass $ dpsPass opt
+      lOpt <- checkPass OptPass $ loweredOptimizations dps
       cc <- getEntryFunCC
       impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
       llvmOpt <- packageLLVMCallable impOpt

@@ -58,6 +58,13 @@ onSnd f (x, y) = (x, f y)
 onSndM :: (Functor m) => (a -> m b) -> (c, a) -> m (c, b)
 onSndM f (x, y) = (x,) <$> f y
 
+popList :: [a] -> ([a], a)
+popList xs = case drop (n-1) xs of
+  [x] -> (xsPrefix, x)
+  _ -> error "empty list"
+  where n = length xs
+        xsPrefix = take (n-1) xs
+
 unsnocNonempty :: NonEmpty a -> ([a], a)
 unsnocNonempty (x:|xs) = case reverse (x:xs) of
   (y:ys) -> (reverse ys, y)
@@ -387,3 +394,13 @@ readFileWithHash path = liftIO $ addHash <$> BS.readFile path
 sameConstructor :: a -> a -> Bool
 sameConstructor x y = tagToEnum# (getTag x ==# getTag y)
 {-# INLINE sameConstructor #-}
+
+-- === static-case version of Maybe ===
+
+type family Not (x::Bool) where
+  Not True = False
+  Not False = True
+
+data SMaybe (isJust::Bool) (a:: *) where
+  SNothing ::      SMaybe False a
+  SJust    :: a -> SMaybe True  a

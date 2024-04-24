@@ -514,7 +514,7 @@ simplifyApp resultTy f xs = case f of
     CCNoInlineFun v _ _ -> simplifyTopFunApp v xs
     CCFFIFun _ f' -> do
       xs' <- dropSubst $ mapM toDataAtom xs
-      liftSimpAtom resultTy =<< naryTopApp f' xs'
+      liftSimpAtom resultTy =<< topApp f' xs'
   CCACase aCase -> forceACase aCase \f' -> simplifyApp (sink resultTy) f' (sink <$> xs)
   CCTabLam _     -> error "not a function"
   CCLiftSimp _ _ -> error "not a function"
@@ -529,7 +529,7 @@ simplifyTopFunApp fName xs = do
       let spec = AppSpecialization fName xsGeneralized
       Just specializedFunction <- getSpecializedFunction spec >>= emitHoistedEnv
       runtimeArgs' <- dropSubst $ mapM toDataAtom runtimeArgs
-      liftSimpAtom resultTy =<< naryTopApp specializedFunction runtimeArgs'
+      liftSimpAtom resultTy =<< topApp specializedFunction runtimeArgs'
     False ->
       -- TODO: we should probably just fall back to inlining in this case,
       -- especially if we want make everything @noinline by default.

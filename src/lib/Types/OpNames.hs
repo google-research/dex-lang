@@ -32,7 +32,7 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
 data MemOp = IOAlloc | IOFree | PtrOffset | PtrLoad | PtrStore
 
 data MiscOp =
-   Select | CastOp | BitcastOp | UnsafeCoerce | GarbageVal | Effects
+   Select | CastOp | BitcastOp | UnsafeCoerce | GarbageVal | NewRef | Effects
  | ThrowError | ThrowException | Tag | SumTag | Create | ToEnum
  | OutputStream | ShowAny | ShowScalar
 

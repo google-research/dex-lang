@@ -361,10 +361,10 @@ linearizeExpr expr = case expr of
     -- bindings and then only hoisting the final result.
     Just (PairE fPrimal fTan) <- liftTopBuilderAndEmit $
        liftM toPairE $ linearizeTopFun (sink $ LinearizationSpec f' (map isJust ts))
-    (ans, residuals) <- fromPair =<< naryTopApp fPrimal xs'
+    (ans, residuals) <- fromPair =<< topApp fPrimal xs'
     return $ WithTangent ans do
       ts' <- forM (catMaybes ts) \(WithTangent UnitE t) -> t
-      naryTopApp (sink fTan) (sinkList xs' ++ [sink residuals, Con $ ProdCon ts'])
+      topApp (sink fTan) (sinkList xs' ++ [sink residuals, Con $ ProdCon ts'])
     where
       unitLike :: e n -> UnitE n
       unitLike _ = UnitE

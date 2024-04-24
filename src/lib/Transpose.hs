@@ -159,7 +159,7 @@ transposeExpr expr ct = case expr of
     Just fT <- getTransposedTopFun =<< substNonlin f
     (xsNonlin, [xLin]) <- return $ splitAt (length xs - 1) xs
     xsNonlin' <- mapM substNonlin xsNonlin
-    ct' <- naryTopApp fT (xsNonlin' ++ [ct])
+    ct' <- topApp fT (xsNonlin' ++ [ct])
     transposeAtom xLin ct'
   PrimOp op -> transposeOp op ct
   Case e alts _ -> do
