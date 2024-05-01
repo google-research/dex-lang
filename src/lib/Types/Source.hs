@@ -163,7 +163,6 @@ type CSDeclW     = WithSrcs CSDecl
 type SourceNameW = WithSrc SourceName
 
 type BracketedGroup = WithSrcs [GroupW]
--- optional arrow, effects, result type
 type ExplicitParams = BracketedGroup
 type GivenClause = (BracketedGroup, Maybe BracketedGroup)  -- implicits, classes
 type WithClause  = BracketedGroup -- no classes because we don't want to carry class dicts at runtime
@@ -644,7 +643,7 @@ data PrimName =
  | UWhile | ULinearize | UTranspose
  | UProjNewtype | UExplicitApply | UMonoLiteral
  | UIndexRef | UApplyMethod Int
- | UNat | UNatCon | UFin | UEffectRowKind
+ | UNat | UNatCon | UFin
  | UTuple -- overloaded for type constructor and data constructor, resolved in inference
    deriving (Show, Eq, Generic)
 
@@ -703,7 +702,6 @@ primNames = M.fromList
   , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
   , ("Nat"           , UNat)
   , ("Fin"           , UFin)
-  , ("EffKind"       , UEffectRowKind)
   , ("NatCon"        , UNatCon)
   , ("Ref"        , UPrimTC $ P.RefType)
   , ("indexRef"   , UIndexRef)

@@ -972,7 +972,8 @@ applyProjectionsReduced (p:ps) x = do
     ProjectProduct i -> reduceProj i x'
     UnwrapNewtype    -> reduceUnwrap x'
 
-mkBlock :: (EnvReader m, IRRep r) => ToExpr e r => Abs (Decls r) e n -> m n (Expr r n)
+mkBlock :: (EnvReader m, IRRep r, ToExpr e r) => Abs (Decls r) e n -> m n (Expr r n)
+mkBlock (Abs Empty expr) = return $ toExpr expr
 mkBlock (Abs decls body) = do
   let block = Abs decls (toExpr body)
   effTy <- blockEffTy block

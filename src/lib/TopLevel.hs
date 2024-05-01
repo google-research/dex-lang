@@ -473,6 +473,7 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   Optimize   -> act x
 
 evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
+evalBlock (TopLam _ _ (LamExpr Empty (Atom result))) = return result
 evalBlock typed = do
   SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
   opt <- simpOptimizations simp
