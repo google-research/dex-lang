@@ -69,10 +69,6 @@ data Stuck (r::IR) (n::S) where
   SuperclassProj    :: Int -> CStuck n         -> Stuck CoreIR n
   LiftSimp          :: CType n -> Stuck SimpIR n         -> Stuck CoreIR n
   LiftSimpFun       :: CorePiType n -> LamExpr SimpIR n  -> Stuck CoreIR n
-  -- TabLam and ACase are just defunctionalization tools. The result type
-  -- in both cases should *not* be `Data`.
-  TabLam            :: TabLamExpr n                     -> Stuck CoreIR n
-  ACase :: SStuck n -> [Abs SBinder CAtom n] -> CType n -> Stuck CoreIR n
 
 data TyCon (r::IR) (n::S) where
   BaseType :: BaseType             -> TyCon r n
@@ -913,13 +909,11 @@ instance IRRep r => GenericE (Stuck r) where
  {-  StuckUnwrap  -}      (WhenCore r (CStuck))
  {-  InstantiatedGiven -} (WhenCore r (CStuck `PairE` ListE CAtom))
  {-  SuperclassProj    -} (WhenCore r (LiftE Int `PairE` CStuck))
-                         ) (EitherE6
+                         ) (EitherE4
  {-  PtrVar -}            (LiftE PtrType `PairE` PtrName)
  {-  RepValAtom -}        (WhenSimp r RepVal)
  {-  LiftSimp -}          (WhenCore r (CType `PairE` SStuck))
  {-  LiftSimpFun -}       (WhenCore r (CorePiType `PairE` LamExpr SimpIR))
- {-  TabLam -}            (WhenCore r TabLamExpr)
- {-  ACase -}             (WhenCore r (SStuck `PairE` ListE (Abs SBinder CAtom) `PairE` CType))
                         )
 
   fromE = \case
@@ -933,8 +927,6 @@ instance IRRep r => GenericE (Stuck r) where
     RepValAtom r      -> Case1 $ Case1 $ WhenIRE r
     LiftSimp t x      -> Case1 $ Case2 $ WhenIRE $ t `PairE` x
     LiftSimpFun t lam -> Case1 $ Case3 $ WhenIRE $ t `PairE` lam
-    TabLam lam        -> Case1 $ Case4 $ WhenIRE lam
-    ACase s alts ty   -> Case1 $ Case5 $ WhenIRE $ s `PairE` ListE alts `PairE` ty
   {-# INLINE fromE #-}
 
   toE = \case
@@ -951,8 +943,6 @@ instance IRRep r => GenericE (Stuck r) where
       Case1 (WhenIRE r)               -> RepValAtom r
       Case2 (WhenIRE (t `PairE` x))   -> LiftSimp t x
       Case3 (WhenIRE (t `PairE` lam)) -> LiftSimpFun t lam
-      Case4 (WhenIRE lam)             -> TabLam lam
-      Case5 (WhenIRE (s `PairE` ListE alts `PairE` ty)) -> ACase s alts ty
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1896,10 +1886,8 @@ instance IRRep r => PrettyPrec (Stuck r n) where
     SuperclassProj d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i
     PtrVar _ v -> atPrec ArgPrec $ p v
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    ACase e alts _ -> atPrec AppPrec $ "acase" <+> p e <+> p alts
     LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
     LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
-    TabLam lam -> atPrec AppPrec $ "tablam" <+> p lam
     where
       p :: Pretty a => a -> Doc ann
       p = pretty

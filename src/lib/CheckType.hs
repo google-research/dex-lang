@@ -301,8 +301,6 @@ instance IRRep r => CheckableE r (Stuck r) where
     RepValAtom repVal -> RepValAtom <$> renameM repVal -- TODO: check
     LiftSimp t x -> LiftSimp <$> checkE t <*> renameM x -- TODO: check
     LiftSimpFun t x -> LiftSimpFun <$> checkE t <*> renameM x -- TODO: check
-    ACase scrut alts resultTy -> ACase <$> renameM scrut <*> mapM renameM alts <*> checkE resultTy -- TODO: check
-    TabLam lam -> TabLam <$> renameM lam -- TODO: check
 
 depPairLeftTy :: DepPairType r n -> Type r n
 depPairLeftTy (DepPairType _ (_:>ty) _) = ty

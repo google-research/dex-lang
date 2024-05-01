@@ -16,7 +16,7 @@ module CheapReduction
   , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst
   , repValAtom, reduceUnwrap, reduceProj, reduceSuperclassProj, typeOfApp
   , reduceInstantiateGiven, queryStuckType, substMStuck, reduceTabApp, substStuck
-  , liftSimpAtom, reduceACase)
+  , liftSimpAtom)
   where
 
 import Control.Applicative
@@ -63,10 +63,6 @@ reduceExpr e = liftReducerM $ reduceExprM e
 reduceProj :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Atom r n)
 reduceProj i x = liftM fromJust $ liftReducerM $ reduceProjM i x
 {-# INLINE reduceProj #-}
-
-reduceACase :: EnvReader m => SAtom n -> [Abs SBinder CAtom n] -> CType n -> m n (CAtom n)
-reduceACase scrut alts resultTy = liftM fromJust $ liftReducerM $ reduceACaseM scrut alts resultTy
-{-# INLINE reduceACase #-}
 
 reduceUnwrap :: EnvReader m => CAtom n -> m n (CAtom n)
 reduceUnwrap x = liftM fromJust $ liftReducerM $ reduceUnwrapM x
@@ -138,14 +134,6 @@ reduceApp f xs = do
     Con (Lam lam) -> dropSubst $ withInstantiated lam xs \body -> reduceExprM body
     _ -> empty
 
-reduceACaseM :: SAtom n -> [Abs SBinder CAtom n] -> CType n -> ReducerM i n (CAtom n)
-reduceACaseM scrut alts resultTy = case scrut of
-  Con (SumCon _ i arg) -> do
-    Abs b body <- return $ alts !! i
-    applySubst (b@>SubstVal arg) body
-  Con _ -> error "not a sum type"
-  Stuck _ scrut' -> mkStuck $ ACase scrut' alts resultTy
-
 reduceProjM :: IRRep r => Int -> Atom r o -> ReducerM i o (Atom r o)
 reduceProjM i x = case x of
   Con con -> case con of
@@ -199,10 +187,6 @@ queryStuckType = \case
   SuperclassProj i s -> superclassProjType i =<< queryStuckType s
   LiftSimp t _ -> return t
   LiftSimpFun t _ -> return $ toType t
-  -- TabLam and ACase are just defunctionalization tools. The result type
-  -- in both cases should *not* be `Data`.
-  TabLam (PairE t _) -> return $ toType t
-  ACase _ _ resultTy -> return resultTy
 
 projType :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Type r n)
 projType i x = case getType x of
@@ -637,12 +621,6 @@ reduceStuck = \case
     s' <- reduceStuck s
     liftSimpAtom t' s'
   LiftSimpFun t f -> mkStuck =<< (LiftSimpFun <$> substM t <*> substM f)
-  TabLam lam -> mkStuck =<< (TabLam <$> substM lam)
-  ACase scrut alts resultTy -> do
-    scrut' <- reduceStuck scrut
-    resultTy' <- substM resultTy
-    alts' <- mapM substM alts
-    reduceACaseM scrut' alts' resultTy'
 
 liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
 liftSimpAtom (StuckTy _ _) _ = error "Can't lift stuck type"
