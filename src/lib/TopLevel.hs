@@ -473,23 +473,25 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   Optimize   -> act x
 
 evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
-evalBlock (TopLam _ _ (LamExpr Empty (Atom result))) = return result
-evalBlock typed = do
-  SimplifiedTopLam simp recon <- checkPass SimpPass $ simplifyTopBlock typed
-  opt <- simpOptimizations simp
-  simpResult <- case opt of
-    TopLam _ _ (LamExpr Empty (Atom result)) -> return result
-    _ -> do
-      dps <- checkPass LowerPass $ dpsPass opt
-      lOpt <- checkPass OptPass $ loweredOptimizations dps
-      cc <- getEntryFunCC
-      impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
-      llvmOpt <- packageLLVMCallable impOpt
-      resultVals <- liftIO $ callEntryFun llvmOpt []
-      TopLam _ destTy _ <- return lOpt
-      resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
-      repValAtom =<< repValFromFlatList resultTy resultVals
-  applyReconTop recon simpResult
+evalBlock typed@(TopLam _ _ (LamExpr Empty body)) = case body of
+  Atom result -> return result
+  _ -> do
+    simp <- checkPass SimpPass $ simplifyTopBlock typed
+    opt <- simpOptimizations simp
+    simpResult <- case opt of
+      TopLam _ _ (LamExpr Empty (Atom result)) -> return result
+      _ -> do
+        dps <- checkPass LowerPass $ dpsPass opt
+        lOpt <- checkPass OptPass $ loweredOptimizations dps
+        cc <- getEntryFunCC
+        impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
+        llvmOpt <- packageLLVMCallable impOpt
+        resultVals <- liftIO $ callEntryFun llvmOpt []
+        TopLam _ destTy _ <- return lOpt
+        resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
+        repValAtom =<< repValFromFlatList resultTy resultVals
+    liftSimpAtom (getType body) simpResult
+evalBlock _ = error "not a top block"
 {-# SCC evalBlock #-}
 
 simpOptimizations :: Topper m => STopLam n -> m n (STopLam n)
