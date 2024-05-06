@@ -4,22 +4,22 @@ import sort
 
 '## Monoidal enforcement of uniqueness in sorted lists
 
-def last(xs:n=>a) -> Maybe a given (n|Ix, a) =
+def last(xs:n=>a) -> Maybe a given (n|Ix, a:Type) =
   s = size n
   case s == 0 of
     True -> Nothing
     False -> Just xs[unsafe_from_ordinal (unsafe_nat_diff s 1)]
 
-def first(xs:n=>a) -> Maybe a given (n|Ix, a) =
+def first(xs:n=>a) -> Maybe a given (n|Ix, a:Type) =
   s = size n
   case s == 0 of
     True -> Nothing
     False -> Just xs[unsafe_from_ordinal 0]
 
-def all_except_last(xs:n=>a) -> List a given (n|Ix, a) =
-  shortSize = Fin (size n -| 1)
-  allButLast = for i:shortSize. xs[unsafe_from_ordinal (ordinal i)]
-  AsList _ allButLast
+def all_except_last(xs:n=>a) -> List a given (n|Ix, a:Type) =
+  newlen = size n -| 1
+  allButLast = for i:(Fin newlen). xs[unsafe_from_ordinal (ordinal i)]
+  AsList newlen allButLast
 
 def merge_unique_sorted_lists(xlist:List a, ylist:List a) -> List a given (a|Eq) =
   # This function is associative, for use in a monoidal reduction.
@@ -39,8 +39,7 @@ def merge_unique_sorted_lists(xlist:List a, ylist:List a) -> List a given (a|Eq)
 
 def remove_duplicates_from_sorted(xs:n=>a) -> List a given (n|Ix, a|Eq) =
   xlists = for i:n. (AsList 1 [xs[i]])
-  reduce (AsList 0 []) merge_unique_sorted_lists xlists
-
+  reduce xlists (AsList 0 []) merge_unique_sorted_lists
 
 '## Sets
 
@@ -82,7 +81,7 @@ def set_intersect(
   UnsafeAsSet(nx, xs) = sx
   UnsafeAsSet(ny, ys) = sy
   # This could be done in O(nx + ny) instead of O(nx log ny).
-  isInYs = \x. case search_sorted_exact ys x of
+  isInYs = \x:a. case search_sorted_exact ys x of
     Just x -> True
     Nothing -> False
   AsList(n', intersection) = filter xs isInYs

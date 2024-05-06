@@ -1,10 +1,10 @@
 import set
 
--- check order invariance.
+# check order invariance.
 :p (to_set ["Bob", "Alice", "Charlie"]) == (to_set ["Charlie", "Bob", "Alice"])
 > True
 
--- check uniqueness.
+# check uniqueness.
 :p (to_set ["Bob", "Alice", "Alice", "Charlie"]) == (to_set ["Charlie", "Charlie", "Bob", "Alice"])
 > True
 
@@ -57,13 +57,13 @@ Person : Type = Element names2
 :p size Person
 > 3
 
--- Check that ordinal and unsafeFromOrdinal are inverses.
+# Check that ordinal and unsafeFromOrdinal are inverses.
 roundTrip = for i:Person.
   i == (unsafe_from_ordinal (ordinal i))
 :p all roundTrip
 > True
 
--- Check that member and value are inverses.
+# Check that member and value are inverses.
 roundTrip2 = for i:Person.
   s = value i
   ix = member s names2
