@@ -478,19 +478,16 @@ evalBlock typed@(TopLam _ _ (LamExpr Empty body)) = case body of
   _ -> do
     simp <- checkPass SimpPass $ simplifyTopBlock typed
     opt <- simpOptimizations simp
-    simpResult <- case opt of
-      TopLam _ _ (LamExpr Empty (Atom result)) -> return result
-      _ -> do
-        dps <- checkPass LowerPass $ dpsPass opt
-        lOpt <- checkPass OptPass $ loweredOptimizations dps
-        cc <- getEntryFunCC
-        impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
-        llvmOpt <- packageLLVMCallable impOpt
-        resultVals <- liftIO $ callEntryFun llvmOpt []
-        TopLam _ destTy _ <- return lOpt
-        resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
-        repValAtom =<< repValFromFlatList resultTy resultVals
-    liftSimpAtom (getType body) simpResult
+    dps <- checkPass LowerPass $ dpsPass opt
+    lOpt <- checkPass OptPass $ loweredOptimizations dps
+    cc <- getEntryFunCC
+    impOpt <- checkPass ImpPass $ toImpFunction cc lOpt
+    llvmOpt <- packageLLVMCallable impOpt
+    resultVals <- liftIO $ callEntryFun llvmOpt []
+    TopLam _ destTy _ <- return lOpt
+    resultTy <- return $ assumeConst $ piTypeWithoutDest destTy
+    RepVal _ repVal <- repValFromFlatList resultTy resultVals
+    return $ toAtom $ RepVal (getType body) repVal
 evalBlock _ = error "not a top block"
 {-# SCC evalBlock #-}
 
@@ -713,7 +710,7 @@ loadModuleSource config moduleName = do
 getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
-  Stuck _ (LiftSimp _ (RepValAtom (RepVal _ tree))) <- return val
+  Stuck _ (RepValAtom (RepVal _ tree)) <- return val
   Branch [Leaf (IIdxRepVal n), Leaf (IPtrVar ptrName _)] <- return tree
   PtrBinding (CPU, Scalar Word8Type) (PtrLitVal ptr) <- lookupEnv ptrName
   liftIO $ peekCStringLen (castPtr ptr, fromIntegral n)

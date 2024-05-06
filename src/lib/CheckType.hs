@@ -299,8 +299,6 @@ instance IRRep r => CheckableE r (Stuck r) where
     SuperclassProj i d -> SuperclassProj <$> pure i <*> checkE d -- TODO: check index in range
     PtrVar t v -> PtrVar t <$> renameM v
     RepValAtom repVal -> RepValAtom <$> renameM repVal -- TODO: check
-    LiftSimp t x -> LiftSimp <$> checkE t <*> renameM x -- TODO: check
-    LiftSimpFun t x -> LiftSimpFun <$> checkE t <*> renameM x -- TODO: check
 
 depPairLeftTy :: DepPairType r n -> Type r n
 depPairLeftTy (DepPairType _ (_:>ty) _) = ty

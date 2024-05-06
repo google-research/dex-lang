@@ -63,12 +63,10 @@ data Stuck (r::IR) (n::S) where
   StuckProject      :: Int -> Stuck r n        -> Stuck r n
   StuckTabApp       :: Stuck r n -> Atom r n   -> Stuck r n
   PtrVar            :: PtrType -> PtrName n    -> Stuck r n
-  RepValAtom        :: RepVal n                -> Stuck SimpIR n
+  RepValAtom        :: RepVal r n              -> Stuck r n
   StuckUnwrap       :: CStuck n                -> Stuck CoreIR n
   InstantiatedGiven :: CStuck n -> [CAtom n]   -> Stuck CoreIR n
   SuperclassProj    :: Int -> CStuck n         -> Stuck CoreIR n
-  LiftSimp          :: CType n -> Stuck SimpIR n         -> Stuck CoreIR n
-  LiftSimpFun       :: CorePiType n -> LamExpr SimpIR n  -> Stuck CoreIR n
 
 data TyCon (r::IR) (n::S) where
   BaseType :: BaseType             -> TyCon r n
@@ -117,7 +115,7 @@ data Expr r n where
 deriving instance IRRep r => Show (Expr r n)
 deriving via WrapE (Expr r) n instance IRRep r => Generic (Expr r n)
 
-data RepVal (n::S) = RepVal (SType n) (Tree (IExpr n))
+data RepVal (r::IR) (n::S) = RepVal (Type r n) (Tree (IExpr n))
      deriving (Show, Generic)
 
 data DeclBinding r n = DeclBinding LetAnn (Expr r n)
@@ -511,7 +509,7 @@ instance ToAtom DictType     CoreIR where toAtom = Con . TyConAtom . DictTy
 instance ToAtom NewtypeTyCon CoreIR where toAtom = Con . TyConAtom . NewtypeTyCon
 instance ToAtom (AtomVar r) r where
   toAtom (AtomVar v ty) = Stuck ty (Var (AtomVar v ty))
-instance ToAtom RepVal SimpIR where
+instance IRRep r => ToAtom (RepVal r) r where
   toAtom (RepVal ty tree) = Stuck ty $ RepValAtom $ RepVal ty tree
 instance ToAtom (Type CoreIR) CoreIR where
   toAtom = \case
@@ -678,16 +676,16 @@ pattern TrueAtom = Con (Lit (Word8Lit 1))
 
 -- === Typeclass instances for Name and other Haskell libraries ===
 
-instance GenericE RepVal where
-  type RepE RepVal= PairE SType (ComposeE Tree IExpr)
+instance IRRep r => GenericE (RepVal r) where
+  type RepE (RepVal r) = PairE (Type r) (ComposeE Tree IExpr)
   fromE (RepVal ty tree) = ty `PairE` ComposeE tree
   toE   (ty `PairE` ComposeE tree) = RepVal ty tree
 
-instance SinkableE      RepVal
-instance RenameE        RepVal
-instance HoistableE     RepVal
-instance AlphaHashableE RepVal
-instance AlphaEqE       RepVal
+instance IRRep r => SinkableE      (RepVal r)
+instance IRRep r => RenameE        (RepVal r)
+instance IRRep r => HoistableE     (RepVal r)
+instance IRRep r => AlphaHashableE (RepVal r)
+instance IRRep r => AlphaEqE       (RepVal r)
 
 instance GenericE TyConParams where
   type RepE TyConParams = PairE (LiftE [Explicitness]) (ListE CAtom)
@@ -909,11 +907,9 @@ instance IRRep r => GenericE (Stuck r) where
  {-  StuckUnwrap  -}      (WhenCore r (CStuck))
  {-  InstantiatedGiven -} (WhenCore r (CStuck `PairE` ListE CAtom))
  {-  SuperclassProj    -} (WhenCore r (LiftE Int `PairE` CStuck))
-                         ) (EitherE4
+                         ) (EitherE2
  {-  PtrVar -}            (LiftE PtrType `PairE` PtrName)
- {-  RepValAtom -}        (WhenSimp r RepVal)
- {-  LiftSimp -}          (WhenCore r (CType `PairE` SStuck))
- {-  LiftSimpFun -}       (WhenCore r (CorePiType `PairE` LamExpr SimpIR))
+ {-  RepValAtom -}        (RepVal r)
                         )
 
   fromE = \case
@@ -924,9 +920,7 @@ instance IRRep r => GenericE (Stuck r) where
     InstantiatedGiven e xs -> Case0 $ Case4 $ WhenIRE $ e `PairE` ListE xs
     SuperclassProj i e     -> Case0 $ Case5 $ WhenIRE $ LiftE i `PairE` e
     PtrVar t p        -> Case1 $ Case0 $ LiftE t `PairE` p
-    RepValAtom r      -> Case1 $ Case1 $ WhenIRE r
-    LiftSimp t x      -> Case1 $ Case2 $ WhenIRE $ t `PairE` x
-    LiftSimpFun t lam -> Case1 $ Case3 $ WhenIRE $ t `PairE` lam
+    RepValAtom r      -> Case1 $ Case1 $ r
   {-# INLINE fromE #-}
 
   toE = \case
@@ -940,9 +934,7 @@ instance IRRep r => GenericE (Stuck r) where
       _ -> error "impossible"
     Case1 con -> case con of
       Case0 (LiftE t `PairE` p)       -> PtrVar t p
-      Case1 (WhenIRE r)               -> RepValAtom r
-      Case2 (WhenIRE (t `PairE` x))   -> LiftSimp t x
-      Case3 (WhenIRE (t `PairE` lam)) -> LiftSimpFun t lam
+      Case1 r                         -> RepValAtom r
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1612,7 +1604,7 @@ instance IRRep r => Store (MemOp r n)
 instance IRRep r => Store (TyCon r n)
 instance IRRep r => Store (Con r n)
 instance IRRep r => Store (PrimOp r n)
-instance Store (RepVal n)
+instance IRRep r => Store (RepVal r n)
 instance IRRep r => Store (Type r n)
 instance IRRep r => Store (Effects r n)
 instance IRRep r => Store (EffTy r n)
@@ -1886,8 +1878,6 @@ instance IRRep r => PrettyPrec (Stuck r n) where
     SuperclassProj d' i -> atPrec LowestPrec $ "SuperclassProj" <+> p d' <+> p i
     PtrVar _ v -> atPrec ArgPrec $ p v
     RepValAtom x -> atPrec LowestPrec $ pretty x
-    LiftSimp ty x -> atPrec ArgPrec $ "<embedded-simp-atom " <+> p x <+> " : " <+> p ty <+> ">"
-    LiftSimpFun ty x -> atPrec ArgPrec $ "<embedded-simp-function " <+> p x <+> " : " <+> p ty <+> ">"
     where
       p :: Pretty a => a -> Doc ann
       p = pretty
@@ -1943,7 +1933,7 @@ withExplParens Explicit x = parens x
 withExplParens (Inferred _ Unify) x = braces   $ x
 withExplParens (Inferred _ (Synth _)) x = brackets x
 
-instance Pretty (RepVal n) where
+instance IRRep r => Pretty (RepVal r n) where
   pretty (RepVal ty tree) = "<RepVal " <+> pretty tree <+> ":" <+> pretty ty <> ">"
 
 prettyBlock :: (IRRep r, PrettyPrec (e l)) => Nest (Decl r) n l -> e l -> Doc ann

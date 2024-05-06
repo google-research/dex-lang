@@ -15,8 +15,7 @@ module CheapReduction
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
   , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst
   , repValAtom, reduceUnwrap, reduceProj, reduceSuperclassProj, typeOfApp
-  , reduceInstantiateGiven, queryStuckType, substMStuck, reduceTabApp, substStuck
-  , liftSimpAtom)
+  , reduceInstantiateGiven, queryStuckType, substMStuck, reduceTabApp, substStuck)
   where
 
 import Control.Applicative
@@ -185,8 +184,6 @@ queryStuckType = \case
     fTy <- queryStuckType f
     typeOfApp fTy xs
   SuperclassProj i s -> superclassProjType i =<< queryStuckType s
-  LiftSimp t _ -> return t
-  LiftSimpFun t _ -> return $ toType t
 
 projType :: (IRRep r, EnvReader m) => Int -> Atom r n -> m n (Type r n)
 projType i x = case getType x of
@@ -219,7 +216,7 @@ typeOfApp (TyCon (Pi piTy)) xs = withSubstReaderT $
   withInstantiated piTy xs \ty -> substM ty
 typeOfApp _ _ = error "expected a pi type"
 
-repValAtom :: EnvReader m => RepVal n -> m n (SAtom n)
+repValAtom :: EnvReader m => RepVal r n -> m n (Atom r n)
 repValAtom (RepVal ty tree) = case ty of
   TyCon (ProdType ts) -> case tree of
     Branch trees -> toAtom <$> ProdCon <$> mapM repValAtom (zipWith RepVal ts trees)
@@ -280,8 +277,8 @@ instantiate e xs = case toAbs e of
 
 -- "lazy" subst-extending version of `instantiate`
 withInstantiated
-  :: (SubstReader AtomSubstVal m, IRRep r, SubstE (SubstVal Atom) body, SinkableE body, ToBindersAbs e body r)
-  => e i -> [Atom r o]
+  :: (SubstReader (SubstVal val) m, IRRep r, SinkableE body, ToBindersAbs e body r)
+  => e i -> [val r o]
   -> (forall i'. body i' -> m i' o a)
   -> m i o a
 withInstantiated e xs cont = case toAbs e of
@@ -498,7 +495,7 @@ instance IRRep r => VisitGeneric (DepPairType r) r where
       PiType (UnaryNest b') ty' -> DepPairType expl b' ty'
       _ -> error "not a dependent pair type"
 
-instance VisitGeneric RepVal SimpIR where
+instance VisitGeneric (RepVal r) r where
   visitGeneric (RepVal ty tree) = RepVal <$> visitGeneric ty <*> mapM renameIExpr tree
     where renameIExpr = \case
             ILit l -> return $ ILit l
@@ -616,33 +613,6 @@ reduceStuck = \case
     reduceSuperclassProjM superclassIx child'
   PtrVar ptrTy ptr -> mkStuck =<< PtrVar ptrTy <$> substM ptr
   RepValAtom repVal -> mkStuck =<< RepValAtom <$> substM repVal
-  LiftSimp t s -> do
-    t' <- substM t
-    s' <- reduceStuck s
-    liftSimpAtom t' s'
-  LiftSimpFun t f -> mkStuck =<< (LiftSimpFun <$> substM t <*> substM f)
-
-liftSimpAtom :: EnvReader m => Type CoreIR n -> SAtom n -> m n (CAtom n)
-liftSimpAtom (StuckTy _ _) _ = error "Can't lift stuck type"
-liftSimpAtom ty@(TyCon tyCon) simpAtom = case simpAtom of
-  Stuck _ stuck -> return $ Stuck ty $ LiftSimp ty stuck
-  Con con -> Con <$> case (tyCon, con) of
-    (NewtypeTyCon newtypeCon, _) -> do
-      (dataCon, repTy) <- unwrapNewtypeType newtypeCon
-      cAtom <- rec repTy (Con con)
-      return $ NewtypeCon dataCon cAtom
-    (BaseType _  , Lit v)      -> return $ Lit v
-    (ProdType tys, ProdCon xs)   -> ProdCon <$> zipWithM rec tys xs
-    (SumType  tys, SumCon _ i x) -> SumCon tys i <$> rec (tys!!i) x
-    (DepPairTy dpt@(DepPairType _ (b:>t1) t2), DepPair x1 x2 _) -> do
-      x1' <- rec t1 x1
-      t2' <- applySubst (b@>SubstVal x1') t2
-      x2' <- rec t2' x2
-      return $ DepPair x1' x2' dpt
-    _ -> error $ "can't lift " <> pprint simpAtom <> " to " <> pprint ty
-  where
-    rec = liftSimpAtom
-{-# INLINE liftSimpAtom #-}
 
 instance SubstE AtomSubstVal SpecializationSpec where
   substE env (AppSpecialization (AtomVar f _) ab) = do
@@ -658,7 +628,7 @@ instance SubstE AtomSubstVal (Effects r) where
     Effectful -> Effectful
 
 instance SubstE AtomSubstVal IExpr
-instance SubstE AtomSubstVal RepVal
+instance IRRep r => SubstE AtomSubstVal (RepVal r)
 instance SubstE AtomSubstVal TyConParams
 instance SubstE AtomSubstVal DataConDef
 instance IRRep r => SubstE AtomSubstVal (TypedHof r)

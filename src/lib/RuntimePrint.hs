@@ -28,8 +28,8 @@ newtype Printer (n::S) (a :: *) = Printer { runPrinter' :: ReaderT1 (Atom CoreIR
                  , Fallible, ScopeReader, MonadFail, EnvExtender, CBuilder, ScopableBuilder CoreIR)
 type Print n = Printer n ()
 
-showAny :: EnvReader m => Atom CoreIR n -> m n (CExpr n)
-showAny x = liftPrinter $ showAnyRec (sink x)
+showAny :: EnvReader m => Atom SimpIR n -> m n (CExpr n)
+showAny x = undefined -- liftPrinter $ showAnyRec (sink x)
 
 liftPrinter
   :: EnvReader m

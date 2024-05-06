@@ -36,7 +36,6 @@ instance IRRep r => HasType r (AtomBinding r) where
     SolverBound (SkolemBound ty)   -> ty
     SolverBound (DictBound   ty)   -> ty
     NoinlineFun ty _               -> ty
-    TopDataBound e                 -> getType e
     FFIFunBound piTy _ -> TyCon $ Pi piTy
 
 litType :: LitVal -> BaseType
@@ -133,7 +132,7 @@ instance IRRep r => HasType r (Expr r) where
     Project t _ _ -> t
     Unwrap t _ -> t
 
-instance HasType SimpIR RepVal where
+instance IRRep r => HasType r (RepVal r) where
   getType (RepVal ty _) = ty
 
 instance IRRep r => HasType r (PrimOp r) where

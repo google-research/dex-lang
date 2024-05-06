@@ -85,7 +85,7 @@ typeOfProjRef _ _ = error "expected a reference"
 appEffTy  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (EffTy r n)
 appEffTy (TyCon (Pi piTy)) xs = do
   ty <- instantiate piTy xs
-  return $ EffTy undefined ty  -- TODO
+  return $ EffTy Effectful ty  -- TODO: don't assume Effectful
 appEffTy t _ = error $ "expected a pi type, got: " ++ pprint t
 
 partialAppType  :: (IRRep r, EnvReader m) => Type r n -> [Atom r n] -> m n (Type r n)

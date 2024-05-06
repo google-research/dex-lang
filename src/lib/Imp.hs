@@ -579,7 +579,7 @@ traverseScalarRepTys :: EnvReader m => SType n -> (LeafType n -> m n a) -> m n (
 traverseScalarRepTys ty f = traverse f =<< typeToTree ty
 {-# INLINE traverseScalarRepTys #-}
 
-storeRepVal :: Emits n => Dest n -> RepVal n -> SubstImpM i n ()
+storeRepVal :: Emits n => Dest n -> RepVal SimpIR n -> SubstImpM i n ()
 storeRepVal (Dest _ destTree) repVal@(RepVal _ valTree) = do
   leafTys <- valueToTree repVal
   forM_ (zipTrees (zipTrees leafTys destTree) valTree) \((leafTy, ptr), val) -> do
@@ -588,7 +588,7 @@ storeRepVal (Dest _ destTree) repVal@(RepVal _ valTree) = do
 
 -- Like `typeToTree`, but when we additionally have the value, we can populate
 -- the existentially-hidden fields.
-valueToTree :: EnvReader m => RepVal n -> m n (Tree (LeafType n))
+valueToTree :: EnvReader m => RepVal SimpIR n -> m n (Tree (LeafType n))
 valueToTree (RepVal tyTop valTop) = do
   go REmpty tyTop valTop
  where
@@ -705,7 +705,7 @@ isNull p = do
 nullPtrIExpr :: BaseType -> IExpr n
 nullPtrIExpr baseTy = ILit $ PtrLit (CPU, baseTy) NullPtr
 
-loadRepVal :: (ImpBuilder m, Emits n) => Dest n -> m n (RepVal n)
+loadRepVal :: (ImpBuilder m, Emits n) => Dest n -> m n (RepVal SimpIR n)
 loadRepVal (Dest valTy destTree) = do
   leafTys <- typeToTree valTy
   RepVal valTy <$> forM (zipTrees leafTys destTree) \(leafTy, ptr) -> do
@@ -715,7 +715,7 @@ loadRepVal (Dest valTy destTree) = do
       _         -> return ptr
 {-# INLINE loadRepVal #-}
 
-atomToRepVal :: Emits n => SAtom n -> SubstImpM i n (RepVal n)
+atomToRepVal :: Emits n => SAtom n -> SubstImpM i n (RepVal SimpIR n)
 atomToRepVal x = RepVal (getType x) <$> go x where
   go :: Emits n => SAtom n -> SubstImpM i n (Tree (IExpr n))
   go (Con con) = case con of
@@ -732,9 +732,7 @@ atomToRepVal x = RepVal (getType x) <$> go x where
         else buildGarbageVal t <&> \(Stuck _ (RepValAtom (RepVal _ tree))) -> tree
       return $ Branch $ tag':xs
   go (Stuck _ stuck) = case stuck of
-    Var v -> lookupAtomName (atomVarName v) >>= \case
-      TopDataBound (RepVal _ tree) -> return tree
-      _ -> error "should only have pointer and data atom names left"
+    Var _ -> error "should only have pointer and data atom names left"
     PtrVar ty p -> return $ Leaf $ IPtrVar p ty
     RepValAtom dRepVal -> do
       (RepVal _ tree) <- return dRepVal
@@ -759,7 +757,7 @@ atomToDest (Stuck _ (RepValAtom val)) = do
 atomToDest atom = error $ "Expected a non-var atom of type `RawRef _`, got: " ++ pprint atom
 {-# INLINE atomToDest #-}
 
-repValToList :: RepVal n -> [IExpr n]
+repValToList :: RepVal r n -> [IExpr n]
 repValToList (RepVal _ tree) = toList tree
 
 -- TODO: augment with device, backend information as needed
@@ -832,7 +830,7 @@ storeAtom dest x = storeRepVal dest =<< atomToRepVal x
 loadAtom :: Emits n => Dest n -> SubstImpM i n (SAtom n)
 loadAtom d = repValAtom =<< loadRepVal d
 
-repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (RepVal n)
+repValFromFlatList :: (TopBuilder m, Mut n) => SType n -> [LitVal] -> m n (RepVal SimpIR n)
 repValFromFlatList ty xs = do
   (litValTree, []) <- runStreamReaderT1 xs $ traverseScalarRepTys ty \_ ->
     fromJust <$> readStream

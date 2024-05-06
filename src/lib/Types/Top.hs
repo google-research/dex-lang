@@ -63,7 +63,6 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
 data AtomBinding (r::IR) (n::S) where
  LetBound     :: DeclBinding r  n  -> AtomBinding r n
  MiscBound    :: Type        r  n  -> AtomBinding r n
- TopDataBound :: RepVal n          -> AtomBinding SimpIR n
  SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
  NoinlineFun  :: CType n -> CAtom n -> AtomBinding CoreIR n
  FFIFunBound  :: CorePiType n -> TopFunName n -> AtomBinding CoreIR n
@@ -438,9 +437,8 @@ instance IRRep r => GenericE (AtomBinding r) where
       (DeclBinding   r)              -- LetBound
       (Type          r)              -- MiscBound
       (WhenCore r SolverBinding)     -- SolverBound
-     ) (EitherE3
+     ) (EitherE2
       (WhenCore r (PairE CType CAtom))               -- NoinlineFun
-      (WhenSimp r RepVal)                            -- TopDataBound
       (WhenCore r (CorePiType `PairE` TopFunName))   -- FFIFunBound
      )
 
@@ -449,8 +447,7 @@ instance IRRep r => GenericE (AtomBinding r) where
     MiscBound   x -> Case0 $ Case1 x
     SolverBound x -> Case0 $ Case2 $ WhenIRE x
     NoinlineFun t x -> Case1 $ Case0 $ WhenIRE $ PairE t x
-    TopDataBound repVal -> Case1 $ Case1 $ WhenIRE repVal
-    FFIFunBound ty v    -> Case1 $ Case2 $ WhenIRE $ ty `PairE` v
+    FFIFunBound t v -> Case1 $ Case1 $ WhenIRE $ t `PairE` v
   {-# INLINE fromE #-}
 
   toE = \case
@@ -461,8 +458,7 @@ instance IRRep r => GenericE (AtomBinding r) where
       _ -> error "impossible"
     Case1 x' -> case x' of
       Case0 (WhenIRE (PairE t x)) -> NoinlineFun t x
-      Case1 (WhenIRE repVal)                         -> TopDataBound repVal
-      Case2 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
+      Case1 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1008,7 +1004,6 @@ instance IRRep r => Pretty (AtomBinding r n) where
     SolverBound b -> pretty b
     FFIFunBound s _ -> pretty s
     NoinlineFun ty _ -> "Top function with type: " <+> pretty ty
-    TopDataBound (RepVal ty _) -> "Top data with type: " <+> pretty ty
 
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
