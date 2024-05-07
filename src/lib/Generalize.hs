@@ -21,9 +21,6 @@ import Subst
 import Types.Primitives
 import Types.Top
 
-type RolePiBinder = WithAttrB RoleExpl CBinder
-type RolePiBinders = Nest RolePiBinder
-
 generalizeIxDict :: EnvReader m => CDict n -> m n (Generalized CoreIR CDict n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
@@ -127,8 +124,8 @@ traverseTyParams (StuckTy _ _) _ = error "shouldn't have StuckTy left"
 traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case ty of
   DictTy dictTy -> DictTy <$> case dictTy of
     DictType sn name params -> do
-      Abs paramRoles UnitE <- getClassRoleBinders name
-      params' <- traverseRoleBinders f paramRoles params
+      ClassDef _ _ _ _ _ bs _ _ <- lookupClassDef name
+      params' <- traverseRoleBinders f bs params
       return $ DictType sn name params'
     IxDictType   t -> IxDictType   <$> f' TypeParam TyKind t
   TabPi (TabPiType d (b:>iTy) resultTy) -> do
@@ -147,8 +144,8 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
     Nat -> return Nat
     Fin n -> Fin <$> f DataParam NatTy n
     UserADTType sn def (TyConParams infs params) -> do
-      Abs roleBinders UnitE <- getDataDefRoleBinders def
-      params' <- traverseRoleBinders f roleBinders params
+      TyConDef _ _ bs _ <- lookupTyCon def
+      params' <- traverseRoleBinders f bs params
       return $ UserADTType sn def $ TyConParams infs params'
   _ -> error $ "Not implemented: " ++ pprint ty
   where
@@ -159,33 +156,22 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
 traverseRoleBinders
   :: forall m n n'. EnvReader m
   => (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
-  ->  RolePiBinders n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
+  ->  Nest CBinder n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
 traverseRoleBinders f allBinders allParams =
   runSubstReaderT idSubst $ go allBinders allParams
   where
-    go :: forall i i'. RolePiBinders i i' -> [Atom CoreIR n]
+    go :: forall i i'. Nest CBinder i i' -> [Atom CoreIR n]
        -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
     go Empty [] = return []
-    go (Nest (WithAttrB (role, _) b) bs) (param:params) = do
+    go (Nest b bs) (param:params) = do
       ty' <- substM $ binderType b
+      role <- inferRoleFromType ty'
       Distinct <- getDistinct
       param' <- liftSubstReaderT $ f role ty' param
       params'' <- extendSubst (b@>SubstVal param') $ go bs params
       return $ param' : params''
     go _ _ = error "zip error"
 {-# INLINE traverseRoleBinders #-}
-
-getDataDefRoleBinders :: EnvReader m => TyConName n -> m n (Abs RolePiBinders UnitE n)
-getDataDefRoleBinders def = do
-  TyConDef _ attrs bs _ <- lookupTyCon def
-  return $ Abs (zipAttrs attrs bs) UnitE
-{-# INLINE getDataDefRoleBinders #-}
-
-getClassRoleBinders :: EnvReader m => ClassName n -> m n (Abs RolePiBinders UnitE n)
-getClassRoleBinders def = do
-  ClassDef _ _ _ _ roleExpls bs _ _ <- lookupClassDef def
-  return $ Abs (zipAttrs roleExpls bs) UnitE
-{-# INLINE getClassRoleBinders #-}
 
 -- === instances ===
 

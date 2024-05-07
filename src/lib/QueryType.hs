@@ -136,8 +136,8 @@ getUVarType = \case
   UDataConVar v -> getDataConNameType v
   UPunVar     v -> getStructDataConType v
   UClassVar v -> do
-    ClassDef _ _ _ _ roleExpls bs _ _ <- lookupClassDef v
-    return $ toType $ CorePiType ExplicitApp (map snd roleExpls) bs TyKind
+    ClassDef _ _ _ _ expls bs _ _ <- lookupClassDef v
+    return $ toType $ CorePiType ExplicitApp expls bs TyKind
   UMethodVar  v -> getMethodNameType v
 
 getMethodNameType :: EnvReader m => MethodName n -> m n (CType n)
@@ -180,7 +180,7 @@ getTyConNameType v = do
   TyConDef _ expls bs _ <- lookupTyCon v
   case bs of
     Empty -> return TyKind
-    _ -> return $ toType $ CorePiType ExplicitApp (snd <$> expls) bs TyKind
+    _ -> return $ toType $ CorePiType ExplicitApp expls bs TyKind
 
 getDataConNameType :: EnvReader m => DataConName n -> m n (Type CoreIR n)
 getDataConNameType dataCon = liftEnvReaderM $ withSubstReaderT do
@@ -212,8 +212,7 @@ buildDataConType
   => TyConDef n
   -> (forall l. DExt n l => [Explicitness] -> Nest CBinder n l -> [CAtomName l] -> TyConParams l -> m l a)
   -> m n a
-buildDataConType (TyConDef _ roleExpls bs _) cont = do
-  let expls = snd <$> roleExpls
+buildDataConType (TyConDef _ expls bs _) cont = do
   expls' <- forM expls \case
     Explicit -> return $ Inferred Nothing Unify
     expl     -> return $ expl
@@ -225,7 +224,7 @@ buildDataConType (TyConDef _ roleExpls bs _) cont = do
 makeTyConParams :: EnvReader m => TyConName n -> [CAtom n] -> m n (TyConParams n)
 makeTyConParams tc params = do
   TyConDef _ expls _ _ <- lookupTyCon tc
-  return $ TyConParams (map snd expls) params
+  return $ TyConParams expls params
 
 dictType :: EnvReader m => ClassName n -> [CAtom n] -> m n (DictType n)
 dictType className params = do

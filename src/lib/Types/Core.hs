@@ -154,7 +154,7 @@ data TyConDef n where
   -- binder name is in UExpr and Env
   TyConDef
     :: SourceName
-    -> [RoleExpl]
+    -> [Explicitness]
     -> Nest CBinder n l
     ->   DataConDefs l
     -> TyConDef n
@@ -169,8 +169,6 @@ data DataConDef n =
   -- list of projection indices that recovers elements from the representation.
   DataConDef SourceName (EmptyAbs (Nest CBinder) n) (CType n) [[Projection]]
   deriving (Show, Generic)
-
-data ParamRole = TypeParam | DictParam | DataParam deriving (Show, Generic, Eq)
 
 -- We track the explicitness information because we need it for the equality
 -- check since we skip equality checking on dicts.
@@ -420,16 +418,14 @@ isSumCon = \case
 
 -- === type classes ===
 
-type RoleExpl = (ParamRole, Explicitness)
-
 data ClassDef (n::S) where
   ClassDef
     :: SourceName            -- name of class
     -> Maybe BuiltinClassName
     -> [SourceName]          -- method source names
     -> [Maybe SourceName]    -- parameter source names
-    -> [RoleExpl]            -- parameter info
-    -> Nest CBinder n1 n2   -- parameters
+    -> [Explicitness]        -- parameter info
+    -> Nest CBinder n1 n2    -- parameters
     ->   Nest CBinder n2 n3  -- superclasses
     ->   [CorePiType n3]     -- method types
     -> ClassDef n1
@@ -439,8 +435,8 @@ data BuiltinClassName = Ix  deriving (Show, Generic, Eq)
 data InstanceDef (n::S) where
   InstanceDef
     :: ClassName n1
-    -> [RoleExpl]           -- parameter info
-    -> Nest CBinder n1 n2   -- parameters (types and dictionaries)
+    -> [Explicitness]        -- parameter info
+    -> Nest CBinder n1 n2    -- parameters (types and dictionaries)
     ->   [CAtom n2]          -- class parameters
     ->   InstanceBody n2
     -> InstanceDef n1
@@ -731,7 +727,7 @@ instance AlphaEqE       DataConDefs
 instance AlphaHashableE DataConDefs
 
 instance GenericE TyConDef where
-  type RepE TyConDef = PairE (LiftE (SourceName, [RoleExpl])) (Abs (Nest CBinder) DataConDefs)
+  type RepE TyConDef = PairE (LiftE (SourceName, [Explicitness])) (Abs (Nest CBinder) DataConDefs)
   fromE (TyConDef sourceName expls bs cons) = PairE (LiftE (sourceName, expls)) (Abs bs cons)
   {-# INLINE fromE #-}
   toE   (PairE (LiftE (sourceName, expls)) (Abs bs cons)) = TyConDef sourceName expls bs cons
@@ -1296,7 +1292,7 @@ deriving instance (Show (ann n)) => IRRep r => Show (NonDepNest r ann n l)
 
 instance GenericE ClassDef where
   type RepE ClassDef =
-    LiftE (SourceName, Maybe BuiltinClassName, [SourceName], [Maybe SourceName], [RoleExpl])
+    LiftE (SourceName, Maybe BuiltinClassName, [SourceName], [Maybe SourceName], [Explicitness])
      `PairE` Abs (Nest CBinder) (Abs (Nest CBinder) (ListE CorePiType))
   fromE (ClassDef name builtin names paramNames roleExpls b scs tys) =
     LiftE (name, builtin, names, paramNames, roleExpls) `PairE` Abs b (Abs scs (ListE tys))
@@ -1317,7 +1313,7 @@ instance HasSourceName (ClassDef n) where
 
 instance GenericE InstanceDef where
   type RepE InstanceDef =
-    ClassName `PairE` LiftE [RoleExpl] `PairE` Abs (Nest CBinder) (ListE CAtom `PairE` InstanceBody)
+    ClassName `PairE` LiftE [Explicitness] `PairE` Abs (Nest CBinder) (ListE CAtom `PairE` InstanceBody)
   fromE (InstanceDef name expls bs params body) =
     name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)
   toE (name `PairE` LiftE expls `PairE` Abs bs (ListE params `PairE` body)) =
@@ -1595,7 +1591,6 @@ instance IRRep r => BindsOneName (Decl r) (AtomNameC r) where
   {-# INLINE binderName #-}
 
 instance Hashable IxMethod
-instance Hashable ParamRole
 instance Hashable BuiltinClassName
 
 instance IRRep r => Store (MiscOp r n)
@@ -1632,7 +1627,6 @@ instance Store (DictType n)
 instance IRRep r => Store (DictCon r n)
 instance Store (ann n) => Store (NonDepNest r ann n l)
 instance Store IxMethod
-instance Store ParamRole
 instance IRRep r => Store (Dict r n)
 instance IRRep r => Store (TypedHof r n)
 instance IRRep r => Store (Hof r n)
@@ -1774,9 +1768,6 @@ instance Pretty (ClassDef n) where
          line <> "parameter binders:" <+> pretty params <>
          line <> "superclasses:" <+> pretty superclasses <>
          line <> "methods:" <+> pretty methodTys)
-
-instance Pretty ParamRole where
-  pretty r = pretty (show r)
 
 instance Pretty (InstanceDef n) where
   pretty (InstanceDef className _ bs params _) =
