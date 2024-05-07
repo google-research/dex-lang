@@ -13,7 +13,7 @@ module Imp
   , repValFromFlatList, addImpTracing
   -- These are just for the benefit of serialization/printing. otherwise we wouldn't need them
   , BufferType (..), IdxNest, IndexStructure, IExprInterpretation (..), typeToTree
-  , computeOffset, getIExprInterpretation
+  , getIExprInterpretation
   , isSingletonType, singletonTypeVal
   ) where
 
@@ -28,7 +28,6 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict hiding (State)
 import qualified Control.Monad.State.Strict as MTL
 
-import Algebra
 import Builder
 import CheapReduction
 import CheckType (CheckableE (..))
@@ -854,16 +853,7 @@ buildGarbageVal ty =
 -- === Operations on dests ===
 
 indexDest :: Emits n => Dest n -> SAtom n -> SubstImpM i n (Dest n)
-indexDest (Dest (TyCon (TabPi tabTy)) tree) i = do
-  eltTy <- instantiate tabTy [i]
-  ord <- ordinalImp (tabIxType tabTy) i
-  leafTys <- typeToTree $ toType tabTy
-  Dest eltTy <$> forM (zipTrees leafTys tree) \(leafTy, ptr) -> do
-    BufferType ixStruct _ <- return $ getRefBufferType leafTy
-    offset <- computeOffsetImp ixStruct ord
-    impOffset ptr offset
-indexDest _ _ = error "expected a reference to a table"
-{-# INLINE indexDest #-}
+indexDest (Dest (TyCon (TabPi tabTy)) tree) i = undefined
 
 projectDest :: Int -> Dest n -> Dest n
 projectDest i (Dest (TyCon (ProdType tys)) (Branch ds)) =
@@ -876,20 +866,7 @@ type SBuilderM = BuilderM SimpIR
 
 computeElemCountImp :: Emits n => IndexStructure SimpIR n -> SubstImpM i n (IExpr n)
 computeElemCountImp Singleton = return $ IIdxRepVal 1
-computeElemCountImp idxs = do
-  result <- liftBuilderImp do
-    idxs' <- sinkM idxs
-    computeElemCount idxs'
-  fromScalarAtom result
-
-computeOffsetImp
-  :: Emits n => IndexStructure SimpIR n -> IExpr n -> SubstImpM i n (IExpr n)
-computeOffsetImp idxs ixOrd = do
-  let ixOrd' = toScalarAtom ixOrd
-  result <- liftBuilderImp do
-    PairE idxs' ixOrd'' <- sinkM $ PairE idxs ixOrd'
-    computeOffset idxs' ixOrd''
-  fromScalarAtom result
+computeElemCountImp _ = undefined
 
 computeElemCount :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
 computeElemCount (EmptyAbs Empty) =
@@ -897,31 +874,6 @@ computeElemCount (EmptyAbs Empty) =
   -- in the case that we don't have any indices. The more general path will
   -- still compute `1`, but it might emit decls along the way.
   return $ IdxRepVal 1
-computeElemCount idxNest' = do
-  let (idxList, idxNest) = indexStructureSplit idxNest'
-  sizes <- forM idxList indexSetSize
-  listSize <- foldM imul (IdxRepVal 1) sizes
-  nestSize <- elemCountPoly idxNest
-  imul listSize nestSize
-
-elemCountPoly :: Emits n => IndexStructure SimpIR n -> SBuilderM n (Atom SimpIR n)
-elemCountPoly (Abs bs UnitE) = case bs of
-  Empty -> return $ IdxRepVal 1
-  Nest b@(PairB (LiftB d) (_:>t)) rest -> do
-   curSize <- indexSetSize $ IxType t d
-   restSizes <- computeSizeGivenOrdinal b $ EmptyAbs rest
-   sumUsingPolysImp curSize restSizes
-
-computeSizeGivenOrdinal
-  :: EnvReader m
-  => IxBinder SimpIR n l -> IndexStructure SimpIR l
-  -> m n (Abs SBinder SExpr n)
-computeSizeGivenOrdinal (PairB (LiftB d) (b:>t)) idxStruct = liftBuilder do
-  withFreshBinder noHint IdxRepTy \bOrdinal ->
-    Abs bOrdinal <$> buildBlock do
-      i <- unsafeFromOrdinal (sink $ IxType t d) $ toAtom $ sink $ binderVar bOrdinal
-      idxStruct' <- applySubst (b@>SubstVal i) idxStruct
-      elemCountPoly $ sink idxStruct'
 
 -- Split the index structure into a prefix of non-dependent index types
 -- and a trailing nest of indices that can contain inter-dependencies.
@@ -932,26 +884,6 @@ indexStructureSplit s@(Abs (Nest (PairB (LiftB d) b) rest) UnitE) =
     HoistFailure _     -> ([], s)
     HoistSuccess rest' -> (IxType (binderType b) d:ans1, ans2)
       where (ans1, ans2) = indexStructureSplit rest'
-
-computeOffset :: forall n. Emits n
-              => IndexStructure SimpIR n -> SAtom n -> SBuilderM n (SAtom n)
-computeOffset (EmptyAbs (Nest _ Empty)) i = return i  -- optimization
-computeOffset (EmptyAbs (Nest b idxs)) idxOrdinal = do
-  case hoist b (EmptyAbs idxs) of
-    HoistFailure _ -> do
-     rhsElemCounts <- computeSizeGivenOrdinal b (EmptyAbs idxs)
-     sumUsingPolysImp idxOrdinal rhsElemCounts
-    HoistSuccess idxs' -> do
-      stride <- computeElemCount idxs'
-      idxOrdinal `imul` stride
-computeOffset _ _ = error "Expected a nonempty nest of idx binders"
-
-sumUsingPolysImp
-  :: Emits n => SAtom n
-  -> Abs SBinder SExpr n -> BuilderM SimpIR n (SAtom n)
-sumUsingPolysImp lim (Abs i body) = do
-  ab <- hoistDecls i body
-  sumUsingPolys lim ab
 
 hoistDecls
   :: ( Builder SimpIR m, EnvReader m, Emits n

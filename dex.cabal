@@ -41,7 +41,6 @@ flag debug
 
 library
   exposed-modules:     AbstractSyntax
-                     , Algebra
                      , Builder
                      , CUDA
                      , CheapReduction
