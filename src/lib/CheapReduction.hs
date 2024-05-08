@@ -11,7 +11,7 @@ module CheapReduction
   ( reduceWithDecls, reduceExpr
   , instantiateTyConDef, dataDefRep, unwrapNewtypeType, projType
   , NonAtomRenamer (..), Visitor (..), VisitGeneric (..)
-  , visitAtomDefault, visitTypeDefault, Visitor2, mkStuck, mkStuckTy
+  , visitAtomDefault, visitTypeDefault, Visitor2, mkStuck
   , visitBinders, visitPiDefault, visitAlt, toAtomVar, instantiate, withInstantiated
   , bindersToVars, bindersToAtoms, instantiateNames, withInstantiatedNames, assumeConst
   , repValAtom, reduceUnwrap, reduceProj, reduceSuperclassProj, typeOfApp
@@ -162,11 +162,6 @@ mkStuck:: (IRRep r, EnvReader m) => Stuck r n -> m n (Atom r n)
 mkStuck x = do
   ty <- queryStuckType x
   return $ Stuck ty x
-
-mkStuckTy :: EnvReader m => CStuck n -> m n (CType n)
-mkStuckTy x = do
-  ty <- queryStuckType x
-  return $ StuckTy ty x
 
 queryStuckType :: (IRRep r, EnvReader m) => Stuck r n -> m n (Type r n)
 queryStuckType = \case
@@ -531,7 +526,7 @@ instance IRRep r => VisitGeneric (TyCon r) r where
     RefType t      -> RefType  <$> visitGeneric t
     TabPi t        -> TabPi     <$> visitGeneric t
     DepPairTy t    -> DepPairTy <$> visitGeneric t
-    TypeKind       -> return TypeKind
+    Kind k         -> return $ Kind k
     DictTy t       -> DictTy <$> visitGeneric t
     Pi t           -> Pi <$> visitGeneric t
     NewtypeTyCon t -> NewtypeTyCon <$> visitGeneric t

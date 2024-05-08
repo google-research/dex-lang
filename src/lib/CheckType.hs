@@ -172,7 +172,9 @@ instance IRRep r => CheckableE r (AtomVar r) where
 
 instance IRRep r => CheckableE r (Type r) where
   checkE = \case
-    StuckTy ty e -> uncurry StuckTy <$> checkStuck ty e
+    StuckTy k e -> do
+      (TyCon (Kind k'), e') <- checkStuck (TyCon (Kind k)) e
+      return $ StuckTy k' e'
     TyCon e -> TyCon <$> checkE e
 
 instance (ToBinding ann c, Color c, CheckableE r ann) => CheckableB r (BinderP c ann) where
@@ -369,7 +371,7 @@ instance IRRep r => CheckableE r (TyCon r) where
     ProdType tys     -> ProdType <$> mapM checkE tys
     SumType  cs      -> SumType  <$> mapM checkE cs
     RefType a        -> RefType  <$> checkE a
-    TypeKind         -> return TypeKind
+    Kind k         -> return $ Kind k
     Pi t           -> Pi           <$> checkE t
     TabPi t        -> TabPi        <$> checkE t
     NewtypeTyCon t -> NewtypeTyCon <$> checkE t

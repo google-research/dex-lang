@@ -270,7 +270,7 @@ withInferenceVar hint binding cont = diffStateT1 \s -> do
 {-# INLINE withInferenceVar #-}
 
 withFreshUnificationVar
-  :: (Zonkable e, Emits o) => SrcId -> InfVarDesc -> Kind CoreIR o
+  :: (Zonkable e, Emits o) => SrcId -> InfVarDesc -> CType o
   -> (forall o'. (Emits o', DExt o o') => CAtomVar o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
 withFreshUnificationVar sid desc k cont = do
@@ -283,7 +283,7 @@ withFreshUnificationVar sid desc k cont = do
 {-# INLINE withFreshUnificationVar #-}
 
 withFreshUnificationVarNoEmits
-  :: (Zonkable e) => SrcId -> InfVarDesc -> Kind CoreIR o
+  :: (Zonkable e) => SrcId -> InfVarDesc -> CType o
   -> (forall o'. (DExt o o') => CAtomVar o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
 withFreshUnificationVarNoEmits sid desc k cont = diffStateT1 \s -> do
@@ -417,6 +417,19 @@ etaExpandPartialPi (PartialPiType appExpl expls bs reqTy) cont = do
     let piTy = CorePiType appExpl expls bs' (getType body)
     return $ CoreLamExpr piTy $ LamExpr bs' body
 
+-- Expects the uexpr to be a type-like thing, including ordinary data types, pi
+-- types, dict types etc.
+topDownType :: forall i o. Emits o => UExpr i -> InfererM i o (CType o)
+topDownType exprWithSrc@(WithSrcE sid expr) = case expr of
+  UPrim UTuple xs -> toType . ProdType <$> mapM checkUType xs
+  _ -> do
+    ty <- bottomUpExplicit exprWithSrc
+    ty' <- maybeInterpretPunsAsTyCons (Check (toType $ Kind TypeKind)) ty
+    ty'' <- instantiateSigma sid Infer ty'
+    case toMaybeType ty'' of
+      Nothing -> throw sid $ ExpectedAType (pprint ty'')
+      Just ty''' -> return ty'''
+
 -- Doesn't introduce implicit pi binders or dependent pairs
 topDownExplicit :: forall i o. Emits o => CType o -> UExpr i -> InfererM i o (CAtom o)
 topDownExplicit reqTy exprWithSrc@(WithSrcE sid expr) = emitExprType sid reqTy >> case expr of
@@ -452,7 +465,7 @@ topDownExplicit reqTy exprWithSrc@(WithSrcE sid expr) = emitExprType sid reqTy >
   UNatLit x -> fromNatLit sid x reqTy
   UIntLit x -> fromIntLit sid x reqTy
   UPrim UTuple xs -> case reqTy of
-    TyKind -> toAtom . ProdType <$> mapM checkUType xs
+    TyCon (Kind TypeKind) -> toAtom . ProdType <$> mapM checkUType xs
     TyCon (ProdType reqTys) -> do
       when (length reqTys /= length xs) $ throw sid $ TupleLengthMismatch (length reqTys) (length xs)
       toAtom <$> ProdCon <$> forM (zip reqTys xs) \(reqTy', x) -> topDown reqTy' x
@@ -644,8 +657,8 @@ withUDecl (WithSrcB _ d) cont = case d of
     bindLetPat p var cont
 
 considerInlineAnn :: LetAnn -> CType n -> LetAnn
-considerInlineAnn PlainLet TyKind = InlineLet
-considerInlineAnn PlainLet (TyCon (Pi (CorePiType _ _ _ TyKind))) = InlineLet
+considerInlineAnn PlainLet (TyCon (Kind _)) = InlineLet
+considerInlineAnn PlainLet (TyCon (Pi (CorePiType _ _ _ (TyCon (Kind _))))) = InlineLet
 considerInlineAnn ann _ = ann
 
 applyFromLiteralMethod
@@ -785,7 +798,7 @@ buildAppConstraints appSrcId reqTy (CorePiType _ _ bs ty) = do
       Check reqTy' -> [TypeConstraint appSrcId (sink reqTy') resultTy]
 
 maybeInterpretPunsAsTyCons :: RequiredTy n -> SigmaAtom n -> InfererM i n (SigmaAtom n)
-maybeInterpretPunsAsTyCons (Check TyKind) (SigmaUVar sn _ (UPunVar v)) = do
+maybeInterpretPunsAsTyCons (Check (TyCon (Kind TypeKind))) (SigmaUVar sn _ (UPunVar v)) = do
   let v' = UTyConVar v
   ty <- getUVarType v'
   return $ SigmaUVar sn ty v'
@@ -1005,7 +1018,7 @@ inferPrimArg :: Emits o => UExpr i -> InfererM i o (CAtom o)
 inferPrimArg x = do
   xBlock <- buildBlock $ bottomUp x
   case getType xBlock of
-    TyKind -> reduceExpr xBlock >>= \case
+    TyCon (Kind TypeKind) -> reduceExpr xBlock >>= \case
       Just reduced -> return reduced
       _ -> throwInternal "Type args to primops must be reducible"
     _ -> emit xBlock
@@ -1020,7 +1033,7 @@ matchPrimApp = \case
    P.ProdType -> \ts -> return $ toAtom $ ProdType $ map (fromJust . toMaybeType) ts
    P.SumType  -> \ts -> return $ toAtom $ SumType  $ map (fromJust . toMaybeType) ts
    P.RefType  -> \case ~[h, a] -> undefined -- return $ toAtom $ RefType h (fromJust $ toMaybeType a)
-   P.TypeKind -> \case ~[] -> return $ Con $ TyConAtom $ TypeKind
+   P.TypeKind -> \case ~[] -> return $ toAtom $ Kind $ TypeKind
  UCon con -> case con of
    P.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
    P.SumCon _ -> error "not supported"
@@ -1050,7 +1063,7 @@ matchPrimApp = \case
    matchGenericOp op xs = do
      (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
        case getType x of
-         TyKind -> do
+         TyCon (Kind TypeKind) -> do
            Just x' <- return $ toMaybeType x
            return $ Left x'
          _ -> return $ Right x
@@ -1372,7 +1385,8 @@ checkInstanceParams bsTop paramsTop = go bsTop paramsTop
   go :: Nest CBinder o any -> [UExpr i] -> InfererM i o [CAtom o]
   go Empty [] = return []
   go (Nest (b:>ty) bs) (x:xs) = do
-    x' <- checkUParam ty x
+    let msg = CantReduceType $ pprint x
+    x' <- withReducibleEmissions (getSrcId x) msg $ topDown (sink ty) x
     Abs bs' UnitE <- applySubst (b@>SubstVal x') $ Abs bs UnitE
     (x':) <$> go bs' xs
   go _ _ = error "zip error"
@@ -1517,14 +1531,9 @@ bindLetPat (WithSrcB sid pat) v cont = emitExprType sid (getType v) >> case pat 
     emitInline atom = emitDecl noHint InlineLet $ Atom atom
 
 checkUType :: UType i -> InfererM i o (CType o)
-checkUType t = do
-  Just t' <- toMaybeType <$> checkUParam TyKind t
-  return t'
-
-checkUParam :: Kind CoreIR o -> UType i -> InfererM i o (CAtom o)
-checkUParam k uty =
-  withReducibleEmissions (getSrcId uty) msg $ topDownExplicit (sink k) uty
-  where msg = CantReduceType $ pprint uty
+checkUType t = withReducibleEmissions (getSrcId t) msg do
+  topDownType t
+  where msg = CantReduceType $ pprint t
 
 inferTabCon :: forall i o. Emits o => SrcId -> [UExpr i] -> InfererM i o (CAtom o)
 inferTabCon sid xs = do
@@ -1662,8 +1671,8 @@ instance Unifiable (TyCon CoreIR) where
   unify t1 t2 = case t1 of
     ( BaseType b ) -> do
     { BaseType b' <- matchit; guard $ b == b'}
-    ( TypeKind ) -> do
-    { TypeKind <- matchit; return () }
+    ( Kind k ) -> do
+    { Kind k'  <- matchit; guard $ k == k' }
     ( Pi piTy ) -> do
     { Pi piTy' <- matchit; unify piTy piTy'}
     ( TabPi piTy) -> do
@@ -1760,7 +1769,7 @@ instance Unifiable (Abs CBinder CType) where
       return UnitE
 
 withFreshSkolemName
-  :: Zonkable e => Kind CoreIR o
+  :: Zonkable e => CType o
   -> (forall o'. DExt o o' => CAtomVar o' -> SolverM i o' (e o'))
   -> SolverM i o (e o)
 withFreshSkolemName ty cont = diffStateT1 \s -> do
@@ -1895,7 +1904,7 @@ generalizeInstanceArg role ty arg cont = case role of
   -- that it's valid to implement `generalizeDict` by synthesizing an entirely
   -- fresh dictionary, and if we were to do that, we would infer this type
   -- parameter exactly as we do here, using inference.
-  TypeParam -> withFreshUnificationVarNoEmits rootSrcId MiscInfVar TyKind \v -> cont $ toAtom v
+  TypeParam -> withFreshUnificationVarNoEmits rootSrcId MiscInfVar (toType $ Kind TypeKind) \v -> cont $ toAtom v
   DictParam -> withFreshDictVarNoEmits ty (
     \ty' -> case toMaybeDict (sink arg) of
               Just d -> liftM toAtom $ lift11 $ generalizeDictRec ty' d

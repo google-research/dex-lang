@@ -152,6 +152,7 @@ data TypeErr =
  | AmbiguousInferenceVar VarStr TypeStr InfVarDesc
  | FFIResultTyErr    TypeStr
  | FFIArgTyNotScalar TypeStr
+ | ExpectedAType TypeStr
    deriving (Show, Eq)
 
 data MiscErr =
@@ -303,6 +304,7 @@ instance PrintableErr TypeErr where
          "couldn't infer instantiation of type " <> t
        MiscInfVar ->
          "ambiguous type variable: " ++ infVar ++ ": " ++ ty
+    ExpectedAType t -> "Expected a type, got a: " ++ t
 
 instance PrintableErr MiscErr where
   printErr = \case

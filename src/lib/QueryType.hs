@@ -137,7 +137,7 @@ getUVarType = \case
   UPunVar     v -> getStructDataConType v
   UClassVar v -> do
     ClassDef _ _ _ _ expls bs _ _ <- lookupClassDef v
-    return $ toType $ CorePiType ExplicitApp expls bs TyKind
+    return $ toType $ CorePiType ExplicitApp expls bs (toType $ Kind TypeKind)
   UMethodVar  v -> getMethodNameType v
 
 getMethodNameType :: EnvReader m => MethodName n -> m n (CType n)
@@ -179,8 +179,8 @@ getTyConNameType :: EnvReader m => TyConName n -> m n (Type CoreIR n)
 getTyConNameType v = do
   TyConDef _ expls bs _ <- lookupTyCon v
   case bs of
-    Empty -> return TyKind
-    _ -> return $ toType $ CorePiType ExplicitApp expls bs TyKind
+    Empty -> return $ toType $ Kind TypeKind
+    _ -> return $ toType $ CorePiType ExplicitApp expls bs $ toType $ Kind TypeKind
 
 getDataConNameType :: EnvReader m => DataConName n -> m n (Type CoreIR n)
 getDataConNameType dataCon = liftEnvReaderM $ withSubstReaderT do
@@ -284,30 +284,3 @@ liftIFunType (IFunType _ argTys resultTys) = liftEnvReaderM $ go argTys where
     t:ts -> withFreshBinder noHint (toType $ BaseType t) \b -> do
       PiType bs effTy <- go ts
       return $ PiType (Nest b bs) effTy
-
--- === Data constraints ===
-
-isData :: EnvReader m => Type CoreIR n -> m n Bool
-isData ty = do
-  result <- liftEnvReaderT $ withSubstReaderT $ go ty
-  case result of
-    Just () -> return True
-    Nothing -> return False
-  where
-    go :: Type CoreIR i -> SubstReaderT Name (EnvReaderT Maybe) i o ()
-    go = \case
-      StuckTy _ _ -> notData
-      TyCon con -> case con of
-        TabPi (TabPiType _ b eltTy) -> renameBinders b \_ -> go eltTy
-        DepPairTy (DepPairType _ b@(_:>l) r) -> go l >> renameBinders b \_ -> go r
-        NewtypeTyCon nt -> do
-          (_, ty') <- unwrapNewtypeType =<< renameM nt
-          dropSubst $ go ty'
-        BaseType _  -> return ()
-        ProdType as -> mapM_ go as
-        SumType  cs -> mapM_ go cs
-        RefType _ -> return ()
-        TypeKind -> notData
-        DictTy _ -> notData
-        Pi _     -> notData
-      where notData = empty

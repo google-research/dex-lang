@@ -66,6 +66,20 @@ typeBinOp binop xTy = case binop of
 typeUnOp :: UnOp -> BaseType -> BaseType
 typeUnOp = const id  -- All unary ops preserve the type of the input
 
+getKind :: Type r n -> Kind
+getKind = \case
+  StuckTy k _ -> k
+  TyCon con -> case con of
+    BaseType _     -> TypeKind
+    ProdType _     -> TypeKind
+    SumType  _     -> TypeKind
+    TabPi _        -> TypeKind
+    DepPairTy _    -> TypeKind
+    NewtypeTyCon _ -> TypeKind
+    RefType _  -> RefKind
+    Pi _       -> FunKind
+    DictTy _   -> DictKind
+    Kind _     -> OtherKind
 
 instance IRRep r => HasType r (AtomVar r) where
   getType (AtomVar _ ty) = ty
@@ -87,13 +101,8 @@ instance HasType CoreIR (DictCon CoreIR) where
     IxFin n -> toType $ IxDictType (FinTy n)
     IxRawFin _ -> toType $ IxDictType IdxRepTy
 
-instance HasType CoreIR CType where
-  getType = \case
-    TyCon _ -> TyKind
-    StuckTy t _ -> t
-
 instance HasType CoreIR NewtypeTyCon where
-  getType _ = TyKind
+  getType _ = TyCon $ Kind TypeKind
 
 getNewtypeType :: NewtypeCon n -> CType n
 getNewtypeType con = case con of
@@ -110,7 +119,7 @@ instance IRRep r => HasType r (Con r) where
     DepPair _ _ ty -> toType $ DepPairTy ty
     DictConAtom d -> getType d
     NewtypeCon con _ -> getNewtypeType con
-    TyConAtom _ -> TyKind
+    TyConAtom k -> TyCon $ Kind $ getKind $ TyCon k
 
 getSuperclassType :: RNest CBinder n l -> Nest CBinder l l' -> Int -> CType n
 getSuperclassType _ Empty = error "bad index"

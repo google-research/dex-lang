@@ -42,7 +42,10 @@ data Atom (r::IR) (n::S) where
 
 data Type (r::IR) (n::S) where
   TyCon   :: TyCon r n -> Type r n
-  StuckTy :: CType n -> CStuck n  -> Type CoreIR n
+  StuckTy :: Kind -> CStuck n  -> Type CoreIR n
+
+data Kind = DataKind | RefKind | TypeKind | FunKind | DictKind | OtherKind
+     deriving (Show, Generic, Eq, Ord)
 
 data Dict (r::IR) (n::S) where
   DictCon :: DictCon r n -> Dict r n
@@ -75,10 +78,10 @@ data TyCon (r::IR) (n::S) where
   RefType  :: Type r n             -> TyCon r n
   TabPi        :: TabPiType r n    -> TyCon r n
   DepPairTy    :: DepPairType r n  -> TyCon r n
-  TypeKind     ::                     TyCon CoreIR n
   DictTy       :: DictType n       -> TyCon CoreIR n
   Pi           :: CorePiType  n    -> TyCon CoreIR n
   NewtypeTyCon :: NewtypeTyCon n   -> TyCon CoreIR n
+  Kind         :: Kind             -> TyCon CoreIR n
 
 data AtomVar (r::IR) (n::S) = AtomVar
   { atomVarName :: AtomName r n
@@ -205,9 +208,6 @@ data CorePiType (n::S) where
 
 data DepPairType (r::IR) (n::S) where
   DepPairType :: DepPairExplicitness -> Binder r n l -> Type r l -> DepPairType r n
-
-type Val  = Atom
-type Kind = Type
 
 -- A nest where the annotation of a binder cannot depend on the binders
 -- introduced before it. You can think of it as introducing a bunch of
@@ -510,7 +510,7 @@ instance IRRep r => ToAtom (RepVal r) r where
 instance ToAtom (Type CoreIR) CoreIR where
   toAtom = \case
     TyCon con -> Con $ TyConAtom con
-    StuckTy t s -> Stuck t s
+    StuckTy k s -> Stuck (TyCon $ Kind k) s
 instance ToAtom (Dict CoreIR) CoreIR where
   toAtom = \case
     DictCon d -> Con $ DictConAtom d
@@ -535,7 +535,7 @@ instance ToType NewtypeTyCon CoreIR where toType = TyCon . NewtypeTyCon
 
 toMaybeType :: CAtom n -> Maybe (CType n)
 toMaybeType = \case
-  Stuck t s -> Just $ StuckTy t s
+  Stuck (TyCon (Kind k)) s -> Just $ StuckTy k s
   Con (TyConAtom t) -> Just $ TyCon t
   _ -> Nothing
 
@@ -636,9 +636,6 @@ pattern NatTy = TyCon (NewtypeTyCon Nat)
 
 pattern NatVal :: Word32 -> Atom CoreIR n
 pattern NatVal n = Con (NewtypeCon NatCon (IdxRepVal n))
-
-pattern TyKind :: Kind CoreIR n
-pattern TyKind = TyCon TypeKind
 
 pattern FinConst :: Word32 -> Type CoreIR n
 pattern FinConst n = TyCon (NewtypeTyCon (Fin (NatVal n)))
@@ -968,13 +965,13 @@ instance IRRep r => AlphaHashableE (AtomVar r) where
 instance IRRep r => RenameE        (AtomVar r)
 
 instance IRRep r => GenericE (Type r) where
-  type RepE (Type r) = EitherE (WhenCore r (PairE (Type r) (Stuck r))) (TyCon r)
+  type RepE (Type r) = EitherE (WhenCore r (PairE (LiftE Kind) (Stuck r))) (TyCon r)
   fromE = \case
-    StuckTy t x -> LeftE (WhenIRE (PairE t x))
+    StuckTy k x -> LeftE (WhenIRE (PairE (LiftE k) x))
     TyCon x -> RightE x
   {-# INLINE fromE #-}
   toE = \case
-    LeftE (WhenIRE (PairE t x)) -> StuckTy t x
+    LeftE (WhenIRE (PairE (LiftE k) x)) -> StuckTy k x
     RightE x -> TyCon x
   {-# INLINE toE #-}
 
@@ -1232,7 +1229,7 @@ instance IRRep r => GenericE (TyCon r) where
                      (EitherE3
   {- TabPi -}         (TabPiType r)
   {- DepPairTy -}     (DepPairType r)
-  {- TypeKind -}      (WhenCore r UnitE))
+  {- Kind -}         (WhenCore r (LiftE Kind)))
                      (EitherE3
   {- DictTy -}        (WhenCore r DictType)
   {- Pi -}            (WhenCore r CorePiType)
@@ -1244,7 +1241,7 @@ instance IRRep r => GenericE (TyCon r) where
     RefType t      -> Case0 (Case3 t)
     TabPi t        -> Case1 (Case0 t)
     DepPairTy t    -> Case1 (Case1 t)
-    TypeKind       -> Case1 (Case2 (WhenIRE UnitE))
+    Kind k         -> Case1 (Case2 (WhenIRE (LiftE k)))
     DictTy    t    -> Case2 (Case0 (WhenIRE t))
     Pi        t    -> Case2 (Case1 (WhenIRE t))
     NewtypeTyCon t -> Case2 (Case2 (WhenIRE t))
@@ -1259,7 +1256,7 @@ instance IRRep r => GenericE (TyCon r) where
     Case1 c -> case c of
       Case0 t -> TabPi t
       Case1 t -> DepPairTy t
-      Case2 (WhenIRE UnitE) -> TypeKind
+      Case2 (WhenIRE (LiftE k)) -> Kind k
       _ -> error "impossible"
     Case2 c -> case c of
       Case0 (WhenIRE t) -> DictTy       t
@@ -1592,6 +1589,7 @@ instance IRRep r => BindsOneName (Decl r) (AtomNameC r) where
 
 instance Hashable IxMethod
 instance Hashable BuiltinClassName
+instance Hashable Kind
 
 instance IRRep r => Store (MiscOp r n)
 instance IRRep r => Store (VectorOp r n)
@@ -1601,6 +1599,7 @@ instance IRRep r => Store (Con r n)
 instance IRRep r => Store (PrimOp r n)
 instance IRRep r => Store (RepVal r n)
 instance IRRep r => Store (Type r n)
+instance Store Kind
 instance IRRep r => Store (Effects r n)
 instance IRRep r => Store (EffTy r n)
 instance IRRep r => Store (Stuck r n)
@@ -1655,7 +1654,7 @@ instance IRRep r => PrettyPrec (TyCon r n) where
     SumType  cs  -> atPrec ArgPrec $ align $ group $
       encloseSep "(|" "|)" " | " $ fmap pApp cs
     RefType a -> atPrec AppPrec $ "Ref" <+> p a
-    TypeKind -> atPrec ArgPrec "Type"
+    Kind k    -> atPrec ArgPrec $ pretty $ show k
     Pi piType -> atPrec LowestPrec $ align $ p piType
     TabPi piType -> atPrec LowestPrec $ align $ p piType
     DepPairTy ty -> prettyPrec ty

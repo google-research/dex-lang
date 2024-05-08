@@ -39,16 +39,16 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
     go (Nest (WithAttrB expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
       arg' <- liftSubstReaderT case (ty', expl) of
-        (TyKind, _) -> toAtom <$> generalizeType (fromJust $ toMaybeType arg)
+        (TyCon (Kind TypeKind), _) -> toAtom <$> generalizeType (fromJust $ toMaybeType arg)
         (TyCon (DictTy _), Inferred Nothing (Synth _)) ->
           toAtom <$> generalizeDict ty' (fromJust $ toMaybeDict arg)
-        _ -> isData ty' >>= \case
-          True -> toAtom <$> emitGeneralizationParameter ty' arg
-          False -> do
-            -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
-            -- non-type, non-dict arguments (e.g. a function). We just don't
-            -- generalize in that case.
-            return arg
+        -- _ -> isData ty' >>= \case
+        --   True -> toAtom <$> emitGeneralizationParameter ty' arg
+        --   False -> do
+        --     -- Unlike in `inferRoles` in `Inference`, it's ok to have non-data,
+        --     -- non-type, non-dict arguments (e.g. a function). We just don't
+        --     -- generalize in that case.
+        --     return arg
       args'' <- extendSubst (b@>SubstVal arg') $ go bs args
       return $ arg' : args''
     go Empty [] = return []
@@ -127,19 +127,19 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
       ClassDef _ _ _ _ _ bs _ _ <- lookupClassDef name
       params' <- traverseRoleBinders f bs params
       return $ DictType sn name params'
-    IxDictType   t -> IxDictType   <$> f' TypeParam TyKind t
+    IxDictType   t -> IxDictType   <$> f' TypeParam (toType $ Kind TypeKind) t
   TabPi (TabPiType d (b:>iTy) resultTy) -> do
-    iTy' <- f' TypeParam TyKind iTy
+    iTy' <- f' TypeParam (toType $ Kind TypeKind) iTy
     let dictTy = toType $ IxDictType iTy'
     d' <- fromJust . toMaybeDict <$> f DictParam dictTy (toAtom d)
     withFreshBinder (getNameHint b) iTy' \(b':>_) -> do
-      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam TyKind)
+      resultTy' <- applyRename (b@>binderName b') resultTy >>= (f' TypeParam (toType $ Kind TypeKind))
       return $ TabPi $ TabPiType d' (b':>iTy') resultTy'
   BaseType b -> return $ BaseType b
-  ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam TyKind t
+  ProdType tys -> ProdType <$> forM tys \t -> f' TypeParam (toType $ Kind TypeKind) t
   RefType _ -> error "not implemented"
-  SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam TyKind t
-  TypeKind     -> return TypeKind
+  SumType  tys -> SumType  <$> forM tys \t -> f' TypeParam (toType $ Kind TypeKind) t
+  Kind k -> return $ Kind k
   NewtypeTyCon con -> NewtypeTyCon <$> case con of
     Nat -> return Nat
     Fin n -> Fin <$> f DataParam NatTy n

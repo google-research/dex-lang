@@ -707,7 +707,7 @@ loadModuleSource config moduleName = do
       LibDirectory dir -> return dir
 {-# SCC loadModuleSource #-}
 
-getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => Val CoreIR n -> m n String
+getDexString :: (MonadIO1 m, EnvReader m, Fallible1 m) => CAtom n -> m n String
 getDexString val = do
   -- TODO: use a `ByteString` instead of `String`
   Stuck _ (RepValAtom (RepVal _ tree)) <- return val

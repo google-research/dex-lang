@@ -181,7 +181,7 @@ getRepType (TyCon con) = case con of
     -- dropSubst $ getRepType ty'
   Pi _     -> error notDataType
   DictTy _ -> error notDataType
-  TypeKind -> error notDataType
+  Kind _ -> error notDataType
   where notDataType = "Not a type of runtime-representable data"
 
 toDataAtomAssumeNoDecls :: CAtom i -> SimplifyM i o (SAtom o)

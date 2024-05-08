@@ -80,7 +80,7 @@ showAnyTyCon tyCon atom = case tyCon of
     xs <- getUnpacked atom
     parens $ sepBy ", " $ map rec xs
   -- TODO: traverse the type and print out data components
-  TypeKind -> printAsConstant
+  Kind _ -> printAsConstant
   Pi _ -> printTypeOnly "function"
   TabPi _ -> brackets $ forEachTabElt atom \iOrd x -> do
     isFirst <- emit $ BinOp (ICmp Equal) iOrd (NatVal 0)
