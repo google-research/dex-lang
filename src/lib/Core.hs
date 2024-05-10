@@ -401,7 +401,7 @@ liftLamExpr (TopLam d ty (LamExpr bs body)) f = liftM (TopLam d ty) $ liftEnvRea
 fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
-  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) ->
+  Hof (TypedHof _ (For _ _ (UnaryLamExpr b body))) ->
     extend <|> (Just $ (1, LamExpr (Nest b Empty) body))
     where
       extend = do

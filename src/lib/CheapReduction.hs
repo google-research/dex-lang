@@ -340,7 +340,7 @@ visitAlt (Abs b body) = do
 traverseOpTerm
   :: (GenericOp e, Visitor m r i o, OpConst e r ~ OpConst e r)
   => e r i -> m (e r o)
-traverseOpTerm e = traverseOp e visitGeneric visitGeneric visitGeneric
+traverseOpTerm e = traverseOp e visitGeneric visitGeneric
 
 visitTypeDefault
   :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
@@ -397,6 +397,7 @@ instance IRRep r => VisitGeneric (Expr r) r where
     ApplyMethod et m i xs -> ApplyMethod <$> visitGeneric et <*> visitGeneric m <*> pure i <*> mapM visitGeneric xs
     Project t i x -> Project <$> visitGeneric t <*> pure i <*> visitGeneric x
     Unwrap t x -> Unwrap <$> visitGeneric t <*> visitGeneric x
+    Hof op -> Hof <$> visitGeneric op
 
 instance IRRep r => VisitGeneric (PrimOp r) r where
   visitGeneric = \case
@@ -405,8 +406,7 @@ instance IRRep r => VisitGeneric (PrimOp r) r where
     MemOp        op -> MemOp    <$> visitGeneric op
     VectorOp     op -> VectorOp     <$> visitGeneric op
     MiscOp       op -> MiscOp       <$> visitGeneric op
-    Hof          op -> Hof          <$> visitGeneric op
-    RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric visitGeneric
+    RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric
 
 instance IRRep r => VisitGeneric (TypedHof r) r where
   visitGeneric (TypedHof eff hof) = TypedHof <$> visitGeneric eff <*> visitGeneric hof

@@ -1067,7 +1067,11 @@ matchPrimApp = \case
            Just x' <- return $ toMaybeType x
            return $ Left x'
          _ -> return $ Right x
-     return $ fromJust $ toOp $ GenericOpRep op tyArgs dataArgs []
+     let tyArgs' = case tyArgs of
+           [] -> Nothing
+           [t] -> Just t
+           _ -> error "Expected at most one type arg"
+     return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
 
 pattern ExplicitCoreLam :: Nest CBinder n l -> CExpr l -> CAtom n
 pattern ExplicitCoreLam bs body <- Con (Lam (CoreLamExpr _ (LamExpr bs body)))

@@ -176,6 +176,7 @@ transposeExpr expr ct = case expr of
     forM_ (enumerate es) \(ordinalIdx, e) -> do
       i <- unsafeFromOrdinal idxTy (IdxRepVal $ fromIntegral ordinalIdx)
       tabApp ct i >>= transposeAtom e
+  Hof (TypedHof _ hof) -> transposeHof hof ct
   TabApp _ _ _  -> error "should have been handled by reference projection"
   Project _ _ _ -> error "should have been handled by reference projection"
 
@@ -193,7 +194,6 @@ transposeOp op ct = case op of
         void $ emitEff $ MPut zero
       IndexRef _ _ -> notImplemented
       ProjRef _ _  -> notImplemented
-  Hof (TypedHof _ hof) -> transposeHof hof ct
   MiscOp miscOp   -> transposeMiscOp miscOp ct
   UnOp  FNeg x    -> transposeAtom x =<< (emitLin $ UnOp FNeg ct)
   UnOp  _    _    -> notLinear

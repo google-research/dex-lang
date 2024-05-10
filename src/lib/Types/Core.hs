@@ -110,6 +110,7 @@ data Expr r n where
  Atom   :: Atom r n                                            -> Expr r n
  TabCon :: Type r n -> [Atom r n] -> Expr r n
  PrimOp :: PrimOp r n                                          -> Expr r n
+ Hof    :: TypedHof r n                                        -> Expr r n
  Project     :: Type r n -> Int -> Atom r n                    -> Expr r n
  App         :: EffTy CoreIR n -> CAtom n -> [CAtom n]         -> Expr CoreIR n
  Unwrap      :: CType n -> CAtom n                             -> Expr CoreIR n
@@ -259,14 +260,14 @@ class GenericOp (e::IR->E) where
   toOp   :: GenericOpRep (OpConst e r) r n -> Maybe (e r n)
 
 data GenericOpRep (const :: *) (r::IR) (n::S) =
-  GenericOpRep const [Type r n] [Atom r n] [LamExpr r n]
+  GenericOpRep const (Maybe (Type r n)) [Atom r n] -- name, optional result type, args
   deriving (Show, Generic)
 
 instance GenericE (GenericOpRep const r) where
-  type RepE (GenericOpRep const r) = LiftE const `PairE` ListE (Type r) `PairE` ListE (Atom r) `PairE` ListE (LamExpr r)
-  fromE (GenericOpRep c ts xs lams) = LiftE c `PairE` ListE ts `PairE` ListE xs `PairE` ListE lams
+  type RepE (GenericOpRep const r) = LiftE const `PairE` MaybeE (Type r) `PairE` ListE (Atom r)
+  fromE (GenericOpRep c ts xs) = LiftE c `PairE` toMaybeE ts `PairE` ListE xs
   {-# INLINE fromE #-}
-  toE   (LiftE c `PairE` ListE ts `PairE` ListE xs `PairE` ListE lams) = GenericOpRep c ts xs lams
+  toE   (LiftE c `PairE` ts `PairE` ListE xs) = GenericOpRep c (fromMaybeE ts) xs
   {-# INLINE toE #-}
 
 instance IRRep r => SinkableE (GenericOpRep const r) where
@@ -274,8 +275,8 @@ instance IRRep r => HoistableE (GenericOpRep const r) where
 instance (Eq const, IRRep r) => AlphaEqE (GenericOpRep const r)
 instance (Hashable const, IRRep r) => AlphaHashableE (GenericOpRep const r)
 instance IRRep r => RenameE (GenericOpRep const r) where
-  renameE env (GenericOpRep c ts xs ys) =
-    GenericOpRep c (map (renameE env) ts) (map (renameE env) xs) (map (renameE env) ys)
+  renameE env (GenericOpRep c ts xs) =
+    GenericOpRep c (fmap (renameE env) ts) (map (renameE env) xs)
 
 fromEGenericOpRep :: GenericOp e => e r n -> GenericOpRep (OpConst e r) r n
 fromEGenericOpRep = fromOp
@@ -288,14 +289,12 @@ traverseOp
   => e r i
   -> (Type r i -> m (Type r' o))
   -> (Atom r i -> m (Atom r' o))
-  -> (LamExpr r i -> m (LamExpr r' o))
   -> m (e r' o)
-traverseOp op fType fAtom fLam = do
-  let GenericOpRep c tys atoms lams = fromOp op
+traverseOp op fType fAtom = do
+  let GenericOpRep c tys atoms = fromOp op
   tys'   <- mapM fType tys
   atoms' <- mapM fAtom atoms
-  lams'  <- mapM fLam  lams
-  return $ fromJust $ toOp $ GenericOpRep c tys' atoms' lams'
+  return $ fromJust $ toOp $ GenericOpRep c tys' atoms'
 
 -- === Various ops ===
 
@@ -305,7 +304,6 @@ data PrimOp (r::IR) (n::S) where
  MemOp    :: MemOp r n                       -> PrimOp r n
  VectorOp :: VectorOp r n                    -> PrimOp r n
  MiscOp   :: MiscOp r n                      -> PrimOp r n
- Hof      :: TypedHof r n                    -> PrimOp r n
  RefOp    :: Atom r n -> RefOp r n           -> PrimOp r n
 
 deriving instance IRRep r => Show (PrimOp r n)
@@ -568,7 +566,7 @@ instance ToExpr (PrimOp   r) r where toExpr = PrimOp
 instance ToExpr (MiscOp   r) r where toExpr = PrimOp . MiscOp
 instance ToExpr (MemOp    r) r where toExpr = PrimOp . MemOp
 instance ToExpr (VectorOp r) r where toExpr = PrimOp . VectorOp
-instance ToExpr (TypedHof r) r where toExpr = PrimOp . Hof
+instance ToExpr (TypedHof r) r where toExpr = Hof
 
 -- === Pattern synonyms ===
 
@@ -850,16 +848,16 @@ instance IRRep r => AlphaHashableE (Hof r)
 instance GenericOp RefOp where
   type OpConst RefOp r = P.RefOp
   fromOp = \case
-    MGet                       -> GenericOpRep P.MGet        [] []  []
-    MPut x                     -> GenericOpRep P.MPut        [] [x] []
-    IndexRef t x               -> GenericOpRep P.IndexRef    [t] [x] []
-    ProjRef t p                -> GenericOpRep (P.ProjRef p) [t] []  []
+    MGet         -> GenericOpRep P.MGet        Nothing []
+    MPut x       -> GenericOpRep P.MPut        Nothing [x]
+    IndexRef t x -> GenericOpRep P.IndexRef    (Just t) [x]
+    ProjRef t p  -> GenericOpRep (P.ProjRef p) (Just t) []
   {-# INLINE fromOp #-}
   toOp = \case
-    GenericOpRep P.MGet        [] []     []  -> Just $ MGet
-    GenericOpRep P.MPut        [] [x]    []  -> Just $ MPut x
-    GenericOpRep P.IndexRef    [t] [x]   []  -> Just $ IndexRef t x
-    GenericOpRep (P.ProjRef p) [t] []    []  -> Just $ ProjRef t p
+    GenericOpRep P.MGet        Nothing  []  -> Just $ MGet
+    GenericOpRep P.MPut        Nothing  [x] -> Just $ MPut x
+    GenericOpRep P.IndexRef    (Just t) [x] -> Just $ IndexRef t x
+    GenericOpRep (P.ProjRef p) (Just t) []  -> Just $ ProjRef t p
     _ -> Nothing
   {-# INLINE toOp #-}
 
@@ -991,12 +989,13 @@ instance IRRep r => GenericE (Expr r) where
  {- TopApp -} (WhenSimp r (EffTy r `PairE` TopFunName `PairE` ListE (Atom r)))
  {- Block -}  (EffTy r `PairE` Block r)
     )
-    ( EitherE5
+    ( EitherE6
  {- TabCon -}          (Type r `PairE` ListE (Atom r))
  {- PrimOp -}          (PrimOp r)
  {- ApplyMethod -}     (WhenCore r (EffTy r `PairE` Atom r `PairE` LiftE Int `PairE` ListE (Atom r)))
  {- Project -}         (Type r `PairE` LiftE Int `PairE` Atom r)
- {- Unwrap -}          (WhenCore r (CType `PairE` CAtom)))
+ {- Unwrap -}          (WhenCore r (CType `PairE` CAtom))
+ {- Hof -}             (TypedHof r))
   fromE = \case
     App    et f xs        -> Case0 $ Case0 (WhenIRE (et `PairE` f `PairE` ListE xs))
     TabApp  t f x         -> Case0 $ Case1 (t `PairE` f `PairE` x)
@@ -1009,6 +1008,7 @@ instance IRRep r => GenericE (Expr r) where
     ApplyMethod et d i xs -> Case1 $ Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs))
     Project ty i x        -> Case1 $ Case3 (ty `PairE` LiftE i `PairE` x)
     Unwrap t x            -> Case1 $ Case4 (WhenIRE (t `PairE` x))
+    Hof hof               -> Case1 $ Case5 hof
   {-# INLINE fromE #-}
   toE = \case
     Case0 case0 -> case case0 of
@@ -1025,6 +1025,7 @@ instance IRRep r => GenericE (Expr r) where
       Case2 (WhenIRE (et `PairE` d `PairE` LiftE i `PairE` ListE xs)) -> ApplyMethod et d i xs
       Case3 (ty `PairE` LiftE i `PairE` x) -> Project ty i x
       Case4 (WhenIRE (t `PairE` x)) -> Unwrap t x
+      Case5 hof -> Hof hof
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
@@ -1036,39 +1037,29 @@ instance IRRep r => AlphaHashableE (Expr r)
 instance IRRep r => RenameE        (Expr r)
 
 instance IRRep r => GenericE (PrimOp r) where
-  type RepE (PrimOp r) = EitherE2
-   ( EitherE5
- {- UnOp -}  (LiftE P.UnOp `PairE` Atom r)
- {- BinOp -} (LiftE P.BinOp `PairE` Atom r `PairE` Atom r)
- {- MemOp -} (MemOp r)
+  type RepE (PrimOp r) = EitherE6
+ {- UnOp -}     (LiftE P.UnOp `PairE` Atom r)
+ {- BinOp -}    (LiftE P.BinOp `PairE` Atom r `PairE` Atom r)
+ {- MemOp -}    (MemOp r)
  {- VectorOp -} (VectorOp r)
  {- MiscOp -}   (MiscOp r)
-   ) (EitherE2
- {- Hof -}           (TypedHof r)
- {- RefOp -}         (Atom r `PairE` RefOp r)
-             )
+ {- RefOp -}    (Atom r `PairE` RefOp r)
   fromE = \case
-    UnOp  op x   -> Case0 $ Case0 $ LiftE op `PairE` x
-    BinOp op x y -> Case0 $ Case1 $ LiftE op `PairE` x `PairE` y
-    MemOp op     -> Case0 $ Case2 op
-    VectorOp op  -> Case0 $ Case3 op
-    MiscOp op    -> Case0 $ Case4 op
-    Hof op          -> Case1 $ Case0 op
-    RefOp r op      -> Case1 $ Case1 $ r `PairE` op
+    UnOp  op x   -> Case0 $ LiftE op `PairE` x
+    BinOp op x y -> Case1 $ LiftE op `PairE` x `PairE` y
+    MemOp op     -> Case2 op
+    VectorOp op  -> Case3 op
+    MiscOp op    -> Case4 op
+    RefOp r op   -> Case5 $ r `PairE` op
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 rep -> case rep of
-      Case0 (LiftE op `PairE` x          ) -> UnOp  op x
-      Case1 (LiftE op `PairE` x `PairE` y) -> BinOp op x y
-      Case2 op -> MemOp op
-      Case3 op -> VectorOp op
-      Case4 op -> MiscOp op
-      _ -> error "impossible"
-    Case1 rep -> case rep of
-      Case0 op -> Hof op
-      Case1 (r `PairE` op) -> RefOp r op
-      _ -> error "impossible"
+    Case0 (LiftE op `PairE` x          ) -> UnOp  op x
+    Case1 (LiftE op `PairE` x `PairE` y) -> BinOp op x y
+    Case2 op -> MemOp op
+    Case3 op -> VectorOp op
+    Case4 op -> MiscOp op
+    Case5 (r `PairE` op) -> RefOp r op
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -1081,17 +1072,17 @@ instance IRRep r => RenameE        (PrimOp r)
 instance GenericOp VectorOp where
   type OpConst VectorOp r = P.VectorOp
   fromOp = \case
-    VectorBroadcast x t -> GenericOpRep P.VectorBroadcast [t] [x]    []
-    VectorIota t        -> GenericOpRep P.VectorIota      [t] []     []
-    VectorIdx x y t     -> GenericOpRep P.VectorIdx       [t] [x, y] []
-    VectorSubref x y t  -> GenericOpRep P.VectorSubref    [t] [x, y] []
+    VectorBroadcast x t -> GenericOpRep P.VectorBroadcast (Just t) [x]
+    VectorIota t        -> GenericOpRep P.VectorIota      (Just t) []
+    VectorIdx x y t     -> GenericOpRep P.VectorIdx       (Just t) [x, y]
+    VectorSubref x y t  -> GenericOpRep P.VectorSubref    (Just t) [x, y]
   {-# INLINE fromOp #-}
 
   toOp = \case
-    GenericOpRep P.VectorBroadcast [t] [x]    [] -> Just $ VectorBroadcast x t
-    GenericOpRep P.VectorIota      [t] []     [] -> Just $ VectorIota t
-    GenericOpRep P.VectorIdx       [t] [x, y] [] -> Just $ VectorIdx x y t
-    GenericOpRep P.VectorSubref    [t] [x, y] [] -> Just $ VectorSubref x y t
+    GenericOpRep P.VectorBroadcast (Just t) [x]    -> Just $ VectorBroadcast x t
+    GenericOpRep P.VectorIota      (Just t) []     -> Just $ VectorIota t
+    GenericOpRep P.VectorIdx       (Just t) [x, y] -> Just $ VectorIdx x y t
+    GenericOpRep P.VectorSubref    (Just t) [x, y] -> Just $ VectorSubref x y t
     _ -> Nothing
   {-# INLINE toOp #-}
 
@@ -1108,18 +1099,18 @@ instance IRRep r => RenameE        (VectorOp r)
 instance GenericOp MemOp where
   type OpConst MemOp r = P.MemOp
   fromOp = \case
-    IOAlloc x     -> GenericOpRep P.IOAlloc   [] [x]    []
-    IOFree x      -> GenericOpRep P.IOFree    [] [x]    []
-    PtrOffset x y -> GenericOpRep P.PtrOffset [] [x, y] []
-    PtrLoad x     -> GenericOpRep P.PtrLoad   [] [x]    []
-    PtrStore x y  -> GenericOpRep P.PtrStore  [] [x, y] []
+    IOAlloc x     -> GenericOpRep P.IOAlloc   Nothing [x]
+    IOFree x      -> GenericOpRep P.IOFree    Nothing [x]
+    PtrOffset x y -> GenericOpRep P.PtrOffset Nothing [x, y]
+    PtrLoad x     -> GenericOpRep P.PtrLoad   Nothing [x]
+    PtrStore x y  -> GenericOpRep P.PtrStore  Nothing [x, y]
   {-# INLINE fromOp #-}
   toOp = \case
-    GenericOpRep P.IOAlloc   [] [x]    [] -> Just $ IOAlloc x
-    GenericOpRep P.IOFree    [] [x]    [] -> Just $ IOFree x
-    GenericOpRep P.PtrOffset [] [x, y] [] -> Just $ PtrOffset x y
-    GenericOpRep P.PtrLoad   [] [x]    [] -> Just $ PtrLoad x
-    GenericOpRep P.PtrStore  [] [x, y] [] -> Just $ PtrStore x y
+    GenericOpRep P.IOAlloc   Nothing [x]    -> Just $ IOAlloc x
+    GenericOpRep P.IOFree    Nothing [x]    -> Just $ IOFree x
+    GenericOpRep P.PtrOffset Nothing [x, y] -> Just $ PtrOffset x y
+    GenericOpRep P.PtrLoad   Nothing [x]    -> Just $ PtrLoad x
+    GenericOpRep P.PtrStore  Nothing [x, y] -> Just $ PtrStore x y
     _ -> Nothing
   {-# INLINE toOp #-}
 
@@ -1136,32 +1127,32 @@ instance IRRep r => RenameE        (MemOp r)
 instance GenericOp MiscOp where
   type OpConst MiscOp r = P.MiscOp
   fromOp = \case
-    Select p x y     -> GenericOpRep P.Select         []  [p,x,y] []
-    CastOp t x       -> GenericOpRep P.CastOp         [t] [x]     []
-    BitcastOp t x    -> GenericOpRep P.BitcastOp      [t] [x]     []
-    UnsafeCoerce t x -> GenericOpRep P.UnsafeCoerce   [t] [x]     []
-    GarbageVal t     -> GenericOpRep P.GarbageVal     [t] []      []
-    NewRef t         -> GenericOpRep P.NewRef         [t] []      []
-    ThrowError t     -> GenericOpRep P.ThrowError     [t] []      []
-    SumTag x         -> GenericOpRep P.SumTag         []  [x]     []
-    ToEnum t x       -> GenericOpRep P.ToEnum         [t] [x]     []
-    OutputStream     -> GenericOpRep P.OutputStream   []  []      []
-    ShowAny x        -> GenericOpRep P.ShowAny        []  [x]     []
-    ShowScalar x     -> GenericOpRep P.ShowScalar     []  [x]     []
+    Select p x y     -> GenericOpRep P.Select         Nothing  [p,x,y]
+    CastOp t x       -> GenericOpRep P.CastOp         (Just t) [x]
+    BitcastOp t x    -> GenericOpRep P.BitcastOp      (Just t) [x]
+    UnsafeCoerce t x -> GenericOpRep P.UnsafeCoerce   (Just t) [x]
+    GarbageVal t     -> GenericOpRep P.GarbageVal     (Just t) []
+    NewRef t         -> GenericOpRep P.NewRef         (Just t) []
+    ThrowError t     -> GenericOpRep P.ThrowError     (Just t) []
+    SumTag x         -> GenericOpRep P.SumTag         Nothing  [x]
+    ToEnum t x       -> GenericOpRep P.ToEnum         (Just t) [x]
+    OutputStream     -> GenericOpRep P.OutputStream   Nothing  []
+    ShowAny x        -> GenericOpRep P.ShowAny        Nothing  [x]
+    ShowScalar x     -> GenericOpRep P.ShowScalar     Nothing  [x]
   {-# INLINE fromOp #-}
   toOp = \case
-    GenericOpRep P.Select         []  [p,x,y] [] -> Just $ Select p x y
-    GenericOpRep P.CastOp         [t] [x]     [] -> Just $ CastOp t x
-    GenericOpRep P.BitcastOp      [t] [x]     [] -> Just $ BitcastOp t x
-    GenericOpRep P.UnsafeCoerce   [t] [x]     [] -> Just $ UnsafeCoerce t x
-    GenericOpRep P.GarbageVal     [t] []      [] -> Just $ GarbageVal t
-    GenericOpRep P.NewRef         [t] []      [] -> Just $ NewRef t
-    GenericOpRep P.ThrowError     [t] []      [] -> Just $ ThrowError t
-    GenericOpRep P.SumTag         []  [x]     [] -> Just $ SumTag x
-    GenericOpRep P.ToEnum         [t] [x]     [] -> Just $ ToEnum t x
-    GenericOpRep P.OutputStream   []  []      [] -> Just $ OutputStream
-    GenericOpRep P.ShowAny        []  [x]     [] -> Just $ ShowAny x
-    GenericOpRep P.ShowScalar     []  [x]     [] -> Just $ ShowScalar x
+    GenericOpRep P.Select         Nothing  [p,x,y] -> Just $ Select p x y
+    GenericOpRep P.CastOp         (Just t) [x]     -> Just $ CastOp t x
+    GenericOpRep P.BitcastOp      (Just t) [x]     -> Just $ BitcastOp t x
+    GenericOpRep P.UnsafeCoerce   (Just t) [x]     -> Just $ UnsafeCoerce t x
+    GenericOpRep P.GarbageVal     (Just t) []      -> Just $ GarbageVal t
+    GenericOpRep P.NewRef         (Just t) []      -> Just $ NewRef t
+    GenericOpRep P.ThrowError     (Just t) []      -> Just $ ThrowError t
+    GenericOpRep P.SumTag         Nothing  [x]     -> Just $ SumTag x
+    GenericOpRep P.ToEnum         (Just t) [x]     -> Just $ ToEnum t x
+    GenericOpRep P.OutputStream   Nothing  []      -> Just $ OutputStream
+    GenericOpRep P.ShowAny        Nothing  [x]     -> Just $ ShowAny x
+    GenericOpRep P.ShowScalar     Nothing  [x]     -> Just $ ShowScalar x
     _ -> Nothing
   {-# INLINE toOp #-}
 
@@ -1712,7 +1703,6 @@ instance IRRep r => PrettyPrec (PrimOp r n) where
   prettyPrec = \case
     MemOp    op -> prettyPrec op
     VectorOp op -> prettyPrec op
-    Hof (TypedHof _ hof) -> prettyPrec hof
     RefOp ref eff -> atPrec LowestPrec case eff of
       MGet        -> "get" <+> pApp ref
       MPut x      -> pApp ref <+> ":=" <+> pApp x
@@ -1742,8 +1732,8 @@ instance IRRep r => PrettyPrec (VectorOp r n) where
 
 prettyOpGeneric :: (IRRep r, GenericOp op, Show (OpConst op r)) => op r n -> DocPrec ann
 prettyOpGeneric op = case fromEGenericOpRep op of
-  GenericOpRep op' [] [] [] -> atPrec ArgPrec (pretty $ show op')
-  GenericOpRep op' ts xs lams -> atPrec AppPrec $ pAppArg (pretty (show op')) xs <+> pretty ts <+> pretty lams
+  GenericOpRep op' Nothing [] -> atPrec ArgPrec (pretty $ show op')
+  GenericOpRep op' ts xs -> atPrec AppPrec $ pAppArg (pretty (show op')) xs <+> pretty ts
 
 instance Pretty IxMethod where
   pretty method = pretty $ show method
@@ -1786,6 +1776,7 @@ instance IRRep r => PrettyPrec (Expr r n) where
     ApplyMethod _ d i xs -> atPrec AppPrec $ "applyMethod" <+> p d <+> p i <+> p xs
     Project _ i x -> atPrec AppPrec $ "Project" <+> p i <+> p x
     Unwrap _  x -> atPrec AppPrec $ "Unwrap" <+> p x
+    Hof (TypedHof _ hof) -> prettyPrec hof
     where
       p :: Pretty a => a -> Doc ann
       p = pretty

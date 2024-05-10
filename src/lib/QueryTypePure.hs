@@ -140,6 +140,7 @@ instance IRRep r => HasType r (Expr r) where
     ApplyMethod (EffTy _ t) _ _ _ -> t
     Project t _ _ -> t
     Unwrap t _ -> t
+    Hof  (TypedHof (EffTy _ ty) _) -> ty
 
 instance IRRep r => HasType r (RepVal r) where
   getType (RepVal ty _) = ty
@@ -148,7 +149,6 @@ instance IRRep r => HasType r (PrimOp r) where
   getType primOp = case primOp of
     BinOp op x _ -> TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
     UnOp  op x   -> TyCon $ BaseType $ typeUnOp  op $ getTypeBaseType x
-    Hof  (TypedHof (EffTy _ ty) _) -> ty
     MemOp op -> getType op
     MiscOp op -> getType op
     VectorOp op -> getType op
@@ -258,6 +258,7 @@ instance IRRep r => HasEffects (Expr r) r where
     PrimOp primOp -> getEffects primOp
     Project _ _ _ -> Pure
     Unwrap _ _ -> Pure
+    Hof (TypedHof (EffTy eff _) _) -> eff
 
 instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr
@@ -291,5 +292,4 @@ instance IRRep r => HasEffects (PrimOp r) r where
       MPut    _ -> Effectful
       IndexRef _ _ -> Pure
       ProjRef _ _  -> Pure
-    Hof (TypedHof (EffTy eff _) _) -> eff
   {-# INLINE getEffects #-}

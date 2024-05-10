@@ -266,6 +266,10 @@ instance IRRep r => CheckableE r (Expr r) where
       resultTy'' <- snd <$> unwrapNewtypeType con
       checkTypesEq resultTy' resultTy''
       return $ Unwrap resultTy' x'
+    Hof (TypedHof effTy hof) -> do
+      effTy' <- checkE effTy
+      hof' <- checkHof effTy' hof
+      return $ Hof (TypedHof effTy' hof')
 
 instance CheckableE CoreIR TyConParams where
   checkE (TyConParams expls params) = TyConParams expls <$> mapM checkE params
@@ -441,10 +445,6 @@ instance CheckableE CoreIR NewtypeTyCon where
 
 instance IRRep r => CheckableE r (PrimOp r) where
   checkE = \case
-    Hof (TypedHof effTy hof) -> do
-      effTy' <- checkE effTy
-      hof' <- checkHof effTy' hof
-      return $ Hof (TypedHof effTy' hof')
     VectorOp vOp -> VectorOp <$> checkE vOp
     BinOp binop x y -> do
       x' <- checkE x

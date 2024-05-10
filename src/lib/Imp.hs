@@ -317,6 +317,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
   TabApp _ _ _ -> error "Unexpected `TabApp` in Imp pass."
   TabCon _ _ -> error "Unexpected `TabCon` in Imp pass."
   Project _ i x -> reduceProj i =<< substM x
+  Hof hof -> toImpTypedHof hof
 
 toImpRefOp :: Emits o
   => SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
@@ -336,7 +337,6 @@ toImpRefOp refDest' m = do
 
 toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
 toImpOp op = case op of
-  Hof hof -> toImpTypedHof hof
   RefOp refDest eff -> toImpRefOp refDest eff
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)

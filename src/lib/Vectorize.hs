@@ -379,7 +379,7 @@ instance Visitor (CalcWidthM i o) SimpIR i o where
 
 instance ExprVisitorNoEmits (CalcWidthM i o) SimpIR i o where
   visitExprNoEmits expr = case expr of
-    PrimOp (Hof     _) -> fallback
+    Hof _ -> fallback
     PrimOp (RefOp _ _) -> fallback
     PrimOp _ -> do
       expr' <- renameM expr

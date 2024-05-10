@@ -168,7 +168,7 @@ inlineDeclsSubst = \case
     -- since their main purpose is to force inlining in the simplifier, and if
     -- one just stuck like this it has become equivalent to a `for` anyway.
     ixDepthExpr :: Expr SimpIR n -> Int
-    ixDepthExpr (PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body))))) = 1 + ixDepthExpr body
+    ixDepthExpr (Hof (TypedHof _ (For _ _ (UnaryLamExpr _ body)))) = 1 + ixDepthExpr body
     ixDepthExpr _ = 0
 
 -- Should we decide to inline this binding wherever it appears, before we even
@@ -316,7 +316,7 @@ reconstruct ctx e = case ctx of
 reconstructTabApp :: Emits o
   => Context SExpr e o -> SExpr o -> SAtom i -> InlineM i o (e o)
 reconstructTabApp ctx expr i = case expr of
-  PrimOp (Hof (TypedHof _ (For _ _ (UnaryLamExpr b body)))) -> do
+  Hof (TypedHof _ (For _ _ (UnaryLamExpr b body))) -> do
     -- See NoteReconstructTabAppDecisions
     AtomVar i' _ <- inline (EmitToNameCtx Stop) i
     dropSubst $ extendSubst (b@>Rename i') do

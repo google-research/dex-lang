@@ -376,7 +376,7 @@ instance HasOCC SExpr where
       ty' <- occTy ty
       countFreeVarsAsOccurrences effs
       return $ Case scrut' alts' (EffTy effs ty')
-    PrimOp (Hof op) -> PrimOp . Hof <$> occ a op
+    Hof op -> Hof <$> occ a op
     PrimOp (RefOp ref op) -> do
       ref' <- occ a ref
       PrimOp . RefOp ref' <$> occ a op

@@ -404,10 +404,10 @@ linearizeExpr expr = case expr of
   Project _ i x -> do
     x' <- linearizeAtom x
     emitBoth x' \x'' -> mkProject i x''
+  Hof (TypedHof _ e) -> linearizeHof e
 
 linearizeOp :: Emits o => PrimOp SimpIR i -> LinM i o SAtom SAtom
 linearizeOp op = case op of
-  Hof (TypedHof _ e) -> linearizeHof e
   RefOp ref m -> do
     ref' <- linearizeAtom ref
     case m of

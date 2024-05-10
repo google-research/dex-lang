@@ -222,6 +222,7 @@ simplifyExpr = \case
     simplifyTabApp f' x'
   Atom x -> simplifyAtom x
   PrimOp  op  -> simplifyOp op
+  Hof (TypedHof (EffTy _ ty) hof) -> simplifyHof hof
   ApplyMethod (EffTy _ ty) dict i xs -> do
     xs' <- mapM simplifyAtom xs
     SimpCCon (WithSubst s (DictConAtom d)) <- simplifyAtom dict
@@ -408,7 +409,6 @@ simplifyLam (LamExpr bsTop body) = case bsTop of
 
 simplifyOp :: Emits o => PrimOp CoreIR i -> SimplifyM i o (SimpVal o)
 simplifyOp op = case op of
-  Hof (TypedHof (EffTy _ ty) hof) -> simplifyHof hof
   MemOp    op' -> simplifyGenericOp op'
   VectorOp op' -> simplifyGenericOp op'
   RefOp ref eff -> do
@@ -433,7 +433,7 @@ simplifyGenericOp
   => op CoreIR i
   -> SimplifyM i o (SimpVal o)
 simplifyGenericOp op = do
-  op' <- traverseOp op getRepType toDataAtom (error "shouldn't have lambda left")
+  op' <- traverseOp op getRepType toDataAtom
   SimpAtom <$> emit op'
 {-# INLINE simplifyGenericOp #-}
 

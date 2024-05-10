@@ -68,7 +68,7 @@ instance ExprVisitorEmits (ULM i o) SimpIR i o where
 -- constant-foldable after inlining don't count towards it.
 ulExpr :: Emits o => SExpr i -> ULM i o (SAtom o)
 ulExpr expr = case expr of
-  PrimOp (Hof (TypedHof _ (For Fwd ixTy body))) ->
+  Hof (TypedHof _ (For Fwd ixTy body)) ->
     case ixTypeDict ixTy of
       DictCon (IxRawFin (IdxRepVal n)) -> do
         (body', bodyCost) <- withLocalAccounting $ visitLamEmits body
@@ -133,7 +133,7 @@ hoistLoopInvariant lam = liftLamExpr lam hoistLoopInvariantExpr
 
 licmExpr :: Emits o => SExpr i -> LICMM i o (SAtom o)
 licmExpr = \case
-  PrimOp (Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body)))) -> undefined
+  Hof (TypedHof _ (For dir ix (LamExpr (UnaryNest b) body))) -> undefined
     -- ix' <- substM ix
     -- Abs hdecls destsAndBody <- visitBinders (UnaryNest b) \(UnaryNest b') -> do
     --   Abs decls ans <- buildScoped $ visitExprEmits body
