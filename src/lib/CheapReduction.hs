@@ -337,11 +337,6 @@ visitAlt (Abs b body) = do
     LamExpr (UnaryNest b') body' -> return $ Abs b' body'
     _ -> error "not an alt"
 
-traverseOpTerm
-  :: (GenericOp e, Visitor m r i o, OpConst e r ~ OpConst e r)
-  => e r i -> m (e r o)
-traverseOpTerm e = traverseOp e visitGeneric visitGeneric
-
 visitTypeDefault
   :: (IRRep r, Visitor (m i o) r i o, AtomSubstReader v m, EnvReader2 m)
   => Type r i -> m i o (Type r o)
@@ -392,21 +387,12 @@ instance IRRep r => VisitGeneric (Expr r) r where
       return $ Case x' alts' effTy'
     Atom x -> Atom <$> visitGeneric x
     TabCon t xs -> TabCon <$> visitGeneric t <*> mapM visitGeneric xs
-    PrimOp t op -> PrimOp <$> visitGeneric t <*> visitGeneric op
+    PrimOp t op -> PrimOp <$> visitGeneric t <*> mapM visitGeneric op
     App et fAtom xs -> App <$> visitGeneric et <*> visitGeneric fAtom <*> mapM visitGeneric xs
     ApplyMethod et m i xs -> ApplyMethod <$> visitGeneric et <*> visitGeneric m <*> pure i <*> mapM visitGeneric xs
     Project t i x -> Project <$> visitGeneric t <*> pure i <*> visitGeneric x
     Unwrap t x -> Unwrap <$> visitGeneric t <*> visitGeneric x
     Hof op -> Hof <$> visitGeneric op
-
-instance IRRep r => VisitGeneric (PrimOp r) r where
-  visitGeneric = \case
-    UnOp     op x   -> UnOp  op <$> visitGeneric x
-    BinOp    op x y -> BinOp op <$> visitGeneric x <*> visitGeneric y
-    MemOp        op -> MemOp    <$> visitGeneric op
-    VectorOp     op -> VectorOp     <$> visitGeneric op
-    MiscOp       op -> MiscOp       <$> visitGeneric op
-    RefOp r op  -> RefOp <$> visitGeneric r <*> traverseOp op visitGeneric visitGeneric
 
 instance IRRep r => VisitGeneric (TypedHof r) r where
   visitGeneric (TypedHof eff hof) = TypedHof <$> visitGeneric eff <*> visitGeneric hof
@@ -536,10 +522,6 @@ instance IRRep r => VisitGeneric (Dict r) r where
     StuckDict ty s -> fromJust <$> toMaybeDict <$> visitGeneric (Stuck ty s)
     DictCon con -> DictCon <$> visitGeneric con
 
-instance VisitGeneric (MiscOp   r) r where visitGeneric = traverseOpTerm
-instance VisitGeneric (VectorOp r) r where visitGeneric = traverseOpTerm
-instance VisitGeneric (MemOp    r) r where visitGeneric = traverseOpTerm
-
 -- === SubstE/SubstB instances ===
 -- These live here, as orphan instances, because we normalize as we substitute.
 
@@ -631,14 +613,8 @@ instance IRRep r => SubstE AtomSubstVal (Hof r)
 instance IRRep r => SubstE AtomSubstVal (TyCon r)
 instance IRRep r => SubstE AtomSubstVal (DictCon r)
 instance IRRep r => SubstE AtomSubstVal (Con r)
-instance IRRep r => SubstE AtomSubstVal (MiscOp r)
-instance IRRep r => SubstE AtomSubstVal (VectorOp r)
-instance IRRep r => SubstE AtomSubstVal (MemOp r)
-instance IRRep r => SubstE AtomSubstVal (PrimOp r)
-instance IRRep r => SubstE AtomSubstVal (RefOp r)
 instance IRRep r => SubstE AtomSubstVal (EffTy r)
 instance IRRep r => SubstE AtomSubstVal (Expr r)
-instance IRRep r => SubstE AtomSubstVal (GenericOpRep const r)
 instance SubstE AtomSubstVal InstanceBody
 instance SubstE AtomSubstVal DictType
 instance IRRep r => SubstE AtomSubstVal (LamExpr r)

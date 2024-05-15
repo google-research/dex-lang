@@ -38,7 +38,6 @@ import Data.String (fromString)
 import Err
 import PPrint
 import Name
-import qualified Types.OpNames as P
 import IRVariants
 import MonadUtil
 import Util (File (..), SnocList)
@@ -632,11 +631,11 @@ data EnvQuery =
 
 data PrimName =
    UBaseType BaseType
- | UPrimTC   P.TC
- | UCon      P.Con
- | UMemOp    P.MemOp
- | UVectorOp P.VectorOp
- | UMiscOp   P.MiscOp
+ | UPrimTC   TCName
+ | UCon      ConName
+ | UMemOp    MemOpName
+ | UVectorOp VectorOpName
+ | UMiscOp   MiscOpName
  | UUnOp     UnOp
  | UBinOp    BinOp
  | UMGet | UMPut
@@ -646,6 +645,13 @@ data PrimName =
  | UNat | UNatCon | UFin
  | UTuple -- overloaded for type constructor and data constructor, resolved in inference
    deriving (Show, Eq, Generic)
+
+data TCName = ProdType | SumType | RefType | TypeKind  deriving (Show, Eq, Generic)
+data ConName = ProdCon | SumCon Int  deriving (Show, Eq, Generic)
+
+type MemOpName = MemOp CoreIR ()
+type VectorOpName = VectorOp CoreIR ()
+type MiscOpName = MiscOp CoreIR ()
 
 -- === primitive constructors and operators ===
 
@@ -686,7 +692,7 @@ primNames = M.fromList
   , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
   , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
   , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  , ("TyKind"    , UPrimTC $ P.TypeKind)
+  , ("TyKind"    , UPrimTC $ TypeKind)
   , ("Float64"   , baseTy $ Scalar Float64Type)
   , ("Float32"   , baseTy $ Scalar Float32Type)
   , ("Int64"     , baseTy $ Scalar Int64Type)
@@ -703,24 +709,24 @@ primNames = M.fromList
   , ("Nat"           , UNat)
   , ("Fin"           , UFin)
   , ("NatCon"        , UNatCon)
-  , ("Ref"        , UPrimTC $ P.RefType)
+  , ("Ref"        , UPrimTC $ RefType)
   , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ P.IOAlloc)
-  , ("free"     , memOp $ P.IOFree)
-  , ("ptrOffset", memOp $ P.PtrOffset)
-  , ("ptrLoad"  , memOp $ P.PtrLoad)
-  , ("ptrStore" , memOp $ P.PtrStore)
-  , ("throwError"    , miscOp $ P.ThrowError)
-  , ("dataConTag"    , miscOp $ P.SumTag)
-  , ("toEnum"        , miscOp $ P.ToEnum)
-  , ("outputStream"  , miscOp $ P.OutputStream)
-  , ("cast"          , miscOp $ P.CastOp)
-  , ("bitcast"       , miscOp $ P.BitcastOp)
-  , ("unsafeCoerce"  , miscOp $ P.UnsafeCoerce)
-  , ("garbageVal"    , miscOp $ P.GarbageVal)
-  , ("select"        , miscOp $ P.Select)
-  , ("showAny"       , miscOp $ P.ShowAny)
-  , ("showScalar"    , miscOp $ P.ShowScalar)
+  , ("alloc"    , memOp $ IOAlloc ())
+  , ("free"     , memOp $ IOFree ())
+  , ("ptrOffset", memOp $ PtrOffset () ())
+  , ("ptrLoad"  , memOp $ PtrLoad ())
+  , ("ptrStore" , memOp $ PtrStore () ())
+  , ("throwError"    , miscOp $ ThrowError)
+  , ("dataConTag"    , miscOp $ SumTag ())
+  , ("toEnum"        , miscOp $ ToEnum ())
+  , ("outputStream"  , miscOp $ OutputStream)
+  , ("cast"          , miscOp $ CastOp ())
+  , ("bitcast"       , miscOp $ BitcastOp ())
+  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce ())
+  , ("garbageVal"    , miscOp $ GarbageVal)
+  , ("select"        , miscOp $ Select () () ())
+  , ("showAny"       , miscOp $ ShowAny ())
+  , ("showScalar"    , miscOp $ ShowScalar ())
   , ("projNewtype" , UProjNewtype)
   , ("applyMethod0" , UApplyMethod 0)
   , ("applyMethod1" , UApplyMethod 1)

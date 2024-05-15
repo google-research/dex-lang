@@ -150,15 +150,15 @@ getTypeBaseType e = case getType e of
   TyCon (BaseType b) -> b
   ty -> error $ "Expected a base type. Got: " ++ show ty
 
-instance IRRep r => HasType r (MemOp r) where
-  getType = \case
-    IOAlloc _ -> PtrTy (CPU, Scalar Word8Type)
-    IOFree _ -> UnitTy
-    PtrOffset arr _ -> getType arr
-    PtrLoad ptr -> do
-      let PtrTy (_, t) = getType ptr
-      toType $ BaseType t
-    PtrStore _ _ -> UnitTy
+-- instance IRRep r => HasType r (MemOp r) where
+--   getType = \case
+--     IOAlloc _ -> PtrTy (CPU, Scalar Word8Type)
+--     IOFree _ -> UnitTy
+--     PtrOffset arr _ -> getType arr
+--     PtrLoad ptr -> do
+--       let PtrTy (_, t) = getType ptr
+--       toType $ BaseType t
+--     PtrStore _ _ -> UnitTy
 
 rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
@@ -216,7 +216,7 @@ instance IRRep r => HasEffects (Expr r) r where
     Case _ _ (EffTy effs _) -> effs
     TabCon _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
-    PrimOp _ primOp -> getEffects primOp
+    -- PrimOp _ primOp -> getEffects primOp
     Project _ _ _ -> Pure
     Unwrap _ _ -> Pure
     Hof (TypedHof (EffTy eff _) _) -> eff
@@ -225,32 +225,32 @@ instance IRRep r => HasEffects (DeclBinding r) r where
   getEffects (DeclBinding _ expr) = getEffects expr
   {-# INLINE getEffects #-}
 
-instance IRRep r => HasEffects (PrimOp r) r where
-  getEffects = \case
-    UnOp  _ _   -> Pure
-    BinOp _ _ _ -> Pure
-    VectorOp _  -> Pure
-    MemOp op -> case op of
-      IOAlloc  _    -> Effectful
-      IOFree   _    -> Effectful
-      PtrLoad  _    -> Effectful
-      PtrStore _ _  -> Effectful
-      PtrOffset _ _ -> Pure
-    MiscOp op -> case op of
-      Select _ _ _     -> Pure
-      ThrowError       -> Pure
-      CastOp _         -> Pure
-      UnsafeCoerce _   -> Pure
-      GarbageVal       -> Pure
-      BitcastOp _      -> Pure
-      SumTag _         -> Pure
-      ToEnum _         -> Pure
-      OutputStream     -> Pure
-      ShowAny _        -> Pure
-      ShowScalar _     -> Pure
-    RefOp _ m -> case m of
-      MGet      -> Effectful
-      MPut    _ -> Effectful
-      IndexRef _ -> Pure
-      ProjRef _  -> Pure
-  {-# INLINE getEffects #-}
+-- instance IRRep r => HasEffects (PrimOp r) r where
+--   getEffects = \case
+--     UnOp  _ _   -> Pure
+--     BinOp _ _ _ -> Pure
+--     VectorOp _  -> Pure
+--     MemOp op -> case op of
+--       IOAlloc  _    -> Effectful
+--       IOFree   _    -> Effectful
+--       PtrLoad  _    -> Effectful
+--       PtrStore _ _  -> Effectful
+--       PtrOffset _ _ -> Pure
+--     MiscOp op -> case op of
+--       Select _ _ _     -> Pure
+--       ThrowError       -> Pure
+--       CastOp _         -> Pure
+--       UnsafeCoerce _   -> Pure
+--       GarbageVal       -> Pure
+--       BitcastOp _      -> Pure
+--       SumTag _         -> Pure
+--       ToEnum _         -> Pure
+--       OutputStream     -> Pure
+--       ShowAny _        -> Pure
+--       ShowScalar _     -> Pure
+--     RefOp _ m -> case m of
+--       MGet      -> Effectful
+--       MPut    _ -> Effectful
+--       IndexRef _ -> Pure
+--       ProjRef _  -> Pure
+--   {-# INLINE getEffects #-}

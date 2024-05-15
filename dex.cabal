@@ -86,7 +86,6 @@ library
                      , Types.Core
                      , Types.Imp
                      , Types.Primitives
-                     , Types.OpNames
                      , Types.Source
                      , Types.Top
                      , QueryType

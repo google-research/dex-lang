@@ -221,7 +221,6 @@ simplifyExpr = \case
     f' <- toDataAtom f
     simplifyTabApp f' x'
   Atom x -> simplifyAtom x
-  PrimOp _ op  -> simplifyOp op
   Hof (TypedHof (EffTy _ ty) hof) -> simplifyHof hof
   ApplyMethod (EffTy _ ty) dict i xs -> do
     xs' <- mapM simplifyAtom xs
@@ -247,24 +246,21 @@ simplifyExpr = \case
     x'  <- toDataAtom x
     SimpAtom <$> proj i x'
   Unwrap _ x -> SimpAtom <$> toDataAtom x
+  PrimOp _ (RefOp ref (ProjRef UnwrapNewtype)) -> SimpAtom <$> toDataAtom ref
+  PrimOp ty op  -> do
+    ty' <- getRepType ty
+    op' <- mapM toDataAtom op
+    let op'' = changeIR op'
+    SimpAtom <$> emit (PrimOp ty' op'')
+
+-- Use this if you've handled all the cases that occur in `r` but not `r'`
+changeIR :: PrimOp r a -> PrimOp r' a
+changeIR = undefined
 
 requireReduced :: CExpr o -> SimplifyM i o (CAtom o)
 requireReduced expr = reduceExpr expr >>= \case
   Just x -> return x
   Nothing -> error "couldn't reduce expression"
-
-simplifyRefOp :: Emits o => RefOp CoreIR i -> SAtom o -> SimplifyM i o (SAtom o)
-simplifyRefOp op ref = case op of
-  MGet   -> undefined -- emit $ RefOp ref MGet
-  MPut x -> do
-    x' <- toDataAtom x
-    emitRefOp $ MPut x'
-  IndexRef x -> do
-    x' <- toDataAtom x
-    emit =<< mkIndexRef ref x'
-  ProjRef (ProjectProduct i) -> emit =<< mkProjRef ref (ProjectProduct i)
-  ProjRef UnwrapNewtype -> return ref
-  where emitRefOp op' = undefined -- emit $ RefOp ref op'
 
 simplifyApp :: Emits o => SimpVal o -> [SimpVal o] -> SimplifyM i o (SimpVal o)
 simplifyApp f xs = case f of
@@ -406,37 +402,6 @@ simplifyLam (LamExpr bsTop body) = case bsTop of
   Empty -> do
     body' <- buildBlock $ fromSimpAtom <$> simplifyExpr body
     return $ LamExpr Empty body'
-
-simplifyOp :: Emits o => PrimOp CoreIR i -> SimplifyM i o (SimpVal o)
-simplifyOp op = case op of
-  MemOp    op' -> simplifyGenericOp op'
-  VectorOp op' -> undefined -- simplifyGenericOp op'
-  RefOp ref eff -> do
-    ref' <- toDataAtom ref
-    SimpAtom <$> simplifyRefOp eff ref'
-  BinOp binop x y -> do
-    x' <- toDataAtom x
-    y' <- toDataAtom y
-    SimpAtom <$> emitBinOp binop x' y'
-  UnOp unOp x -> do
-    x' <- toDataAtom x
-    SimpAtom <$> emitUnOp unOp x'
-  MiscOp op' -> case op' of
-    ShowAny x -> undefined
-    -- ShowAny x -> do
-    --   x' <- toDataAtom x
-    --   dropSubst $ showAny x' >>= simplifyExpr
-    _ -> undefined -- simplifyGenericOp op'
-
-simplifyGenericOp
-  :: (GenericOp op, ToExpr (op SimpIR) SimpIR, HasType CoreIR (op CoreIR), Emits o,
-      OpConst op CoreIR ~ OpConst op SimpIR)
-  => op CoreIR i
-  -> SimplifyM i o (SimpVal o)
-simplifyGenericOp op = do
-  op' <- traverseOp op getRepType toDataAtom
-  SimpAtom <$> emit op'
-{-# INLINE simplifyGenericOp #-}
 
 applyDictMethod :: Emits o => DictCon CoreIR i -> Int -> [SimpVal o] -> SimplifyM i o (SimpVal o)
 applyDictMethod d i methodArgs = case d of

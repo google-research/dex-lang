@@ -15,7 +15,7 @@ import Data.Functor ((<&>))
 
 import Types.Primitives
 import Types.Core
-import Types.Source
+import Types.Source hiding (TCName (..))
 import Types.Top
 import Types.Imp
 import IRVariants

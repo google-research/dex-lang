@@ -40,7 +40,7 @@ import Types.Core
 import Types.Top
 import Types.Imp
 import Types.Primitives
-import Types.Source
+import Types.Source hiding (ProdCon, ProdType)
 
 -- === Typeclasses for monads ===
 

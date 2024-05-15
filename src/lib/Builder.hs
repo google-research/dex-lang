@@ -34,7 +34,7 @@ import QueryType
 import Types.Core
 import Types.Imp
 import Types.Primitives
-import Types.Source
+import Types.Source hiding (TCName (..), ConName (..))
 import Types.Top
 import Util (enumerate, transitiveClosureM, bindM2, toSnocList, popList)
 
@@ -51,7 +51,6 @@ instance ToExpr (Expr     r) r where toExpr = id
 instance ToExpr (Atom     r) r where toExpr = Atom
 instance ToExpr (Con      r) r where toExpr = Atom . Con
 instance ToExpr (AtomVar  r) r where toExpr = toExpr . toAtom
-instance IRRep r => ToExpr (MemOp    r) r where toExpr op = PrimOp (getType op) (MemOp op)
 instance ToExpr (TypedHof r) r where toExpr = Hof
 
 -- === Ordinary (local) builder class ===
@@ -102,7 +101,7 @@ emitBinOp :: (Builder r m, Emits n) => BinOp -> Atom r n -> Atom r n -> m n (Ato
 emitBinOp op x y = emit $ PrimOp resultTy $ BinOp op x y
   where resultTy = TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
 
-emitRefOp :: (Builder r m, Emits n) => Atom r n -> RefOp r n -> m n (Atom r n)
+emitRefOp :: (Builder r m, Emits n) => Atom r n -> RefOp r (Atom r n) -> m n (Atom r n)
 emitRefOp ref op = undefined
 
 emitToVar :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (AtomVar r n)
@@ -1092,11 +1091,11 @@ naryIndexRef ref is = foldM indexRef ref is
 
 ptrOffset :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ptrOffset x (IdxRepVal 0) = return x
-ptrOffset x i = emit $ PtrOffset x i
+ptrOffset x i = undefined -- emit $ PtrOffset x i
 {-# INLINE ptrOffset #-}
 
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-unsafePtrLoad x = emit . PtrLoad =<< sinkM x
+unsafePtrLoad x = undefined -- emit . PtrLoad =<< sinkM x
 
 mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Atom r n -> Atom r n -> m n (Expr r n)
 mkIndexRef ref i = do

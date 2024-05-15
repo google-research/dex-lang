@@ -42,9 +42,9 @@ import QueryType
 import Types.Core
 import Types.Imp
 import Types.Primitives
-import Types.Source
+import qualified Types.Source as S
+import Types.Source hiding (ConName (..), TCName (..))
 import Types.Top
-import qualified Types.OpNames as P
 import Util hiding (group)
 
 -- === Top-level interface ===
@@ -1030,13 +1030,13 @@ matchPrimApp = \case
  UBaseType b         -> \case ~[]  -> return $ toAtomR $ BaseType b
  UNatCon             -> \case ~[x] -> return $ toAtom $ NewtypeCon NatCon x
  UPrimTC tc -> case tc of
-   P.ProdType -> \ts -> return $ toAtom $ ProdType $ map (fromJust . toMaybeType) ts
-   P.SumType  -> \ts -> return $ toAtom $ SumType  $ map (fromJust . toMaybeType) ts
-   P.RefType  -> \case ~[h, a] -> undefined -- return $ toAtom $ RefType h (fromJust $ toMaybeType a)
-   P.TypeKind -> \case ~[] -> return $ toAtom $ Kind $ TypeKind
+   S.ProdType -> \ts -> return $ toAtom $ ProdType $ map (fromJust . toMaybeType) ts
+   S.SumType  -> \ts -> return $ toAtom $ SumType  $ map (fromJust . toMaybeType) ts
+   S.RefType  -> \case ~[h, a] -> undefined -- return $ toAtom $ RefType h (fromJust $ toMaybeType a)
+   S.TypeKind -> \case ~[] -> return $ toAtom $ Kind $ TypeKind
  UCon con -> case con of
-   P.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
-   P.SumCon _ -> error "not supported"
+   S.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
+   S.SumCon _ -> error "not supported"
  -- UMiscOp op -> \x -> emit =<< MiscOp <$> matchGenericOp op x
  -- UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
  UBinOp op -> \case ~[x, y] -> emitBinOp op x y
@@ -1059,19 +1059,19 @@ matchPrimApp = \case
      ExplicitCoreLam (UnaryNest b) body <- return x
      return $ UnaryLamExpr b body
 
-   matchGenericOp :: GenericOp op => OpConst op CoreIR -> [CAtom n] -> InfererM i n (op CoreIR n)
-   matchGenericOp op xs = do
-     (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
-       case getType x of
-         TyCon (Kind TypeKind) -> do
-           Just x' <- return $ toMaybeType x
-           return $ Left x'
-         _ -> return $ Right x
-     let tyArgs' = case tyArgs of
-           [] -> Nothing
-           [t] -> Just t
-           _ -> error "Expected at most one type arg"
-     return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
+   -- matchGenericOp :: GenericOp op => OpConst op CoreIR -> [CAtom n] -> InfererM i n (op CoreIR n)
+   -- matchGenericOp op xs = do
+   --   (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
+   --     case getType x of
+   --       TyCon (Kind TypeKind) -> do
+   --         Just x' <- return $ toMaybeType x
+   --         return $ Left x'
+   --       _ -> return $ Right x
+   --   let tyArgs' = case tyArgs of
+   --         [] -> Nothing
+   --         [t] -> Just t
+   --         _ -> error "Expected at most one type arg"
+   --   return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
 
 pattern ExplicitCoreLam :: Nest CBinder n l -> CExpr l -> CAtom n
 pattern ExplicitCoreLam bs body <- Con (Lam (CoreLamExpr _ (LamExpr bs body)))

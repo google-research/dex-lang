@@ -320,10 +320,10 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
   Hof hof -> toImpTypedHof hof
 
 toImpRefOp :: Emits o
-  => SAtom i -> RefOp SimpIR i -> SubstImpM i o (SAtom o)
+  => SAtom i -> RefOp SimpIR (SAtom i) -> SubstImpM i o (SAtom o)
 toImpRefOp refDest' m = do
   refDest <- atomToDest =<< substM refDest'
-  substM m >>= \case
+  mapM substM m >>= \case
     MPut x -> storeAtom refDest x >> return UnitVal
     MGet -> do
       Dest resultTy _ <- return refDest
@@ -335,23 +335,23 @@ toImpRefOp refDest' m = do
     IndexRef i -> destToAtom <$> indexDest refDest i
     ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
 
-toImpOp :: forall i o . Emits o => SType i -> PrimOp SimpIR i -> SubstImpM i o (SAtom o)
+toImpOp :: forall i o . Emits o => SType i -> PrimOp SimpIR (SAtom i) -> SubstImpM i o (SAtom o)
 toImpOp resultTy op = case op of
   RefOp refDest eff -> toImpRefOp refDest eff
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
-  MemOp    op' -> toImpMemOp    =<< substM op'
+  MemOp    op' -> toImpMemOp    =<< mapM substM op'
   MiscOp   op' -> do
     resultTy' <- substM resultTy
-    toImpMiscOp resultTy' =<< substM op'
+    toImpMiscOp resultTy' =<< mapM substM op'
   VectorOp op' -> do
     resultTy' <- substM resultTy
-    toImpVectorOp resultTy' =<< substM op'
+    toImpVectorOp resultTy' =<< mapM substM op'
   where
     fsa x = substM x >>= fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpVectorOp :: Emits o => SType o -> VectorOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpVectorOp :: Emits o => SType o -> VectorOp SimpIR (SAtom o) -> SubstImpM i o (SAtom o)
 toImpVectorOp vty = \case
   VectorBroadcast val -> do
     val' <- fromScalarAtom val
@@ -373,7 +373,7 @@ castPtrToVectorType ptr vty = do
   let PtrType (addrSpace, _) = getIType ptr
   cast ptr (PtrType (addrSpace, vty))
 
-toImpMiscOp :: forall i o . Emits o => SType o -> MiscOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpMiscOp :: forall i o . Emits o => SType o -> MiscOp SimpIR (SAtom o) -> SubstImpM i o (SAtom o)
 toImpMiscOp resultTy op = case op of
   ThrowError -> do
     emitStatement IThrowError
@@ -424,7 +424,7 @@ toImpMiscOp resultTy op = case op of
     fsa = fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpMemOp :: forall i o . Emits o => MemOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpMemOp :: forall i o . Emits o => MemOp SimpIR (SAtom o) -> SubstImpM i o (SAtom o)
 toImpMemOp op = case op of
   IOAlloc n -> do
     n' <- fsa n

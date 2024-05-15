@@ -60,8 +60,8 @@ import Err
 import Name
 import PPrint
 import Types.Primitives
+import qualified Types.Source as S
 import Types.Source
-import qualified Types.OpNames as P
 import Util
 
 -- === Converting concrete syntax to abstract syntax ===
@@ -521,7 +521,7 @@ charExpr :: Char -> (UExpr' VoidS)
 charExpr c = ULit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: SrcId -> UExpr VoidS
-unitExpr sid = WithSrcE sid $ UPrim (UCon $ P.ProdCon) []
+unitExpr sid = WithSrcE sid $ UPrim (UCon $ S.ProdCon) []
 
 -- === Builders ===
 
