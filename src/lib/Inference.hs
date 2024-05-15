@@ -29,7 +29,7 @@ import GHC.Generics (Generic (..))
 
 import Builder
 import CheapReduction
-import CheckType
+-- import CheckType
 import Core
 import Err
 import IRVariants
@@ -1037,12 +1037,12 @@ matchPrimApp = \case
  UCon con -> case con of
    P.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
    P.SumCon _ -> error "not supported"
- UMiscOp op -> \x -> emit =<< MiscOp <$> matchGenericOp op x
- UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
- UBinOp op -> \case ~[x, y] -> emit $ BinOp op x y
- UUnOp  op -> \case ~[x]    -> emit $ UnOp  op x
- UMGet      -> \case ~[r]    -> emit $ RefOp r MGet
- UMPut      -> \case ~[r, x] -> emit $ RefOp r $ MPut x
+ -- UMiscOp op -> \x -> emit =<< MiscOp <$> matchGenericOp op x
+ -- UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
+ UBinOp op -> \case ~[x, y] -> emitBinOp op x y
+ UUnOp  op -> \case ~[x]    -> emitUnOp  op x
+ UMGet      -> \case ~[r]    -> emitRefOp r MGet
+ UMPut      -> \case ~[r, x] -> emitRefOp r $ MPut x
  UIndexRef  -> \case ~[r, i] -> indexRef r i
  UApplyMethod i -> \case ~(d:args) -> emit =<< mkApplyMethod (fromJust $ toMaybeDict d) i args
  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
@@ -1116,7 +1116,7 @@ buildNthOrderedAlt alts _ resultTy i v = do
   case lookup i [(idx, alt) | IndexedAlt idx alt <- alts] of
     Nothing -> do
       resultTy' <- sinkM resultTy
-      emit $ ThrowError resultTy'
+      emit $ PrimOp resultTy' $ MiscOp ThrowError
     Just alt -> applyAbs alt (SubstVal v) >>= emit
 
 buildMonomorphicCase
@@ -2212,14 +2212,6 @@ instance PrettyE e => Pretty (UDeclInferenceResult e l) where
 
 instance SinkableE e => SinkableE (UDeclInferenceResult e) where
   sinkingProofE = todoSinkableProof
-
-instance (RenameE e, CheckableE CoreIR e) => CheckableE CoreIR (UDeclInferenceResult e) where
-  checkE = \case
-    UDeclResultDone e -> UDeclResultDone <$> checkE e
-    UDeclResultBindName ann block ab ->
-      UDeclResultBindName ann <$> checkE block <*> renameM ab -- TODO: check result
-    UDeclResultBindPattern hint block recon ->
-      UDeclResultBindPattern hint <$> checkE block <*> renameM recon -- TODO: check recon
 
 instance GenericE SynthType where
   type RepE SynthType = EitherE2 DictType (PairE (LiftE [Explicitness]) (Abs (Nest CBinder) DictType))

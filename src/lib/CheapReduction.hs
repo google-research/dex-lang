@@ -110,7 +110,7 @@ reduceExprM = \case
        withInstantiated def args \(PairE _ (InstanceBody _ methods)) -> do
          reduceApp (methods !! i) explicitArgs'
      _ -> empty
- PrimOp (MiscOp (CastOp ty' val')) -> do
+ PrimOp ty' (MiscOp (CastOp val')) -> do
    ty  <- substM ty'
    val <- substM val'
    case (ty, val) of
@@ -124,7 +124,7 @@ reduceExprM = \case
  TopApp _ _ _ -> empty
  Case _ _ _   -> empty
  TabCon _ _   -> empty
- PrimOp _     -> empty
+ PrimOp _ _   -> empty
 
 reduceApp :: CAtom i -> [CAtom o] -> ReducerM i o (CAtom o)
 reduceApp f xs = do
@@ -392,7 +392,7 @@ instance IRRep r => VisitGeneric (Expr r) r where
       return $ Case x' alts' effTy'
     Atom x -> Atom <$> visitGeneric x
     TabCon t xs -> TabCon <$> visitGeneric t <*> mapM visitGeneric xs
-    PrimOp op -> PrimOp <$> visitGeneric op
+    PrimOp t op -> PrimOp <$> visitGeneric t <*> visitGeneric op
     App et fAtom xs -> App <$> visitGeneric et <*> visitGeneric fAtom <*> mapM visitGeneric xs
     ApplyMethod et m i xs -> ApplyMethod <$> visitGeneric et <*> visitGeneric m <*> pure i <*> mapM visitGeneric xs
     Project t i x -> Project <$> visitGeneric t <*> pure i <*> visitGeneric x

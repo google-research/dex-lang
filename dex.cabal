@@ -44,7 +44,7 @@ library
                      , Builder
                      , CUDA
                      , CheapReduction
-                     , CheckType
+                     -- , CheckType
                      , ConcreteSyntax
                      , Core
                      , DPS
@@ -56,9 +56,9 @@ library
                      , Inference
                      -- , Inline
                      , IRVariants
-                     , JAX.Concrete
-                     , JAX.Rename
-                     , JAX.ToSimp
+                     -- , JAX.Concrete
+                     -- , JAX.Rename
+                     -- , JAX.ToSimp
                      , LLVM.Link
                      , LLVM.Compile
                      , LLVM.CUDA
@@ -75,7 +75,7 @@ library
                      , PPrint
                      , RawName
                      , Runtime
-                     , RuntimePrint
+                     -- , RuntimePrint
                      , Serialize
                      , Simplify
                      , Subst

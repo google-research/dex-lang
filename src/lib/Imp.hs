@@ -30,7 +30,7 @@ import qualified Control.Monad.State.Strict as MTL
 
 import Builder
 import CheapReduction
-import CheckType (CheckableE (..))
+-- import CheckType (CheckableE (..))
 import Core
 import Err
 import IRVariants
@@ -289,7 +289,7 @@ translateExpr expr = confuseGHC >>= \_ -> case expr of
         results <- impCall f scalarArgs
         restructureScalarOrPairType resultTy results
   Atom x -> substM x
-  PrimOp op -> toImpOp op
+  PrimOp ty op -> toImpOp ty op
   Case e alts (EffTy _ unitResultTy) -> do
     e' <- substM e
     case unitResultTy of
@@ -332,34 +332,38 @@ toImpRefOp refDest' m = do
       -- than to go through a general purpose atom.
       storeAtom dest =<< loadAtom refDest
       loadAtom dest
-    IndexRef _ i -> destToAtom <$> indexDest refDest i
-    ProjRef  _ ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
+    IndexRef i -> destToAtom <$> indexDest refDest i
+    ProjRef  ~(ProjectProduct i) -> return $ destToAtom $ projectDest i refDest
 
-toImpOp :: forall i o . Emits o => PrimOp SimpIR i -> SubstImpM i o (SAtom o)
-toImpOp op = case op of
+toImpOp :: forall i o . Emits o => SType i -> PrimOp SimpIR i -> SubstImpM i o (SAtom o)
+toImpOp resultTy op = case op of
   RefOp refDest eff -> toImpRefOp refDest eff
   BinOp binOp x y -> returnIExprVal =<< emitInstr =<< (IBinOp binOp <$> fsa x <*> fsa y)
   UnOp  unOp  x   -> returnIExprVal =<< emitInstr =<< (IUnOp  unOp  <$> fsa x)
   MemOp    op' -> toImpMemOp    =<< substM op'
-  MiscOp   op' -> toImpMiscOp   =<< substM op'
-  VectorOp op' -> toImpVectorOp =<< substM op'
+  MiscOp   op' -> do
+    resultTy' <- substM resultTy
+    toImpMiscOp resultTy' =<< substM op'
+  VectorOp op' -> do
+    resultTy' <- substM resultTy
+    toImpVectorOp resultTy' =<< substM op'
   where
     fsa x = substM x >>= fromScalarAtom
     returnIExprVal x = return $ toScalarAtom x
 
-toImpVectorOp :: Emits o => VectorOp SimpIR o -> SubstImpM i o (SAtom o)
-toImpVectorOp = \case
-  VectorBroadcast val vty -> do
+toImpVectorOp :: Emits o => SType o -> VectorOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpVectorOp vty = \case
+  VectorBroadcast val -> do
     val' <- fromScalarAtom val
     emitInstr (IVectorBroadcast val' $ toIVectorType vty) >>= returnIExprVal
-  VectorIota vty -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
-  VectorSubref ref i vty -> do
+  VectorIota -> emitInstr (IVectorIota $ toIVectorType vty) >>= returnIExprVal
+  VectorSubref ref i -> do
     refDest <- atomToDest ref
     refi <- destToAtom <$> indexDest refDest i
     refi' <- fromScalarAtom refi
     resultVal <- castPtrToVectorType refi' (toIVectorType vty)
     repValAtom $ RepVal (RefTy vty) (Leaf resultVal)
-  VectorIdx _ _ _ -> error "Unexpected VectorIdx in Imp pass"
+  VectorIdx _ _ -> error "Unexpected VectorIdx in Imp pass"
   where
     returnIExprVal x = return $ toScalarAtom x
 
@@ -369,20 +373,20 @@ castPtrToVectorType ptr vty = do
   let PtrType (addrSpace, _) = getIType ptr
   cast ptr (PtrType (addrSpace, vty))
 
-toImpMiscOp :: forall i o . Emits o => MiscOp SimpIR o -> SubstImpM i o (SAtom o)
-toImpMiscOp op = case op of
-  ThrowError resultTy -> do
+toImpMiscOp :: forall i o . Emits o => SType o -> MiscOp SimpIR o -> SubstImpM i o (SAtom o)
+toImpMiscOp resultTy op = case op of
+  ThrowError -> do
     emitStatement IThrowError
     buildGarbageVal resultTy
-  CastOp destTy x -> do
+  CastOp x -> do
     BaseTy _  <- return $ getType x
-    BaseTy bt <- return destTy
+    BaseTy bt <- return resultTy
     x' <- fsa x
     returnIExprVal =<< cast x' bt
-  BitcastOp destTy x -> do
-    BaseTy bt <- return destTy
+  BitcastOp x -> do
+    BaseTy bt <- return resultTy
     returnIExprVal =<< emitInstr =<< (IBitcastOp bt <$> fsa x)
-  UnsafeCoerce resultTy x -> do
+  UnsafeCoerce x -> do
     srcTy <- return $ getType x
     srcRep  <- getRepBaseTypes srcTy
     destRep <- getRepBaseTypes resultTy
@@ -390,8 +394,8 @@ toImpMiscOp op = case op of
       "representation types don't match: " ++ pprint srcRep ++ "  !=  " ++ pprint destRep
     RepVal _ tree <- atomToRepVal x
     repValAtom (RepVal resultTy tree)
-  GarbageVal resultTy -> buildGarbageVal resultTy
-  NewRef _ -> error "not implemented"
+  GarbageVal -> buildGarbageVal resultTy
+  NewRef -> error "not implemented"
   Select p x y -> do
     BaseTy _ <- return $ getType x
     returnIExprVal =<< emitInstr =<< (ISelect <$> fsa p <*> fsa x <*> fsa y)
@@ -401,15 +405,14 @@ toImpMiscOp op = case op of
       RepVal _ (Branch (tag:_)) <- return dRepVal
       return $ toAtom $ RepVal (TagRepTy :: SType o) tag
     _ -> error $ "Not a data constructor: " ++ pprint con
-  ToEnum ty i -> case ty of
+  ToEnum i -> case resultTy of
     TyCon (SumType cases) -> do
       i' <- fromScalarAtom i
-      return $ toAtom $ RepVal ty $ Branch $ Leaf i' : map (const (Branch [])) cases
-    _ -> error $ "Not an enum: " ++ pprint ty
+      return $ toAtom $ RepVal resultTy $ Branch $ Leaf i' : map (const (Branch [])) cases
+    _ -> error $ "Not an enum: " ++ pprint resultTy
   OutputStream -> returnIExprVal =<< emitInstr IOutputStream
   ShowAny _ -> error "Shouldn't have ShowAny in simplified IR"
   ShowScalar x -> do
-    resultTy <- return $ getType $ PrimOp $ MiscOp op
     Dest (PairTy sizeTy tabTy) (Branch [sizeTree, tabTree@(Leaf tabPtr)]) <- allocDest resultTy
     xScalar <- fromScalarAtom x
     size <- emitInstr $ IShowScalar tabPtr xScalar
@@ -1234,8 +1237,8 @@ impInstrTypes instr = case instr of
   IShowScalar _ _  -> return [Scalar Word32Type]
   where hostPtrTy ty = PtrType (CPU, ty)
 
-instance CheckableE SimpIR ImpFunction where
-  checkE = renameM -- TODO
+-- instance CheckableE SimpIR ImpFunction where
+--   checkE = renameM -- TODO
 
 -- TODO: Don't use Core Envs for Imp!
 instance BindsEnv ImpDecl where

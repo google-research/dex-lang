@@ -42,6 +42,18 @@ import Util (enumerate, transitiveClosureM, bindM2, toSnocList, popList)
 peepholeExpr :: a -> a
 peepholeExpr = id
 
+-- === ToExpr ===
+
+class ToExpr (e::E) (r::IR) | e -> r where
+  toExpr :: e n -> Expr r n
+
+instance ToExpr (Expr     r) r where toExpr = id
+instance ToExpr (Atom     r) r where toExpr = Atom
+instance ToExpr (Con      r) r where toExpr = Atom . Con
+instance ToExpr (AtomVar  r) r where toExpr = toExpr . toAtom
+instance IRRep r => ToExpr (MemOp    r) r where toExpr op = PrimOp (getType op) (MemOp op)
+instance ToExpr (TypedHof r) r where toExpr = Hof
+
 -- === Ordinary (local) builder class ===
 
 class (EnvReader m, Fallible1 m, IRRep r)
@@ -80,6 +92,18 @@ emit e = case toExpr e of
     v <- emitDecl noHint PlainLet $ peepholeExpr expr
     return $ toAtom v
 {-# INLINE emit #-}
+
+emitUnOp :: (Builder r m, Emits n) => UnOp -> Atom r n -> m n (Atom r n)
+emitUnOp op x = emit $ PrimOp resultTy $ UnOp op x
+  where resultTy = TyCon $ BaseType $ typeUnOp op $ getTypeBaseType x
+
+
+emitBinOp :: (Builder r m, Emits n) => BinOp -> Atom r n -> Atom r n -> m n (Atom r n)
+emitBinOp op x y = emit $ PrimOp resultTy $ BinOp op x y
+  where resultTy = TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
+
+emitRefOp :: (Builder r m, Emits n) => Atom r n -> RefOp r n -> m n (Atom r n)
+emitRefOp ref op = undefined
 
 emitToVar :: (Builder r m, ToExpr e r, Emits n) => e n -> m n (AtomVar r n)
 emitToVar expr = emit expr >>= \case
@@ -823,7 +847,7 @@ maybeTangentType' ty = case ty of
 addTangent :: (Emits n, SBuilder m) => SAtom n -> SAtom n -> m n (SAtom n)
 addTangent x y = do
   case getTyCon x of
-    BaseType (Scalar _) -> emit $ BinOp FAdd x y
+    BaseType (Scalar _) -> emitBinOp FAdd x y
     ProdType _          -> do
       xs <- getUnpacked x
       ys <- getUnpacked y
@@ -855,22 +879,22 @@ symbolicTangentNonZero val = do
 -- === builder versions of common local ops ===
 
 fadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fadd x y = emit $ BinOp FAdd x y
+fadd x y = emitBinOp FAdd x y
 
 fsub :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fsub x y = emit $ BinOp FSub x y
+fsub x y = emitBinOp FSub x y
 
 fmul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fmul x y = emit $ BinOp FMul x y
+fmul x y = emitBinOp FMul x y
 
 fdiv :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-fdiv x y = emit $ BinOp FDiv x y
+fdiv x y = emitBinOp FDiv x y
 
 iadd :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-iadd x y = emit $ BinOp IAdd x y
+iadd x y = emitBinOp IAdd x y
 
 imul :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
-imul x y = emit $ BinOp IMul x y
+imul x y = emitBinOp IMul x y
 
 fLitLike :: Double -> SAtom n -> SAtom n
 fLitLike x t = case getTyCon t of
@@ -893,7 +917,7 @@ getProjRef :: (Builder r m, Emits n) => Projection -> Atom r n -> m n (Atom r n)
 getProjRef i r = emit =<< mkProjRef r i
 
 newUninitializedRef :: (SBuilder m, Emits o) => SType o -> m o (SAtom o)
-newUninitializedRef ty = emit $ NewRef ty
+newUninitializedRef ty = emit $ PrimOp ty $ MiscOp NewRef
 
 -- XXX: getUnpacked must reduce its argument to enforce the invariant that
 -- ProjectElt atoms are always fully reduced (to avoid type errors between two
@@ -1068,21 +1092,21 @@ naryIndexRef ref is = foldM indexRef ref is
 
 ptrOffset :: (Builder r m, Emits n) => Atom r n -> Atom r n -> m n (Atom r n)
 ptrOffset x (IdxRepVal 0) = return x
-ptrOffset x i = emit $ MemOp $ PtrOffset x i
+ptrOffset x i = emit $ PtrOffset x i
 {-# INLINE ptrOffset #-}
 
 unsafePtrLoad :: (Builder r m, Emits n) => Atom r n -> m n (Atom r n)
-unsafePtrLoad x = emit . MemOp . PtrLoad =<< sinkM x
+unsafePtrLoad x = emit . PtrLoad =<< sinkM x
 
-mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Atom r n -> Atom r n -> m n (PrimOp r n)
+mkIndexRef :: (EnvReader m, Fallible1 m, IRRep r) => Atom r n -> Atom r n -> m n (Expr r n)
 mkIndexRef ref i = do
   resultTy <- typeOfIndexRef (getType ref) i
-  return $ RefOp ref $ IndexRef resultTy i
+  return $ PrimOp resultTy $ RefOp ref $ IndexRef i
 
-mkProjRef :: (EnvReader m, IRRep r) => Atom r n -> Projection -> m n (PrimOp r n)
+mkProjRef :: (EnvReader m, IRRep r) => Atom r n -> Projection -> m n (Expr r n)
 mkProjRef ref i = do
   resultTy <- typeOfProjRef (getType ref) i
-  return $ RefOp ref $ ProjRef resultTy i
+  return $ PrimOp resultTy $ RefOp ref $ ProjRef i
 
 -- === index set type class ===
 
@@ -1127,7 +1151,7 @@ emitIf :: (Emits n, ScopableBuilder r m)
        -> (forall l. (Emits l, DExt n l) => m l (Atom r l))
        -> m n (Atom r n)
 emitIf predicate resultTy trueCase falseCase = do
-  predicate' <- emit $ ToEnum (TyCon (SumType [UnitTy, UnitTy])) predicate
+  predicate' <- emit $ PrimOp (TyCon (SumType [UnitTy, UnitTy])) $ MiscOp (ToEnum predicate)
   buildCase predicate' resultTy \i _ ->
     case i of
       0 -> falseCase

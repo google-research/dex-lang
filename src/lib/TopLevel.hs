@@ -43,10 +43,10 @@ import qualified LLVM.AST
 
 import AbstractSyntax
 import Builder
-import CheckType ( CheckableE (..), checkTypeIs)
-#ifdef DEX_DEBUG
-import CheckType (checkTypes)
-#endif
+-- import CheckType ( CheckableE (..), checkTypeIs)
+-- #ifdef DEX_DEBUG
+-- import CheckType (checkTypes)
+-- #endif
 import Core
 import ConcreteSyntax
 import CheapReduction
@@ -288,36 +288,37 @@ evalSourceBlock' mname block = case sbContents block of
         let desc = makeTopNameDescription mname block
         emitSourceMap $ SourceMap $
           M.singleton dexName [ModuleVar desc (Just $ UAtomVar vCore)]
-  DeclareCustomLinearization fname zeros g -> do
-    expr <- parseExpr g
-    lookupSourceMap (withoutSrc fname) >>= \case
-      Nothing -> throw rootSrcId $ UnboundVarErr $ pprint fname
-      Just (UAtomVar fname') -> do
-        lookupCustomRules fname' >>= \case
-          Nothing -> return ()
-          Just _  -> throwErr $ MiscErr $ MiscMiscErr
-            $ pprint fname ++ " already has a custom linearization"
-        lookupAtomName fname' >>= \case
-          NoinlineFun _ _ -> return ()
-          _ -> throwErr $ MiscErr $ MiscMiscErr "Custom linearizations only apply to @noinline functions"
-        -- We do some special casing to avoid instantiating polymorphic functions.
-        impl <- case expr of
-          WithSrcE _ (UVar _) ->
-            renameSourceNamesUExpr expr >>= \case
-              WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> toAtom <$> toAtomVar v
-              _ -> error "Expected a variable"
-          _ -> evalUExpr expr
-        fType <- getType <$> toAtomVar fname'
-        (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
-        liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
-          Failure _ -> do
-            let implTy = getType impl
-            throwErr $ MiscErr $ MiscMiscErr $ unlines
-              [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
-              , "but it has type:" , "" , pprint implTy]
-          Success () -> return ()
-        updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
-      Just _ -> throwErr $ MiscErr $ MiscMiscErr $ "Custom linearization can only be defined for functions"
+  DeclareCustomLinearization fname zeros g -> undefined
+  -- DeclareCustomLinearization fname zeros g -> do
+  --   expr <- parseExpr g
+  --   lookupSourceMap (withoutSrc fname) >>= \case
+  --     Nothing -> throw rootSrcId $ UnboundVarErr $ pprint fname
+  --     Just (UAtomVar fname') -> do
+  --       lookupCustomRules fname' >>= \case
+  --         Nothing -> return ()
+  --         Just _  -> throwErr $ MiscErr $ MiscMiscErr
+  --           $ pprint fname ++ " already has a custom linearization"
+  --       lookupAtomName fname' >>= \case
+  --         NoinlineFun _ _ -> return ()
+  --         _ -> throwErr $ MiscErr $ MiscMiscErr "Custom linearizations only apply to @noinline functions"
+  --       -- We do some special casing to avoid instantiating polymorphic functions.
+  --       impl <- case expr of
+  --         WithSrcE _ (UVar _) ->
+  --           renameSourceNamesUExpr expr >>= \case
+  --             WithSrcE _ (UVar (InternalName _ _ (UAtomVar v))) -> toAtom <$> toAtomVar v
+  --             _ -> error "Expected a variable"
+  --         _ -> evalUExpr expr
+  --       fType <- getType <$> toAtomVar fname'
+  --       (nimplicit, nexplicit, linFunTy) <- liftExceptEnvReaderM $ getLinearizationType zeros fType
+  --       liftEnvReaderT (impl `checkTypeIs` linFunTy) >>= \case
+  --         Failure _ -> do
+  --           let implTy = getType impl
+  --           throwErr $ MiscErr $ MiscMiscErr $ unlines
+  --             [ "Expected the custom linearization to have type:" , "" , pprint linFunTy , ""
+  --             , "but it has type:" , "" , pprint implTy]
+  --         Success () -> return ()
+  --       updateTopEnv $ AddCustomRule fname' $ CustomLinearize nimplicit nexplicit zeros impl
+  --     Just _ -> throwErr $ MiscErr $ MiscMiscErr $ "Custom linearization can only be defined for functions"
   UnParseable _ s -> throwErr $ ParseErr $ MiscParseErr s
   Misc m -> case m of
     GetNameType v -> do
@@ -596,10 +597,11 @@ compileTopLevelFun cc fSimp = do
   checkPass ImpPass $ toImpFunction cc flOpt
 
 printCodegen :: (Topper m, Mut n) => CAtom n -> m n String
-printCodegen x = do
-  block <- liftBuilder $ buildBlock $ emit $ ShowAny $ sink x
-  (topBlock, _) <- asTopBlock block
-  getDexString =<< evalBlock topBlock
+printCodegen x = undefined
+-- printCodegen x = do
+--   block <- liftBuilder $ buildBlock $ emit $ ShowAny $ sink x
+--   (topBlock, _) <- asTopBlock block
+--   getDexString =<< evalBlock topBlock
 
 loadObject :: (Topper m, Mut n) => FunObjCodeName n -> m n NativeFunction
 loadObject fname =
@@ -674,19 +676,26 @@ funNameToObj v = do
     TopFunBinding (DexTopFun _ _ (Finished impl)) -> return $ topFunObjCode impl
     b -> error $ "couldn't find object cache entry for " ++ pprint v ++ "\ngot:\n" ++ pprint b
 
-checkPass :: (Topper m, Pretty (e n), CheckableE r e)
+checkPass :: (Topper m, Pretty (e n))
           => PassName -> m n (e n) -> m n (e n)
 checkPass name cont = do
   result <- cont
   logPass name result
-#ifdef DEX_DEBUG
-  logDebug $ return $ MiscLog $ "Running checks"
-  checkTypes result
-  logDebug $ return $ MiscLog $ "Checks passed"
-#else
-  logDebug $ return $ MiscLog $ "Checks skipped (not a debug build)"
-#endif
   return result
+
+-- checkPass :: (Topper m, Pretty (e n), CheckableE r e)
+--           => PassName -> m n (e n) -> m n (e n)
+-- checkPass name cont = do
+--   result <- cont
+--   logPass name result
+-- #ifdef DEX_DEBUG
+--   logDebug $ return $ MiscLog $ "Running checks"
+--   checkTypes result
+--   logDebug $ return $ MiscLog $ "Checks passed"
+-- #else
+--   logDebug $ return $ MiscLog $ "Checks skipped (not a debug build)"
+-- #endif
+--   return result
 
 logTop :: TopLogger m => Output -> m ()
 logTop x = emitLog $ Outputs [x]

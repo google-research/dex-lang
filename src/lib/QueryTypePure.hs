@@ -135,7 +135,7 @@ instance IRRep r => HasType r (Expr r) where
     Atom x   -> getType x
     Block (EffTy _ ty) _ -> ty
     TabCon ty _ -> ty
-    PrimOp op -> getType op
+    PrimOp ty _ -> ty
     Case _ _ (EffTy _ resultTy) -> resultTy
     ApplyMethod (EffTy _ t) _ _ _ -> t
     Project t _ _ -> t
@@ -144,21 +144,6 @@ instance IRRep r => HasType r (Expr r) where
 
 instance IRRep r => HasType r (RepVal r) where
   getType (RepVal ty _) = ty
-
-instance IRRep r => HasType r (PrimOp r) where
-  getType primOp = case primOp of
-    BinOp op x _ -> TyCon $ BaseType $ typeBinOp op $ getTypeBaseType x
-    UnOp  op x   -> TyCon $ BaseType $ typeUnOp  op $ getTypeBaseType x
-    MemOp op -> getType op
-    MiscOp op -> getType op
-    VectorOp op -> getType op
-    RefOp ref m -> case getType ref of
-      TyCon (RefType s) -> case m of
-        MGet        -> s
-        MPut _      -> UnitTy
-        IndexRef t _ -> t
-        ProjRef t _ -> t
-      _ -> error "not a reference type"
 
 getTypeBaseType :: (IRRep r, HasType r e) => e n -> BaseType
 getTypeBaseType e = case getType e of
@@ -174,30 +159,6 @@ instance IRRep r => HasType r (MemOp r) where
       let PtrTy (_, t) = getType ptr
       toType $ BaseType t
     PtrStore _ _ -> UnitTy
-
-instance IRRep r => HasType r (VectorOp r) where
-  getType = \case
-    VectorBroadcast _ vty -> vty
-    VectorIota vty -> vty
-    VectorIdx _ _ vty -> vty
-    VectorSubref ref _ vty -> case getType ref of
-      TyCon (RefType _) -> TyCon $ RefType vty
-      ty -> error $ "Not a reference type: " ++ show ty
-
-instance IRRep r => HasType r (MiscOp r) where
-  getType = \case
-    Select _ x _ -> getType x
-    ThrowError t     -> t
-    CastOp t _       -> t
-    BitcastOp t _    -> t
-    UnsafeCoerce t _ -> t
-    GarbageVal t -> t
-    SumTag _     -> TagRepTy
-    ToEnum t _   -> t
-    OutputStream -> toType $ BaseType $ hostPtrTy $ Scalar Word8Type
-      where hostPtrTy ty = PtrType (CPU, ty)
-    ShowAny _ -> rawStrType -- TODO: constrain `ShowAny` to have `HasCore r`
-    ShowScalar _ -> toType $ ProdType [IdxRepTy, rawFinTabType (IdxRepVal showStringBufferSize) CharRepTy]
 
 rawStrType :: IRRep r => Type r n
 rawStrType = case newName "n" of
@@ -255,7 +216,7 @@ instance IRRep r => HasEffects (Expr r) r where
     Case _ _ (EffTy effs _) -> effs
     TabCon _ _      -> Pure
     ApplyMethod (EffTy eff _) _ _ _ -> eff
-    PrimOp primOp -> getEffects primOp
+    PrimOp _ primOp -> getEffects primOp
     Project _ _ _ -> Pure
     Unwrap _ _ -> Pure
     Hof (TypedHof (EffTy eff _) _) -> eff
@@ -277,19 +238,19 @@ instance IRRep r => HasEffects (PrimOp r) r where
       PtrOffset _ _ -> Pure
     MiscOp op -> case op of
       Select _ _ _     -> Pure
-      ThrowError _     -> Pure
-      CastOp _ _       -> Pure
-      UnsafeCoerce _ _ -> Pure
-      GarbageVal _     -> Pure
-      BitcastOp _ _    -> Pure
+      ThrowError       -> Pure
+      CastOp _         -> Pure
+      UnsafeCoerce _   -> Pure
+      GarbageVal       -> Pure
+      BitcastOp _      -> Pure
       SumTag _         -> Pure
-      ToEnum _ _       -> Pure
+      ToEnum _         -> Pure
       OutputStream     -> Pure
       ShowAny _        -> Pure
       ShowScalar _     -> Pure
     RefOp _ m -> case m of
       MGet      -> Effectful
       MPut    _ -> Effectful
-      IndexRef _ _ -> Pure
-      ProjRef _ _  -> Pure
+      IndexRef _ -> Pure
+      ProjRef _  -> Pure
   {-# INLINE getEffects #-}

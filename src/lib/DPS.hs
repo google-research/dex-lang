@@ -85,7 +85,7 @@ storeDest :: Emits o => Dest o -> SAtom o -> DestM i o ()
 storeDest dest val = do
   RefTy (TyCon tycon) <- return $ getType dest
   case tycon of
-    BaseType _ -> void $ emit $ RefOp dest $ MPut val
+    BaseType _ -> undefined -- void $ emit $ RefOp dest $ MPut val
 
 -- The dps pass carries a non-type-preserving substitution in which arrays are
 -- replaced with refs to arrays. So it's incorrect to directly apply the
@@ -121,7 +121,7 @@ dpsExpr maybeDest expr = case expr of
       return UnitVal
   Atom x ->  lowerAtom x >>= returnResult
   TabCon _ _ -> undefined
-  PrimOp _ -> undefined
+  PrimOp _ _ -> undefined
   Project _ _ _ -> undefined
 
   where

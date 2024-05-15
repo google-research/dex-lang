@@ -24,7 +24,7 @@ import Name
 import Subst
 import PPrint
 import QueryType
-import RuntimePrint
+-- import RuntimePrint
 -- import Transpose
 import Types.Core
 import Types.Top
@@ -221,7 +221,7 @@ simplifyExpr = \case
     f' <- toDataAtom f
     simplifyTabApp f' x'
   Atom x -> simplifyAtom x
-  PrimOp  op  -> simplifyOp op
+  PrimOp _ op  -> simplifyOp op
   Hof (TypedHof (EffTy _ ty) hof) -> simplifyHof hof
   ApplyMethod (EffTy _ ty) dict i xs -> do
     xs' <- mapM simplifyAtom xs
@@ -255,16 +255,16 @@ requireReduced expr = reduceExpr expr >>= \case
 
 simplifyRefOp :: Emits o => RefOp CoreIR i -> SAtom o -> SimplifyM i o (SAtom o)
 simplifyRefOp op ref = case op of
-  MGet   -> emit $ RefOp ref MGet
+  MGet   -> undefined -- emit $ RefOp ref MGet
   MPut x -> do
     x' <- toDataAtom x
     emitRefOp $ MPut x'
-  IndexRef _ x -> do
+  IndexRef x -> do
     x' <- toDataAtom x
     emit =<< mkIndexRef ref x'
-  ProjRef _ (ProjectProduct i) -> emit =<< mkProjRef ref (ProjectProduct i)
-  ProjRef _ UnwrapNewtype -> return ref
-  where emitRefOp op' = emit $ RefOp ref op'
+  ProjRef (ProjectProduct i) -> emit =<< mkProjRef ref (ProjectProduct i)
+  ProjRef UnwrapNewtype -> return ref
+  where emitRefOp op' = undefined -- emit $ RefOp ref op'
 
 simplifyApp :: Emits o => SimpVal o -> [SimpVal o] -> SimplifyM i o (SimpVal o)
 simplifyApp f xs = case f of
@@ -410,22 +410,23 @@ simplifyLam (LamExpr bsTop body) = case bsTop of
 simplifyOp :: Emits o => PrimOp CoreIR i -> SimplifyM i o (SimpVal o)
 simplifyOp op = case op of
   MemOp    op' -> simplifyGenericOp op'
-  VectorOp op' -> simplifyGenericOp op'
+  VectorOp op' -> undefined -- simplifyGenericOp op'
   RefOp ref eff -> do
     ref' <- toDataAtom ref
     SimpAtom <$> simplifyRefOp eff ref'
   BinOp binop x y -> do
     x' <- toDataAtom x
     y' <- toDataAtom y
-    SimpAtom <$> emit (BinOp binop x' y')
+    SimpAtom <$> emitBinOp binop x' y'
   UnOp unOp x -> do
     x' <- toDataAtom x
-    SimpAtom <$> emit (UnOp unOp x')
+    SimpAtom <$> emitUnOp unOp x'
   MiscOp op' -> case op' of
-    ShowAny x -> do
-      x' <- toDataAtom x
-      dropSubst $ showAny x' >>= simplifyExpr
-    _ -> simplifyGenericOp op'
+    ShowAny x -> undefined
+    -- ShowAny x -> do
+    --   x' <- toDataAtom x
+    --   dropSubst $ showAny x' >>= simplifyExpr
+    _ -> undefined -- simplifyGenericOp op'
 
 simplifyGenericOp
   :: (GenericOp op, ToExpr (op SimpIR) SimpIR, HasType CoreIR (op CoreIR), Emits o,
