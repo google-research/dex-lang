@@ -36,7 +36,7 @@ import GHC.Float
 import GHC.Generics (Generic (..))
 
 import PPrint
-import Occurrence
+-- import Occurrence
 import Types.OpNames (UnOp (..), BinOp (..), CmpOp (..), Projection (..))
 import Name
 
@@ -70,11 +70,11 @@ data LetAnn =
   | LinearLet
   -- Bound expression is pure, and the binding's occurrences are summarized by
   -- the UsageInfo
-  | OccInfoPure UsageInfo
+  -- | OccInfoPure UsageInfo
   -- Bound expression is impure, and the binding's occurrences are summarized by
   -- the UsageInfo.  For now, the inliner does not distinguish different effects,
   -- so no additional information on effects is needed.
-  | OccInfoImpure UsageInfo
+  -- | OccInfoImpure UsageInfo
   deriving (Show, Eq, Generic)
 
 -- === Primitive scalar values and base types ===
@@ -233,8 +233,8 @@ instance Pretty LetAnn where
     InlineLet       -> "%inline"
     NoInlineLet     -> "%noinline"
     LinearLet       -> "%linear"
-    OccInfoPure   u -> pretty u <> hardline
-    OccInfoImpure u -> pretty u <> ", impure" <> hardline
+    -- OccInfoPure   u -> pretty u <> hardline
+    -- OccInfoImpure u -> pretty u <> ", impure" <> hardline
 
 instance PrettyPrec Direction where
   prettyPrec d = atPrec ArgPrec $ case d of

@@ -56,13 +56,13 @@ import IRVariants
 import Imp
 import ImpToLLVM
 import Inference
-import Inline
+-- import Inline
 import MonadUtil
 import MTL1
 import Subst
 import Name
-import OccAnalysis
-import Optimize
+-- import OccAnalysis
+-- import Optimize
 import Paths_dex  (getDataFileName)
 import QueryType
 import Runtime
@@ -77,7 +77,27 @@ import Types.Primitives
 import Types.Source
 import Types.Top
 import Util ( Tree (..), File (..), readFileWithHash)
-import Vectorize
+-- import Vectorize
+
+
+-- temporary stubs
+optimize :: EnvReader m => STopLam n -> m n (STopLam n)
+optimize x = return x
+
+inlineBindings :: (EnvReader m) => STopLam n -> m n (STopLam n)
+inlineBindings x = return x
+
+analyzeOccurrences :: EnvReader m => TopLam SimpIR n -> m n (TopLam SimpIR n)
+analyzeOccurrences x = return x
+
+vectorizeLoops :: EnvReader m => a -> STopLam n -> m n (STopLam n, [Err])
+vectorizeLoops _ x = return (x, [])
+
+hoistLoopInvariant :: EnvReader m => STopLam n -> m n (STopLam n)
+hoistLoopInvariant x = return x
+
+dceTop :: EnvReader m => STopLam n -> m n (STopLam n)
+dceTop x = return x
 
 -- === top-level monad ===
 

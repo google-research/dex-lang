@@ -19,13 +19,13 @@ import Core
 import Err
 import Generalize
 import IRVariants
-import Linearize
+-- import Linearize
 import Name
 import Subst
 import PPrint
 import QueryType
 import RuntimePrint
-import Transpose
+-- import Transpose
 import Types.Core
 import Types.Top
 import Types.Primitives
@@ -475,10 +475,10 @@ simplifyHof = \case
   --   result' <- liftSimpAtom lamResultTy result
   --   linFun' <- liftSimpFun linFunTy linFun
   --   return $ PairVal result' linFun'
-  Transpose lam x -> do
-    lam' <- simplifyLam lam
-    x' <- toDataAtom x
-    SimpAtom <$> transpose lam' x'
+  -- Transpose lam x -> do
+  --   lam' <- simplifyLam lam
+  --   x' <- toDataAtom x
+  --   SimpAtom <$> transpose lam' x'
 
 liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (SimpVal n)
 liftSimpFun = undefined -- (TyCon (Pi piTy)) f = mkStuck $ LiftSimpFun piTy f

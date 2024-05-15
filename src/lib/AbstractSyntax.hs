@@ -52,7 +52,7 @@ import Control.Monad (forM, when)
 import Data.Functor
 import Data.Either
 import Data.Maybe (catMaybes)
-import Data.Set qualified as S
+-- import Data.Set qualified as S
 import Data.Text (Text)
 
 import ConcreteSyntax

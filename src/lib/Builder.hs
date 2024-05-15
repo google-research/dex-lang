@@ -28,7 +28,7 @@ import IRVariants
 import MTL1
 import Subst
 import Name
-import PeepholeOptimize
+-- import PeepholeOptimize
 import PPrint
 import QueryType
 import Types.Core
@@ -37,6 +37,10 @@ import Types.Primitives
 import Types.Source
 import Types.Top
 import Util (enumerate, transitiveClosureM, bindM2, toSnocList, popList)
+
+-- temporary stub
+peepholeExpr :: a -> a
+peepholeExpr = id
 
 -- === Ordinary (local) builder class ===
 

@@ -54,7 +54,7 @@ library
                      , ImpToLLVM
                      , IncState
                      , Inference
-                     , Inline
+                     -- , Inline
                      , IRVariants
                      , JAX.Concrete
                      , JAX.Rename
@@ -64,14 +64,14 @@ library
                      , LLVM.CUDA
                      , LLVM.Shims
                      , Lexing
-                     , Linearize
+                     -- , Linearize
                      , MonadUtil
                      , MTL1
                      , Name
-                     , Occurrence
-                     , OccAnalysis
-                     , Optimize
-                     , PeepholeOptimize
+                     -- , Occurrence
+                     -- , OccAnalysis
+                     -- , Optimize
+                     -- , PeepholeOptimize
                      , PPrint
                      , RawName
                      , Runtime
@@ -82,7 +82,7 @@ library
                      , SourceRename
                      , SourceIdTraversal
                      , TopLevel
-                     , Transpose
+                     -- , Transpose
                      , Types.Core
                      , Types.Imp
                      , Types.Primitives
@@ -92,7 +92,7 @@ library
                      , QueryType
                      , QueryTypePure
                      , Util
-                     , Vectorize
+                     -- , Vectorize
                      , Actor
                      , Live.Eval
                      , Live.Web
