@@ -27,7 +27,6 @@ import Text.Megaparsec.Char hiding (space, eol)
 
 import Err
 import Lexing
-import Types.Core
 import Types.Source
 import Types.Primitives
 import Util

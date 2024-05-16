@@ -255,7 +255,7 @@ patOptAnn (WithSrcs _ _ (CBin Colon lhs typeAnn)) = (,) <$> pat lhs <*> (Just <$
 patOptAnn (WithSrcs _ _ (CParens [g])) = patOptAnn g
 patOptAnn g = (,Nothing) <$> pat g
 
-uBinder :: GroupW -> SyntaxM (UBinder c VoidS VoidS)
+uBinder :: GroupW -> SyntaxM (UBinder VoidS VoidS)
 uBinder (WithSrcs sid _ b) = case b of
   CLeaf (CIdentifier name) -> return $ fromSourceNameW $ WithSrc sid name
   CLeaf CHole -> return $ WithSrcB sid UIgnore

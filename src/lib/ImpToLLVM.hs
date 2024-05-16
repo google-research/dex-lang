@@ -60,11 +60,11 @@ import Util (IsBool (..), bindM2, enumerate)
 
 -- === Compile monad ===
 
-data OperandSubstVal (c::C) (n::S) where
-  OperandSubstVal  :: L.Operand -> OperandSubstVal ImpNameC n
-  PtrSubstVal      :: L.Operand -> OperandSubstVal PtrNameC n
-  FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal TopFunNameC   n
-  RenameOperandSubstVal :: Name c n -> OperandSubstVal c n -- only used for top-level FFI names
+data OperandSubstVal (n::S) where
+  OperandSubstVal  :: L.Operand -> OperandSubstVal n
+  PtrSubstVal      :: L.Operand -> OperandSubstVal n
+  FunctionSubstVal :: L.Operand -> LLVMFunType -> IFunType -> OperandSubstVal n
+  RenameOperandSubstVal :: Name n -> OperandSubstVal n -- only used for top-level FFI names
 
 type OperandEnv     = Subst     OperandSubstVal
 type OperandEnvFrag = SubstFrag OperandSubstVal
@@ -150,7 +150,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
       [prefix <> fromString (show h) <> "_" <> fromString (show i) | (i, h) <- enumerate hints]
 
     makeFunDefns :: EnvReader m => Nest IFunBinder any1 any2
-                 -> m n ([L.Definition], [CName], [OperandSubstVal TopFunNameC n])
+                 -> m n ([L.Definition], [CName], [OperandSubstVal n])
     makeFunDefns bs = do
       let cnames = makeNames "dex_called_fun_" $ nestToList getNameHint bs
       let tys = nestToList (\(IFunBinder _ ty) -> ty) bs
@@ -164,7 +164,7 @@ impToLLVM logger fNameHint (ClosedImpFunction funBinders ptrBinders impFun) = do
       return (defns, cnames, substVals)
 
     makePtrDefns :: EnvReader m => Nest PtrBinder any1 any2
-                 -> m n ([L.Definition], [CName], [OperandSubstVal PtrNameC n])
+                 -> m n ([L.Definition], [CName], [OperandSubstVal n])
     makePtrDefns bs = do
       let cnames = makeNames "dex_const_ptr_" $ nestToList getNameHint bs
       let tys = nestToList (\(PtrBinder _ t) -> t) bs
@@ -1242,7 +1242,7 @@ liftCompile dev subst m =
     -- TODO: figure out naming discipline properly
     initState = CompileState [] [] [] "start_block" mempty mempty mempty dev
 
-opSubstVal :: Operand -> OperandSubstVal ImpNameC n
+opSubstVal :: Operand -> OperandSubstVal n
 opSubstVal x = OperandSubstVal x
 
 finishBlock :: LLVMBuilder m => L.Terminator -> L.Name -> m ()
@@ -1410,8 +1410,7 @@ instance PrettyPrec L.Operand where
 instance Pretty L.Type where
   pretty x = pretty (show x)
 
-instance SinkableV OperandSubstVal
-instance SinkableE (OperandSubstVal c) where
+instance SinkableE OperandSubstVal where
   sinkingProofE = undefined
 
 instance FromName OperandSubstVal where

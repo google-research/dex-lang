@@ -34,7 +34,6 @@ import qualified Data.Map.Strict       as M
 
 import Name
 import Err
-import IRVariants
 
 import Types.Core
 import Types.Top
@@ -189,20 +188,20 @@ class BindsNames b => BindsEnv (b::B) where
                         => Distinct l => b n l -> EnvFrag n l
   toEnvFrag b = toEnvFrag $ fromB b
 
-instance (Color c, SinkableE ann, ToBinding ann c) => BindsEnv (BinderP c ann) where
+instance (SinkableE ann, ToBinding ann) => BindsEnv (BinderP ann) where
   toEnvFrag (b:>ann) = EnvFrag (RecSubstFrag (b @> toBinding ann'))
     where ann' = withExtEvidence b $ sink ann
 
-instance (IRRep r, SinkableE ann, ToBinding ann (AtomNameC r)) => BindsEnv (NonDepNest r ann) where
+instance (SinkableE ann, ToBinding ann) => BindsEnv (NonDepNest ann) where
   toEnvFrag (NonDepNest topBs topAnns) = toEnvFrag $ zipNest topBs topAnns
     where
-      zipNest :: Distinct l => Nest (AtomNameBinder r) n l -> [ann n] -> Nest (BinderP (AtomNameC r) ann) n l
+      zipNest :: Distinct l => Nest AtomNameBinder n l -> [ann n] -> Nest (BinderP ann) n l
       zipNest Empty [] = Empty
       zipNest (Nest b bs) (a:anns) = withExtEvidence b $ withSubscopeDistinct bs $
         Nest (b:>a) $ zipNest bs $ sinkList anns
       zipNest _ _ = error "Mismatched lengths in NonDepNest"
 
-instance IRRep r => BindsEnv (Decl r) where
+instance BindsEnv Decl where
   toEnvFrag (Let b binding) = toEnvFrag $ b :> binding
   {-# INLINE toEnvFrag #-}
 
@@ -265,12 +264,12 @@ instance (BindsEnv b1, BindsEnv b2)
 instance BindsEnv UnitB where
   toEnvFrag UnitB = emptyOutFrag
 
-instance IRRep r => ExtOutMap Env (Nest (Decl r)) where
+instance ExtOutMap Env (Nest Decl) where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
   {-# INLINE extendOutMap #-}
 
-instance IRRep r => ExtOutMap Env (RNest (Decl r)) where
+instance ExtOutMap Env (RNest Decl) where
   extendOutMap bindings emissions =
     bindings `extendOutMap` toEnvFrag emissions
   {-# INLINE extendOutMap #-}
@@ -281,15 +280,15 @@ instance ExtOutMap Env UnitB where
 
 -- === Monadic helpers ===
 
-lookupEnv :: (Color c, EnvReader m) => Name c o -> m o (Binding c o)
+lookupEnv :: EnvReader m => Name o -> m o (Binding o)
 lookupEnv v = withEnv $ flip lookupEnvPure v . topEnv
 {-# INLINE lookupEnv #-}
 
-lookupAtomName :: (IRRep r, EnvReader m) => AtomName r n -> m n (AtomBinding r n)
+lookupAtomName :: EnvReader m => AtomName n -> m n (AtomBinding n)
 lookupAtomName name = bindingToAtomBinding <$> lookupEnv name
 {-# INLINE lookupAtomName #-}
 
-lookupCustomRules :: EnvReader m => AtomName CoreIR n -> m n (Maybe (AtomRules n))
+lookupCustomRules :: EnvReader m => AtomName n -> m n (Maybe (AtomRules n))
 lookupCustomRules name = liftM fromMaybeE $ withEnv $
   toMaybeE . M.lookup name . customRulesMap . envCustomRules . topEnv
 {-# INLINE lookupCustomRules #-}
@@ -317,7 +316,7 @@ lookupTyCon name = lookupEnv name >>= \case
   TyConBinding Nothing  _ -> error "TyCon not yet defined"
 {-# INLINE lookupTyCon #-}
 
-lookupDataCon :: EnvReader m => Name DataConNameC n -> m n (TyConName n, Int)
+lookupDataCon :: EnvReader m => DataConName n -> m n (TyConName n, Int)
 lookupDataCon v = do
   ~(DataConBinding defName idx) <- lookupEnv v
   return (defName, idx)
@@ -356,9 +355,9 @@ refreshBinders b cont = refreshAbs (Abs b $ idSubstFrag b) cont
 {-# INLINE refreshBinders #-}
 
 withFreshBinder
-  :: (Color c, EnvExtender m, ToBinding binding c)
+  :: (EnvExtender m, ToBinding binding)
   => NameHint -> binding n
-  -> (forall l. DExt n l => BinderP c binding n l -> m l a)
+  -> (forall l. DExt n l => BinderP binding n l -> m l a)
   -> m n a
 withFreshBinder hint binding cont = do
   Abs b v <- freshNameM hint
@@ -366,9 +365,9 @@ withFreshBinder hint binding cont = do
 {-# INLINE withFreshBinder #-}
 
 withFreshBinders
-  :: (Color c, EnvExtender m, ToBinding binding c)
+  :: (EnvExtender m, ToBinding binding)
   => [binding n]
-  -> (forall l. DExt n l => Nest (BinderP c binding) n l -> [Name c l] -> m l a)
+  -> (forall l. DExt n l => Nest (BinderP binding) n l -> [Name l] -> m l a)
   -> m n a
 withFreshBinders [] cont = do
   Distinct <- getDistinct
@@ -391,14 +390,14 @@ withFreshBinders (binding:rest) cont = do
 --   present, in which case exactly maxDepth binders are packed into the nary
 --   structure.  Excess binders, if any, are still left in the unary structures.
 
-liftLamExpr :: (IRRep r, EnvReader m)
-  => TopLam r n
-  -> (forall l m2. EnvReader m2 => Expr r l -> m2 l (Expr r l))
-  -> m n (TopLam r n)
+liftLamExpr :: EnvReader m
+  => TopLam n
+  -> (forall l m2. EnvReader m2 => Expr l -> m2 l (Expr l))
+  -> m n (TopLam n)
 liftLamExpr (TopLam d ty (LamExpr bs body)) f = liftM (TopLam d ty) $ liftEnvReaderM $
   refreshAbs (Abs bs body) \bs' body' -> LamExpr bs' <$> f body'
 
-fromNaryForExpr :: IRRep r => Int -> Expr r n -> Maybe (Int, LamExpr r n)
+fromNaryForExpr :: Int -> Expr n -> Maybe (Int, LamExpr n)
 fromNaryForExpr maxDepth | maxDepth <= 0 = error "expected non-negative number of args"
 fromNaryForExpr maxDepth = \case
   Hof (TypedHof _ (For _ _ (UnaryLamExpr b body))) ->
@@ -419,16 +418,13 @@ bundleFold emptyVal pair els = case els of
   h:t -> (pair h tb, td + 1)
     where (tb, td) = bundleFold emptyVal pair t
 
-mkBundleTy :: [Type r n] -> (Type r n, BundleDesc)
+mkBundleTy :: [Type n] -> (Type n, BundleDesc)
 mkBundleTy = bundleFold UnitTy (\x y -> TyCon (ProdType [x, y]))
 
-mkBundle :: [Atom r n] -> (Atom r n, BundleDesc)
+mkBundle :: [Atom n] -> (Atom n, BundleDesc)
 mkBundle = bundleFold UnitVal (\x y -> Con (ProdCon [x, y]))
 
-freeAtomVarsList :: forall r e n. (IRRep r, HoistableE e) => e n -> [Name (AtomNameC r) n]
-freeAtomVarsList = freeVarsList
-
-freshNameM :: (Color c, EnvReader m) => NameHint -> m n (Abs (NameBinder c) (Name c) n)
+freshNameM :: (EnvReader m) => NameHint -> m n (Abs NameBinder Name n)
 freshNameM hint = do
   scope    <- toScope <$> unsafeGetEnv
   Distinct <- getDistinct

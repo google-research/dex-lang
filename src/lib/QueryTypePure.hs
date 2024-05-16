@@ -1,4 +1,4 @@
--- Copyright 2023 Google LLC
+-- (Copyright 2023 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -9,26 +9,25 @@ module QueryTypePure where
 import Types.Primitives
 import Types.Core
 import Types.Top
-import IRVariants
 import Name
 
-class HasType (r::IR) (e::E) | e -> r where
-  getType :: e n -> Type r n
+class HasType (e::E) where
+  getType :: e n -> Type n
 
-class HasEffects (e::E) (r::IR) | e -> r where
-  getEffects :: e n -> Effects r n
+class HasEffects (e::E) where
+  getEffects :: e n -> Effects n
 
-getTyCon :: HasType SimpIR e => e n -> TyCon SimpIR n
+getTyCon :: HasType e => e n -> TyCon n
 getTyCon e = con where TyCon con = getType e
 
-isPure :: (IRRep r, HasEffects e r) => e n -> Bool
+isPure :: HasEffects e => e n -> Bool
 isPure e = case getEffects e of
   Pure      -> True
   Effectful -> False
 
 -- === querying types implementation ===
 
-instance IRRep r => HasType r (AtomBinding r) where
+instance HasType AtomBinding where
   getType = \case
     LetBound    (DeclBinding _ e)  -> getType e
     MiscBound   ty                 -> ty
@@ -66,7 +65,7 @@ typeBinOp binop xTy = case binop of
 typeUnOp :: UnOp -> BaseType -> BaseType
 typeUnOp = const id  -- All unary ops preserve the type of the input
 
-getKind :: Type r n -> Kind
+getKind :: Type n -> Kind
 getKind = \case
   StuckTy k _ -> k
   TyCon con -> case con of
@@ -81,27 +80,27 @@ getKind = \case
     DictTy _   -> DictKind
     Kind _     -> OtherKind
 
-instance IRRep r => HasType r (AtomVar r) where
+instance HasType AtomVar where
   getType (AtomVar _ ty) = ty
   {-# INLINE getType #-}
 
-instance IRRep r => HasType r (Atom r) where
+instance HasType Atom where
   getType = \case
     Stuck t _ -> t
     Con e -> getType e
 
-instance HasType CoreIR (Dict CoreIR) where
+instance HasType Dict where
   getType = \case
     StuckDict t _ -> t
     DictCon e -> getType e
 
-instance HasType CoreIR (DictCon CoreIR) where
+instance HasType DictCon where
   getType = \case
     InstanceDict t _ _ -> t
     IxFin n -> toType $ IxDictType (FinTy n)
     IxRawFin _ -> toType $ IxDictType IdxRepTy
 
-instance HasType CoreIR NewtypeTyCon where
+instance HasType NewtypeTyCon where
   getType _ = TyCon $ Kind TypeKind
 
 getNewtypeType :: NewtypeCon n -> CType n
@@ -110,7 +109,7 @@ getNewtypeType con = case con of
   FinCon n            -> TyCon $ NewtypeTyCon $ Fin n
   UserADTData sn d xs -> TyCon $ NewtypeTyCon $ UserADTType sn d xs
 
-instance IRRep r => HasType r (Con r) where
+instance HasType Con where
   getType = \case
     Lit l          -> toType $ BaseType $ litType l
     ProdCon xs     -> toType $ ProdType $ map getType xs
@@ -127,7 +126,7 @@ getSuperclassType bsAbove (Nest b@(_:>t) bs) = \case
   0 -> ignoreHoistFailure $ hoist bsAbove t
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
-instance IRRep r => HasType r (Expr r) where
+instance HasType Expr where
   getType expr = case expr of
     App (EffTy _ ty) _ _ -> ty
     TopApp (EffTy _ ty) _ _ -> ty
@@ -142,15 +141,15 @@ instance IRRep r => HasType r (Expr r) where
     Unwrap t _ -> t
     Hof  (TypedHof (EffTy _ ty) _) -> ty
 
-instance IRRep r => HasType r (RepVal r) where
+instance HasType RepVal where
   getType (RepVal ty _) = ty
 
-getTypeBaseType :: (IRRep r, HasType r e) => e n -> BaseType
+getTypeBaseType :: HasType e => e n -> BaseType
 getTypeBaseType e = case getType e of
   TyCon (BaseType b) -> b
   ty -> error $ "Expected a base type. Got: " ++ show ty
 
--- instance IRRep r => HasType r (MemOp r) where
+-- instance HasType MemOp where
 --   getType = \case
 --     IOAlloc _ -> PtrTy (CPU, Scalar Word8Type)
 --     IOFree _ -> UnitTy
@@ -160,22 +159,22 @@ getTypeBaseType e = case getType e of
 --       toType $ BaseType t
 --     PtrStore _ _ -> UnitTy
 
-rawStrType :: IRRep r => Type r n
+rawStrType :: Type n
 rawStrType = case newName "n" of
   Abs b v -> do
     let tabTy = rawFinTabType (toAtom $ AtomVar v IdxRepTy) CharRepTy
     TyCon $ DepPairTy $ DepPairType ExplicitDepPair (b:>IdxRepTy) tabTy
 
 -- `n` argument is IdxRepVal, not Nat
-rawFinTabType :: IRRep r => Atom r n -> Type r n -> Type r n
+rawFinTabType :: Atom n -> Type n -> Type n
 rawFinTabType n eltTy = IxType IdxRepTy (DictCon (IxRawFin n)) ==> eltTy
 
-tabIxType :: TabPiType r n -> IxType r n
+tabIxType :: TabPiType n -> IxType n
 tabIxType (TabPiType d (_:>t) _) = IxType t d
 
 typesAsBinderNest
-  :: (SinkableE e, HoistableE e, IRRep r)
-  => [Type r n] -> e n -> Abs (Nest (Binder r)) e n
+  :: (SinkableE e, HoistableE e)
+  => [Type n] -> e n -> Abs (Nest Binder) e n
 typesAsBinderNest types body = toConstBinderNest types body
 
 nonDepPiType :: [CType n] -> CType n -> CorePiType n
@@ -184,29 +183,29 @@ nonDepPiType argTys resultTy = case typesAsBinderNest argTys resultTy of
     let expls = nestToList (const Explicit) bs
     CorePiType ExplicitApp expls bs resultTy'
 
-nonDepTabPiType :: IRRep r => IxType r n -> Type r n -> TabPiType r n
+nonDepTabPiType :: IxType n -> Type n -> TabPiType n
 nonDepTabPiType (IxType t d) resultTy =
   case toConstAbsPure resultTy of
     Abs b resultTy' -> TabPiType d (b:>t) resultTy'
 
-corePiTypeToPiType :: CorePiType n -> PiType CoreIR n
+corePiTypeToPiType :: CorePiType n -> PiType n
 corePiTypeToPiType (CorePiType _ _ bs effTy) = PiType bs effTy
 
-coreLamToTopLam :: CoreLamExpr n -> TopLam CoreIR n
+coreLamToTopLam :: CoreLamExpr n -> TopLam n
 coreLamToTopLam (CoreLamExpr ty f) = TopLam False (corePiTypeToPiType ty) f
 
-(==>) :: IRRep r => IxType r n -> Type r n -> Type r n
+(==>) :: IxType n -> Type n -> Type n
 a ==> b = TyCon $ TabPi $ nonDepTabPiType a b
 
-litFinIxTy :: Int -> IxType SimpIR n
+litFinIxTy :: Int -> IxType n
 litFinIxTy n = finIxTy $ IdxRepVal $ fromIntegral n
 
-finIxTy :: Atom SimpIR n -> IxType SimpIR n
+finIxTy :: Atom n -> IxType n
 finIxTy n = IxType IdxRepTy (DictCon (IxRawFin n))
 
 -- === querying effects implementation ===
 
-instance IRRep r => HasEffects (Expr r) r where
+instance HasEffects Expr where
   getEffects = \case
     Atom _ -> Pure
     Block (EffTy eff _) _ -> eff
@@ -221,11 +220,11 @@ instance IRRep r => HasEffects (Expr r) r where
     Unwrap _ _ -> Pure
     Hof (TypedHof (EffTy eff _) _) -> eff
 
-instance IRRep r => HasEffects (DeclBinding r) r where
+instance HasEffects DeclBinding where
   getEffects (DeclBinding _ expr) = getEffects expr
   {-# INLINE getEffects #-}
 
--- instance IRRep r => HasEffects (PrimOp r) r where
+-- instance HasEffects PrimOp r where
 --   getEffects = \case
 --     UnOp  _ _   -> Pure
 --     BinOp _ _ _ -> Pure

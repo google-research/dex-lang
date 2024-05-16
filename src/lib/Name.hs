@@ -46,12 +46,11 @@ import qualified RawName as R
 import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
 import PPrint
 import Err
-import IRVariants
 
 -- === category-like classes for envs, scopes etc ===
 
 data Subst v i o where
-  Subst :: (forall c.  Color c => Name c hidden -> v c o)
+  Subst :: (Name hidden -> v o)
         -> SubstFrag v hidden i o
         -> Subst v i o
   -- This is a compact, but unsafe representation of a substitution
@@ -64,7 +63,7 @@ tryApplyIdentitySubst s e = case s of
   Subst _ _ -> Nothing
   UnsafeMakeIdentitySubst -> Just $ unsafeCoerceE e
 
-newSubst :: (forall c.  Color c => Name c i -> v c o) -> Subst v i o
+newSubst :: (Name i -> v o) -> Subst v i o
 newSubst f = Subst f emptyInFrag
 
 envFromFrag :: SubstFrag v VoidS i o -> Subst v i o
@@ -78,7 +77,7 @@ idSubstFrag b =
   scopeFragToSubstFrag (\v -> fromName $ sinkR v) (toScopeFrag b)
 
 infixl 9 !
-(!) ::  Color c => Subst v i o -> Name c i -> v c o
+(!) ::  Subst v i o -> Name i -> v o
 (!) (Subst f env) name =
   case lookupSubstFragProjected env name of
     Left name' -> f name'
@@ -154,30 +153,29 @@ instance ExtOutMap Scope ScopeFrag where
 
 -- outvar version of SubstFrag/Subst, where the query name space and the result name
 -- space are the same (thus recursive)
-newtype RecSubst      (v::V) o    = RecSubst     { fromRecSubst     :: SubstFrag v VoidS o o } deriving Generic
-newtype RecSubstFrag  (v::V) o o' = RecSubstFrag { fromRecSubstFrag :: SubstFrag v o o' o'   } deriving Generic
+newtype RecSubst      (v::E) o    = RecSubst     { fromRecSubst     :: SubstFrag v VoidS o o } deriving Generic
+newtype RecSubstFrag  (v::E) o o' = RecSubstFrag { fromRecSubstFrag :: SubstFrag v o o' o'   } deriving Generic
 
-instance SinkableV v => OutFrag (RecSubstFrag v) where
+instance SinkableE v => OutFrag (RecSubstFrag v) where
   emptyOutFrag = RecSubstFrag $ emptyInFrag
   {-# INLINE emptyOutFrag #-}
   catOutFrags = catRecSubstFrags
   {-# INLINE catOutFrags #-}
 
-catRecSubstFrags :: (Distinct n3, SinkableV v)
-               => RecSubstFrag v n1 n2 -> RecSubstFrag v n2 n3 -> RecSubstFrag v n1 n3
+catRecSubstFrags :: (Distinct n3, SinkableE v)
+                 => RecSubstFrag v n1 n2 -> RecSubstFrag v n2 n3 -> RecSubstFrag v n1 n3
 catRecSubstFrags (RecSubstFrag frag1) (RecSubstFrag frag2) = RecSubstFrag $
   withExtEvidence (toExtEvidence (RecSubstFrag frag2)) $
     sink frag1 `catInFrags` frag2
 
-extendRecSubst :: SinkableV v => Distinct l => RecSubst v n -> RecSubstFrag v n l
-               -> RecSubst v l
+extendRecSubst :: SinkableE v => Distinct l => RecSubst v n -> RecSubstFrag v n l -> RecSubst v l
 extendRecSubst (RecSubst env) (RecSubstFrag frag) = RecSubst $
   withExtEvidence (toExtEvidence (RecSubstFrag frag)) $
     sink env <.> frag
 
-deriving instance (forall c. Show (v c o')) => Show (RecSubstFrag v o o')
+deriving instance Show (v o') => Show (RecSubstFrag v o o')
 
-lookupTerminalSubstFrag :: Color c => SubstFrag v VoidS i o -> Name c i -> v c o
+lookupTerminalSubstFrag :: SubstFrag v VoidS i o -> Name i -> v o
 lookupTerminalSubstFrag frag name =
   case lookupSubstFragProjected frag name of
     Left name' -> absurdNameFunction name'
@@ -195,10 +193,9 @@ instance (SinkableB b, BindsNames b) => OutFrag (RNest b) where
   catOutFrags = (>>>)
   {-# INLINE catOutFrags #-}
 
-updateSubstFrag :: Color c => Name c i -> v c o -> SubstFrag v VoidS i o
-                -> SubstFrag v VoidS i o
+updateSubstFrag :: Name i -> v o -> SubstFrag v VoidS i o -> SubstFrag v VoidS i o
 updateSubstFrag (UnsafeMakeName v) rhs (UnsafeMakeSubst m) =
-  UnsafeMakeSubst $ R.adjust (\(SubstItem d c _) -> SubstItem d c (unsafeCoerceVC rhs)) v m
+  UnsafeMakeSubst $ R.adjust (\(SubstItem d _) -> SubstItem d (unsafeCoerceE rhs)) v m
 
 -- === renaming ===
 
@@ -226,18 +223,13 @@ class SinkableB b => RenameB (b::B) where
     -> a
   renameB env b cont = renameB env (fromB b) \env' b' -> cont env' $ toB b'
 
-class (SinkableV v , forall c. Color c => RenameE (v c)) => RenameV (v::V)
-
-
 type HasNamesE e = (RenameE e, SinkableE e, HoistableE e)
 type HasNamesB = RenameB
 
-instance RenameV Name
-
-instance Color c => RenameE (Name c) where
+instance RenameE Name where
   renameE (_, env) name = env ! name
 
-instance Color c => RenameB (NameBinder c) where
+instance RenameB NameBinder where
   renameB (scope, env) b cont = do
     withFresh (getNameHint b) scope \b' -> do
       let scope' = scope `extendOutMap` toScopeFrag b'
@@ -289,8 +281,8 @@ class ScopeReader m => ScopeExtender (m::MonadKind1) where
 
 -- === extending envs with name-only substitutions ===
 
-class FromName (v::V) where
-  fromName :: Name c n -> v c n
+class FromName (v::E) where
+  fromName :: Name n -> v n
 
 instance FromName Name where
   fromName = id
@@ -342,15 +334,15 @@ popNest bs = case toRNest bs of
   RNest bs' b -> Just $ PairB (unRNest bs') b
   REmpty -> Nothing
 
-data BinderP (c::C) (ann::E) (n::S) (l::S) =
-  (:>) (NameBinder c n l) (ann n)
+data BinderP (ann::E) (n::S) (l::S) =
+  (:>) (NameBinder n l) (ann n)
   deriving (Show, Generic)
 
 type EmptyAbs b = Abs b UnitE :: E
 pattern EmptyAbs :: b n l -> EmptyAbs b n
 pattern EmptyAbs bs = Abs bs UnitE
 
-type NaryAbs (c::C) = Abs (Nest (NameBinder c)) :: E -> E
+type NaryAbs = Abs (Nest NameBinder) :: E -> E
 
 -- Proof object that a given scope is void
 data IsVoidS n where
@@ -404,24 +396,24 @@ sinkM e = do
 {-# INLINE sinkM #-}
 
 toConstAbs :: (SinkableE e, ScopeReader m)
-           => e n -> m n (Abs (NameBinder c) e n)
+           => e n -> m n (Abs NameBinder e n)
 toConstAbs body = do
   WithScope scope body' <- addScope body
   withFresh noHint scope \b -> do
     sinkM $ Abs b $ sink body'
 
 toConstAbsPure :: (HoistableE e, SinkableE e)
-               => e n -> (Abs (NameBinder c) e n)
+               => e n -> (Abs NameBinder e n)
 toConstAbsPure e = Abs (UnsafeMakeBinder n) (unsafeCoerceE e)
   where n = freshRawName noHint $ fromNameSet $ freeVarsE e
 
 toConstBinderNest
-  :: forall n ann e c
-  .  (HoistableE ann, HoistableE e, SinkableE e, SinkableE ann, Color c)
-  => [ann n] -> e n -> Abs (Nest (BinderP c ann)) e n
+  :: forall n ann e
+  .  (HoistableE ann, HoistableE e, SinkableE e, SinkableE ann)
+  => [ann n] -> e n -> Abs (Nest (BinderP ann)) e n
 toConstBinderNest anns body = withFabricatedDistinct @n $ runScopeReaderM scope $ go anns
   where
-    go :: forall l.  DExt n l => [ann l] -> ScopeReaderM l (Abs (Nest (BinderP c ann)) e l)
+    go :: forall l.  DExt n l => [ann l] -> ScopeReaderM l (Abs (Nest (BinderP ann)) e l)
     go = \case
       [] -> Abs Empty <$> sinkM body
       ann:rest -> withFreshM noHint \b -> do
@@ -435,15 +427,12 @@ type PrettyE e = (forall (n::S)       . Pretty (e n  )) :: Constraint
 type PrettyB b = (forall (n::S) (l::S). Pretty (b n l)) :: Constraint
 
 type ShowE e = (forall (n::S)       . Show (e n  )) :: Constraint
-type ShowV v = (forall (c::C) (n::S). Show (v c n)) :: Constraint
 type ShowB b = (forall (n::S) (l::S). Show (b n l)) :: Constraint
 
 type EqE e = (forall (n::S)       . Eq (e n  )) :: Constraint
-type EqV v = (forall (c::C) (n::S). Eq (v c n)) :: Constraint
 type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
-type OrdE e = (forall (n::S)       . Ord (e n  )) :: Constraint
-type OrdV v = (forall (c::C) (n::S). Ord (v c n)) :: Constraint
+type OrdE e = (forall (n::S).        Ord (e n))   :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
 
 type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
@@ -509,30 +498,6 @@ newtype ComposeE (f :: * -> *) (e::E) (n::S) =
   ComposeE { fromComposeE :: (f (e n)) }
   deriving (Show, Eq, Generic)
 
-data WhenE (p::Bool) (e::E) (n::S) where
-  WhenE :: e n -> WhenE True e n
-
-data WhenIRE (r::IR) (r'::IR) (e::E) (n::S) where
-  WhenIRE :: e n -> WhenIRE r r e n
-
-deriving instance ShowE e => Show (WhenIRE r r' e n)
-
-data WhenC (c::C) (c'::C) (e::E) (n::S) where
-  WhenC :: e n -> WhenC c c e n
-
-data WhenAtomName (c::C) (e::IR->E) (n::S) where
-  WhenAtomName :: e r n -> WhenAtomName (AtomNameC r) e n
-
-type WhenCore = WhenIRE CoreIR
-type WhenSimp = WhenIRE SimpIR
-
-newtype WrapWithTrue (p::Bool) r = WrapWithTrue { fromWrapWithTrue :: (p ~ True) => r }
-
-withFabricatedTruth :: forall p a. (p ~ True => a) -> a
-withFabricatedTruth cont = fromWrapWithTrue
-  (TrulyUnsafe.unsafeCoerce (WrapWithTrue cont :: WrapWithTrue p a
-                                             ) :: WrapWithTrue True a)
-
 data UnitB (n::S) (l::S) where
   UnitB :: UnitB n n
 deriving instance Show (UnitB n l)
@@ -569,13 +534,6 @@ forgetEitherB :: EitherB b b n l -> b n l
 forgetEitherB (LeftB b) = b
 forgetEitherB (RightB b) = b
 {-# INLINE forgetEitherB #-}
-
--- The constant function of kind `V`
-newtype ConstE (const::E) (ignored::C) (n::S) = ConstE (const n)
-        deriving (Show, Eq, Generic)
-type UnitV = ConstE UnitE
-pattern UnitV :: UnitV c n
-pattern UnitV = ConstE UnitE
 
 type MaybeE e = EitherE e UnitE
 
@@ -632,53 +590,52 @@ instance (GenericB b, Generic (RepB b n l)) => Generic (WrapB b n l) where
 -- -- === various convenience utilities ===
 
 infixr 7 @>
-class BindsNames b => BindsAtMostOneName (b::B) (c::C) | b -> c where
-  (@>) :: b i i' -> v c o -> SubstFrag v i i' o
+class BindsNames b => BindsAtMostOneName (b::B) where
+  (@>) :: b i i' -> v o -> SubstFrag v i i' o
 
-class BindsAtMostOneName (b::B) (c::C)
-  =>  BindsOneName (b::B) (c::C) | b -> c where
-  binderName :: b i i' -> Name c i'
-  asNameBinder :: b i i' -> NameBinder c i i'
-  default asNameBinder :: b i i' -> NameBinder c i i'
+class BindsAtMostOneName (b::B) => BindsOneName (b::B) where
+  binderName :: b i i' -> Name i'
+  asNameBinder :: b i i' -> NameBinder i i'
+  default asNameBinder :: b i i' -> NameBinder i i'
   asNameBinder b = UnsafeMakeBinder n where UnsafeMakeName n = binderName b
 
-instance Color c => ProvesExt  (NameBinder c) where
+instance ProvesExt  NameBinder where
 
-instance Color c =>  BindsAtMostOneName (NameBinder c) c where
+instance BindsAtMostOneName NameBinder where
   b @> x = singletonSubst b x
   {-# INLINE (@>) #-}
 
-instance Color c =>  BindsOneName (NameBinder c) c where
+instance BindsOneName NameBinder where
   binderName (UnsafeMakeBinder v) = UnsafeMakeName v
   {-# INLINE binderName #-}
 
-instance Color c =>  BindsAtMostOneName (BinderP c ann) c where
+instance BindsAtMostOneName (BinderP ann) where
   (b:>_) @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance Color c =>  BindsOneName (BinderP c ann) c where
+instance BindsOneName (BinderP ann) where
   binderName (b:>_) = binderName b
   {-# INLINE binderName #-}
 
-instance (Color c, BindsAtMostOneName b1 c, BindsAtMostOneName b2 c) =>
-  BindsAtMostOneName (EitherB b1 b2) c where
+instance (BindsAtMostOneName b1, BindsAtMostOneName b2) =>
+  BindsAtMostOneName (EitherB b1 b2) where
   ( LeftB b) @> x = b @> x
   (RightB b) @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance (Color c, BindsOneName b1 c, BindsOneName b2 c) =>
-  BindsOneName (EitherB b1 b2) c where
+instance (BindsOneName b1, BindsOneName b2) =>
+  BindsOneName (EitherB b1 b2) where
   binderName ( LeftB b) = binderName b
   binderName (RightB b) = binderName b
 
 infixr 7 @@>
-(@@>) :: (Foldable f, BindsNameList b c) => b i i' -> f (v c o) -> SubstFrag v i i' o
+(@@>) :: (Foldable f, BindsNameList b) => b i i' -> f (v o) -> SubstFrag v i i' o
 (@@>) bs xs = bindNameList bs (toList xs)
 
-class BindsNameList (b::B) (c::C) | b -> c where
-  bindNameList :: b i i' -> [v c o] -> SubstFrag v i i' o
+class BindsNameList (b::B) where
+  bindNameList :: b i i' -> [v o] -> SubstFrag v i i' o
 
-instance BindsAtMostOneName b c => BindsNameList (Nest b) c where
+instance BindsAtMostOneName b => BindsNameList (Nest b) where
   bindNameList Empty [] = emptyInFrag
   bindNameList (Nest b rest) (x:xs) = b@>x <.> bindNameList rest xs
   bindNameList _ _ = error "length mismatch"
@@ -716,17 +673,17 @@ forEachNestItem n f = runIdentity $ forEachNestItemM n (return . f)
 -- TODO: make a more general E-kinded Traversable?
 traverseSubstFrag :: forall v v' i i' o o' m .
                    Monad m
-                => (forall c. Color c => v c o -> m (v' c o'))
+                => (v o -> m (v' o'))
                 -> SubstFrag v i i' o  -> m (SubstFrag v' i i' o')
 traverseSubstFrag f frag = liftM fromSubstPairs $
   forEachNestItemM (toSubstPairs frag) \(SubstPair b val) ->
     SubstPair b <$> f val
 
-lookupSubstFragProjected :: SubstFrag v i i' o -> Name c i'
-                         -> Either (Name c i) (v c o)
+lookupSubstFragProjected :: SubstFrag v i i' o -> Name i'
+                         -> Either (Name i) (v o)
 lookupSubstFragProjected (UnsafeMakeSubst s) (UnsafeMakeName rawName) =
   case R.lookup rawName s of
-    Just d -> Right $ unsafeFromSubstItem d
+    Just d -> Right $ fromSubstItem d
     _ -> Left $ UnsafeMakeName rawName
 
 fromSubstPairs :: Nest (SubstPair v o) i i' -> SubstFrag v i i' o
@@ -736,7 +693,7 @@ fromSubstPairs (Nest (SubstPair (UnsafeRepeatedNameBinder d (UnsafeMakeBinder b)
 
 foldMapSubstFrag
   :: forall v i i' o accum . Monoid accum
-  => (forall c. Color c => v c o -> accum)
+  => (v o -> accum)
   -> SubstFrag v i i' o -> accum
 foldMapSubstFrag f frag =
   execWriter $ traverseSubstFrag (\x -> tell (f x) >> return x) frag
@@ -759,8 +716,8 @@ nestToListFlip :: BindsNames b
            -> [a]
 nestToListFlip bs f = nestToList f bs
 
-nestToNames :: (Distinct l, Ext n l, BindsOneName b c, BindsNames b)
-            => Nest b n l -> [Name c l]
+nestToNames :: (Distinct l, Ext n l, BindsOneName b, BindsNames b)
+            => Nest b n l -> [Name l]
 nestToNames bs = nestToList (sink . binderName) bs
 
 nestToList' :: (forall n' l'. b n' l' -> a) -> Nest b n l -> [a]
@@ -798,18 +755,18 @@ joinRNest l r = case r of
       "joinRNest * REmpty"    forall n.   joinRNest n REmpty = n;
   #-}
 
-binderAnn :: BinderP c ann n l -> ann n
+binderAnn :: BinderP ann n l -> ann n
 binderAnn (_:>ann) = ann
 
-withFreshM :: (Color c, ScopeExtender m)
+withFreshM :: ScopeExtender m
            => NameHint
-           -> (forall o'. (DExt o o') => NameBinder c o o' -> m o' a)
+           -> (forall o'. DExt o o' => NameBinder o o' -> m o' a)
            -> m o a
 withFreshM hint cont = refreshAbsScope (newName hint) \b _ -> cont b
 
-withManyFresh :: (Color c, Distinct n)
+withManyFresh :: Distinct n
               => [NameHint] -> Scope n
-              -> (forall l. DExt n l => Nest (NameBinder c) n l -> a) -> a
+              -> (forall l. DExt n l => Nest NameBinder n l -> a) -> a
 withManyFresh [] _ cont = cont Empty
 withManyFresh (h:hs) scope cont =
   withFresh h scope \b ->
@@ -818,7 +775,7 @@ withManyFresh (h:hs) scope cont =
 
 fmapRenamingM
   :: (RenameE e, SinkableE e, ScopeReader m)
-  => (forall c. Color c => Name c i -> Name c o)
+  => (Name i -> Name o)
   -> e i -> m o (e o)
 fmapRenamingM f e = do
   scope <- unsafeGetScope
@@ -910,8 +867,8 @@ class ( forall i1 i2 o. Monad (m i1 i2 o)
       , forall i1 i2 o. MonadFail (m i1 i2 o)
       , forall i1 i2.   ScopeExtender (m i1 i2))
       => ZipSubstReader (m :: S -> S -> S -> * -> *) where
-  lookupZipSubstFst :: Color c => Name c i1 -> m i1 i2 o (Name c o)
-  lookupZipSubstSnd :: Color c => Name c i2 -> m i1 i2 o (Name c o)
+  lookupZipSubstFst :: Name i1 -> m i1 i2 o (Name o)
+  lookupZipSubstSnd :: Name i2 -> m i1 i2 o (Name o)
 
   extendZipSubstFst :: SubstFrag Name i1 i1' o -> m i1' i2  o r -> m i1 i2 o r
   extendZipSubstSnd :: SubstFrag Name i2 i2' o -> m i1  i2' o r -> m i1 i2 o r
@@ -936,8 +893,6 @@ class SinkableB b => AlphaEqB (b::B) where
                        ->             m i1  i2  o  a
   withAlphaEqB b1 b2 cont = withAlphaEqB (fromB b1) (fromB b2) $ cont
 
-class (SinkableV v, forall c. Color c => AlphaEqE (v c)) => AlphaEqV (v::V)
-
 addScope :: (ScopeReader m, SinkableE e) => e n -> m n (WithScope e n)
 addScope e = do
   scope <- unsafeGetScope
@@ -945,8 +900,7 @@ addScope e = do
   return $ WithScope scope (sink e)
 {-# INLINE addScope #-}
 
-alphaEq :: (AlphaEqE e, ScopeReader m)
-        => e n -> e n -> m n Bool
+alphaEq :: (AlphaEqE e, ScopeReader m) => e n -> e n -> m n Bool
 alphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
   return $ case checkAlphaEqPure scope e1' e2' of
@@ -959,27 +913,24 @@ checkAlphaEq e1 e2 = do
   WithScope scope (PairE e1' e2') <- addScope $ PairE e1 e2
   liftExcept $ checkAlphaEqPure scope e1' e2'
 
-alphaEqPure :: (AlphaEqE e, Distinct n)
-            => Scope n -> e n -> e n -> Bool
+alphaEqPure :: (AlphaEqE e, Distinct n) => Scope n -> e n -> e n -> Bool
 alphaEqPure scope e1 e2 = checkAlphaEqPure scope e1 e2 & \case
   Success _ -> True
   Failure _ -> False
 
-checkAlphaEqPure :: (AlphaEqE e, Distinct n)
-                 => Scope n -> e n -> e n -> Except ()
+checkAlphaEqPure :: (AlphaEqE e, Distinct n) => Scope n -> e n -> e n -> Except ()
 checkAlphaEqPure scope e1 e2 =
   runScopeReaderT scope $
     flip runReaderT (emptyInMap, emptyInMap) $ runZipSubstReaderT $
       withEmptyZipSubst $ alphaEqE e1 e2
 
-instance AlphaEqV Name
-instance Color c => AlphaEqE (Name c) where
+instance AlphaEqE Name where
   alphaEqE v1 v2 = do
     v1' <- lookupZipSubstFst v1
     v2' <- lookupZipSubstSnd v2
     unless (v1' == v2') zipErr
 
-instance Color c => AlphaEqB (NameBinder c) where
+instance AlphaEqB NameBinder where
   withAlphaEqB b1 b2 cont = do
     withFreshM (getNameHint b1) \b -> do
       let v = binderName b
@@ -1021,7 +972,7 @@ instance Generic (e UnsafeS) => Generic (LiftB e n l) where
 instance AlphaEqE e => AlphaEqB (LiftB e) where
   withAlphaEqB (LiftB e1) (LiftB e2) cont = alphaEqE e1 e2 >> cont
 
-instance (Color c, AlphaEqE ann) => AlphaEqB (BinderP c ann) where
+instance AlphaEqE ann => AlphaEqB (BinderP ann) where
   withAlphaEqB (b1:>ann1) (b2:>ann2) cont = do
     alphaEqE ann1 ann2
     withAlphaEqB b1 b2 $ cont
@@ -1046,14 +997,14 @@ instance (AlphaEqE e1, AlphaEqE e2) => AlphaEqE (EitherE e1 e2) where
 -- === alpha-renaming-invariant hashing ===
 
 type HashVal = Int
-data NamePreHash (c::C) (n::S) =
+data NamePreHash (n::S) =
    HashFreeName RawName
     -- XXX: convention is the opposite of de Bruijn order, `0` means
     -- the *outermost* binder
  | HashBoundName Int
  deriving (Eq, Generic)
 
-instance Hashable (NamePreHash c n)
+instance Hashable (NamePreHash n)
 
 data HashEnv n =
   -- the Int is the number of local binders in scope
@@ -1062,13 +1013,13 @@ data HashEnv n =
 emptyHashEnv :: HashEnv n
 emptyHashEnv = HashEnv 0 (newSubst $ HashFreeName . getRawName)
 
-lookupHashEnv :: Color c => HashEnv n -> Name c n -> NamePreHash c VoidS
+lookupHashEnv :: HashEnv n -> Name n -> NamePreHash VoidS
 lookupHashEnv (HashEnv _ env) name = env ! name
 
 alphaHashWithSalt :: AlphaHashableE e => HashVal -> e n -> HashVal
 alphaHashWithSalt salt e = hashWithSaltE emptyHashEnv salt e
 
-extendHashEnv :: Color c => HashEnv n -> NameBinder c n l -> HashEnv l
+extendHashEnv :: HashEnv n -> NameBinder n l -> HashEnv l
 extendHashEnv (HashEnv depth env) b =
   HashEnv (depth + 1) (env <>> b @> HashBoundName depth)
 
@@ -1085,10 +1036,10 @@ class AlphaHashableB (b::B) where
                         => HashEnv n -> HashVal -> b n l -> (HashVal, HashEnv l)
   hashWithSaltB env salt b = hashWithSaltB env salt (fromB b)
 
-instance Color c => AlphaHashableE (Name c) where
+instance AlphaHashableE Name where
   hashWithSaltE env salt v = hashWithSalt salt $ lookupHashEnv env v
 
-instance Color c => AlphaHashableB (NameBinder c) where
+instance AlphaHashableB NameBinder where
   hashWithSaltB env salt b = (salt, extendHashEnv env b)
 
 instance AlphaHashableE UnitE where
@@ -1117,7 +1068,7 @@ instance (AlphaHashableB b1, AlphaHashableB b2)
     let (h, env') = hashWithSaltB env salt b1
     hashWithSaltB env' h b2
 
-instance (Color c, AlphaHashableE ann) => AlphaHashableB (BinderP c ann) where
+instance (AlphaHashableE ann) => AlphaHashableB (BinderP ann) where
   hashWithSaltB env salt (b:>ann) = do
     let h = hashWithSaltE env salt ann
     hashWithSaltB env h b
@@ -1152,18 +1103,6 @@ instance (AlphaHashableB b1, AlphaHashableB b2)
 
 instance AlphaHashableE VoidE where
   hashWithSaltE _ _ _ = error "impossible"
-
-instance (p ~ True => AlphaHashableE e) => AlphaHashableE (WhenE p e) where
-  hashWithSaltE env val (WhenE e) = hashWithSaltE env val e
-
-instance (r~r' => AlphaHashableE e) => AlphaHashableE (WhenIRE r r' e) where
-  hashWithSaltE env val (WhenIRE e) = hashWithSaltE env val e
-
-instance (c~c' => AlphaHashableE e) => AlphaHashableE (WhenC c c' e) where
-  hashWithSaltE env val (WhenC e) = hashWithSaltE env val e
-
-instance (forall r. c ~ AtomNameC r => AlphaHashableE (e r)) => AlphaHashableE (WhenAtomName c e) where
-  hashWithSaltE env val (WhenAtomName e) = hashWithSaltE env val e
 
 -- === wrapper for E-kinded things suitable for use as keys ===
 
@@ -1422,7 +1361,7 @@ extendSubInplaceT ab = do
 
 freshExtendSubInplaceT
   :: (ExtOutMap b d, ExtOutFrag ds d, Monad m)
-  => Mut n => NameHint -> (forall l. NameBinder c n l -> (d n l, e l)) -> InplaceT b ds m n (e n)
+  => Mut n => NameHint -> (forall l. NameBinder n l -> (d n l, e l)) -> InplaceT b ds m n (e n)
 freshExtendSubInplaceT hint build =
    UnsafeMakeInplaceT \env decls ->
      withFresh hint (toScope env) \b -> do
@@ -1673,69 +1612,12 @@ extendDoubleInplaceTLocal f cont =
 
 -- === name hints ===
 
-instance HasNameHint (BinderP c ann n l) where
+instance HasNameHint (BinderP ann n l) where
   getNameHint (b:>_) = getNameHint b
-
--- === handling the dynamic/heterogeneous stuff for Subst ===
-
-data ColorProxy (c::C) = ColorProxy
-
-data ColorsEqual (c1::C) (c2::C) where
-  ColorsEqual :: ColorsEqual c c
-
-eqColorRep :: forall c1 c2. (Color c1, Color c2) => Maybe (ColorsEqual c1 c2)
-eqColorRep = if c1Rep == c2Rep
- then Just (TrulyUnsafe.unsafeCoerce (ColorsEqual :: ColorsEqual c1 c1) :: ColorsEqual c1 c2)
- else Nothing
- where c1Rep = getColorRep @c1; c2Rep = getColorRep @c2
-{-# INLINE eqColorRep #-}
-
-tryAsColor :: forall (v::V) (c1::C) (c2::C) (n::S).
-              (Color c1, Color c2) => v c1 n -> Maybe (v c2 n)
-tryAsColor x = case eqColorRep of
-  Just (ColorsEqual :: ColorsEqual c1 c2) -> Just x
-  Nothing -> Nothing
-
--- like Typeable, this gives a term-level representation of a name color
-class Color (c::C) where
-  getColorRep :: C
-
-instance IRRep r => Color (AtomNameC r) where getColorRep = AtomNameC $ getIRRep @r
-instance Color TyConNameC      where getColorRep = TyConNameC
-instance Color DataConNameC    where getColorRep = DataConNameC
-instance Color ClassNameC      where getColorRep = ClassNameC
-instance Color InstanceNameC   where getColorRep = InstanceNameC
-instance Color MethodNameC     where getColorRep = MethodNameC
-instance Color TopFunNameC     where getColorRep = TopFunNameC
-instance Color FunObjCodeNameC where getColorRep = FunObjCodeNameC
-instance Color ModuleNameC     where getColorRep = ModuleNameC
-instance Color PtrNameC        where getColorRep = PtrNameC
-instance Color SpecializedDictNameC where getColorRep = SpecializedDictNameC
-instance Color ImpNameC        where getColorRep = ImpNameC
--- The instance for Color UnsafeC is purposefully missing! UnsafeC is
--- only used for storing heterogeneously-colored values and we should
--- restore their type before we every try to reflect upon their color!
-
-interpretColor :: C -> (forall c. Color c => ColorProxy c -> a) -> a
-interpretColor c cont = case c of
-  AtomNameC CoreIR -> cont $ ColorProxy @(AtomNameC CoreIR)
-  AtomNameC SimpIR -> cont $ ColorProxy @(AtomNameC SimpIR)
-  TyConNameC      -> cont $ ColorProxy @TyConNameC
-  DataConNameC    -> cont $ ColorProxy @DataConNameC
-  ClassNameC      -> cont $ ColorProxy @ClassNameC
-  InstanceNameC   -> cont $ ColorProxy @InstanceNameC
-  MethodNameC     -> cont $ ColorProxy @MethodNameC
-  TopFunNameC     -> cont $ ColorProxy @TopFunNameC
-  FunObjCodeNameC -> cont $ ColorProxy @FunObjCodeNameC
-  ModuleNameC     -> cont $ ColorProxy @ModuleNameC
-  PtrNameC        -> cont $ ColorProxy @PtrNameC
-  SpecializedDictNameC -> cont $ ColorProxy @SpecializedDictNameC
-  ImpNameC        -> cont $ ColorProxy @ImpNameC
-  UnsafeC         -> error "shouldn't reflect over Unsafe colors!"
 
 -- === instances ===
 
-instance SinkableV v => SinkableE (Subst v i) where
+instance SinkableE v => SinkableE (Subst v i) where
   sinkingProofE fresh (Subst f m) =
     Subst (\name -> sinkingProofE fresh $ f name)
           (sinkingProofE fresh m)
@@ -1813,15 +1695,15 @@ instance (RenameB b1, RenameB b2) => RenameB (EitherB b1 b2) where
     renameB env b \env' b' ->
       cont env' $ RightB b'
 
-instance GenericB (BinderP c ann) where
-  type RepB (BinderP c ann) = PairB (LiftB ann) (NameBinder c)
+instance GenericB (BinderP ann) where
+  type RepB (BinderP ann) = PairB (LiftB ann) NameBinder
   fromB (b:>ann) = PairB (LiftB ann) b
   toB   (PairB (LiftB ann) b) = b:>ann
 
-instance (Color c, SinkableE ann) => SinkableB (BinderP c ann)
-instance (Color c, SinkableE ann, RenameE ann) => RenameB (BinderP c ann)
-instance Color c => ProvesExt  (BinderP c ann)
-instance Color c => BindsNames (BinderP c ann) where
+instance SinkableE ann => SinkableB (BinderP ann)
+instance (SinkableE ann, RenameE ann) => RenameB (BinderP ann)
+instance ProvesExt  (BinderP ann)
+instance BindsNames (BinderP ann) where
   toScopeFrag (b :> _) = toScopeFrag b
 
 instance BindsNames b => ProvesExt  (RNest b) where
@@ -1907,10 +1789,6 @@ instance AlphaEqB VoidB where
 
 instance RenameB VoidB where
   renameB _ _ _ = error "impossible"
-
-instance SinkableE const => SinkableV (ConstE const)
-instance SinkableE const => SinkableE (ConstE const ignored) where
-  sinkingProofE fresh (ConstE e) = ConstE $ sinkingProofE fresh e
 
 instance SinkableE VoidE where
   sinkingProofE _ _ = error "impossible"
@@ -2014,86 +1892,6 @@ instance RenameE e => RenameE (ListE e) where
 instance RenameE e => RenameE (NonEmptyListE e) where
   renameE env (NonEmptyListE xs) = NonEmptyListE $ fmap (renameE env) xs
 
-instance (p ~ True => SinkableE e) => SinkableE (WhenE p e) where
-  sinkingProofE rename (WhenE e) = WhenE $ sinkingProofE rename e
-
-instance (p ~ True => HoistableE e) => HoistableE (WhenE p e) where
-  freeVarsE (WhenE e) = freeVarsE e
-
-instance (p ~ True => RenameE e) => RenameE (WhenE p e) where
-  renameE (scope, subst) (WhenE e) = WhenE $ renameE (scope, subst) e
-
-instance (p ~ True => AlphaEqE e) => AlphaEqE (WhenE p e) where
-  alphaEqE (WhenE e1) (WhenE e2) = alphaEqE e1 e2
-
-instance (r~r' => SinkableE e) => SinkableE (WhenIRE r r' e) where
-  sinkingProofE rename (WhenIRE e) = WhenIRE $ sinkingProofE rename e
-
-instance (r~r' => HoistableE e) => HoistableE (WhenIRE r r' e) where
-  freeVarsE (WhenIRE e) = freeVarsE e
-
-instance (r~r' => RenameE e) => RenameE (WhenIRE r r' e) where
-  renameE (scope, subst) (WhenIRE e) = WhenIRE $ renameE (scope, subst) e
-
-instance (r~r' => AlphaEqE e) => AlphaEqE (WhenIRE r r' e) where
-  alphaEqE (WhenIRE e1) (WhenIRE e2) = alphaEqE e1 e2
-
-instance (c~c' => SinkableE e) => SinkableE (WhenC c c' e) where
-  sinkingProofE rename (WhenC e) = WhenC $ sinkingProofE rename e
-
-instance (c~c' => HoistableE e) => HoistableE (WhenC c c' e) where
-  freeVarsE (WhenC e) = freeVarsE e
-
-instance (c~c' => RenameE e) => RenameE (WhenC c c' e) where
-  renameE (scope, subst) (WhenC e) = WhenC $ renameE (scope, subst) e
-
-instance (c~c' => AlphaEqE e) => AlphaEqE (WhenC c c' e) where
-  alphaEqE (WhenC e1) (WhenC e2) = alphaEqE e1 e2
-
-instance (Color c, forall r. (c ~ AtomNameC r, IRRep r) => SinkableE (e r))
-         => SinkableE (WhenAtomName c e) where
-  sinkingProofE rename (WhenAtomName e) =
-    withIRRepFromColor @c \_ -> WhenAtomName $ sinkingProofE rename e
-
-instance (Color c, forall r. (c ~ AtomNameC r, IRRep r) => HoistableE (e r))
-         => HoistableE (WhenAtomName c e) where
-  freeVarsE (WhenAtomName e) = withIRRepFromColor @c \_ -> freeVarsE e
-
-instance (Color c, forall r. (c ~ AtomNameC r, IRRep r) => RenameE (e r))
-         =>  RenameE (WhenAtomName c e) where
-  renameE (scope, subst) (WhenAtomName e) =
-    withIRRepFromColor @c \_ -> WhenAtomName $ renameE (scope, subst) e
-
-instance (Color c, forall r. (c ~ AtomNameC r, IRRep r) => AlphaEqE (e r))
-         => AlphaEqE (WhenAtomName c e) where
-  alphaEqE (WhenAtomName e1) (WhenAtomName e2) =
-    withIRRepFromColor @c \_ -> alphaEqE e1 e2
-
-tryAsAtomName
-  :: forall c a. Color c
-  => (forall r. (c ~ AtomNameC r, IRRep r) => IRProxy r -> a)
-  -> Maybe a
-tryAsAtomName cont =
-  case getColorRep @c of
-    AtomNameC r -> Just $ interpretIR r \(p :: IRProxy r) ->
-      case eqColorRep @c @(AtomNameC r) of
-        Just ColorsEqual -> cont p
-        Nothing -> error "impossible"
-    _ -> Nothing
-
-withIRRepFromColor
-  :: forall c r a. (c ~ AtomNameC r, Color (AtomNameC r))
-  => (IRRep r => IRProxy r -> a) -> a
-withIRRepFromColor cont =
-  case getColorRep @c of
-    AtomNameC r -> do
-      interpretIR r \(IRProxy :: IRProxy r') ->
-        case eqColorRep @(AtomNameC r') @(AtomNameC r) of
-          Just ColorsEqual -> cont IRProxy
-          Nothing -> error "impossible"
-    _ -> error "impossible"
-{-# INLINE withIRRepFromColor #-}
-
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
   pretty (Abs b body) = group $
     "(Abs " <> nest 2 (pretty b <> line <> pretty body) <> line <> ")"
@@ -2117,7 +1915,7 @@ instance PrettyE e => Pretty (ListE e n) where
 instance PrettyE e => Pretty (RListE e n) where
   pretty (RListE e) = pretty $ unsnoc e
 
-deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubst v o)
+deriving instance (forall n. Pretty (v n)) => Pretty (RecSubst v o)
 
 instance ( Generic (b UnsafeS UnsafeS)
          , Generic (body UnsafeS) )
@@ -2150,12 +1948,12 @@ instance ProvesExt  (RecSubstFrag v) where
 instance BindsNames (RecSubstFrag v) where
   toScopeFrag env = substFragAsScope $ fromRecSubstFrag env
   {-# INLINE toScopeFrag #-}
-instance HoistableV v => HoistableB (RecSubstFrag v) where
+instance HoistableE v => HoistableB (RecSubstFrag v) where
   freeVarsB (RecSubstFrag env) = freeVarsE (Abs (substFragAsScope env) env)
 
 -- Traversing a recursive set of bindings is a bit tricky because we have to do
 -- two passes: first we rename the binders, then we go and subst the payloads.
-instance RenameV v => RenameB (RecSubstFrag v) where
+instance (SinkableE v, RenameE v) => RenameB (RecSubstFrag v) where
   renameB env (RecSubstFrag recSubst) cont = do
     let pairs = toSubstPairs recSubst
     renameSubstPairBinders env pairs \env' pairs' -> do
@@ -2164,7 +1962,7 @@ instance RenameV v => RenameB (RecSubstFrag v) where
       cont env' $ RecSubstFrag $ fromSubstPairs pairs''
 
 renameSubstPairBinders
-  :: (Distinct o, SinkableV v)
+  :: (Distinct o, SinkableE v)
   => (Scope o, Subst Name i o)
   -> Nest (SubstPair v ignored) i i'
   -> (forall o'.
@@ -2179,16 +1977,9 @@ renameSubstPairBinders env (Nest (SubstPair b v) rest) cont =
     renameSubstPairBinders env' rest \env'' rest' ->
       cont env'' (Nest (SubstPair b' v) rest')
 
-instance HoistableE (UniformNameSet c) where
-  freeVarsE (UniformNameSet s) = UnsafeMakeNameSet s
-
-instance RenameE (UniformNameSet c) where
-  renameE _ (UniformNameSet _) = undefined
-
-instance SinkableV v => SinkableB (RecSubstFrag v) where
+instance SinkableE v => SinkableB (RecSubstFrag v) where
   sinkingProofB _ _ _ = todoSinkableProof
 
-instance Store C
 instance Store (UnitE n)
 instance Store (VoidE n)
 instance (Store (e1 n), Store (e2 n)) => Store (PairE   e1 e2 n)
@@ -2197,43 +1988,14 @@ instance (Store (b1 n l), Store (b2 n l)) => Store (EitherB b1 b2 n l)
 instance Store (e n) => Store (ListE  e n)
 instance Store a => Store (LiftE a n)
 instance (Store (e UnsafeS), Generic (e UnsafeS)) => Store (LiftB e n l)
-instance Store (const n) => Store (ConstE const ignored n)
-instance (Store (ann n)) => Store (BinderP c ann n l)
+instance (Store (ann n)) => Store (BinderP ann n l)
 instance (forall a. Store a => Store (f a), Store (e n)) => Store (ComposeE f e n)
 
-instance ( forall c. Color c => Store (v c o')
-         , forall c. Color c => Generic (v c o'))
-         => Store (RecSubstFrag v o o')
+instance (Store (v o'), Generic (v o')) => Store (RecSubstFrag v o o')
 
-instance ( forall c. Color c => Store (v c o)
-         , forall c. Color c => Generic (v c o))
-         => Store (RecSubst v o)
+instance (Store (v o), Generic (v o)) => Store (RecSubst v o)
 instance Store (Scope n)
-deriving instance (forall c n. Pretty (v c n)) => Pretty (RecSubstFrag v o o')
-
-instance (p ~ True => Store (e n)) => Store (WhenE p e n) where
-  size = VarSize \(WhenE e) -> getSize e
-  peek = withFabricatedTruth @p (WhenE <$> peek)
-  poke (WhenE e) = poke e
-
-instance (IRRep r, IRRep r', Store (e n)) => Store (WhenIRE r r' e n) where
-  size = VarSize \(WhenIRE e) -> getSize e
-  peek = case eqIRRep @r @r' of
-    Just IRsEqual -> WhenIRE <$> peek
-    Nothing -> error "impossible"
-  poke (WhenIRE e) = poke e
-
-instance (Color c, Color c', Store (e n)) => Store (WhenC c c' e n) where
-  size = VarSize \(WhenC e) -> getSize e
-  peek = case eqColorRep @c @c' of
-    Just ColorsEqual -> WhenC <$> peek
-    Nothing -> error "impossible"
-  poke (WhenC e) = poke e
-
-instance (Color c, forall r. (c ~ AtomNameC r, IRRep r) => Store (e r n)) => Store (WhenAtomName c e n) where
-  size = VarSize \(WhenAtomName e) -> withIRRepFromColor @c \_ -> getSize e
-  peek = fromJust $ tryAsAtomName @c \_ -> WhenAtomName <$> peek
-  poke (WhenAtomName e) = withIRRepFromColor @c \_ -> poke e
+deriving instance (forall n. Pretty (v n)) => Pretty (RecSubstFrag v o o')
 
 -- We often have high-degree sum types that need GenericE instances, and
 -- EitherE seems like a natural choice for those. However, if you have 20
@@ -2383,23 +2145,6 @@ data S = (:=>:) S S
        | VoidS
        | UnsafeS
 
--- Name "color" ("type", "kind", etc. already taken)
-data C =
-    AtomNameC !IR
-  | TyConNameC
-  | DataConNameC
-  | ClassNameC
-  | InstanceNameC
-  | MethodNameC
-  | TopFunNameC
-  | FunObjCodeNameC
-  | ModuleNameC
-  | PtrNameC
-  | SpecializedDictNameC
-  | UnsafeC
-  | ImpNameC
-    deriving (Eq, Ord, Generic, Show)
-
 type E = S -> *       -- expression-y things, covariant in the S param
 type B = S -> S -> *  -- binder-y things, covariant in the first param and
                       -- contravariant in the second. These are things like
@@ -2407,14 +2152,10 @@ type B = S -> S -> *  -- binder-y things, covariant in the first param and
                       -- `ScopeFrag n l`, extending `n` to `l`. Their free
                       -- name are in `Scope n`. We sometimes call `n` the
                       -- "outside scope" and "l" the "inside scope".
-type V = C -> E       -- value-y things that we might look up in an environment
-                      -- with a `Name c n`, parameterized by the name's color.
 
 -- We use SubstItem for ColorRep to be able to unsafeCoerce scopes into name sets in O(1).
 type ColorRep = SubstItem GHC.Exts.Any UnsafeS
 newtype NameSet (n::S) = UnsafeMakeNameSet { fromNameSet :: RawNameMap ColorRep }
-        deriving (Monoid, Semigroup)
-newtype UniformNameSet (c::C) (n::S) = UniformNameSet (RawNameMap ColorRep)
         deriving (Monoid, Semigroup)
 
 -- ScopeFrag is a SubstFrag that can contain _any_ V-kinded thing.
@@ -2442,43 +2183,37 @@ instance Category ScopeFrag where
     UnsafeMakeScopeFrag $ R.unionWith takeLeftNonDistinct s2 s1
   {-# INLINE (.) #-}
 
-instance Color c => BindsNames (NameBinder c) where
+instance BindsNames NameBinder where
   toScopeFrag (UnsafeMakeBinder v) = substFragAsScope $
     UnsafeMakeSubst $ R.singleton v $ toSubstItem DistinctName
-      (TrulyUnsafe.unsafeCoerce UnitV :: GHC.Exts.Any c VoidS)
+      (TrulyUnsafe.unsafeCoerce UnitE :: GHC.Exts.Any c VoidS)
 
-absurdNameFunction :: Name v VoidS -> a
+absurdNameFunction :: Name VoidS -> a
 absurdNameFunction v = error $ "Void names shouldn't exist: " ++ show v
 
 scopeFragToSubstFrag :: forall v i i' o
-                      . (forall c. Name c (i:=>:i') -> v c o)
+                      . (forall c. Name (i:=>:i') -> v o)
                      -> ScopeFrag i i' -> SubstFrag v i i' o
 scopeFragToSubstFrag f (UnsafeScopeFromSubst m) = fmapSubstFrag (\n _ -> f n) m
 
-newtype Name (c::C)  -- Name color
-             (n::S)  -- Scope parameter
+newtype Name (n::S)  -- Scope parameter
   = UnsafeMakeName RawName
     deriving (Show, Eq, Ord, Pretty, HasNameHint, Generic, Store)
 
-newtype NameBinder (c::C)  -- name color
-                   (n::S)  -- scope above the binder
+newtype NameBinder (n::S)  -- scope above the binder
                    (l::S)  -- scope under the binder (`l` for "local")
   = UnsafeMakeBinder RawName
     deriving (Show, Pretty, HasNameHint, Generic, Store)
 
-newBinder :: NameHint -> (forall l. NameBinder c VoidS l -> a) -> a
+newBinder :: NameHint -> (forall l. NameBinder VoidS l -> a) -> a
 newBinder hint cont = cont $ UnsafeMakeBinder $ rawNameFromHint hint
 
 -- Closed binder-name pair. The name isn't fresh and it doesn't pretend to be.
 -- It's intended for subsequent refreshing.
-newName :: Color c => NameHint -> Abs (NameBinder c) (Name c) n
+newName :: NameHint -> Abs NameBinder Name n
 newName hint = sinkFromTop $ newBinder hint \b -> Abs b $ binderName b
 
--- uses the monad just to diambiguate the scope parameter
-newNameM :: Color c => Monad1 m => NameHint -> m n (Abs (NameBinder c) (Name c) n)
-newNameM hint = return $ newName hint
-
-newNames :: Int -> Abs (Nest (NameBinder c)) (ListE (Name c)) n
+newNames :: Int -> Abs (Nest NameBinder) (ListE Name) n
 newNames n = do
   let ns = rawNames n
   let vs = map UnsafeMakeName ns
@@ -2487,11 +2222,11 @@ newNames n = do
 
 withFresh :: forall n c a. (Distinct n)
           => NameHint -> Scope n
-          -> (forall l. DExt n l => NameBinder c n l -> a) -> a
+          -> (forall l. DExt n l => NameBinder n l -> a) -> a
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
   withFabricatedDistinct @UnsafeS $
     withFabricatedExt @n @UnsafeS $
-      cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder c n UnsafeS)
+      cont $ (UnsafeMakeBinder (freshRawName hint scope) :: NameBinder n UnsafeS)
 {-# INLINE withFresh #-}
 
 -- proves that the names in n are distinct
@@ -2528,7 +2263,7 @@ withSubscopeDistinct b cont =
 {-# INLINE withSubscopeDistinct #-}
 
 -- useful for printing etc.
-getRawName :: Name c n -> RawName
+getRawName :: Name n -> RawName
 getRawName (UnsafeMakeName rawName) = rawName
 
 -- === sinkings ===
@@ -2616,23 +2351,10 @@ class SinkableB (b::B) where
   sinkingProofB fresh b cont =
     sinkingProofB fresh (fromB b) \fresh' b' -> cont fresh' $ toB b'
 
--- previously we just had the alias
--- `type SinkableV v = forall c. SinkableE (v c)`
--- but GHC seemed to have trouble figuring out superclasses etc. so
--- we're making it an explicit class instead
-class (forall c. Color c => SinkableE (v c))
-      => SinkableV (v::V)
-
-class (forall c. Color c => HoistableE (v c))
-      => HoistableV (v::V)
-
 data SinkingCoercion (n::S) (l::S) where
-  SinkingCoercion :: (forall s. Name s n -> Name s l) -> SinkingCoercion n l
+  SinkingCoercion :: (Name n -> Name l) -> SinkingCoercion n l
 
-instance SinkableV Name
-instance HoistableV  Name
-
-instance SinkableE (Name c) where
+instance SinkableE Name where
   sinkingProofE (SinkingCoercion f) name = f name
 
 -- This is the unsafely-implemented base case. Here's why it's valid. Let's say
@@ -2644,7 +2366,7 @@ instance SinkableE (Name c) where
 --   (1) x itself, in which case it's also in l'
 --   (2) in n, in which case it can be sinked to n'. The only issue would be
 --       if it were shadowed by x, but it can't be because then we'd be in case (1).
-instance SinkableB (NameBinder s) where
+instance SinkableB NameBinder where
   sinkingProofB  _ (UnsafeMakeBinder b) cont =
     cont (SinkingCoercion unsafeCoerceE) (UnsafeMakeBinder b)
 
@@ -2745,20 +2467,18 @@ sinkFromTop :: SinkableE e => e VoidS -> e n
 sinkFromTop = unsafeCoerceE
 {-# INLINE sinkFromTop #-}
 
-freeVarsList :: (HoistableE e, Color c) => e n -> [Name c n]
+freeVarsList :: HoistableE e => e n -> [Name n]
 freeVarsList e = nameSetToList $ freeVarsE e
 
-nameSetToList :: forall c n. Color c => NameSet n -> [Name c n]
+nameSetToList :: NameSet n -> [Name n]
 nameSetToList nameSet =
-  catMaybes $ flip map (R.toList $ fromNameSet nameSet) \(rawName, item) ->
-    case fromSubstItem item of
-      Nothing -> Nothing
-      Just (_ :: GHC.Exts.Any c UnsafeS) -> Just $ UnsafeMakeName rawName
+  flip map (R.toList $ fromNameSet nameSet) \(rawName, item) ->
+    UnsafeMakeName rawName
 
 nameSetIntersection :: NameSet n -> NameSet n -> NameSet n
 nameSetIntersection s1 s2 = UnsafeMakeNameSet $ R.intersection (fromNameSet s1) (fromNameSet s2)
 
-boundNamesList :: (BindsNames b, Color c) => b n l -> [Name c l]
+boundNamesList :: BindsNames b => b n l -> [Name l]
 boundNamesList b = nameSetToList $ toNameSet $ toScopeFrag b
 
 toNameSet :: ScopeFrag n l -> NameSet l
@@ -2767,13 +2487,13 @@ toNameSet (UnsafeMakeScopeFrag s) = UnsafeMakeNameSet s
 nameSetRawNames :: NameSet n -> [RawName]
 nameSetRawNames m = R.keys $ fromNameSet m
 
-isInNameSet :: Name c n -> NameSet n -> Bool
+isInNameSet :: Name n -> NameSet n -> Bool
 isInNameSet v ns = getRawName v `R.member` fromNameSet ns
 
-isFreeIn :: HoistableE e => Name c n -> e n -> Bool
+isFreeIn :: HoistableE e => Name n -> e n -> Bool
 isFreeIn v e = getRawName v `R.member` fromNameSet (freeVarsE e)
 
-anyFreeIn :: HoistableE e => [Name c n] -> e n -> Bool
+anyFreeIn :: HoistableE e => [Name n] -> e n -> Bool
 anyFreeIn vs e =
   not $ R.disjoint (R.fromList $ map (\v -> (getRawName v, ())) vs)
                    (fromNameSet $ freeVarsE e)
@@ -2811,7 +2531,7 @@ partitionBinders sid bs assignBinder = go bs where
 -- NameBinder has no free vars, so there's no risk associated with hoisting.
 -- The scope is completely distinct, so their exchange doesn't create any accidental
 -- capture either.
-exchangeNameBinder :: (Distinct l, SinkableB b) => b n p -> NameBinder c p l -> PairB (NameBinder c) b n l
+exchangeNameBinder :: (Distinct l, SinkableB b) => b n p -> NameBinder p l -> PairB NameBinder b n l
 exchangeNameBinder b nb = PairB (unsafeCoerceB nb) (unsafeCoerceB b)
 {-# INLINE exchangeNameBinder #-}
 
@@ -2820,19 +2540,19 @@ hoistFilterNameSet b nameSet =
   UnsafeMakeNameSet $ fromNameSet nameSet `R.difference` frag
   where UnsafeMakeScopeFrag frag = toScopeFrag b
 
-abstractFreeVar :: Name c n -> e n -> Abs (NameBinder c) e n
+abstractFreeVar :: Name n -> e n -> Abs NameBinder e n
 abstractFreeVar v e =
   case abstractFreeVarsNoAnn [v] e of
     Abs (Nest b Empty) e' -> Abs b e'
     _ -> error "impossible"
 
-abstractFreeVars :: [(Name c n, ann n)] -> e n -> Abs (Nest (BinderP c ann)) e n
+abstractFreeVars :: [(Name n, ann n)] -> e n -> Abs (Nest (BinderP ann)) e n
 abstractFreeVars vs e = Abs bs e
   where bs = unsafeCoerceB $ unsafeListToNest bsFlat
         bsFlat = vs <&> \(UnsafeMakeName v, ann) ->
           UnsafeMakeBinder v :> unsafeCoerceE ann
 
-abstractFreeVarsNoAnn :: [Name c n] -> e n -> Abs (Nest (NameBinder c)) e n
+abstractFreeVarsNoAnn :: [Name n] -> e n -> Abs (Nest NameBinder) e n
 abstractFreeVarsNoAnn vs e =
   case abstractFreeVars (zip vs (repeat UnitE)) e of
     Abs bs e' -> Abs bs' e'
@@ -2842,18 +2562,18 @@ unsafeFromNest :: Nest b n l -> [b UnsafeS UnsafeS]
 unsafeFromNest Empty = []
 unsafeFromNest (Nest b rest) = unsafeCoerceB b : unsafeFromNest rest
 
-instance Color c => HoistableB (NameBinder c) where
+instance HoistableB NameBinder where
   freeVarsB _ = mempty
 
-instance Color c => HoistableE (Name c) where
+instance HoistableE Name where
   freeVarsE name = UnsafeMakeNameSet $ R.singleton (getRawName name) $
-    toSubstItem DistinctName (TrulyUnsafe.unsafeCoerce UnitV :: GHC.Exts.Any c UnsafeS)
+    toSubstItem DistinctName (TrulyUnsafe.unsafeCoerce UnitE :: GHC.Exts.Any UnsafeS)
 
 instance (HoistableB b1, HoistableB b2) => HoistableB (PairB b1 b2) where
   freeVarsB (PairB b1 b2) =
     freeVarsB b1 <> hoistFilterNameSet b1 (freeVarsB b2)
 
-instance (Color c, HoistableE ann) => HoistableB (BinderP c ann) where
+instance HoistableE ann => HoistableB (BinderP ann) where
   freeVarsB (b:>ann) = freeVarsB b <> freeVarsE ann
 
 instance HoistableB UnitB where
@@ -2874,70 +2594,46 @@ instance HoistableE e => HoistableE (RListE e) where
 -- long chains of case analyses as we extend environments one name at a time.
 
 newtype SubstFrag
-  (v ::V)  -- env payload, as a function of the name's color
+  (v ::E)  -- env payload, as a function of the name's color
   (i ::S)  -- starting scope parameter for names we can look up in this env
   (i'::S)  -- ending   scope parameter for names we can look up in this env
   (o ::S)  -- scope parameter for the values stored in the env
   = UnsafeMakeSubst (RawNameMap (SubstItem v o))
-  deriving (Generic)
-deriving instance (forall c. Show (v c o)) => Show (SubstFrag v i i' o)
+  deriving (Generic, Show)
 
-data SubstItem (v::V) (n::S) = SubstItem !FragNameDistinctness !C (v UnsafeC n)
-deriving instance (forall c. Show (v c n)) => Show (SubstItem v n)
+data SubstItem (e::E) (n::S) = SubstItem !FragNameDistinctness (e n)
+     deriving (Show, Generic)
 
-unsafeFromSubstItem :: forall c v o. SubstItem v o -> (v c o)
-unsafeFromSubstItem (SubstItem _ _ val) = TrulyUnsafe.unsafeCoerce val
-{-# INLINE unsafeFromSubstItem #-}
-
-fromSubstItem :: forall c v o. Color c => SubstItem v o -> Maybe (v c o)
-fromSubstItem (SubstItem _ c (val :: v c' o)) =
-  case c == getColorRep @c of
-    True  -> Just (TrulyUnsafe.unsafeCoerce val :: v c o)
-    False -> Nothing
+fromSubstItem :: SubstItem v o -> (v o)
+fromSubstItem (SubstItem _ val) = val
 {-# INLINE fromSubstItem #-}
 
-toSubstItem :: forall v c o. Color c => FragNameDistinctness -> v c o -> SubstItem v o
-toSubstItem d v = SubstItem d (getColorRep @c) (unsafeCoerceVC v)
+toSubstItem :: forall v o. FragNameDistinctness -> v o -> SubstItem v o
+toSubstItem d e = SubstItem d e
 {-# INLINE toSubstItem #-}
-
-fromSubstItemPoly :: forall v o a. SubstItem v o -> (forall c. Color c => v c o -> a) -> a
-fromSubstItemPoly (SubstItem _ c v) cont =
-  interpretColor c \(ColorProxy :: ColorProxy c) -> cont (unsafeCoerceVC @c v)
-{-# INLINE fromSubstItemPoly #-}
-
--- === Packed representation of SubstItem properties ===
--- We use the MSB to encode shadowing: a name has been shadowed in the current
--- fragment if the bit is set. The rest of the bits are used to encode the tag
--- of the C constructor (representing name's color).
-
-newtype SubstItemFlags = SubstItemFlags Int deriving (Show, Store)
-
-shadowBit :: Int
-shadowBit = finiteBitSize @Int undefined - 1
-{-# INLINE shadowBit #-}
 
 data FragNameDistinctness = DistinctName | ShadowingName deriving (Eq, Show, Generic)
 instance Store FragNameDistinctness
 
 itemDistinctness :: SubstItem v n -> FragNameDistinctness
-itemDistinctness (SubstItem d _ _) = d
+itemDistinctness (SubstItem d _) = d
 {-# INLINE itemDistinctness #-}
 
 takeLeftNonDistinct :: SubstItem v n -> SubstItem v n -> SubstItem v n
-takeLeftNonDistinct (SubstItem _ c v) _ = SubstItem ShadowingName c v
+takeLeftNonDistinct (SubstItem _ v) _ = SubstItem ShadowingName v
 
 -- === environments and scopes ===
 
-lookupSubstFrag :: SubstFrag v i i' o -> Name c (i:=>:i') -> v c o
+lookupSubstFrag :: SubstFrag v i i' o -> Name (i:=>:i') -> v o
 lookupSubstFrag (UnsafeMakeSubst m) (UnsafeMakeName rawName) = undefined
   case R.lookup rawName m of
-    Just d -> unsafeFromSubstItem d
+    Just d -> fromSubstItem d
     _ -> error "Subst lookup failed (this should never happen)"
 
 -- Just for debugging
-lookupSubstFragRaw :: SubstFrag v i i' o -> RawName -> Maybe (v UnsafeC o)
+lookupSubstFragRaw :: SubstFrag v i i' o -> RawName -> Maybe (v o)
 lookupSubstFragRaw (UnsafeMakeSubst m) rawName =
-  R.lookup rawName m <&> \(SubstItem _ _ v) -> v
+  R.lookup rawName m <&> \(SubstItem _ v) -> v
 
 instance InFrag (SubstFrag v) where
   emptyInFrag = UnsafeMakeSubst mempty
@@ -2946,24 +2642,23 @@ instance InFrag (SubstFrag v) where
     UnsafeMakeSubst (R.unionWith takeLeftNonDistinct m2 m1)
   {-# INLINE catInFrags #-}
 
-singletonSubst :: Color c => NameBinder c i i' -> v c o -> SubstFrag v i i' o
+singletonSubst :: NameBinder i i' -> v o -> SubstFrag v i i' o
 singletonSubst (UnsafeMakeBinder name) x =
   UnsafeMakeSubst $ R.singleton name $ toSubstItem DistinctName x
 {-# INLINE singletonSubst #-}
 
-fmapSubstFrag :: (forall c. Color c => Name c (i:=>:i') -> v c o -> v' c o')
+fmapSubstFrag :: (Name (i:=>:i') -> v o -> v' o')
               -> SubstFrag v i i' o -> SubstFrag v' i i' o'
 fmapSubstFrag f (UnsafeMakeSubst m) =
-  UnsafeMakeSubst $ flip R.mapWithKey m $ \k item@(SubstItem d c _) ->
-    SubstItem d c $ fromSubstItemPoly item \v ->
-      unsafeCoerceVC @UnsafeC $ f (UnsafeMakeName k) v
+  UnsafeMakeSubst $ flip R.mapWithKey m $ \k item@(SubstItem d x) ->
+    SubstItem d $ f (UnsafeMakeName k) x
 
 substFragAsScope :: forall v i i' o. SubstFrag v i i' o -> ScopeFrag i i'
 substFragAsScope m = UnsafeMakeScopeFrag $ TrulyUnsafe.unsafeCoerce m
 
 -- === garbage collection ===
 
-collectGarbage :: (HoistableV v, HoistableE e)
+collectGarbage :: (HoistableE v, HoistableE e)
                => Distinct l => RecSubstFrag v n l -> e l
                -> (forall l'. Distinct l' => RecSubstFrag v n l' -> e l' -> a)
                -> a
@@ -2980,46 +2675,46 @@ collectGarbage (RecSubstFrag (UnsafeMakeSubst env)) e cont = do
       Just item | itemDistinctness item == ShadowingName ->
         error "shouldn't be possible, due to Distinct constraint"
 #endif
-      Just item -> R.keys $ fromSubstItemPoly item (fromNameSet . freeVarsE)
+      Just item -> R.keys $ fromNameSet $ freeVarsE $ fromSubstItem item
 
 -- === iterating through env pairs ===
 
 -- Taking this binder apart is unsafe, because converting a nest of RepeatedNameBinders
 -- into a nest of their consecutive NameBinders is expressible in the safe fragment, but
 -- it doesn't preserve the multiplicity of names in a scope fragment!
-data RepeatedNameBinder (c::C) (n::S) (l::S) where
-  UnsafeRepeatedNameBinder :: !FragNameDistinctness -> NameBinder c n l -> RepeatedNameBinder c n l
-instance Color c => SinkableB (RepeatedNameBinder c) where
+data RepeatedNameBinder (n::S) (l::S) where
+  UnsafeRepeatedNameBinder :: !FragNameDistinctness -> NameBinder n l -> RepeatedNameBinder n l
+instance SinkableB RepeatedNameBinder where
   sinkingProofB _ _ _ = todoSinkableProof
-instance Color c => ProvesExt (RepeatedNameBinder c) where
+instance ProvesExt RepeatedNameBinder where
   toExtEvidence (UnsafeRepeatedNameBinder _ b) = toExtEvidence b
   {-# INLINE toExtEvidence #-}
-instance Color c => BindsNames (RepeatedNameBinder c) where
+instance BindsNames RepeatedNameBinder where
   toScopeFrag (UnsafeRepeatedNameBinder _ b) = toScopeFrag b
   {-# INLINE toScopeFrag #-}
-instance Color c => RenameB (RepeatedNameBinder c) where
+instance RenameB RepeatedNameBinder where
   renameB env (UnsafeRepeatedNameBinder d b) cont = renameB env b \env' b' ->
     cont env' $ UnsafeRepeatedNameBinder d b'
   {-# INLINE renameB #-}
-instance Color c => BindsAtMostOneName (RepeatedNameBinder c) c where
+instance BindsAtMostOneName RepeatedNameBinder where
   (UnsafeRepeatedNameBinder _ b) @> v = b @> v
   {-# INLINE (@>) #-}
-instance Color c => BindsOneName (RepeatedNameBinder c) c where
+instance BindsOneName (RepeatedNameBinder) where
   binderName (UnsafeRepeatedNameBinder _ b) = binderName b
   {-# INLINE binderName #-}
-instance HasNameHint (RepeatedNameBinder c n l) where
+instance HasNameHint (RepeatedNameBinder n l) where
   getNameHint (UnsafeRepeatedNameBinder _ b) = getNameHint b
   {-# INLINE getNameHint #-}
 
 
-data SubstPair (v::V) (o::S) (i::S) (i'::S) where
-  SubstPair :: Color c => {-# UNPACK #-} !(RepeatedNameBinder c i i') -> v c o -> SubstPair v o i i'
+data SubstPair (v::E) (o::S) (i::S) (i'::S) where
+  SubstPair :: {-# UNPACK #-} !(RepeatedNameBinder i i') -> v o -> SubstPair v o i i'
 
 toSubstPairs :: forall v i i' o . SubstFrag v i i' o -> Nest (SubstPair v o) i i'
 toSubstPairs (UnsafeMakeSubst m) =
-  go $ R.toList m <&> \(rawName, item) ->
-    fromSubstItemPoly item \v ->
-      SubstPair (UnsafeRepeatedNameBinder (itemDistinctness item) (UnsafeMakeBinder rawName)) v
+  go $ R.toList m <&> \(rawName, item) -> do
+    let v = fromSubstItem item
+    SubstPair (UnsafeRepeatedNameBinder (itemDistinctness item) (UnsafeMakeBinder rawName)) v
   where
     go :: [SubstPair v o UnsafeS UnsafeS] -> Nest (SubstPair v o) i i'
     go [] = unsafeCoerceB Empty
@@ -3054,19 +2749,19 @@ instance BindsNames (SubstPair v o) where
 
 -- === instances ===
 
-instance (forall c. Pretty (v c n)) => Pretty (SubstItem v n) where
-  pretty (SubstItem _ _ val) = pretty val
+instance (forall c. Pretty (v n)) => Pretty (SubstItem v n) where
+  pretty (SubstItem _ val) = pretty val
 
-instance SinkableV v => SinkableE (SubstFrag v i i') where
+instance SinkableE v => SinkableE (SubstFrag v i i') where
   sinkingProofE fresh m = fmapSubstFrag (\(UnsafeMakeName _) v -> sinkingProofE fresh v) m
 
-instance HoistableV v => HoistableE (SubstFrag v i i') where
+instance HoistableE v => HoistableE (SubstFrag v i i') where
   freeVarsE frag = foldMapSubstFrag freeVarsE frag
 
-instance RenameV v => RenameE (SubstFrag v i i') where
+instance RenameE v => RenameE (SubstFrag v i i') where
    renameE env frag = fmapSubstFrag (\_ val -> renameE env val) frag
 
-instance RenameV v => RenameE (Subst v i) where
+instance RenameE v => RenameE (Subst v i) where
   renameE env = \case
     Subst f frag -> Subst (\n -> renameE env (f n)) $ renameE env frag
     UnsafeMakeIdentitySubst
@@ -3084,10 +2779,6 @@ unsafeCoerceE = TrulyUnsafe.unsafeCoerce
 unsafeCoerceB :: forall (b::B) n l n' l' . b n l -> b n' l'
 unsafeCoerceB = TrulyUnsafe.unsafeCoerce
 {-# NOINLINE [1] unsafeCoerceB #-}
-
-unsafeCoerceVC :: forall c' (v::V) c o. v c o -> v c' o
-unsafeCoerceVC = TrulyUnsafe.unsafeCoerce
-{-# NOINLINE [1] unsafeCoerceVC #-}
 
 unsafeCoerceM1 :: forall (m::S -> * -> *) (n1::S) (n2::S) (a:: *). m n1 a -> m n2 a
 unsafeCoerceM1 = TrulyUnsafe.unsafeCoerce
@@ -3130,9 +2821,9 @@ instance HoistableB b => HoistableB (RNest b) where
   freeVarsB REmpty = mempty
   freeVarsB (RNest rest b) = freeVarsB (PairB rest b)
 
-instance (forall c n. Pretty (v c n)) => Pretty (SubstFrag v i i' o) where
+instance (forall n. Pretty (v n)) => Pretty (SubstFrag v i i' o) where
   pretty (UnsafeMakeSubst m) =
-    vcat [ pretty v <+> "@>" <+> pretty x | (v, SubstItem _ _ x) <- R.toList m ]
+    vcat [ pretty v <+> "@>" <+> pretty x | (v, SubstItem _ x) <- R.toList m ]
 
 instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
   type Rep (Nest b n l) = Rep [b UnsafeS UnsafeS]
@@ -3150,31 +2841,19 @@ unsafeListToNest l = case l of
   [] -> unsafeCoerceB Empty
   b:rest -> Nest (unsafeCoerceB b) $ unsafeListToNest rest
 
-instance (forall c. Color c => Store (v c n)) => Store (SubstItem v n) where
-  size = VarSize \item@(SubstItem d c _) ->
-    getSize (d, c) + fromSubstItemPoly item getSize
+instance Store (e n) => Store (SubstItem e n)
 
-  peek = do
-    (d, c) <- peek
-    interpretColor c \(ColorProxy :: ColorProxy c) -> do
-      v :: v c n <- peek
-      return $ SubstItem d c (unsafeCoerceVC v)
+data StoreNothingE (n::S) = StoreNothingE
 
-  poke item@(SubstItem d c _) = do
-    poke (d, c)
-    fromSubstItemPoly item poke
-
-data StoreNothingV (c::C) (n::S) = StoreNothingV
-
-instance Store (StoreNothingV c n) where
+instance Store (StoreNothingE n) where
   size = ConstSize 0
-  peek = return StoreNothingV
+  peek = return StoreNothingE
   poke = const $ return ()
 
-pokeableScopeFrag :: SubstFrag GHC.Exts.Any n l o -> SubstFrag StoreNothingV n l o
+pokeableScopeFrag :: SubstFrag GHC.Exts.Any n l o -> SubstFrag StoreNothingE n l o
 pokeableScopeFrag = TrulyUnsafe.unsafeCoerce
 
-fromPeekedScopeFrag :: SubstFrag StoreNothingV n l o -> SubstFrag GHC.Exts.Any n l o
+fromPeekedScopeFrag :: SubstFrag StoreNothingE n l o -> SubstFrag GHC.Exts.Any n l o
 fromPeekedScopeFrag = TrulyUnsafe.unsafeCoerce
 
 instance Store (ScopeFrag n l) where
@@ -3182,11 +2861,10 @@ instance Store (ScopeFrag n l) where
   peek = UnsafeScopeFromSubst . fromPeekedScopeFrag <$> peek
   poke (UnsafeScopeFromSubst s) = poke $ pokeableScopeFrag s
 
-instance SinkableV v => SinkableE (SubstItem v) where
+instance SinkableE v => SinkableE (SubstItem v) where
   sinkingProofE = todoSinkableProof
 
-instance (forall c. Color c => Store (v c o))
-         => Store (SubstFrag v i i' o) where
+instance Store (v o) => Store (SubstFrag v i i' o) where
 
 instance ( Store   (b UnsafeS UnsafeS)
          , Generic (b UnsafeS UnsafeS) ) => Store (Nest b n l)
@@ -3260,13 +2938,13 @@ instance HoistableB b => HoistableB (WithAttrB a b) where
 -- the only names that are given meaning by the context of the term
 -- being traversed.
 
-newtype NameMapE (c::C) (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
+newtype NameMapE (e:: E) (n::S) = UnsafeNameMapE (RawNameMap (e n))
   deriving (Eq, Semigroup, Monoid, Store)
 
 -- Filters out the entry(ies) for the binder being hoisted above,
 -- and hoists the values of the remaining entries.
 hoistNameMapE :: (BindsNames b, HoistableE e, ShowE e)
-              => b n l -> NameMapE c e l -> HoistExcept (NameMapE c e n)
+              => b n l -> NameMapE e l -> HoistExcept (NameMapE e n)
 hoistNameMapE b (UnsafeNameMapE raw) =
   UnsafeNameMapE <$> traverse (hoist b) diff
   where
@@ -3274,81 +2952,72 @@ hoistNameMapE b (UnsafeNameMapE raw) =
     UnsafeMakeScopeFrag frag = toScopeFrag b
 {-# INLINE hoistNameMapE #-}
 
-insertNameMapE :: Name c n -> e n -> NameMapE c e n -> NameMapE c e n
+insertNameMapE :: Name n -> e n -> NameMapE e n -> NameMapE e n
 insertNameMapE (UnsafeMakeName n) x (UnsafeNameMapE raw)
   = UnsafeNameMapE $ R.insert n x raw
 {-# INLINE insertNameMapE #-}
 
-lookupNameMapE :: Name c n -> NameMapE c e n -> Maybe (e n)
+lookupNameMapE :: Name n -> NameMapE e n -> Maybe (e n)
 lookupNameMapE (UnsafeMakeName n) (UnsafeNameMapE raw) = R.lookup n raw
 {-# INLINE lookupNameMapE #-}
 
-singletonNameMapE :: Name c n -> e n -> NameMapE c e n
+singletonNameMapE :: Name n -> e n -> NameMapE e n
 singletonNameMapE (UnsafeMakeName n) x = UnsafeNameMapE $ R.singleton n x
 {-# INLINE singletonNameMapE #-}
 
-toListNameMapE :: NameMapE c e n -> [(Name c n, (e n))]
+toListNameMapE :: NameMapE e n -> [(Name n, (e n))]
 toListNameMapE (UnsafeNameMapE raw) =
   R.toList raw <&> \(r, x) -> (UnsafeMakeName r, x)
 {-# INLINE toListNameMapE #-}
 
-unionWithNameMapE :: (e n -> e n -> e n) -> NameMapE c e n -> NameMapE c e n -> NameMapE c e n
+unionWithNameMapE :: (e n -> e n -> e n) -> NameMapE e n -> NameMapE e n -> NameMapE e n
 unionWithNameMapE f (UnsafeNameMapE raw1) (UnsafeNameMapE raw2) =
   UnsafeNameMapE $ R.unionWith f raw1 raw2
 {-# INLINE unionWithNameMapE #-}
 
-unionsWithNameMapE :: (Foldable f) => (e n -> e n -> e n) -> f (NameMapE c e n) -> NameMapE c e n
+unionsWithNameMapE :: (Foldable f) => (e n -> e n -> e n) -> f (NameMapE e n) -> NameMapE e n
 unionsWithNameMapE func maps =
   foldl' (unionWithNameMapE func) mempty maps
 {-# INLINE unionsWithNameMapE #-}
 
-traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n))
-                 -> NameMapE c e1 n -> f (NameMapE c e2 n)
+traverseNameMapE :: (Applicative f) => (e1 n -> f (e2 n)) -> NameMapE e1 n -> f (NameMapE e2 n)
 traverseNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE <$> traverse f raw
 {-# INLINE traverseNameMapE #-}
 
-mapNameMapE :: (e1 n -> e2 n)
-            -> NameMapE c e1 n -> NameMapE c e2 n
+mapNameMapE :: (e1 n -> e2 n) -> NameMapE e1 n -> NameMapE e2 n
 mapNameMapE f (UnsafeNameMapE raw) = UnsafeNameMapE $ fmap f raw
 {-# INLINE mapNameMapE #-}
 
-keysNameMapE :: NameMapE c e n -> [Name c n]
+keysNameMapE :: NameMapE e n -> [Name n]
 keysNameMapE = map fst . toListNameMapE
 {-# INLINE keysNameMapE #-}
 
-keySetNameMapE :: (Color c) => NameMapE c e n -> NameSet n
+keySetNameMapE :: NameMapE e n -> NameSet n
 keySetNameMapE nmap = freeVarsE $ ListE $ keysNameMapE nmap
 
-instance SinkableE e => SinkableE (NameMapE c e) where
+instance SinkableE e => SinkableE (NameMapE e) where
   sinkingProofE = undefined
 
-instance RenameE e => RenameE (NameMapE c e) where
+instance RenameE e => RenameE (NameMapE e) where
   renameE = undefined
 
-instance HoistableE e => HoistableE (NameMapE c e) where
+instance HoistableE e => HoistableE (NameMapE e) where
   freeVarsE = undefined
 
 -- A small short-cut: When the information in a NameMapE does not, in
 -- fact, reference any names, hoisting the entries cannot fail.
 
-type NameMap (c::C) (a:: *) = NameMapE c (LiftE a)
+type NameMap (a:: *) = NameMapE (LiftE a)
 
-hoistNameMap :: (BindsNames b, Show a)
-  => b n l -> NameMap c a l -> (NameMap c a n)
+hoistNameMap :: (BindsNames b, Show a) => b n l -> NameMap a l -> (NameMap a n)
 hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
 {-# INLINE hoistNameMap #-}
 
--- === E-kinded IR coercions ===
-
--- XXX: the intention is that we won't have to use this much
-unsafeCoerceIRE :: forall (r'::IR) (r::IR) (e::IR->E) (n::S). e r n -> e r' n
-unsafeCoerceIRE = TrulyUnsafe.unsafeCoerce
-
 -- === Pretty instances ===
 
-instance PrettyPrec (Name s n) where prettyPrec = atPrec ArgPrec . pretty
+instance PrettyPrec (Name n) where prettyPrec = atPrec ArgPrec . pretty
 
-instance PrettyE ann => Pretty (BinderP c ann n l)
+instance PrettyE ann => Pretty (BinderP ann n l)
   where pretty (b:>ty) = pretty b <> ":" <> pretty ty
 
 -- === notes ===

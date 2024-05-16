@@ -17,7 +17,6 @@ import Control.Monad.State.Strict
 
 import Name
 import MTL1
-import IRVariants
 import Types.Core
 import Types.Top
 import Core
@@ -27,11 +26,11 @@ import Err
 
 -- === SubstReader class ===
 
-class (SinkableV v, Monad2 m) => SubstReader (v::V) (m::MonadKind2) | m -> v where
+class (SinkableE v, Monad2 m) => SubstReader (v::E) (m::MonadKind2) | m -> v where
    getSubst :: m i o (Subst v i o)
    withSubst :: Subst v i' o -> m i' o a -> m i o a
 
-lookupSubstM :: (Color c, SubstReader v m) => Name c i -> m i o (v c o)
+lookupSubstM :: SubstReader v m => Name i -> m i o (v o)
 lookupSubstM name = (!name) <$> getSubst
 
 dropSubst :: (SubstReader v m, FromName v) => m o o a -> m i o a
@@ -57,30 +56,29 @@ extendSubst frag cont = do
 traverseNames
   :: forall v e m i o.
      (SubstE v e, HoistableE e, SinkableE e, FromName v, EnvReader m)
-  => (forall c. Color c => Name c i -> m o (v c o))
+  => (Name i -> m o (v o))
   -> e i -> m o (e o)
 traverseNames f e = do
   let vs = freeVarsE e
-  m <- flip R.traverseWithKey (fromNameSet vs) \rawName (SubstItem d c _) ->
-    interpretColor c \(ColorProxy :: ColorProxy c) -> do
-      v' <- f (UnsafeMakeName rawName :: Name c i)
-      return $ SubstItem d c (unsafeCoerceVC v')
+  m <- flip R.traverseWithKey (fromNameSet vs) \rawName (SubstItem d _) -> do
+    v' <- f (UnsafeMakeName rawName :: Name i)
+    return $ SubstItem d v'
   fmapNamesM (applyTraversed m) e
 {-# INLINE traverseNames #-}
 
 applyTraversed :: FromName v
-               => RawNameMap (SubstItem v n) -> Name c i -> v c n
-applyTraversed m = \((UnsafeMakeName v) :: Name c i) -> case R.lookup v m of
-    Just item -> unsafeFromSubstItem item
-    Nothing -> fromName $ (UnsafeMakeName v :: Name c o)
+               => RawNameMap (SubstItem v n) -> Name i -> v n
+applyTraversed m = \((UnsafeMakeName v) :: Name i) -> case R.lookup v m of
+    Just item -> fromSubstItem item
+    Nothing -> fromName $ (UnsafeMakeName v :: Name o)
 
 fmapNames :: (SubstE v e, Distinct o)
-          => Env o -> (forall c. Color c => Name c i -> v c o) -> e i -> e o
+          => Env o -> (Name i -> v o) -> e i -> e o
 fmapNames env f e = substE (env, newSubst f) e
 {-# INLINE fmapNames #-}
 
 fmapNamesM :: (SubstE v e, SinkableE e, EnvReader m)
-          => (forall c. Color c => Name c i -> v c o)
+          => (Name i -> v o)
           -> e i -> m o (e o)
 fmapNamesM f e = do
   env <- unsafeGetEnv
@@ -90,7 +88,7 @@ fmapNamesM f e = do
 
 -- === type classes for traversing names ===
 
-class FromName v => SubstE (v::V) (e::E) where
+class FromName v => SubstE (v::E) (e::E) where
   -- TODO: can't make an alias for these constraints because of impredicativity
   substE :: Distinct o => (Env o, Subst v i o) -> e i -> e o
 
@@ -98,7 +96,7 @@ class FromName v => SubstE (v::V) (e::E) where
                  => (Env o, Subst v i o) -> e i -> e o
   substE env e = toE $ substE env (fromE e)
 
-class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
+class (FromName v, SinkableB b) => SubstB (v::E) (b::B) where
   substB
     :: Distinct o
     => (Env o, Subst v i o)
@@ -117,14 +115,7 @@ class (FromName v, SinkableB b) => SubstB (v::V) (b::B) where
     substB env (fromB b) \env' b' ->
       cont env' $ toB b'
 
-class ( FromName substVal, SinkableV v
-      , forall c. Color c => SubstE substVal (v c))
-      => SubstV (substVal::V) (v::V)
-
-instance ( forall r. IRRep r => SinkableE (atom r)
-         , forall r. IRRep r => RenameE (atom r)) => RenameV (SubstVal atom)
-
-instance (Color c, forall r. IRRep r => RenameE (atom r)) => RenameE (SubstVal atom c) where
+instance RenameE atom => RenameE (SubstVal atom) where
   renameE (_, env) (Rename name) = Rename $ env ! name
   renameE (scope, env) (SubstVal atom) = SubstVal $ renameE (scope, env) atom
 
@@ -155,7 +146,7 @@ extendRenamer :: (SubstReader v m, FromName v) => SubstFrag Name i i' o -> m i' 
 extendRenamer frag = extendSubst (fmapSubstFrag (const fromName) frag)
 
 extendBinderRename
-  :: (SubstReader v m, FromName v, BindsAtMostOneName b c, BindsOneName b' c)
+  :: (SubstReader v m, FromName v, BindsAtMostOneName b, BindsOneName b')
   => b i i' -> b' o o' -> m i' o' r -> m i o' r
 extendBinderRename b b' cont = extendSubst (b@>fromName (binderName b')) cont
 {-# INLINE extendBinderRename #-}
@@ -196,20 +187,20 @@ renameBinders b cont = do
 
 -- === various convenience utilities ===
 
-applySubstFragPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Ext h o, Distinct o)
+applySubstFragPure :: (SubstE v e, SinkableE e, SinkableE v, FromName v, Ext h o, Distinct o)
                    => Env o -> SubstFrag v h i o -> e i -> e o
 applySubstFragPure env substFrag x = do
   let fullSubst = sink idSubst <>> substFrag
   applySubstPure env fullSubst x
 
-applySubstPure :: (SubstE v e, SinkableE e, SinkableV v, FromName v, Distinct o)
+applySubstPure :: (SubstE v e, SinkableE e, SinkableE v, FromName v, Distinct o)
                => Env o -> Subst v i o -> e i -> e o
 applySubstPure env subst x = do
   case tryApplyIdentitySubst subst x of
     Just x' -> x'
     Nothing -> fmapNames env (subst !) x
 
-applySubst :: (EnvReader m, SubstE v e, SinkableE e, SinkableV v, FromName v)
+applySubst :: (EnvReader m, SubstE v e, SinkableE e, SinkableE v, FromName v)
            => Ext h o
            => SubstFrag v h i o -> e i -> m o (e o)
 applySubst substFrag x = do
@@ -218,21 +209,21 @@ applySubst substFrag x = do
   return $ applySubstFragPure env substFrag x
 {-# INLINE applySubst #-}
 
-applyAbs :: ( SinkableV v, SinkableE e
-            , FromName v, EnvReader m, BindsOneName b c, SubstE v e)
-         => Abs b e n -> v c n -> m n (e n)
+applyAbs :: ( SinkableE v, SinkableE e
+            , FromName v, EnvReader m, BindsOneName b, SubstE v e)
+         => Abs b e n -> v n -> m n (e n)
 applyAbs (Abs b body) x = applySubst (b@>x) body
 {-# INLINE applyAbs #-}
 
-applyNaryAbs :: ( SinkableV v, FromName v, EnvReader m, BindsNameList b c, SubstE v e
+applyNaryAbs :: ( SinkableE v, FromName v, EnvReader m, BindsNameList b, SubstE v e
                 , SubstB v b, SinkableE e)
-             => Abs b e n -> [v c n] -> m n (e n)
+             => Abs b e n -> [v n] -> m n (e n)
 applyNaryAbs (Abs bs body) xs = applySubst (bs @@> xs) body
 {-# INLINE applyNaryAbs #-}
 
 substBinders
-  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, RenameV v, RenameB b, BindsEnv b)
+  :: ( SinkableE v, SubstE v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, RenameE v, RenameB b, BindsEnv b)
   => b i i'
   -> (forall o'. DExt o o' => b o o' -> m i' o' a)
   -> m i o a
@@ -241,8 +232,8 @@ substBinders b cont = do
 {-# INLINE substBinders #-}
 
 substBindersFrag
-  :: ( SinkableV v, SubstV v v, EnvExtender2 m, FromName v
-     , SubstReader v m, SubstB v b, RenameV v, RenameB b, BindsEnv b)
+  :: ( SinkableE v, SubstE v v, EnvExtender2 m, FromName v
+     , SubstReader v m, SubstB v b, RenameE v, RenameB b, BindsEnv b)
   => b i i'
   -> (forall o'. DExt o o' => SubstFrag v i i' o' -> b o o' -> m i o' a)
   -> m i o a
@@ -253,26 +244,19 @@ substBindersFrag b cont = do
 
 -- === atom subst vals ===
 
-data SubstVal (atom::IR->E) (c::C) (n::S) where
-  SubstVal :: IRRep r => atom r n -> SubstVal atom (AtomNameC r) n
-  Rename   :: Name c n -> SubstVal atom c n
+data SubstVal (atom::E) (n::S) =
+   SubstVal (atom n)
+ | Rename (Name n)
 type AtomSubstVal = SubstVal Atom
-
-type family IsAtomName (c::C) where
-  IsAtomName (AtomNameC r) = True
-  IsAtomName _             = False
-
-instance (Color c, IsAtomName c ~ False) => SubstE (SubstVal atom) (Name c) where
-  substE (_, env) v = case env ! v of Rename v' -> v'
 
 instance FromName (SubstVal atom) where
   fromName = Rename
   {-# INLINE fromName #-}
 
-class ToSubstVal (v::V) (atom::IR->E) where
-  toSubstVal :: v c n -> SubstVal atom c n
+class ToSubstVal (v::E) (atom::E) where
+  toSubstVal :: v n -> SubstVal atom n
 
-instance ToSubstVal (Name::V) (atom::IR->E) where
+instance ToSubstVal (Name::E) (atom::E) where
   toSubstVal = Rename
 
 instance ToSubstVal (SubstVal atom) atom where
@@ -280,12 +264,12 @@ instance ToSubstVal (SubstVal atom) atom where
 
 type AtomSubstReader v m = (SubstReader v m, FromName v, ToSubstVal v Atom)
 
-toAtomVar :: (EnvReader m,  IRRep r) => AtomName r n -> m n (AtomVar r n)
+toAtomVar :: EnvReader m => AtomName n -> m n (AtomVar n)
 toAtomVar v = do
   ty <- getType <$> lookupAtomName v
   return $ AtomVar v ty
 
-lookupAtomSubst :: (IRRep r, SubstReader AtomSubstVal m, EnvReader2 m) => AtomName r i -> m i o (Atom r o)
+lookupAtomSubst :: (SubstReader AtomSubstVal m, EnvReader2 m) => AtomName i -> m i o (Atom o)
 lookupAtomSubst v = do
   lookupSubstM v >>= \case
     Rename v' -> toAtom <$> toAtomVar v'
@@ -303,7 +287,7 @@ asAtomSubstValSubst subst = newSubst \v -> toSubstVal (subst ! v)
 
 -- === SubstReaderT transformer ===
 
-newtype SubstReaderT (v::V) (m::MonadKind1) (i::S) (o::S) (a:: *) =
+newtype SubstReaderT (v::E) (m::MonadKind1) (i::S) (o::S) (a:: *) =
   SubstReaderT' { runSubstReaderT' :: ReaderT (Subst v i o) (m o) a }
 
 pattern SubstReaderT :: (Subst v i o -> m o a) -> SubstReaderT v m i o a
@@ -336,7 +320,7 @@ deriving instance (Monad1 m, Alternative1 m) => Alternative (SubstReaderT v m i 
 deriving instance Fallible1  m => Fallible  (SubstReaderT v m i o)
 deriving instance Catchable1 m => Catchable (SubstReaderT v m i o)
 
-type ScopedSubstReader (v::V) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
+type ScopedSubstReader (v::E) = SubstReaderT v (ScopeReaderT Identity) :: MonadKind2
 
 liftSubstReaderT :: Monad1 m => m o a -> SubstReaderT v m i o a
 liftSubstReaderT m = SubstReaderT' $ lift m
@@ -352,23 +336,23 @@ withSubstReaderT :: FromName v => SubstReaderT v m n n a -> m n a
 withSubstReaderT = runSubstReaderT idSubst
 {-# INLINE withSubstReaderT #-}
 
-instance (SinkableV v, Monad1 m) => SubstReader v (SubstReaderT v m) where
+instance (SinkableE v, Monad1 m) => SubstReader v (SubstReaderT v m) where
   getSubst = SubstReaderT' ask
   {-# INLINE getSubst #-}
   withSubst env (SubstReaderT' cont) = SubstReaderT' $ withReaderT (const env) cont
   {-# INLINE withSubst #-}
 
-instance (SinkableV v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
+instance (SinkableE v, ScopeReader m) => ScopeReader (SubstReaderT v m i) where
   unsafeGetScope = liftSubstReaderT unsafeGetScope
   {-# INLINE unsafeGetScope #-}
   getDistinct = liftSubstReaderT getDistinct
   {-# INLINE getDistinct #-}
 
-instance (SinkableV v, EnvReader m) => EnvReader (SubstReaderT v m i) where
+instance (SinkableE v, EnvReader m) => EnvReader (SubstReaderT v m i) where
   unsafeGetEnv = liftSubstReaderT unsafeGetEnv
   {-# INLINE unsafeGetEnv #-}
 
-instance (SinkableV v, ScopeReader m, EnvExtender m)
+instance (SinkableE v, ScopeReader m, EnvExtender m)
          => EnvExtender (SubstReaderT v m i) where
   refreshAbs ab cont = SubstReaderT \subst ->
     refreshAbs ab \b e -> do
@@ -394,7 +378,7 @@ liftSubstEnvReaderM
 liftSubstEnvReaderM cont = liftEnvReaderM $ runSubstReaderT idSubst $ cont
 {-# INLINE liftSubstEnvReaderM #-}
 
-instance (SinkableV v, ScopeReader m, ScopeExtender m)
+instance (SinkableE v, ScopeReader m, ScopeExtender m)
          => ScopeExtender (SubstReaderT v m i) where
   refreshAbsScope ab cont = SubstReaderT \env ->
     refreshAbsScope ab \b e -> do
@@ -402,7 +386,7 @@ instance (SinkableV v, ScopeReader m, ScopeExtender m)
       env' <- sinkM env
       cont' env'
 
-instance (SinkableV v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
+instance (SinkableE v, MonadIO1 m) => MonadIO (SubstReaderT v m i o) where
   liftIO m = liftSubstReaderT $ liftIO m
   {-# INLINE liftIO #-}
 
@@ -418,8 +402,7 @@ instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT 
 
 -- === instances ===
 
-instance (forall r. IRRep r => SinkableE (atom r)) => SinkableV (SubstVal atom)
-instance (forall r. IRRep r => SinkableE (atom r)) => SinkableE (SubstVal atom c) where
+instance SinkableE atom => SinkableE (SubstVal atom) where
   sinkingProofE fresh substVal = case substVal of
     Rename name  -> Rename   $ sinkingProofE fresh name
     SubstVal val -> SubstVal $ sinkingProofE fresh val
@@ -430,7 +413,7 @@ instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
 
 instance ( BindsNames b1, SubstB v b1
          , BindsNames b2, SubstB v b2
-         , SinkableV v, FromName v)
+         , SinkableE v, FromName v)
          => SubstB v (PairB b1 b2) where
   substB env (PairB b1 b2) cont =
     substB env b1 \env' b1' ->
@@ -451,8 +434,8 @@ instance (SubstB v b1, SubstB v b2) => SubstB v (EitherB b1 b2) where
     substB env b \env' b' ->
       cont env' $ RightB b'
 
-instance (Color c, SinkableE ann, SubstE v ann, SinkableV v, ToBinding ann c)
-         => SubstB v (BinderP c ann) where
+instance (SinkableE ann, SubstE v ann, SinkableE v, ToBinding ann)
+         => SubstB v (BinderP ann) where
   substB (env, subst) (b:>ty) cont = do
     let ty' = substE (env, subst) ty
     withFresh (getNameHint b) (toScope env) \bRaw -> do
@@ -465,8 +448,7 @@ instance (Color c, SinkableE ann, SubstE v ann, SinkableV v, ToBinding ann c)
                    _ -> sink subst <>> b @> (fromName $ binderName b')
       cont (env', subst') b'
 
-instance (BindsNames b, SubstB v b, SinkableV v)
-         => SubstB v (Nest b) where
+instance (BindsNames b, SubstB v b, SinkableE v) => SubstB v (Nest b) where
   substB env (Nest b bs) cont =
     substB env b \env' b' ->
       substB env' bs \env'' bs' ->
@@ -505,16 +487,10 @@ instance SubstE v e => SubstE v (RListE e) where
 instance SubstE v e => SubstE v (NonEmptyListE e) where
   substE env (NonEmptyListE xs) = NonEmptyListE $ fmap (substE env) xs
 
-instance (p ~ True => SubstE v e, FromName v) => SubstE v (WhenE p e) where
-  substE (scope, subst) (WhenE e) = WhenE $ substE (scope, subst) e
-
-instance (r ~ r' => SubstE v e, FromName v) => SubstE v (WhenIRE r r' e) where
-  substE (scope, subst) (WhenIRE e) = WhenIRE $ substE (scope, subst) e
-
-instance SubstV substVal v => SubstE substVal (SubstFrag v i i') where
+instance SubstE substVal v => SubstE substVal (SubstFrag v i i') where
    substE env frag = fmapSubstFrag (\_ val -> substE env val) frag
 
-instance SubstV substVal v => SubstE substVal (Subst v i) where
+instance SubstE substVal v => SubstE substVal (Subst v i) where
   substE env = \case
     Subst f frag -> Subst (\n -> substE env (f n)) $ substE env frag
     UnsafeMakeIdentitySubst

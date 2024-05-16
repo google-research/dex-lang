@@ -38,7 +38,6 @@ import Data.String (fromString)
 import Err
 import PPrint
 import Name
-import IRVariants
 import MonadUtil
 import Util (File (..), SnocList)
 
@@ -53,9 +52,6 @@ data SourceNameOr (a::E) (n::S) where
 deriving instance Eq (a n) => Eq (SourceNameOr a n)
 deriving instance Ord (a n) => Ord (SourceNameOr a n)
 deriving instance Show (a n) => Show (SourceNameOr a n)
-
-newtype SourceOrInternalName (c::C) (n::S) = SourceOrInternalName (SourceNameOr (Name c) n)
-  deriving (Eq, Ord, Show, Generic)
 
 -- === Source Info ===
 
@@ -276,26 +272,18 @@ data CSBlock =
 -- === Untyped IR ===
 -- The AST of Dex surface language.
 
-data UVar (n::S) =
-   UAtomVar     (Name (AtomNameC CoreIR) n)
- | UTyConVar    (Name TyConNameC    n)
- | UDataConVar  (Name DataConNameC  n)
- | UClassVar    (Name ClassNameC    n)
- | UMethodVar   (Name MethodNameC   n)
- | UPunVar      (Name TyConNameC n) -- for names also used as data constructors
-   deriving (Eq, Ord, Show, Generic)
+type UVar = Name
 
-type UAtomBinder = UBinder (AtomNameC CoreIR)
-type UBinder c = WithSrcB (UBinder' c)
-data UBinder' (c::C) (n::S) (l::S) where
+type UBinder = WithSrcB UBinder'
+data UBinder' (n::S) (l::S) where
   -- Only appears before renaming pass
-  UBindSource :: SourceName -> UBinder' c n n
+  UBindSource :: SourceName -> UBinder' n n
   -- May appear before or after renaming pass
-  UIgnore :: UBinder' c n n
+  UIgnore :: UBinder' n n
   -- The following binders only appear after the renaming pass.
   -- We maintain the source name for user-facing error messages
   -- and named arguments.
-  UBind :: SourceName -> NameBinder c n l -> UBinder' c n l
+  UBind :: SourceName -> NameBinder n l -> UBinder' n l
 
 type UBlock = WithSrcE UBlock'
 data UBlock' (n::S) where
@@ -369,7 +357,7 @@ data UStructDef (n::S) where
     :: SourceName    -- source name for pretty printing
     -> Nest UAnnBinder n l
     -> [(SourceNameW, UType l)]                    -- named payloads
-    -> [(LetAnn, SourceName, Abs UAtomBinder ULamExpr l)] -- named methods (initial binder is for `self`)
+    -> [(LetAnn, SourceName, Abs UBinder ULamExpr l)] -- named methods (initial binder is for `self`)
     -> UStructDef n
 
 data UDataDefTrail (l::S) where
@@ -378,28 +366,27 @@ data UDataDefTrail (l::S) where
 data UTopDecl (n::S) (l::S) where
   ULocalDecl :: UDecl n l -> UTopDecl n l
   UDataDefDecl
-    :: UDataDef n                          -- actual definition
-    -> UBinder TyConNameC n l'             -- type constructor name
-    ->   Nest (UBinder DataConNameC) l' l  -- data constructor names
+    :: UDataDef n               -- actual definition
+    -> UBinder n l'             -- type constructor name
+    ->   Nest UBinder l' l      -- data constructor names
     -> UTopDecl n l
   UStructDecl
-    :: UBinder TyConNameC n l              -- type constructor name
-    -> UStructDef l                        -- actual definition
+    :: UBinder n l              -- type constructor name
+    -> UStructDef l              -- actual definition
     -> UTopDecl n l
   UInterface
     :: Nest UAnnBinder n p   -- parameter binders
-    ->   [UType p]                         -- method types
-    -> UBinder ClassNameC n l'             -- class name
-    ->   Nest (UBinder MethodNameC) l' l   -- method names
+    ->   [UType p]           -- method types
+    -> UBinder n l'          -- class name
+    ->   Nest UBinder l' l   -- method names
     -> UTopDecl n l
   UInstance
-    :: SourceNameOr (Name ClassNameC) n  -- class name
+    :: SourceNameOr Name n  -- class name
     -> Nest UAnnBinder n l'
-    ->   [UExpr l']                      -- class parameters
-    ->   [UMethodDef l']                 -- method definitions
-    -- Maybe we should make a separate color (namespace) for instance names?
-    -> MaybeB UAtomBinder n l    -- optional instance name
-    -> AppExplicitness           -- explicitness (only relevant for named instances)
+    ->   [UExpr l']          -- class parameters
+    ->   [UMethodDef l']     -- method definitions
+    -> MaybeB UBinder n l    -- optional instance name
+    -> AppExplicitness       -- explicitness (only relevant for named instances)
     -> UTopDecl n l
 
 type UType = UExpr
@@ -409,14 +396,14 @@ data UForExpr (n::S) where
   UForExpr :: UAnnBinder n l -> UBlock l -> UForExpr n
 
 type UMethodDef = WithSrcE UMethodDef'
-data UMethodDef' (n::S) = UMethodDef (SourceNameOr (Name MethodNameC) n) (ULamExpr n)
+data UMethodDef' (n::S) = UMethodDef (SourceNameOr Name n) (ULamExpr n)
   deriving (Show, Generic)
 
 data UAnn (n::S) = UAnn (UType n) | UNoAnn deriving Show
 
 -- TODO: SrcId
 data UAnnBinder (n::S) (l::S) =
-  UAnnBinder Explicitness (UAtomBinder n l) (UAnn n) [UConstraint n]
+  UAnnBinder Explicitness (UBinder n l) (UAnn n) [UConstraint n]
   deriving (Show, Generic)
 
 data UAlt (n::S) where
@@ -424,8 +411,8 @@ data UAlt (n::S) where
 
 type UPat = WithSrcB UPat'
 data UPat' (n::S) (l::S) =
-   UPatBinder (UAtomBinder n l)
- | UPatCon (SourceNameOr (Name DataConNameC) n) (Nest UPat n l)
+   UPatBinder (UBinder n l)
+ | UPatCon (SourceNameOr Name n) (Nest UPat n l)
  | UPatProd (Nest UPat n l)
  | UPatDepPair (PairB UPat UPat n l)
  | UPatTable (Nest UPat n l)
@@ -442,7 +429,7 @@ instance HasSourceName (b n l) => HasSourceName (WithSrcB b n l) where
 instance HasSourceName (UAnnBinder n l) where
   getSourceName (UAnnBinder _ b _ _) = getSourceName b
 
-instance HasSourceName (UBinder' c n l) where
+instance HasSourceName (UBinder' n l) where
   getSourceName = \case
     UBindSource sn -> sn
     UIgnore        -> "_"
@@ -497,10 +484,7 @@ class FromSourceNameW a where
 instance FromSourceNameW (SourceNameOr a VoidS) where
   fromSourceNameW (WithSrc sid x) = SourceName sid x
 
-instance FromSourceNameW (SourceOrInternalName c VoidS) where
-  fromSourceNameW x = SourceOrInternalName $ fromSourceNameW x
-
-instance FromSourceNameW (UBinder' s VoidS VoidS) where
+instance FromSourceNameW (UBinder' VoidS VoidS) where
   fromSourceNameW x = UBindSource $ withoutSrc x
 
 instance FromSourceNameW (UPat' VoidS VoidS) where
@@ -649,9 +633,9 @@ data PrimName =
 data TCName = ProdType | SumType | RefType | TypeKind  deriving (Show, Eq, Generic)
 data ConName = ProdCon | SumCon Int  deriving (Show, Eq, Generic)
 
-type MemOpName = MemOp CoreIR ()
-type VectorOpName = VectorOp CoreIR ()
-type MiscOpName = MiscOp CoreIR ()
+type MemOpName = MemOp ()
+type VectorOpName = VectorOp ()
+type MiscOpName = MiscOp ()
 
 -- === primitive constructors and operators ===
 
@@ -801,45 +785,6 @@ instance Pretty (SourceMap n) where
   pretty (SourceMap m) =
     fold [pretty v <+> "@>" <+> pretty x <> hardline | (v, x) <- M.toList m ]
 
-instance GenericE UVar where
-  type RepE UVar = EitherE6 (Name (AtomNameC CoreIR)) (Name TyConNameC)
-                            (Name DataConNameC)  (Name ClassNameC)
-                            (Name MethodNameC)   (Name TyConNameC)
-  fromE name = case name of
-    UAtomVar     v -> Case0 v
-    UTyConVar    v -> Case1 v
-    UDataConVar  v -> Case2 v
-    UClassVar    v -> Case3 v
-    UMethodVar   v -> Case4 v
-    UPunVar      v -> Case5 v
-  {-# INLINE fromE #-}
-
-  toE name = case name of
-    Case0 v -> UAtomVar     v
-    Case1 v -> UTyConVar    v
-    Case2 v -> UDataConVar  v
-    Case3 v -> UClassVar    v
-    Case4 v -> UMethodVar   v
-    Case5 v -> UPunVar v
-    _ -> error "impossible"
-  {-# INLINE toE #-}
-
-instance Pretty (UVar n) where
-  pretty name = case name of
-    UAtomVar     v -> "Atom name: " <> pretty v
-    UTyConVar    v -> "Type constructor name: " <> pretty v
-    UDataConVar  v -> "Data constructor name: " <> pretty v
-    UClassVar    v -> "Class name: " <> pretty v
-    UMethodVar   v -> "Method name: " <> pretty v
-    UPunVar      v -> "Shared type constructor / data constructor name: " <> pretty v
-
--- TODO: name subst instances for the rest of UExpr
-instance SinkableE      UVar
-instance HoistableE     UVar
-instance AlphaEqE       UVar
-instance AlphaHashableE UVar
-instance RenameE        UVar
-
 instance HasNameHint (b n l) => HasNameHint (WithSrcB b n l) where
   getNameHint (WithSrcB _ b) = getNameHint b
 
@@ -852,28 +797,28 @@ instance HasNameHint ModuleSourceName where
   getNameHint Prelude = getNameHint @String "prelude"
   getNameHint Main = getNameHint @String "main"
 
-instance HasNameHint (UBinder' c n l) where
+instance HasNameHint (UBinder' n l) where
   getNameHint b = case b of
     UBindSource v -> getNameHint v
     UIgnore       -> noHint
     UBind v _     -> getNameHint v
 
-instance Color c => BindsNames (UBinder' c) where
+instance BindsNames UBinder' where
   toScopeFrag (UBindSource _) = emptyOutFrag
   toScopeFrag (UIgnore)       = emptyOutFrag
   toScopeFrag (UBind _ b)     = toScopeFrag b
 
-instance Color c => ProvesExt (UBinder' c) where
-instance Color c => BindsAtMostOneName (UBinder' c) c where
+instance ProvesExt UBinder' where
+instance BindsAtMostOneName UBinder' where
   b @> x = case b of
     UBindSource _ -> emptyInFrag
     UIgnore       -> emptyInFrag
     UBind _ b'    -> b' @> x
 
-instance Color c => SinkableB (UBinder' c) where
+instance SinkableB UBinder' where
   sinkingProofB _ _ _ = todoSinkableProof
 
-instance Color c => RenameB (UBinder' c) where
+instance RenameB UBinder' where
   renameB env ub cont = case ub of
     UBindSource sn -> cont env $ UBindSource sn
     UIgnore -> cont env UIgnore
@@ -892,14 +837,14 @@ instance ProvesExt b => ProvesExt (WithSrcB b) where
 instance BindsNames b => BindsNames (WithSrcB b)  where
   toScopeFrag (WithSrcB _ b) = toScopeFrag b
 
-instance BindsAtMostOneName b r => BindsAtMostOneName (WithSrcB b) r where
+instance BindsAtMostOneName b => BindsAtMostOneName (WithSrcB b) where
   WithSrcB _ b @> x = b @> x
 
 instance ProvesExt  UAnnBinder where
 instance BindsNames  UAnnBinder where
   toScopeFrag (UAnnBinder _ b _ _) = toScopeFrag b
 
-instance BindsAtMostOneName UAnnBinder (AtomNameC CoreIR) where
+instance BindsAtMostOneName UAnnBinder where
   UAnnBinder _ b _ _ @> x = b @> x
 
 instance GenericE (WithSrcE e) where
@@ -930,7 +875,6 @@ instance Ord SourceBlock where
 instance Store SymbolicZeros
 instance Store PassName
 instance Store ModuleSourceName
-instance Store (UVar n)
 instance Store (SourceNameDef n)
 instance Store (SourceMap n)
 instance Store TopNameDescription
@@ -938,7 +882,7 @@ instance Store TopNameDescription
 instance Hashable ModuleSourceName
 instance Hashable TopNameDescription
 
-deriving instance Show (UBinder' s n l)
+deriving instance Show (UBinder' n l)
 deriving instance Show (UDataDefTrail n)
 deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
@@ -1094,9 +1038,6 @@ instance PrettyE e => Pretty (SourceNameOr e n) where
   pretty (SourceName _ v) = pretty v
   pretty (InternalName _ v _) = pretty v
 
-instance Pretty (SourceOrInternalName c n) where
-  pretty (SourceOrInternalName sn) = pretty sn
-
 instance Pretty (ULamExpr n) where pretty = prettyFromPrettyPrec
 instance PrettyPrec (ULamExpr n) where
   prettyPrec (ULamExpr bs _ _ body) = atPrec LowestPrec $
@@ -1177,8 +1118,8 @@ instance Pretty Output where
 instance Pretty PassName where
   pretty x = pretty $ show x
 
-instance Pretty (UBinder' c n l) where pretty = prettyFromPrettyPrec
-instance PrettyPrec (UBinder' c n l) where
+instance Pretty (UBinder' n l) where pretty = prettyFromPrettyPrec
+instance PrettyPrec (UBinder' n l) where
   prettyPrec b = atPrec ArgPrec case b of
     UBindSource v -> pretty v
     UIgnore       -> "_"

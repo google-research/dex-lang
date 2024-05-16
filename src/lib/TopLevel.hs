@@ -52,7 +52,6 @@ import ConcreteSyntax
 import CheapReduction
 import DPS
 import Err
-import IRVariants
 import Imp
 import ImpToLLVM
 import Inference
@@ -87,7 +86,7 @@ optimize x = return x
 inlineBindings :: (EnvReader m) => STopLam n -> m n (STopLam n)
 inlineBindings x = return x
 
-analyzeOccurrences :: EnvReader m => TopLam SimpIR n -> m n (TopLam SimpIR n)
+analyzeOccurrences :: EnvReader m => TopLam n -> m n (TopLam n)
 analyzeOccurrences x = return x
 
 vectorizeLoops :: EnvReader m => a -> STopLam n -> m n (STopLam n, [Err])
@@ -287,7 +286,7 @@ evalSourceBlock' mname block = case sbContents block of
         vCore <- emitBinding hint $ AtomNameBinding $ FFIFunBound naryPiTy fTop
         let desc = makeTopNameDescription mname block
         emitSourceMap $ SourceMap $
-          M.singleton dexName [ModuleVar desc (Just $ UAtomVar vCore)]
+          M.singleton dexName [ModuleVar desc (Just vCore)]
   DeclareCustomLinearization fname zeros g -> undefined
   -- DeclareCustomLinearization fname zeros g -> do
   --   expr <- parseExpr g
@@ -354,15 +353,16 @@ runEnvQuery query = do
         Nothing -> throw rootSrcId $ UnboundVarErr $ pprint name
         Just uvar -> do
           logTop $ TextOut $ pprint uvar
-          info <- case uvar of
-            UAtomVar     v' -> pprint <$> lookupEnv v'
-            UTyConVar    v' -> pprint <$> lookupEnv v'
-            UDataConVar  v' -> pprint <$> lookupEnv v'
-            UClassVar    v' -> pprint <$> lookupEnv v'
-            UMethodVar   v' -> pprint <$> lookupEnv v'
-            UPunVar v' -> do
-              val <- lookupEnv v'
-              return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
+          info <- undefined
+          -- info <- case uvar of
+          --   UAtomVar     v' -> pprint <$> lookupEnv v'
+          --   UTyConVar    v' -> pprint <$> lookupEnv v'
+          --   UDataConVar  v' -> pprint <$> lookupEnv v'
+          --   UClassVar    v' -> pprint <$> lookupEnv v'
+          --   UMethodVar   v' -> pprint <$> lookupEnv v'
+          --   UPunVar v' -> do
+          --     val <- lookupEnv v'
+          --     return $ pprint val ++ "\n(type constructor and data constructor share the same name)"
           logTop $ TextOut $ "Binding:\n" ++ info
 
 -- returns a toposorted list of the module's transitive dependencies (including
@@ -493,7 +493,7 @@ whenOpt x act = getConfig <&> optLevel >>= \case
   NoOptimize -> return x
   Optimize   -> act x
 
-evalBlock :: (Topper m, Mut n) => TopBlock CoreIR n -> m n (CAtom n)
+evalBlock :: (Topper m, Mut n) => TopBlock n -> m n (CAtom n)
 evalBlock typed@(TopLam _ _ (LamExpr Empty body)) = case body of
   Atom result -> return result
   _ -> do
@@ -778,7 +778,7 @@ snapshotPtrs bindings = RecSubst <$> traverseSubstFrag
 
 traverseBindingsTopStateEx
   :: Monad m => TopStateEx
-  -> (forall c n. Binding c n -> m (Binding c n)) -> m TopStateEx
+  -> (forall n. Binding n -> m (Binding n)) -> m TopStateEx
 traverseBindingsTopStateEx (TopStateEx (Env tenv menv) dyvars) f = do
   defs <- traverseSubstFrag f $ fromRecSubst $ envDefs tenv
   return $ TopStateEx (Env (tenv {envDefs = RecSubst defs}) menv) dyvars

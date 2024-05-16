@@ -14,14 +14,13 @@ import Err
 import PPrint
 import Types.Core
 import Inference
-import IRVariants
 import QueryType
 import Name
 import Subst
 import Types.Primitives
 import Types.Top
 
-generalizeIxDict :: EnvReader m => CDict n -> m n (Generalized CoreIR CDict n)
+generalizeIxDict :: EnvReader m => CDict n -> m n (Generalized CDict n)
 generalizeIxDict dict = liftGeneralizerM do
   dict' <- sinkM dict
   dictTy <- return $ getType dict'
@@ -29,13 +28,13 @@ generalizeIxDict dict = liftGeneralizerM do
   liftEnvReaderM $ generalizeDict dictTyGeneralized dict'
 {-# INLINE generalizeIxDict #-}
 
-generalizeArgs ::EnvReader m => CorePiType n -> [Atom CoreIR n] -> m n (Generalized CoreIR (ListE CAtom) n)
+generalizeArgs ::EnvReader m => CorePiType n -> [Atom n] -> m n (Generalized (ListE CAtom) n)
 generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
   PairE (CorePiType _ expls bs _) (ListE argsTop') <- sinkM $ PairE fTy (ListE argsTop)
   ListE <$> go (zipAttrs expls bs) argsTop'
   where
-    go :: Nest (WithAttrB Explicitness CBinder) i i' -> [Atom CoreIR n]
-       -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom CoreIR n]
+    go :: Nest (WithAttrB Explicitness CBinder) i i' -> [Atom n]
+       -> SubstReaderT AtomSubstVal GeneralizerM i n [Atom n]
     go (Nest (WithAttrB expl b) bs) (arg:args) = do
       ty' <- substM $ binderType b
       arg' <- liftSubstReaderT case (ty', expl) of
@@ -57,7 +56,7 @@ generalizeArgs fTy argsTop = liftGeneralizerM $ runSubstReaderT idSubst do
 
 -- === generalizer monad plumbing ===
 
-data GeneralizationEmission n l = GeneralizationEmission (Binder CoreIR n l) (Atom CoreIR n)
+data GeneralizationEmission n l = GeneralizationEmission (Binder n l) (Atom n)
 type GeneralizationEmissions = RNest GeneralizationEmission
 
 newtype GeneralizerM n a = GeneralizerM {
@@ -67,7 +66,7 @@ newtype GeneralizerM n a = GeneralizerM {
 liftGeneralizerM
   :: EnvReader m
   => (forall l. DExt n l => GeneralizerM l (e l))
-  -> m n (Generalized CoreIR e n)
+  -> m n (Generalized e n)
 liftGeneralizerM cont = do
   env <- unsafeGetEnv
   Distinct <- getDistinct
@@ -77,7 +76,7 @@ liftGeneralizerM cont = do
   return (Abs bs e, vals)
   where
     -- OPTIMIZE: something not O(N^2)
-    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest (Binder CoreIR) n l, [Atom CoreIR n])
+    hoistGeneralizationVals :: Nest GeneralizationEmission n l -> (Nest (Binder) n l, [Atom n])
     hoistGeneralizationVals Empty = (Empty, [])
     hoistGeneralizationVals (Nest (GeneralizationEmission b val) bs) = do
       let (bs', vals) = hoistGeneralizationVals bs
@@ -89,7 +88,7 @@ liftGeneralizerM cont = do
 {-# INLINE liftGeneralizerM #-}
 
 -- XXX: the supplied type may be more general than the type of the atom!
-emitGeneralizationParameter :: Type CoreIR n -> Atom CoreIR n -> GeneralizerM n (AtomVar CoreIR n)
+emitGeneralizationParameter :: Type n -> Atom n -> GeneralizerM n (AtomVar n)
 emitGeneralizationParameter ty val = GeneralizerM do
   Abs b v <- return $ newName noHint
   let emission = Abs (RNest REmpty (GeneralizationEmission (b:>ty) val)) v
@@ -103,7 +102,7 @@ emitGeneralizationParameter ty val = GeneralizerM do
 -- === actual generalization traversal ===
 
 -- Given a type (an Atom of type `Type`), abstracts over all data components
-generalizeType :: Type CoreIR n -> GeneralizerM n (Type CoreIR n)
+generalizeType :: Type n -> GeneralizerM n (Type n)
 generalizeType ty = traverseTyParams ty \paramRole paramReqTy param -> case paramRole of
   TypeParam -> toAtom <$> generalizeType (fromJust $ toMaybeType param)
   DictParam -> toAtom <$> generalizeDict paramReqTy (fromJust $ toMaybeDict param)
@@ -155,13 +154,13 @@ traverseTyParams (TyCon ty) f = liftM TyCon $ getDistinct >>= \Distinct -> case 
 
 traverseRoleBinders
   :: forall m n n'. EnvReader m
-  => (forall l . DExt n l => ParamRole -> Type CoreIR l -> Atom CoreIR l -> m l (Atom CoreIR l))
-  ->  Nest CBinder n n' -> [Atom CoreIR n] -> m n [Atom CoreIR n]
+  => (forall l . DExt n l => ParamRole -> Type l -> Atom l -> m l (Atom l))
+  ->  Nest CBinder n n' -> [Atom n] -> m n [Atom n]
 traverseRoleBinders f allBinders allParams =
   runSubstReaderT idSubst $ go allBinders allParams
   where
-    go :: forall i i'. Nest CBinder i i' -> [Atom CoreIR n]
-       -> SubstReaderT AtomSubstVal m i n [Atom CoreIR n]
+    go :: forall i i'. Nest CBinder i i' -> [Atom n]
+       -> SubstReaderT AtomSubstVal m i n [Atom n]
     go Empty [] = return []
     go (Nest b bs) (param:params) = do
       ty' <- substM $ binderType b
@@ -176,7 +175,7 @@ traverseRoleBinders f allBinders allParams =
 -- === instances ===
 
 instance GenericB GeneralizationEmission where
-  type RepB GeneralizationEmission = BinderP (AtomNameC CoreIR) (PairE CType CAtom)
+  type RepB GeneralizationEmission = BinderP (PairE CType CAtom)
   fromB (GeneralizationEmission (b:>ty) x) = b :> PairE ty x
   {-# INLINE fromB #-}
   toB   (b :> PairE ty x) = GeneralizationEmission (b:>ty) x

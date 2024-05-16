@@ -38,16 +38,15 @@ import Types.Source
 
 -- === data types ===
 
-type ImpName = Name ImpNameC
-
-type ImpFunName = Name TopFunNameC
+type ImpName = Name
+type PtrName = Name
+type ImpFunName = Name
 data IExpr n = ILit LitVal
              | IVar (ImpName n) BaseType
-             | IPtrVar (Name PtrNameC n) PtrType
+             | IPtrVar (PtrName n) PtrType
                deriving (Show, Generic)
 
-data IBinder n l = IBinder (NameBinder ImpNameC n l) IType
-                   deriving (Show, Generic)
+data IBinder n l = IBinder (NameBinder n l) IType deriving (Show, Generic)
 
 type IVal = IExpr  -- only ILit and IRef constructors
 type IType = BaseType
@@ -171,7 +170,7 @@ data WithCNameInterface a = WithCNameInterface
 type RawObjCode = BS.ByteString
 type FunObjCode = WithCNameInterface RawObjCode
 
-data IFunBinder n l = IFunBinder (NameBinder TopFunNameC n l) IFunType
+data IFunBinder n l = IFunBinder (NameBinder n l) IFunType
 
 -- Imp function with link-time objects abstracted out, suitable for standalone
 -- compilation. TODO: enforce actual `VoidS` as the scope parameter.
@@ -182,9 +181,10 @@ data ClosedImpFunction n where
     -> ImpFunction n3
     -> ClosedImpFunction n1
 
-data PtrBinder n l = PtrBinder (NameBinder PtrNameC n l) PtrType
-data LinktimeNames n = LinktimeNames [Name FunObjCodeNameC n] [Name PtrNameC n]  deriving (Show, Generic)
-data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]                        deriving (Show, Generic)
+data PtrBinder n l = PtrBinder (NameBinder n l) PtrType
+type FunObjCodeName = Name
+data LinktimeNames n = LinktimeNames [FunObjCodeName n] [PtrName n]  deriving (Show, Generic)
+data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]            deriving (Show, Generic)
 
 data CFunction (n::S) = CFunction
   { nameHint :: NameHint
@@ -193,11 +193,11 @@ data CFunction (n::S) = CFunction
   }
   deriving (Show, Generic)
 
-instance BindsAtMostOneName IFunBinder TopFunNameC where
+instance BindsAtMostOneName IFunBinder where
   IFunBinder b _ @> x = b @> x
   {-# INLINE (@>) #-}
 
-instance BindsOneName IFunBinder TopFunNameC where
+instance BindsOneName IFunBinder where
   binderName (IFunBinder b _) = binderName b
   {-# INLINE binderName #-}
 
@@ -205,7 +205,7 @@ instance HasNameHint (IFunBinder n l) where
   getNameHint (IFunBinder b _) = getNameHint b
 
 instance GenericB IFunBinder where
-  type RepB IFunBinder = BinderP TopFunNameC (LiftE IFunType)
+  type RepB IFunBinder = BinderP (LiftE IFunType)
   fromB (IFunBinder b ty) = b :> LiftE ty
   toB   (b :> LiftE ty) = IFunBinder b ty
 
@@ -218,11 +218,11 @@ instance AlphaEqB IFunBinder
 instance AlphaHashableB IFunBinder
 
 instance GenericB PtrBinder where
-  type RepB PtrBinder = BinderP PtrNameC (LiftE PtrType)
+  type RepB PtrBinder = BinderP (LiftE PtrType)
   fromB (PtrBinder b ty) = b :> LiftE ty
   toB   (b :> LiftE ty) = PtrBinder b ty
 
-instance BindsAtMostOneName PtrBinder PtrNameC where
+instance BindsAtMostOneName PtrBinder where
   PtrBinder b _ @> x = b @> x
   {-# INLINE (@>) #-}
 
@@ -368,8 +368,8 @@ deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
   type RepE IExpr = EitherE3 (LiftE LitVal)
-                             (PairE ImpName         (LiftE BaseType))
-                             (PairE (Name PtrNameC) (LiftE PtrType))
+                             (PairE ImpName (LiftE BaseType))
+                             (PairE PtrName (LiftE PtrType))
   fromE iexpr = case iexpr of
     ILit x       -> Case0 (LiftE x)
     IVar    v ty -> Case1 (v `PairE` LiftE ty)
@@ -390,21 +390,21 @@ instance AlphaHashableE IExpr
 instance RenameE     IExpr
 
 instance GenericB IBinder where
-  type RepB IBinder = PairB (LiftB (LiftE IType)) (NameBinder ImpNameC)
+  type RepB IBinder = PairB (LiftB (LiftE IType)) NameBinder
   fromB (IBinder b ty) = PairB (LiftB (LiftE ty)) b
   toB   (PairB (LiftB (LiftE ty)) b) = IBinder b ty
 
 instance HasNameHint (IBinder n l) where
   getNameHint (IBinder b _) = getNameHint b
 
-instance BindsAtMostOneName IBinder ImpNameC where
-  IBinder b _ @> x = b @> x
-
-instance BindsOneName IBinder ImpNameC where
-  binderName (IBinder b _) = binderName b
-
 instance BindsNames IBinder where
   toScopeFrag (IBinder b _) = toScopeFrag b
+
+instance BindsAtMostOneName IBinder where
+  IBinder b _ @> x = b @> x
+
+instance BindsOneName IBinder where
+  binderName (IBinder b _) = binderName b
 
 instance ProvesExt  IBinder
 instance SinkableB IBinder
@@ -441,8 +441,7 @@ instance AlphaHashableE    ImpFunction
 instance RenameE     ImpFunction
 
 instance GenericE LinktimeNames where
-  type RepE LinktimeNames = ListE  (Name FunObjCodeNameC)
-                   `PairE`  ListE  (Name PtrNameC)
+  type RepE LinktimeNames = ListE  FunObjCodeName `PairE`  ListE  PtrName
   fromE (LinktimeNames funs ptrs) = ListE funs `PairE` ListE ptrs
   {-# INLINE fromE #-}
   toE (ListE funs `PairE` ListE ptrs) = LinktimeNames funs ptrs

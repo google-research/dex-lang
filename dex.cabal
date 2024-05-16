@@ -55,7 +55,6 @@ library
                      , IncState
                      , Inference
                      -- , Inline
-                     , IRVariants
                      -- , JAX.Concrete
                      -- , JAX.Rename
                      -- , JAX.ToSimp

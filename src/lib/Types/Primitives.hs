@@ -38,7 +38,6 @@ import GHC.Generics (Generic (..))
 import PPrint
 -- import Occurrence
 import Name
-import IRVariants
 
 -- === Primitive ops ===
 
@@ -46,38 +45,50 @@ data BinOp =
    IAdd | ISub | IMul | IDiv | ICmp CmpOp | FAdd | FSub | FMul
  | FDiv | FCmp CmpOp | FPow | BAnd | BOr | BShL | BShR | IRem | BXor
  deriving (Show, Eq, Ord, Generic)
+instance Hashable BinOp
+instance Store    BinOp
 
 data UnOp =
    Exp | Exp2 | Log | Log2 | Log10 | Log1p | Sin | Cos | Tan | Sqrt | Floor
  | Ceil | Round | LGamma | Erf | Erfc | FNeg | BNot
  deriving (Show, Eq, Ord, Generic)
+instance Hashable UnOp
+instance Store    UnOp
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
      deriving (Show, Eq, Ord, Generic)
+instance Hashable CmpOp
+instance Store    CmpOp
 
 data Projection =
    UnwrapNewtype -- TODO: add `HasCore r` constraint
  | ProjectProduct Int
    deriving (Show, Eq, Ord, Generic)
+instance Hashable Projection
+instance Store    Projection
 
-data PrimOp (r::IR) (a:: *) =
+data PrimOp a =
    UnOp     UnOp   a
  | BinOp    BinOp a a
- | MemOp    (MemOp r a)
- | VectorOp (VectorOp r a)
- | MiscOp   (MiscOp r a)
- | RefOp    a (RefOp r a)
+ | MemOp    (MemOp a)
+ | VectorOp (VectorOp a)
+ | MiscOp   (MiscOp a)
+ | RefOp    a (RefOp a)
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Hashable a => Hashable (PrimOp a)
+instance Store    a => Store    (PrimOp a)
 
-data MemOp (r::IR) (a:: *) =
+data MemOp a =
    IOAlloc a
  | IOFree a
  | PtrOffset a a
  | PtrLoad a
  | PtrStore a a
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Hashable a => Hashable (MemOp a)
+instance Store    a => Store    (MemOp a)
 
-data MiscOp (r::IR) (a:: *) =
+data MiscOp a =
    Select a a a        -- (3) predicate, val-if-true, val-if-false
  | CastOp a                              -- (2) See CheckType.hs for valid coercions.
  | BitcastOp a                -- (2) See CheckType.hs for valid coercions.
@@ -96,20 +107,26 @@ data MiscOp (r::IR) (a:: *) =
                 -- giving the logical size of the result and a fixed-size table,
                 -- `Fin showStringBufferSize => Char`, assumed to have sufficient space.
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Hashable a => Hashable (MiscOp a)
+instance Store    a => Store    (MiscOp a)
 
-data VectorOp r a =
+data VectorOp a =
    VectorBroadcast a
  | VectorIota
  | VectorIdx a a             -- table, base ix
  | VectorSubref a a          -- ref, base ix
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Hashable a => Hashable (VectorOp a)
+instance Store    a => Store    (VectorOp a)
 
-data RefOp r a =
+data RefOp a =
    MGet
  | MPut a
  | IndexRef a
  | ProjRef Projection
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
+instance Hashable a => Hashable (RefOp a)
+instance Store    a => Store    (RefOp a)
 
 -- === various things ===
 
@@ -357,8 +374,8 @@ instance PrettyPrec ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance (IRRep r, PrettyPrec a) => Pretty (PrimOp r a) where pretty = prettyFromPrettyPrec
-instance (IRRep r, PrettyPrec a) => PrettyPrec (PrimOp r a) where
+instance PrettyPrec a => Pretty (PrimOp a) where pretty = prettyFromPrettyPrec
+instance PrettyPrec a => PrettyPrec (PrimOp a) where
   prettyPrec = \case
     MemOp    op -> prettyPrec op
     VectorOp op -> prettyPrec op
@@ -379,41 +396,20 @@ instance Pretty Projection where
     UnwrapNewtype -> "u"
     ProjectProduct i -> pretty i
 
-instance (IRRep r, PrettyPrec a) => Pretty (MemOp r a) where pretty = prettyFromPrettyPrec
-instance (IRRep r, PrettyPrec a) => PrettyPrec (MemOp r a) where
+instance PrettyPrec a => Pretty (MemOp a) where pretty = prettyFromPrettyPrec
+instance PrettyPrec a => PrettyPrec (MemOp a) where
   prettyPrec = \case
     PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
     PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     op -> undefined
 
-instance (IRRep r, PrettyPrec a) => Pretty (VectorOp r a) where pretty = prettyFromPrettyPrec
-instance (IRRep r, PrettyPrec a) => PrettyPrec (VectorOp r a) where
+instance PrettyPrec a => Pretty (VectorOp a) where pretty = prettyFromPrettyPrec
+instance PrettyPrec a => PrettyPrec (VectorOp a) where
   prettyPrec = \case
     VectorBroadcast v -> atPrec LowestPrec $ "vbroadcast" <+> pApp v
     VectorIota -> atPrec LowestPrec $ "viota"
     VectorIdx tbl i -> atPrec LowestPrec $ "vslice" <+> pApp tbl <+> pApp i
     VectorSubref ref i -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
 
-
 instance Pretty Explicitness where
   pretty expl = pretty (show expl)
-
-instance Hashable BinOp
-instance Hashable UnOp
-instance Hashable CmpOp
-instance Hashable Projection
-instance (IRRep r, Hashable a) => Hashable (PrimOp r a)
-instance (IRRep r, Hashable a) => Hashable (MemOp r a)
-instance (IRRep r, Hashable a) => Hashable (MiscOp r a)
-instance (IRRep r, Hashable a) => Hashable (VectorOp r a)
-instance (IRRep r, Hashable a) => Hashable (RefOp r a)
-
-instance Store BinOp
-instance Store UnOp
-instance Store CmpOp
-instance Store Projection
-instance (IRRep r, Store a) => Store (PrimOp r a)
-instance (IRRep r, Store a) => Store (MemOp r a)
-instance (IRRep r, Store a) => Store (MiscOp r a)
-instance (IRRep r, Store a) => Store (VectorOp r a)
-instance (IRRep r, Store a) => Store (RefOp r a)

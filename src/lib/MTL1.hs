@@ -215,7 +215,7 @@ instance HoistableState UnitE where
   hoistState _ _ UnitE = UnitE
   {-# INLINE hoistState #-}
 
-instance Show a => HoistableState (NameMap c a) where
+instance Show a => HoistableState (NameMap a) where
   hoistState _ b m = hoistNameMap b m
   {-# INLINE hoistState #-}
 

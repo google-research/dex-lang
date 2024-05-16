@@ -19,7 +19,6 @@ import Builder
 import Core
 import Imp
 import CheapReduction
-import IRVariants
 import Name
 import Subst
 import PPrint
@@ -39,7 +38,7 @@ dpsPass (TopLam False piTy (LamExpr bs body)) = do
         return UnitVal
 dpsPass (TopLam True _ _) = error "already in destination style"
 
-computeDPSPiTy :: PiType SimpIR i -> DestM i o (PiType SimpIR o)
+computeDPSPiTy :: PiType i -> DestM i o (PiType o)
 computeDPSPiTy (PiType bs resultTy) = case bs of
   Empty -> do
     destTy <- computeDestTy =<< dpsSubstType resultTy
@@ -57,7 +56,7 @@ type MaybeDest   d n = SMaybe d (Dest n)
 type MaybeResult d n = SMaybe (Not d) (SAtom n)
 
 data DPSTag
-type DestM = AtomSubstBuilder DPSTag SimpIR
+type DestM = AtomSubstBuilder DPSTag
 
 computeRepTy :: EnvReader m => SType n -> m n (SType n)
 computeRepTy ty = case ty of

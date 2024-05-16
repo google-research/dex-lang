@@ -32,7 +32,6 @@ import CheapReduction
 -- import CheckType
 import Core
 import Err
-import IRVariants
 import MonadUtil
 import MTL1
 import Name
@@ -53,14 +52,14 @@ checkTopUType :: (Fallible1 m, TopLogger1 m, EnvReader m) => UType n -> m n (CTy
 checkTopUType ty = liftInfererM $ checkUType ty
 {-# SCC checkTopUType #-}
 
-inferTopUExpr :: (Fallible1 m, TopLogger1 m, EnvReader m) => UExpr n -> m n (TopBlock CoreIR n)
+inferTopUExpr :: (Fallible1 m, TopLogger1 m, EnvReader m) => UExpr n -> m n (TopBlock n)
 inferTopUExpr e = fst <$> (asTopBlock =<< liftInfererM (buildBlock $ bottomUp e))
 {-# SCC inferTopUExpr #-}
 
 data UDeclInferenceResult e n =
    UDeclResultDone (e n)  -- used for UDataDefDecl, UInterface and UInstance
- | UDeclResultBindName LetAnn (TopBlock CoreIR n) (Abs (UBinder (AtomNameC CoreIR)) e n)
- | UDeclResultBindPattern NameHint (TopBlock CoreIR n) (ReconAbs CoreIR e n)
+ | UDeclResultBindName LetAnn (TopBlock n) (Abs UBinder e n)
+ | UDeclResultBindPattern NameHint (TopBlock n) (ReconAbs e n)
 
 inferTopUDecl :: (Mut n, Fallible1 m, TopBuilder m, HasNamesE e, TopLogger1 m)
               => UTopDecl n l -> e l -> m n (UDeclInferenceResult e n)
@@ -130,7 +129,7 @@ inferTopUDecl (ULocalDecl (WithSrcB _ decl)) result = case decl of
       return $ UDeclResultBindPattern (getNameHint p) topBlock recon
 {-# SCC inferTopUDecl #-}
 
-asTopBlock :: EnvReader m => CExpr n -> m n (TopBlock CoreIR n, CType n)
+asTopBlock :: EnvReader m => CExpr n -> m n (TopBlock n, CType n)
 asTopBlock block = do
   let ty = getType block
   return (TopLam False (PiType Empty ty) (LamExpr Empty block), ty)
@@ -153,9 +152,9 @@ data InfState (n::S) = InfState
   { givens         :: Givens n }
 
 newtype InfererM (i::S) (o::S) (a:: *) = InfererM
-  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT CoreIR (ExceptT (State TypingInfo)))) i o a }
-  deriving (Functor, Applicative, Monad, MonadFail, Alternative, Builder CoreIR,
-            EnvExtender, ScopableBuilder CoreIR,
+  { runInfererM' :: SubstReaderT Name (ReaderT1 InfState (BuilderT (ExceptT (State TypingInfo)))) i o a }
+  deriving (Functor, Applicative, Monad, MonadFail, Alternative, Builder,
+            EnvExtender, ScopableBuilder,
             ScopeReader, EnvReader, Fallible, Catchable, SubstReader Name)
 
 type InfererCPSB  b i    o a = (forall o'. DExt o o' => b o o' -> InfererM i  o' a) -> InfererM i o a
@@ -245,7 +244,7 @@ withFreshBindersInf explsTop (Abs bsTop e) contTop =
 {-# INLINE withFreshBindersInf #-}
 
 withInferenceVar
-  :: (Zonkable e, Emits o, ToBinding binding (AtomNameC CoreIR)) => NameHint -> binding o
+  :: (Zonkable e, Emits o, ToBinding binding) => NameHint -> binding o
   -> (forall o'. (Emits o', DExt o o') => CAtomName o' -> SolverM i o' (e o', CAtom o'))
   -> SolverM i o (e o)
 withInferenceVar hint binding cont = diffStateT1 \s -> do
@@ -341,7 +340,7 @@ withInfState :: (InfState o -> InfState o) -> InfererM i o a -> InfererM i o a
 withInfState f cont = InfererM $ local f (runInfererM' cont)
 {-# INLINE withInfState #-}
 
-getTypeAndEmit :: HasType CoreIR e => SrcId -> e o -> InfererM i o (e o)
+getTypeAndEmit :: HasType e => SrcId -> e o -> InfererM i o (e o)
 getTypeAndEmit sid e = do
   emitExprType sid (getType e)
   return e
@@ -622,9 +621,10 @@ matchReq _ Infer x = return x
 forceSigmaAtom :: Emits o => SigmaAtom o -> InfererM i o (CAtom o)
 forceSigmaAtom sigmaAtom = case sigmaAtom of
   SigmaAtom _ x -> return x
-  SigmaUVar _ _ v -> case v of
-    UAtomVar v' -> inlineTypeAliases v'
-    _ -> applySigmaAtom sigmaAtom []
+  SigmaUVar _ _ v -> undefined
+  -- SigmaUVar _ _ v -> case v of
+  --   UAtomVar v' -> inlineTypeAliases v'
+  --   _ -> applySigmaAtom sigmaAtom []
   SigmaPartialApp _ _ _ -> error "not implemented" -- better error message?
 
 withBlockDecls
@@ -666,7 +666,7 @@ applyFromLiteralMethod
 applyFromLiteralMethod sid resultTy methodName litVal =
   lookupSourceMap methodName >>= \case
     Nothing -> error $ "prelude function not found: " ++ pprint methodName
-    Just ~(UMethodVar methodName') -> do
+    Just methodName' -> do
       MethodBinding className _ <- lookupEnv methodName'
       dictTy <- toType <$> dictType className [toAtom resultTy]
       Just d <- toMaybeDict <$> trySynthTerm sid dictTy Full
@@ -681,7 +681,7 @@ data SigmaAtom n =
 
 -- XXX: this gives the type of the atom in the absence of other type information.
 -- So it interprets struct names as data constructors rather than type constructors.
-instance HasType CoreIR SigmaAtom where
+instance HasType SigmaAtom where
   getType = \case
     SigmaAtom _ x -> getType x
     SigmaUVar _ ty _ -> ty
@@ -798,11 +798,12 @@ buildAppConstraints appSrcId reqTy (CorePiType _ _ bs ty) = do
       Check reqTy' -> [TypeConstraint appSrcId (sink reqTy') resultTy]
 
 maybeInterpretPunsAsTyCons :: RequiredTy n -> SigmaAtom n -> InfererM i n (SigmaAtom n)
-maybeInterpretPunsAsTyCons (Check (TyCon (Kind TypeKind))) (SigmaUVar sn _ (UPunVar v)) = do
-  let v' = UTyConVar v
-  ty <- getUVarType v'
-  return $ SigmaUVar sn ty v'
-maybeInterpretPunsAsTyCons _ x = return x
+maybeInterpretPunsAsTyCons = undefined
+-- maybeInterpretPunsAsTyCons (Check (TyCon (Kind TypeKind))) (SigmaUVar sn _ (UPunVar v)) = do
+--   let v' = UTyConVar v
+--   ty <- getUVarType v'
+--   return $ SigmaUVar sn ty v'
+-- maybeInterpretPunsAsTyCons _ x = return x
 
 type IsDependent = Bool
 
@@ -814,37 +815,37 @@ inlineTypeAliases v = do
 
 applySigmaAtom :: Emits o => SigmaAtom o -> [CAtom o] -> InfererM i o (CAtom o)
 applySigmaAtom (SigmaAtom _ f) args = emit =<< mkApp f args
-applySigmaAtom (SigmaUVar _ _ f) args = case f of
-  UAtomVar f' -> do
-    f'' <- inlineTypeAliases f'
-    emit  =<< mkApp f'' args
-  UTyConVar f' -> do
-    TyConDef sn expls _ _ <- lookupTyCon f'
-    return $ toAtom $ UserADTType sn f' (TyConParams expls args)
-  UDataConVar v -> do
-    (tyCon, i) <- lookupDataCon v
-    applyDataCon tyCon i args
-  UPunVar tc -> do
-    TyConDef sn _ _ _ <- lookupTyCon tc
-    -- interpret as a data constructor by default
-    (params, dataArgs) <- splitParamPrefix tc args
-    repVal <- makeStructRepVal tc dataArgs
-    return $ toAtom $ NewtypeCon (UserADTData sn tc params) repVal
-  UClassVar f' -> do
-    ClassDef sourceName builtinName _ _ _ _ _ _ <- lookupClassDef f'
-    return $ toAtom case builtinName of
-      Just Ix   -> IxDictType   singleTyParam
-      Nothing   -> DictType sourceName f' args
-      where singleTyParam = case args of
-              [p] -> fromJust $ toMaybeType p
-              _ -> error "not a single type param"
-  UMethodVar  f' -> do
-    MethodBinding className methodIdx <- lookupEnv f'
-    ClassDef _ _ _ _ _ paramBs _ _ <- lookupClassDef className
-    let numParams = nestLength paramBs
-    -- params aren't needed because they're already implied by the dict argument
-    let (dictArg:args') = drop numParams args
-    emit =<< mkApplyMethod (fromJust $ toMaybeDict dictArg) methodIdx args'
+-- applySigmaAtom (SigmaUVar _ _ f) args = case f of
+--   UAtomVar f' -> do
+--     f'' <- inlineTypeAliases f'
+--     emit  =<< mkApp f'' args
+--   UTyConVar f' -> do
+--     TyConDef sn expls _ _ <- lookupTyCon f'
+--     return $ toAtom $ UserADTType sn f' (TyConParams expls args)
+--   UDataConVar v -> do
+--     (tyCon, i) <- lookupDataCon v
+--     applyDataCon tyCon i args
+--   UPunVar tc -> do
+--     TyConDef sn _ _ _ <- lookupTyCon tc
+--     -- interpret as a data constructor by default
+--     (params, dataArgs) <- splitParamPrefix tc args
+--     repVal <- makeStructRepVal tc dataArgs
+--     return $ toAtom $ NewtypeCon (UserADTData sn tc params) repVal
+--   UClassVar f' -> do
+--     ClassDef sourceName builtinName _ _ _ _ _ _ <- lookupClassDef f'
+--     return $ toAtom case builtinName of
+--       Just Ix   -> IxDictType   singleTyParam
+--       Nothing   -> DictType sourceName f' args
+--       where singleTyParam = case args of
+--               [p] -> fromJust $ toMaybeType p
+--               _ -> error "not a single type param"
+--   UMethodVar  f' -> do
+--     MethodBinding className methodIdx <- lookupEnv f'
+--     ClassDef _ _ _ _ _ paramBs _ _ <- lookupClassDef className
+--     let numParams = nestLength paramBs
+--     -- params aren't needed because they're already implied by the dict argument
+--     let (dictArg:args') = drop numParams args
+--     emit =<< mkApplyMethod (fromJust $ toMaybeDict dictArg) methodIdx args'
 applySigmaAtom (SigmaPartialApp _ f prevArgs) args =
   emit =<< mkApp f (prevArgs ++ args)
 
@@ -1049,17 +1050,17 @@ matchPrimApp = \case
  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
  p -> \case xs -> throwInternal $ "Bad primitive application: " ++ show (p, xs)
  where
-   lam2 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)
+   lam2 :: Fallible m => CAtom n -> m (LamExpr n)
    lam2 x = do
      ExplicitCoreLam (BinaryNest b1 b2) body <- return x
      return $ BinaryLamExpr b1 b2 body
 
-   lam1 :: Fallible m => CAtom n -> m (LamExpr CoreIR n)
+   lam1 :: Fallible m => CAtom n -> m (LamExpr n)
    lam1 x = do
      ExplicitCoreLam (UnaryNest b) body <- return x
      return $ UnaryLamExpr b body
 
-   -- matchGenericOp :: GenericOp op => OpConst op CoreIR -> [CAtom n] -> InfererM i n (op CoreIR n)
+   -- matchGenericOp :: GenericOp op => OpConst op -> [CAtom n] -> InfererM i n (op n)
    -- matchGenericOp op xs = do
    --   (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
    --     case getType x of
@@ -1104,12 +1105,12 @@ checkSigmaDependent e ty = withReducibleEmissions (getSrcId e) CantReduceDepende
 
 -- === sorting case alternatives ===
 
-data IndexedAlt n = IndexedAlt CaseAltIndex (Alt CoreIR n)
+data IndexedAlt n = IndexedAlt CaseAltIndex (Alt n)
 
 instance SinkableE IndexedAlt where
   sinkingProofE = todoSinkableProof
 
-buildNthOrderedAlt :: (Emits n, Builder CoreIR m)
+buildNthOrderedAlt :: (Emits n, Builder m)
                    => [IndexedAlt n] -> CType n -> CType n -> Int -> CAtom n
                    -> m n (CAtom n)
 buildNthOrderedAlt alts _ resultTy i v = do
@@ -1120,7 +1121,7 @@ buildNthOrderedAlt alts _ resultTy i v = do
     Just alt -> applyAbs alt (SubstVal v) >>= emit
 
 buildMonomorphicCase
-  :: (Emits n, ScopableBuilder CoreIR m)
+  :: (Emits n, ScopableBuilder m)
   => [IndexedAlt n] -> CAtom n -> CType n -> m n (CAtom n)
 buildMonomorphicCase alts scrut resultTy = do
   scrutTy <- return $ getType scrut
@@ -1130,7 +1131,7 @@ buildMonomorphicCase alts scrut resultTy = do
     resultTy'   <- sinkM resultTy
     buildNthOrderedAlt alts' scrutTy' resultTy' i v
 
-buildSortedCase :: (Fallible1 m, Builder CoreIR m, Emits n)
+buildSortedCase :: (Fallible1 m, Builder m, Emits n)
                  => CAtom n -> [IndexedAlt n] -> CType n
                  -> m n (CAtom n)
 buildSortedCase scrut alts resultTy = do
@@ -1183,7 +1184,7 @@ inferStructDef (UStructDef tyConName paramBs fields _) = do
 
 inferDotMethod
   :: TyConName o
-  -> Abs (Nest UAnnBinder) (Abs UAtomBinder ULamExpr) i
+  -> Abs (Nest UAnnBinder) (Abs UBinder ULamExpr) i
   -> InfererM i o (CoreLamExpr o)
 inferDotMethod tc (Abs uparamBs (Abs selfB lam)) = do
   TyConDef sn expls paramBs _ <- lookupTyCon tc
@@ -1214,7 +1215,7 @@ dataConRepTy (Abs topBs UnitE) = case topBs of
   Empty -> (UnitTy, [])
   _ -> go [] [UnwrapNewtype] topBs
   where
-    go :: [CType l] -> [Projection] -> Nest (Binder CoreIR) l p -> (CType l, [[Projection]])
+    go :: [CType l] -> [Projection] -> Nest (Binder) l p -> (CType l, [[Projection]])
     go revAcc projIdxs = \case
       Empty -> case revAcc of
         []   -> error "should never happen"
@@ -1342,13 +1343,13 @@ checkULamPartial partialPiTy sid lamExpr = do
           Empty -> error "zip error"
     checkLamBinders  _ _ _ _ = error "zip error"
 
-inferUForExpr :: Emits o => UForExpr i -> InfererM i o (LamExpr CoreIR o)
+inferUForExpr :: Emits o => UForExpr i -> InfererM i o (LamExpr o)
 inferUForExpr (UForExpr b body) = do
   withUBinder b \(WithAttrB _ b') -> do
     body' <- buildBlock $ withBlockDecls body \result -> bottomUp result
     return $ LamExpr (UnaryNest b') body'
 
-checkUForExpr :: Emits o => SrcId -> UForExpr i -> TabPiType CoreIR o -> InfererM i o (LamExpr CoreIR o)
+checkUForExpr :: Emits o => SrcId -> UForExpr i -> TabPiType o -> InfererM i o (LamExpr o)
 checkUForExpr sid (UForExpr bFor body) (TabPiType _ bPi resultTy) = do
   let uLamExpr = ULamExpr (UnaryNest bFor) ExplicitApp Nothing body
   partialPi <- liftEnvReaderM $ refreshAbs (Abs bPi resultTy) \bPi' resultTy' -> do
@@ -1449,7 +1450,7 @@ checkCasePat
   :: Emits o
   => UPat i i' -> CType o
   -> (forall o'. (Emits o', Ext o o') => InfererM i' o' (CAtom o'))
-  -> InfererM i o (Alt CoreIR o)
+  -> InfererM i o (Alt o)
 checkCasePat (WithSrcB sid pat) scrutineeTy cont = case pat of
   UPatCon ~(InternalName _ _ conName) ps -> do
     (dataDefName, con) <- renameM conName >>= lookupDataCon
@@ -1531,7 +1532,7 @@ bindLetPat (WithSrcB sid pat) v cont = emitExprType sid (getType v) >> case pat 
       emitToVar =<< mkTabApp (toAtom v) (toAtom $ NewtypeCon (FinCon (NatVal n)) (NatVal $ fromIntegral i))
     bindLetPats ps xs cont
   where
-    emitInline :: Emits n => CAtom  n -> InfererM i n (AtomVar CoreIR n)
+    emitInline :: Emits n => CAtom  n -> InfererM i n (AtomVar n)
     emitInline atom = emitDecl noHint InlineLet $ Atom atom
 
 checkUType :: UType i -> InfererM i o (CType o)
@@ -1551,7 +1552,7 @@ inferTabCon sid xs = do
   xs' <- forM xs \x -> topDown elemTy x
   emit $ TabCon tabTy xs'
 
-checkTabCon :: forall i o. Emits o => TabPiType CoreIR o -> SrcId -> [UExpr i] -> InfererM i o (CAtom o)
+checkTabCon :: forall i o. Emits o => TabPiType o -> SrcId -> [UExpr i] -> InfererM i o (CAtom o)
 checkTabCon tabTy@(TabPiType _ b elemTy) sid xs = do
   let n = fromIntegral (length xs) :: Word32
   let finTy = FinConst n
@@ -1562,29 +1563,30 @@ checkTabCon tabTy@(TabPiType _ b elemTy) sid xs = do
     topDown elemTy' x
   emit $ TabCon (TyCon (TabPi tabTy)) xs'
 
-getIxDict :: SrcId -> CType o -> InfererM i o (IxDict CoreIR o)
+getIxDict :: SrcId -> CType o -> InfererM i o (IxDict o)
 getIxDict sid t = fromJust <$> toMaybeDict <$> trySynthTerm sid (toType $ IxDictType t) Full
 
-asIxType :: SrcId -> CType o -> InfererM i o (IxType CoreIR o)
+asIxType :: SrcId -> CType o -> InfererM i o (IxType o)
 asIxType sid ty = IxType ty <$> getIxDict sid ty
 
 -- === Solver ===
 
 -- TODO: put this pattern and friends in the Name library? Don't really want to
 -- have to think about `eqNameColorRep` just to implement a partial map.
-lookupSolverSubst :: forall c n. Color c => SolverSubst n -> Name c n -> AtomSubstVal c n
-lookupSolverSubst (SolverSubst m) name =
-  case eqColorRep of
-    Nothing -> Rename name
-    Just (ColorsEqual :: ColorsEqual c (AtomNameC CoreIR))-> case M.lookup name m of
-      Nothing -> Rename name
-      Just sol -> SubstVal sol
+lookupSolverSubst :: forall n. SolverSubst n -> Name n -> AtomSubstVal n
+lookupSolverSubst (SolverSubst m) name = undefined
+-- lookupSolverSubst (SolverSubst m) name =
+--   case eqColorRep of
+--     Nothing -> Rename name
+--     Just (ColorsEqual :: ColorsEqual c (AtomNameC))-> case M.lookup name m of
+--       Nothing -> Rename name
+--       Just sol -> SubstVal sol
 
 applyConstraint :: Constraint o -> SolverM i o ()
 applyConstraint = \case
   TypeConstraint sid t1 t2 -> constrainEq sid t1 t2
 
-constrainEq :: ToAtom e CoreIR => SrcId -> e o -> e o -> SolverM i o ()
+constrainEq :: ToAtom e => SrcId -> e o -> e o -> SolverM i o ()
 constrainEq sid t1 t2 = do
   t1' <- zonk $ toAtom t1
   t2' <- zonk $ toAtom t2
@@ -1601,7 +1603,7 @@ searchFailureAsTypeErr sid msg cont = cont <|> throw sid msg
 class AlphaEqE e => Unifiable (e::E) where
   unify :: e n -> e n -> SolverM i n ()
 
-instance Unifiable (Stuck CoreIR) where
+instance Unifiable (Stuck) where
   unify s1 s2 = do
     x1 <- zonkStuck s1
     x2 <- zonkStuck s2
@@ -1625,19 +1627,19 @@ unifyStuckZonked s1 s2 = do
     (Var v1, _) -> extendSolution v1 x2
     (_, _) -> unifyEq s1 s2
 
-unifyStuckConZonked :: CStuck n -> Con CoreIR n -> SolverM i n ()
+unifyStuckConZonked :: CStuck n -> Con n -> SolverM i n ()
 unifyStuckConZonked s x = case s of
   Var v -> extendSolution v (Con x)
   _ -> empty
 
-unifyStuckCon :: CStuck n -> Con CoreIR n -> SolverM i n ()
+unifyStuckCon :: CStuck n -> Con n -> SolverM i n ()
 unifyStuckCon s con = do
   x <- zonkStuck s
   case x of
     Stuck _ s' -> unifyStuckConZonked s' con
     Con con' -> unify con' con
 
-instance Unifiable (Atom CoreIR) where
+instance Unifiable (Atom) where
   unify (Con c) (Con c') = unify c c'
   unify (Stuck _ s) (Stuck _ s') = unify  s s'
   unify (Stuck _ s) (Con c) = unifyStuckCon s c
@@ -1645,13 +1647,13 @@ instance Unifiable (Atom CoreIR) where
 
 -- TODO: do this directly rather than going via `CAtom` using `Type`. We just
 -- need to deal with `Stuck`.
-instance Unifiable (Type CoreIR) where
+instance Unifiable (Type) where
   unify (TyCon c) (TyCon c') = unify c c'
   unify (StuckTy _ s) (StuckTy _ s') = unify  s s'
   unify (StuckTy _ s) (TyCon c) = unifyStuckCon s (TyConAtom c)
   unify (TyCon c) (StuckTy _ s) = unifyStuckCon s (TyConAtom c)
 
-instance Unifiable (Con CoreIR) where
+instance Unifiable (Con) where
   unify e1 e2 = case e1 of
     ( Lit x ) -> do
     { Lit x' <- matchit; guard (x == x')}
@@ -1671,7 +1673,7 @@ instance Unifiable (Con CoreIR) where
     { DictConAtom d' <- matchit; unifyEq d d'}
     where matchit = return e2
 
-instance Unifiable (TyCon CoreIR) where
+instance Unifiable (TyCon) where
   unify t1 t2 = case t1 of
     ( BaseType b ) -> do
     { BaseType b' <- matchit; guard $ b == b'}
@@ -1719,7 +1721,7 @@ instance Unifiable NewtypeTyCon where
     { UserADTType _ c' params' <- matchit; guard (c == c') >> unify params params' }
     where matchit = return e2
 
-instance Unifiable (IxType CoreIR) where
+instance Unifiable (IxType) where
   -- We ignore the dictionaries because we assume coherence
   unify (IxType t _) (IxType t' _) = unify t t'
 
@@ -1738,8 +1740,8 @@ instance Unifiable CorePiType where
     unless (expls1 == expls2) empty
     go (Abs bsTop1 effTy1) (Abs bsTop2 effTy2)
    where
-    go :: Abs (Nest CBinder) (Type CoreIR) n
-       -> Abs (Nest CBinder) (Type CoreIR) n
+    go :: Abs (Nest CBinder) (Type) n
+       -> Abs (Nest CBinder) (Type) n
        -> SolverM i n ()
     go (Abs Empty t1) (Abs Empty t2) = unify t1 t2
     go (Abs (Nest (b1:>t1) bs1) rest1)
@@ -1752,11 +1754,11 @@ instance Unifiable CorePiType where
         return UnitE
     go _ _ = empty
 
-instance Unifiable (TabPiType CoreIR) where
+instance Unifiable (TabPiType) where
   unify (TabPiType _ b1 ty1) (TabPiType _ b2 ty2) =
     unify (Abs b1 ty1) (Abs b2 ty2)
 
-instance Unifiable (DepPairType CoreIR) where
+instance Unifiable (DepPairType) where
   unify (DepPairType expl1 b1 rhs1) (DepPairType expl2 b2 rhs2) = do
     guard $ expl1 == expl2
     unify (Abs b1 rhs1) (Abs b2 rhs2)
@@ -1798,7 +1800,7 @@ extendSolution (AtomVar v _) t =
       -- skolem variable. We don't want to unify with terms containing these
       -- variables because that would mean inferring dependence, which is a can
       -- of worms.
-      forM_ (freeAtomVarsList t) \fv ->
+      forM_ (freeVarsList t) \fv ->
         whenM (isSkolemName fv) solverFail -- can't unify with skolems
       addConstraint v t
     False -> empty
@@ -1822,9 +1824,9 @@ isSkolemName v = lookupEnv v >>= \case
 {-# INLINE isSkolemName #-}
 
 renameForPrinting :: EnvReader m
-                   => (PairE CAtom CAtom n) -> m n (Abs (Nest (AtomNameBinder CoreIR)) (PairE CAtom CAtom) n)
+                   => (PairE CAtom CAtom n) -> m n (Abs (Nest (AtomNameBinder)) (PairE CAtom CAtom) n)
 renameForPrinting e = do
-  infVars <- filterM isSolverName $ freeAtomVarsList e
+  infVars <- filterM isSolverName $ freeVarsList e
   let ab = abstractFreeVarsNoAnn infVars e
   let hints = take (length infVars) $ map getNameHint $
                 map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
@@ -1915,7 +1917,7 @@ generalizeInstanceArg role ty arg cont = case role of
               _ -> error "not a dict") cont
   DataParam -> withFreshUnificationVarNoEmits rootSrcId MiscInfVar ty \v -> cont $ toAtom v
 
-emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name InstanceNameC n)
+emitInstanceDef :: (Mut n, TopBuilder m) => InstanceDef n -> m n (Name n)
 emitInstanceDef instanceDef@(InstanceDef className _ _ _ _) = do
   ty <- getInstanceType instanceDef
   emitBinding (getNameHint className) $ InstanceBinding instanceDef ty
@@ -1932,7 +1934,7 @@ trySynthTerm sid ty reqMethodAccess = do
 {-# SCC trySynthTerm #-}
 
 hasInferenceVars :: (EnvReader m, HoistableE e) => e n -> m n Bool
-hasInferenceVars e = liftEnvReaderM $ anyInferenceVars $ freeAtomVarsList e
+hasInferenceVars e = liftEnvReaderM $ anyInferenceVars $ freeVarsList e
 {-# INLINE hasInferenceVars #-}
 
 anyInferenceVars :: [CAtomName n] -> EnvReaderM n Bool
@@ -2112,7 +2114,7 @@ type WithExpl     = WithAttrB Explicitness
 buildBlockInfWithRecon
   :: HasNamesE e
   => (forall l. (Emits l, DExt n l) => InfererM i l (e l))
-  -> InfererM i n (PairE CExpr (ReconAbs CoreIR e) n)
+  -> InfererM i n (PairE CExpr (ReconAbs e) n)
 buildBlockInfWithRecon cont = do
   ab <- buildScoped cont
   (block, recon) <- liftEnvReaderM $ refreshAbs ab \decls result -> do
@@ -2147,11 +2149,11 @@ checkFFIFunTypeM (CorePiType appExpl (_:expls) (Nest b bs) ty) = do
       return $ IFunType cc (argTy:argTys) resultTys
 checkFFIFunTypeM _ = error "expected at least one argument"
 
-checkScalar :: (IRRep r, Fallible m) => Type r n -> m BaseType
+checkScalar :: Fallible m => Type n -> m BaseType
 checkScalar (BaseTy ty) = return ty
 checkScalar ty = throw rootSrcId $ FFIArgTyNotScalar $ pprint ty
 
-checkScalarOrPairType :: (IRRep r, Fallible m) => Type r n -> m [BaseType]
+checkScalarOrPairType :: Fallible m => Type n -> m [BaseType]
 checkScalarOrPairType (PairTy a b) = do
   tys1 <- checkScalarOrPairType a
   tys2 <- checkScalarOrPairType b
@@ -2193,14 +2195,14 @@ instance SinkableE SigmaAtom
 
 instance SubstE AtomSubstVal SigmaAtom where
   substE env (SigmaAtom sn x) = SigmaAtom sn $ substE env x
-  substE env (SigmaUVar sn ty uvar) = case uvar of
-    UAtomVar v -> substE env $ SigmaAtom (Just sn) $ toAtom (AtomVar v ty)
-    UTyConVar   v -> SigmaUVar sn ty' $ UTyConVar   $ substE env v
-    UDataConVar v -> SigmaUVar sn ty' $ UDataConVar $ substE env v
-    UPunVar     v -> SigmaUVar sn ty' $ UPunVar     $ substE env v
-    UClassVar   v -> SigmaUVar sn ty' $ UClassVar   $ substE env v
-    UMethodVar  v -> SigmaUVar sn ty' $ UMethodVar  $ substE env v
-    where ty' = substE env ty
+  substE env (SigmaUVar sn ty uvar) = undefined
+    -- UAtomVar v -> substE env $ SigmaAtom (Just sn) $ toAtom (AtomVar v ty)
+    -- UTyConVar   v -> SigmaUVar sn ty' $ UTyConVar   $ substE env v
+    -- UDataConVar v -> SigmaUVar sn ty' $ UDataConVar $ substE env v
+    -- UPunVar     v -> SigmaUVar sn ty' $ UPunVar     $ substE env v
+    -- UClassVar   v -> SigmaUVar sn ty' $ UClassVar   $ substE env v
+    -- UMethodVar  v -> SigmaUVar sn ty' $ UMethodVar  $ substE env v
+    -- where ty' = substE env ty
   substE env (SigmaPartialApp ty f xs) =
     SigmaPartialApp (substE env ty) (substE env f) (map (substE env) xs)
 

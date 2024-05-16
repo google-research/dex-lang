@@ -18,7 +18,6 @@ import CheapReduction
 import Core
 import Err
 import Generalize
-import IRVariants
 -- import Linearize
 import Name
 import Subst
@@ -34,7 +33,7 @@ import Util (enumerate)
 -- === Top-level API ===
 
 simplifyTopBlock
-  :: (TopBuilder m, Mut n) => TopBlock CoreIR n -> m n (STopLam n)
+  :: (TopBuilder m, Mut n) => TopBlock n -> m n (STopLam n)
 simplifyTopBlock (TopLam _ _ (LamExpr Empty body)) = do
   block <- liftSimplifyM do
     buildBlock $ fromSimpAtom <$> simplifyExpr body
@@ -48,29 +47,27 @@ simplifyTopFunction _ = error "shouldn't be in destination-passing style already
 
 -- === Simplification monad ===
 
-class (ScopableBuilder2 SimpIR m, SubstReader SimpSubstVal m) => Simplifier m
+class (ScopableBuilder2 m, SubstReader SimpSubstVal m) => Simplifier m
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
   { runSimplifyM'
-    :: SubstReaderT SimpSubstVal (DoubleBuilderT SimpIR TopEnvFrag  HardFailM) i o a }
+    :: SubstReaderT SimpSubstVal (DoubleBuilderT TopEnvFrag  HardFailM) i o a }
   deriving ( Functor, Applicative, Monad, ScopeReader, EnvExtender, Fallible
            , EnvReader, SubstReader SimpSubstVal, MonadFail
-           , Builder SimpIR, HoistingTopBuilder TopEnvFrag)
+           , Builder, HoistingTopBuilder TopEnvFrag)
 
-data SimpValR (r::IR) (n::S) where
-  SimpAtom  :: SAtom n                  -> SimpValR CoreIR n
-  SimpCCon  :: WithSubst (Con CoreIR) n -> SimpValR CoreIR n
-  TopFunVal :: CAtomVar n               -> SimpValR CoreIR n
-  FFIFunVal :: TopFunName n             -> SimpValR CoreIR n
-
-type SimpVal = SimpValR CoreIR
+data SimpVal (n::S) where
+  SimpAtom  :: SAtom n           -> SimpVal n
+  SimpCCon  :: WithSubst (Con) n -> SimpVal n
+  TopFunVal :: CAtomVar n        -> SimpVal n
+  FFIFunVal :: TopFunName n      -> SimpVal n
 
 data WithSubst (e::E) (o::S) where
   WithSubst :: Subst SimpSubstVal i o -> e i -> WithSubst e o
 
-type SimpSubstVal = SubstVal SimpValR
+type SimpSubstVal = SubstVal SimpVal
 
-instance SinkableE (SimpValR r) where
+instance SinkableE SimpVal where
   sinkingProofE _ = undefined
 
 liftSimplifyM
@@ -83,11 +80,11 @@ liftSimplifyM cont = do
   emitEnv $ Abs envFrag e
 {-# INLINE liftSimplifyM #-}
 
-liftDoubleBuilderToSimplifyM :: DoubleBuilder SimpIR o a -> SimplifyM i o a
+liftDoubleBuilderToSimplifyM :: DoubleBuilder o a -> SimplifyM i o a
 liftDoubleBuilderToSimplifyM cont = SimplifyM $ liftSubstReaderT cont
 
 instance Simplifier SimplifyM
-deriving instance ScopableBuilder SimpIR (SimplifyM i)
+deriving instance ScopableBuilder (SimplifyM i)
 
 -- === simplifying Atoms ===
 
@@ -143,7 +140,7 @@ simplifyAtom (Stuck _ stuck) = case stuck of
   InstantiatedGiven _ _ -> error "shouldn't have this left"
   SuperclassProj _ _    -> error "shouldn't have this left"
   PtrVar ty p -> do
-    p' <- substM p
+    Rename p' <- lookupSubstM p
     SimpAtom <$> mkStuck (PtrVar ty p')
 
 fromSimpAtom :: SimpVal o -> SAtom o
@@ -156,7 +153,7 @@ toDataAtom x = fromSimpAtom <$> simplifyAtom x
 
 -- === simplifying types ===
 
-getRepType :: Type CoreIR i -> SimplifyM i o (SType o)
+getRepType :: Type i -> SimplifyM i o (SType o)
 getRepType (StuckTy _ stuck) = undefined
   -- substMStuck stuck >>= \case
   --   Stuck _ _ -> error "shouldn't have stuck CType after substitution"
@@ -193,7 +190,7 @@ toDataAtomAssumeNoDecls x = do
 
 -- === all the bits of IR ===
 
-simplifyDecls :: Emits o => Nest (Decl CoreIR) i i' -> SimplifyM i' o a -> SimplifyM i o a
+simplifyDecls :: Emits o => Nest (Decl) i i' -> SimplifyM i' o a -> SimplifyM i o a
 simplifyDecls topDecls cont = do
   s  <- getSubst
   s' <- simpDeclsSubst s topDecls
@@ -201,7 +198,7 @@ simplifyDecls topDecls cont = do
 {-# INLINE simplifyDecls #-}
 
 simpDeclsSubst
-  :: Emits o => Subst SimpSubstVal l o -> Nest (Decl CoreIR) l i'
+  :: Emits o => Subst SimpSubstVal l o -> Nest (Decl) l i'
   -> SimplifyM i o (Subst SimpSubstVal i' o)
 simpDeclsSubst !s = \case
   Empty -> return s
@@ -209,7 +206,7 @@ simpDeclsSubst !s = \case
     x <- withSubst s $ simplifyExpr expr
     simpDeclsSubst (s <>> (b@>SubstVal x)) rest
 
-simplifyExpr :: Emits o => Expr CoreIR i -> SimplifyM i o (SimpVal o)
+simplifyExpr :: Emits o => Expr i -> SimplifyM i o (SimpVal o)
 simplifyExpr = \case
   Block _ (Abs decls body) -> simplifyDecls decls $ simplifyExpr body
   App _ f xs -> do
@@ -250,12 +247,7 @@ simplifyExpr = \case
   PrimOp ty op  -> do
     ty' <- getRepType ty
     op' <- mapM toDataAtom op
-    let op'' = changeIR op'
-    SimpAtom <$> emit (PrimOp ty' op'')
-
--- Use this if you've handled all the cases that occur in `r` but not `r'`
-changeIR :: PrimOp r a -> PrimOp r' a
-changeIR = undefined
+    SimpAtom <$> emit (PrimOp ty' op')
 
 requireReduced :: CExpr o -> SimplifyM i o (CAtom o)
 requireReduced expr = reduceExpr expr >>= \case
@@ -310,7 +302,7 @@ emitSpecialization s = do
   extendSpecializationCache s name
   return name
 
-specializedFunCoreDefinition :: (Mut n, TopBuilder m) => SpecializationSpec n -> m n (TopLam CoreIR n)
+specializedFunCoreDefinition :: (Mut n, TopBuilder m) => SpecializationSpec n -> m n (TopLam n)
 specializedFunCoreDefinition (AppSpecialization f (Abs bs staticArgs)) = do
   (asTopLam =<<) $ liftBuilder $ buildLamExpr (EmptyAbs bs) \runtimeArgs -> do
     -- This avoids an infinite loop. Otherwise, in simplifyTopFunction,
@@ -328,7 +320,7 @@ simplifyTabApp f x = undefined
 --     SimpAtom <$> tabApp f'' x
 --   _ -> error "not a table"
 
-simplifyIxDict :: Dict CoreIR i -> SimplifyM i o (SDict o)
+simplifyIxDict :: Dict i -> SimplifyM i o (SDict o)
 simplifyIxDict (StuckDict _ stuck) = undefined
 -- simplifyIxDict (StuckDict _ stuck) = forceStuck stuck >>= \case
 --   CCCon (WithSubst s con) -> case con of
@@ -347,7 +339,7 @@ simplifyIxDict (StuckDict _ stuck) = undefined
 --     -- return $ DictCon $ IxSpecialized sdName params'
 
 requireIxDictCache
-  :: (HoistingTopBuilder TopEnvFrag m) => AbsDict n -> m n (Name SpecializedDictNameC n)
+  :: (HoistingTopBuilder TopEnvFrag m) => AbsDict n -> m n (Name n)
 requireIxDictCache dictAbs = do
   queryIxDictCache dictAbs >>= \case
     Just name -> return name
@@ -364,7 +356,7 @@ requireIxDictCache dictAbs = do
         Nothing -> error "Couldn't hoist specialized dictionary"
 {-# INLINE requireIxDictCache #-}
 
-simplifyDictMethod :: Mut n => AbsDict n -> IxMethod -> TopBuilderM n (TopLam SimpIR n)
+simplifyDictMethod :: Mut n => AbsDict n -> IxMethod -> TopBuilderM n (TopLam n)
 simplifyDictMethod absDict@(Abs bs dict) method = do
   ty <- liftEnvReaderM $ ixMethodType method absDict
   lamExpr <- liftBuilder $ buildTopLamFromPi ty \allArgs -> do
@@ -373,7 +365,7 @@ simplifyDictMethod absDict@(Abs bs dict) method = do
     emit =<< mkApplyMethod dict' (fromEnum method) (toAtom <$> methodArgs)
   simplifyTopFunction lamExpr
 
-ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType CoreIR n)
+ixMethodType :: IxMethod -> AbsDict n -> EnvReaderM n (PiType n)
 ixMethodType method absDict = do
   refreshAbs absDict \extraArgBs dict -> do
     CorePiType _ _ methodArgs resultTy <- getMethodType dict (fromEnum method)
@@ -383,7 +375,7 @@ ixMethodType method absDict = do
 
 withSimplifiedBinder
  :: CBinder i i'
- -> (forall o'. DExt o o' => Binder SimpIR o o' -> SimplifyM i' o' a)
+ -> (forall o'. DExt o o' => Binder o o' -> SimplifyM i' o' a)
  -> SimplifyM i o a
 withSimplifiedBinder (b:>ty) cont = do
   tySimp <- getRepType ty
@@ -393,8 +385,8 @@ withSimplifiedBinder (b:>ty) cont = do
 
 -- Assumes first order (args/results are "data", allowing newtypes), monormophic
 simplifyLam
-  :: LamExpr CoreIR i
-  -> SimplifyM i o (LamExpr SimpIR o)
+  :: LamExpr i
+  -> SimplifyM i o (LamExpr o)
 simplifyLam (LamExpr bsTop body) = case bsTop of
   Nest b bs -> withSimplifiedBinder b \b' -> do
     LamExpr bs' body' <- simplifyLam $ LamExpr bs body
@@ -403,10 +395,10 @@ simplifyLam (LamExpr bsTop body) = case bsTop of
     body' <- buildBlock $ fromSimpAtom <$> simplifyExpr body
     return $ LamExpr Empty body'
 
-applyDictMethod :: Emits o => DictCon CoreIR i -> Int -> [SimpVal o] -> SimplifyM i o (SimpVal o)
+applyDictMethod :: Emits o => DictCon i -> Int -> [SimpVal o] -> SimplifyM i o (SimpVal o)
 applyDictMethod d i methodArgs = case d of
   InstanceDict _ instanceName instanceArgs -> do
-    instanceName' <- substM instanceName
+    Rename instanceName' <- lookupSubstM instanceName
     instanceArgs' <- mapM simplifyAtom instanceArgs
     instanceDef <- lookupInstanceDef instanceName'
     dropSubst $ withInstantiated instanceDef instanceArgs' \(PairE _ body) -> do
@@ -423,7 +415,7 @@ applyDictMethod d i methodArgs = case d of
       _ -> error "bad ix args"
   d' -> error $ "Not a simplified dict: " ++ pprint d'
 
-simplifyHof :: Emits o => Hof CoreIR i -> SimplifyM i o (SimpVal o)
+simplifyHof :: Emits o => Hof i -> SimplifyM i o (SimpVal o)
 simplifyHof = \case
   For d (IxType ixTy ixDict) lam -> do
     lam' <- simplifyLam lam
@@ -446,7 +438,7 @@ simplifyHof = \case
   --   x' <- toDataAtom x
   --   SimpAtom <$> transpose lam' x'
 
-liftSimpFun :: EnvReader m => Type CoreIR n -> LamExpr SimpIR n -> m n (SimpVal n)
+liftSimpFun :: EnvReader m => Type n -> LamExpr n -> m n (SimpVal n)
 liftSimpFun = undefined -- (TyCon (Pi piTy)) f = mkStuck $ LiftSimpFun piTy f
 -- liftSimpFun _ _ = error "not a pi type"
 

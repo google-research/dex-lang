@@ -23,7 +23,6 @@ import Foreign.Ptr
 
 import Name
 import Util (FileHash, SnocList (..))
-import IRVariants
 import PPrint
 
 import Types.Primitives
@@ -33,17 +32,17 @@ import Types.Imp
 
 type TopBlock = TopLam -- used for nullary lambda
 type IsDestLam = Bool
-data TopLam (r::IR) (n::S) = TopLam IsDestLam (PiType r n) (LamExpr r n)
+data TopLam (n::S) = TopLam IsDestLam (PiType n) (LamExpr n)
      deriving (Show, Generic)
-type STopLam = TopLam SimpIR
-type CTopLam = TopLam CoreIR
+type STopLam = TopLam
+type CTopLam = TopLam
 
 data EvalStatus a = Waiting | Running | Finished a
      deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
 type TopFunEvalStatus n = EvalStatus (TopFunLowerings n)
 
 data TopFun (n::S) =
-   DexTopFun (TopFunDef n) (TopLam SimpIR n) (TopFunEvalStatus n)
+   DexTopFun (TopFunDef n) (TopLam n) (TopFunEvalStatus n)
  | FFITopFun String IFunType
    deriving (Show, Generic)
 
@@ -60,15 +59,15 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
   { topFunObjCode :: FunObjCodeName n } -- TODO: add optimized, imp etc. as needed
   deriving (Show, Generic, SinkableE, HoistableE, RenameE, AlphaEqE, AlphaHashableE, Pretty)
 
-data AtomBinding (r::IR) (n::S) where
- LetBound     :: DeclBinding r  n  -> AtomBinding r n
- MiscBound    :: Type        r  n  -> AtomBinding r n
- SolverBound  :: SolverBinding n   -> AtomBinding CoreIR n
- NoinlineFun  :: CType n -> CAtom n -> AtomBinding CoreIR n
- FFIFunBound  :: CorePiType n -> TopFunName n -> AtomBinding CoreIR n
+data AtomBinding (n::S) where
+ LetBound     :: DeclBinding  n  -> AtomBinding n
+ MiscBound    :: Type         n  -> AtomBinding n
+ SolverBound  :: SolverBinding n   -> AtomBinding n
+ NoinlineFun  :: CType n -> CAtom n -> AtomBinding n
+ FFIFunBound  :: CorePiType n -> TopFunName n -> AtomBinding n
 
-deriving instance IRRep r => Show (AtomBinding r n)
-deriving via WrapE (AtomBinding r) n instance IRRep r => Generic (AtomBinding r n)
+deriving instance Show (AtomBinding n)
+deriving via WrapE AtomBinding n instance Generic (AtomBinding n)
 
 data SolverBinding (n::S) =
    InfVarBound (CType n)
@@ -78,7 +77,7 @@ data SolverBinding (n::S) =
 
 -- TODO: Use an IntMap
 newtype CustomRules (n::S) =
-  CustomRules { customRulesMap :: M.Map (AtomName CoreIR n) (AtomRules n) }
+  CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
   deriving (Semigroup, Monoid, Store)
 data AtomRules (n::S) =
   -- number of implicit args, number of explicit args, linearization function
@@ -167,8 +166,8 @@ data TopEnvUpdate n =
  | AddCustomRule            (CAtomName n) (AtomRules n)
  | UpdateLoadedModules      ModuleSourceName (ModuleName n)
  | UpdateLoadedObjects      (FunObjCodeName n) NativeFunction
- | FinishDictSpecialization (SpecDictName n) [TopLam SimpIR n]
- | LowerDictSpecialization  (SpecDictName n) [TopLam SimpIR n]
+ | FinishDictSpecialization (SpecDictName n) [STopLam n]
+ | LowerDictSpecialization  (SpecDictName n) [STopLam n]
  | UpdateTopFunEvalStatus   (TopFunName n) (TopFunEvalStatus n)
  | UpdateInstanceDef        (InstanceName n) (InstanceDef n)
  | UpdateTyConDef           (TyConName n) (TyConDef n)
@@ -227,9 +226,9 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 -- === Specialization and generalization ===
 
-type Generalized (r::IR) (e::E) (n::S) = (Abstracted r e n, [Atom r n])
-type Abstracted (r::IR) (e::E) = Abs (Nest (Binder r)) e
-type AbsDict = Abstracted CoreIR (Dict CoreIR)
+type Generalized (e::E) (n::S) = (Abstracted e n, [Atom n])
+type Abstracted (e::E) = Abs (Nest Binder) e
+type AbsDict = Abstracted CDict
 
 data SpecializedDictDef n =
    SpecializedDict
@@ -237,12 +236,12 @@ data SpecializedDictDef n =
      -- Methods (thunked if nullary), if they're available.
      -- We create specialized dict names during simplification, but we don't
      -- actually simplify/lower them until we return to TopLevel
-     (Maybe [TopLam SimpIR n])
+     (Maybe [TopLam n])
    deriving (Show, Generic)
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-   AppSpecialization (AtomVar CoreIR n) (Abstracted CoreIR (ListE CAtom) n)
+   AppSpecialization (AtomVar n) (Abstracted (ListE CAtom) n)
    deriving (Show, Generic)
 
 type Active = Bool
@@ -251,62 +250,62 @@ data LinearizationSpec (n::S) = LinearizationSpec (TopFunName n) [Active]
 
 -- === bindings - static information we carry about a lexical scope ===
 
--- TODO: consider making this an open union via a typeable-like class
-data Binding (c::C) (n::S) where
-  AtomNameBinding   :: AtomBinding r n                -> Binding (AtomNameC r)   n
-  TyConBinding      :: Maybe (TyConDef n) -> DotMethods n -> Binding TyConNameC      n
-  DataConBinding    :: TyConName n -> Int             -> Binding DataConNameC    n
-  ClassBinding      :: ClassDef n                     -> Binding ClassNameC      n
-  InstanceBinding   :: InstanceDef n -> CorePiType n  -> Binding InstanceNameC   n
-  MethodBinding     :: ClassName n   -> Int           -> Binding MethodNameC     n
-  TopFunBinding     :: TopFun n                       -> Binding TopFunNameC     n
-  FunObjCodeBinding :: CFunction n                    -> Binding FunObjCodeNameC n
-  ModuleBinding     :: Module n                       -> Binding ModuleNameC     n
+data Binding (n::S) where
+  AtomNameBinding   :: AtomBinding n                  -> Binding n
+  TyConBinding      :: Maybe (TyConDef n) -> DotMethods n -> Binding n
+  DataConBinding    :: TyConName n -> Int             -> Binding n
+  ClassBinding      :: ClassDef n                     -> Binding n
+  InstanceBinding   :: InstanceDef n -> CorePiType n  -> Binding n
+  MethodBinding     :: ClassName n   -> Int           -> Binding n
+  TopFunBinding     :: TopFun n                       -> Binding n
+  FunObjCodeBinding :: CFunction n                    -> Binding n
+  ModuleBinding     :: Module n                       -> Binding n
   -- TODO: add a case for abstracted pointers, as used in `ClosedImpFunction`
-  PtrBinding        :: PtrType -> PtrLitVal           -> Binding PtrNameC        n
-  SpecializedDictBinding :: SpecializedDictDef n      -> Binding SpecializedDictNameC n
-  ImpNameBinding    :: BaseType                       -> Binding ImpNameC n
+  PtrBinding        :: PtrType -> PtrLitVal           -> Binding n
+  SpecializedDictBinding :: SpecializedDictDef n      -> Binding n
+  ImpNameBinding    :: BaseType                       -> Binding n
+  deriving (Show, Generic)
 
 -- === ToBinding ===
 
-atomBindingToBinding :: AtomBinding r n -> Binding (AtomNameC r) n
+atomBindingToBinding :: AtomBinding n -> Binding n
 atomBindingToBinding b = AtomNameBinding b
 
-bindingToAtomBinding :: Binding (AtomNameC r) n -> AtomBinding r n
+bindingToAtomBinding :: Binding n -> AtomBinding n
 bindingToAtomBinding (AtomNameBinding b) = b
 
-class (RenameE     e, SinkableE e) => ToBinding (e::E) (c::C) | e -> c where
-  toBinding :: e n -> Binding c n
+class (RenameE e, SinkableE e) => ToBinding (e::E) where
+  toBinding :: e n -> Binding n
 
-instance Color c => ToBinding (Binding c) c where
+instance ToBinding Binding where
   toBinding = id
 
-instance IRRep r => ToBinding (AtomBinding r) (AtomNameC r) where
+instance ToBinding AtomBinding where
   toBinding = atomBindingToBinding
 
-instance IRRep r => ToBinding (DeclBinding r) (AtomNameC r) where
+instance ToBinding DeclBinding where
   toBinding = toBinding . LetBound
 
-instance IRRep r => ToBinding (Type r) (AtomNameC r) where
+instance ToBinding Type where
   toBinding = toBinding . MiscBound
 
-instance ToBinding SolverBinding (AtomNameC CoreIR) where
+instance ToBinding SolverBinding where
   toBinding = toBinding . SolverBound
 
-instance IRRep r => ToBinding (IxType r) (AtomNameC r) where
+instance ToBinding IxType where
   toBinding (IxType t _) = toBinding t
 
-instance (ToBinding e1 c, ToBinding e2 c) => ToBinding (EitherE e1 e2) c where
+instance (ToBinding e1, ToBinding e2) => ToBinding (EitherE e1 e2) where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
 
-instance ToBindersAbs (TopLam r) (Expr r) r where
+instance ToBindersAbs TopLam Expr where
   toAbs (TopLam _ _ lam) = toAbs lam
 
 -- === GenericE, GenericB ===
 
 instance GenericE SpecializedDictDef where
-  type RepE SpecializedDictDef = AbsDict `PairE` MaybeE (ListE (TopLam SimpIR))
+  type RepE SpecializedDictDef = AbsDict `PairE` MaybeE (ListE STopLam)
   fromE (SpecializedDict ab methods) = ab `PairE` methods'
     where methods' = case methods of Just xs -> LeftE (ListE xs)
                                      Nothing -> RightE UnitE
@@ -367,7 +366,7 @@ instance AlphaEqE AtomRules
 instance RenameE     AtomRules
 
 instance GenericE CustomRules where
-  type RepE CustomRules = ListE (PairE (AtomName CoreIR) AtomRules)
+  type RepE CustomRules = ListE (PairE AtomName AtomRules)
   fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
   toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
 instance SinkableE CustomRules
@@ -431,44 +430,44 @@ instance AlphaEqE       SynthCandidates
 instance AlphaHashableE SynthCandidates
 instance RenameE        SynthCandidates
 
-instance IRRep r => GenericE (AtomBinding r) where
-  type RepE (AtomBinding r) =
+instance GenericE AtomBinding where
+  type RepE AtomBinding =
      EitherE2 (EitherE3
-      (DeclBinding   r)              -- LetBound
-      (Type          r)              -- MiscBound
-      (WhenCore r SolverBinding)     -- SolverBound
+      DeclBinding              -- LetBound
+      Type                     -- MiscBound
+      (SolverBinding)          -- SolverBound
      ) (EitherE2
-      (WhenCore r (PairE CType CAtom))               -- NoinlineFun
-      (WhenCore r (CorePiType `PairE` TopFunName))   -- FFIFunBound
+      ((PairE CType CAtom))               -- NoinlineFun
+      ((CorePiType `PairE` TopFunName))   -- FFIFunBound
      )
 
   fromE = \case
     LetBound    x -> Case0 $ Case0 x
     MiscBound   x -> Case0 $ Case1 x
-    SolverBound x -> Case0 $ Case2 $ WhenIRE x
-    NoinlineFun t x -> Case1 $ Case0 $ WhenIRE $ PairE t x
-    FFIFunBound t v -> Case1 $ Case1 $ WhenIRE $ t `PairE` v
+    SolverBound x -> Case0 $ Case2 $ x
+    NoinlineFun t x -> Case1 $ Case0 $ PairE t x
+    FFIFunBound t v -> Case1 $ Case1 $ t `PairE` v
   {-# INLINE fromE #-}
 
   toE = \case
     Case0 x' -> case x' of
-      Case0 x         -> LetBound x
-      Case1 x           -> MiscBound x
-      Case2 (WhenIRE x) -> SolverBound x
+      Case0 x -> LetBound x
+      Case1 x -> MiscBound x
+      Case2 x -> SolverBound x
       _ -> error "impossible"
     Case1 x' -> case x' of
-      Case0 (WhenIRE (PairE t x)) -> NoinlineFun t x
-      Case1 (WhenIRE (ty `PairE` v))                 -> FFIFunBound ty v
+      Case0 (PairE t x)    -> NoinlineFun t x
+      Case1 (ty `PairE` v) -> FFIFunBound ty v
       _ -> error "impossible"
     _ -> error "impossible"
   {-# INLINE toE #-}
 
 
-instance IRRep r => SinkableE   (AtomBinding r)
-instance IRRep r => HoistableE  (AtomBinding r)
-instance IRRep r => RenameE     (AtomBinding r)
-instance IRRep r => AlphaEqE       (AtomBinding r)
-instance IRRep r => AlphaHashableE (AtomBinding r)
+instance SinkableE   AtomBinding
+instance HoistableE  AtomBinding
+instance RenameE     AtomBinding
+instance AlphaEqE       AtomBinding
+instance AlphaHashableE AtomBinding
 
 instance GenericE TopFunDef where
   type RepE TopFunDef = EitherE3 SpecializationSpec LinearizationSpec LinearizationSpec
@@ -490,22 +489,22 @@ instance RenameE        TopFunDef
 instance AlphaEqE       TopFunDef
 instance AlphaHashableE TopFunDef
 
-instance IRRep r => GenericE (TopLam r) where
-  type RepE (TopLam r) = LiftE Bool `PairE` PiType r `PairE` LamExpr r
+instance GenericE TopLam where
+  type RepE TopLam = LiftE Bool `PairE` PiType `PairE` LamExpr
   fromE (TopLam d x y) = LiftE d `PairE` x `PairE` y
   {-# INLINE fromE #-}
   toE (LiftE d `PairE` x `PairE` y) = TopLam d x y
   {-# INLINE toE #-}
 
-instance IRRep r => SinkableE      (TopLam r)
-instance IRRep r => HoistableE     (TopLam r)
-instance IRRep r => RenameE        (TopLam r)
-instance IRRep r => AlphaEqE       (TopLam r)
-instance IRRep r => AlphaHashableE (TopLam r)
+instance SinkableE      TopLam
+instance HoistableE     TopLam
+instance RenameE        TopLam
+instance AlphaEqE       TopLam
+instance AlphaHashableE TopLam
 
 instance GenericE TopFun where
   type RepE TopFun = EitherE
-        (TopFunDef `PairE` TopLam SimpIR `PairE` ComposeE EvalStatus TopFunLowerings)
+        (TopFunDef `PairE` STopLam `PairE` ComposeE EvalStatus TopFunLowerings)
         (LiftE (String, IFunType))
   fromE = \case
     DexTopFun def lam status -> LeftE (def `PairE` lam `PairE` ComposeE status)
@@ -524,7 +523,7 @@ instance AlphaHashableE TopFun
 
 instance GenericE SpecializationSpec where
   type RepE SpecializationSpec =
-         PairE (AtomVar CoreIR) (Abs (Nest (Binder CoreIR)) (ListE CAtom))
+         PairE AtomVar (Abs (Nest Binder) (ListE CAtom))
   fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
   toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
@@ -576,63 +575,59 @@ instance RenameE     SolverBinding
 instance AlphaEqE       SolverBinding
 instance AlphaHashableE SolverBinding
 
-instance GenericE (Binding c) where
-  type RepE (Binding c) =
+instance GenericE Binding where
+  type RepE Binding =
     EitherE3
       (EitherE6
-          (WhenAtomName        c AtomBinding)
-          (WhenC TyConNameC    c (MaybeE TyConDef `PairE` DotMethods))
-          (WhenC DataConNameC  c (TyConName `PairE` LiftE Int))
-          (WhenC ClassNameC    c (ClassDef))
-          (WhenC InstanceNameC c (InstanceDef `PairE` CorePiType))
-          (WhenC MethodNameC   c (ClassName `PairE` LiftE Int)))
+          (AtomBinding)
+          (MaybeE TyConDef `PairE` DotMethods)
+          (TyConName `PairE` LiftE Int)
+          (ClassDef)
+          (InstanceDef `PairE` CorePiType)
+          (ClassName `PairE` LiftE Int))
       (EitherE4
-          (WhenC TopFunNameC     c (TopFun))
-          (WhenC FunObjCodeNameC c (CFunction))
-          (WhenC ModuleNameC     c (Module))
-          (WhenC PtrNameC        c (LiftE (PtrType, PtrLitVal))))
+          (TopFun)
+          (CFunction)
+          (Module)
+          (LiftE (PtrType, PtrLitVal)))
       (EitherE2
-          (WhenC SpecializedDictNameC c (SpecializedDictDef))
-          (WhenC ImpNameC             c (LiftE BaseType)))
+          (SpecializedDictDef)
+          (LiftE BaseType))
 
   fromE = \case
-    AtomNameBinding   binding           -> Case0 $ Case0 $ WhenAtomName binding
-    TyConBinding      dataDef methods   -> Case0 $ Case1 $ WhenC $ toMaybeE dataDef `PairE` methods
-    DataConBinding    dataDefName idx   -> Case0 $ Case2 $ WhenC $ dataDefName `PairE` LiftE idx
-    ClassBinding      classDef          -> Case0 $ Case3 $ WhenC $ classDef
-    InstanceBinding   instanceDef ty    -> Case0 $ Case4 $ WhenC $ instanceDef `PairE` ty
-    MethodBinding     className idx     -> Case0 $ Case5 $ WhenC $ className `PairE` LiftE idx
-    TopFunBinding     fun               -> Case1 $ Case0 $ WhenC $ fun
-    FunObjCodeBinding cFun              -> Case1 $ Case1 $ WhenC $ cFun
-    ModuleBinding m                     -> Case1 $ Case2 $ WhenC $ m
-    PtrBinding ty p                     -> Case1 $ Case3 $ WhenC $ LiftE (ty,p)
-    SpecializedDictBinding def          -> Case2 $ Case0 $ WhenC $ def
-    ImpNameBinding ty                   -> Case2 $ Case1 $ WhenC $ LiftE ty
+    AtomNameBinding   binding           -> Case0 $ Case0 $ binding
+    TyConBinding      dataDef methods   -> Case0 $ Case1 $ toMaybeE dataDef `PairE` methods
+    DataConBinding    dataDefName idx   -> Case0 $ Case2 $ dataDefName `PairE` LiftE idx
+    ClassBinding      classDef          -> Case0 $ Case3 $ classDef
+    InstanceBinding   instanceDef ty    -> Case0 $ Case4 $ instanceDef `PairE` ty
+    MethodBinding     className idx     -> Case0 $ Case5 $ className `PairE` LiftE idx
+    TopFunBinding     fun               -> Case1 $ Case0 $ fun
+    FunObjCodeBinding cFun              -> Case1 $ Case1 $ cFun
+    ModuleBinding m                     -> Case1 $ Case2 $ m
+    PtrBinding ty p                     -> Case1 $ Case3 $ LiftE (ty,p)
+    SpecializedDictBinding def          -> Case2 $ Case0 $ def
+    ImpNameBinding ty                   -> Case2 $ Case1 $ LiftE ty
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 (Case0 (WhenAtomName binding))           -> AtomNameBinding   binding
-    Case0 (Case1 (WhenC (def `PairE` methods)))    -> TyConBinding      (fromMaybeE def) methods
-    Case0 (Case2 (WhenC (n `PairE` LiftE idx)))    -> DataConBinding    n idx
-    Case0 (Case3 (WhenC (classDef)))               -> ClassBinding      classDef
-    Case0 (Case4 (WhenC (instanceDef `PairE` ty))) -> InstanceBinding   instanceDef ty
-    Case0 (Case5 (WhenC ((n `PairE` LiftE i))))    -> MethodBinding     n i
-    Case1 (Case0 (WhenC (fun)))                    -> TopFunBinding     fun
-    Case1 (Case1 (WhenC (f)))                      -> FunObjCodeBinding f
-    Case1 (Case2 (WhenC (m)))                      -> ModuleBinding     m
-    Case1 (Case3 (WhenC ((LiftE (ty,p)))))         -> PtrBinding        ty p
-    Case2 (Case0 (WhenC (def)))                    -> SpecializedDictBinding def
-    Case2 (Case1 (WhenC ((LiftE ty))))             -> ImpNameBinding    ty
+    Case0 (Case0 binding)                  -> AtomNameBinding   binding
+    Case0 (Case1 (def `PairE` methods))    -> TyConBinding      (fromMaybeE def) methods
+    Case0 (Case2 (n `PairE` LiftE idx))    -> DataConBinding    n idx
+    Case0 (Case3 classDef)                 -> ClassBinding      classDef
+    Case0 (Case4 (instanceDef `PairE` ty)) -> InstanceBinding   instanceDef ty
+    Case0 (Case5 (n `PairE` LiftE i))      -> MethodBinding     n i
+    Case1 (Case0 fun)                      -> TopFunBinding     fun
+    Case1 (Case1 f)                        -> FunObjCodeBinding f
+    Case1 (Case2 m)                        -> ModuleBinding     m
+    Case1 (Case3 (LiftE (ty,p)))           -> PtrBinding        ty p
+    Case2 (Case0 def)                      -> SpecializedDictBinding def
+    Case2 (Case1 (LiftE ty))               -> ImpNameBinding    ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 
-deriving via WrapE (Binding c) n instance Generic (Binding c n)
-instance SinkableV         Binding
-instance HoistableV        Binding
-instance RenameV           Binding
-instance Color c => SinkableE   (Binding c)
-instance Color c => HoistableE  (Binding c)
-instance Color c => RenameE     (Binding c)
+instance SinkableE   Binding
+instance HoistableE  Binding
+instance RenameE     Binding
 
 instance Semigroup (SynthCandidates n) where
   SynthCandidates xs ys <> SynthCandidates xs' ys' =
@@ -660,8 +655,8 @@ instance GenericE TopEnvUpdate where
     {- UpdateLoadedModules -}      (LiftE ModuleSourceName `PairE` ModuleName)
     {- UpdateLoadedObjects -}      (FunObjCodeName `PairE` LiftE NativeFunction)
       ) ( EitherE6
-    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE (TopLam SimpIR))
-    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE (TopLam SimpIR))
+    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE STopLam)
+    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE STopLam)
     {- UpdateTopFunEvalStatus -}   (TopFunName `PairE` ComposeE EvalStatus TopFunLowerings)
     {- UpdateInstanceDef -}        (InstanceName `PairE` InstanceDef)
     {- UpdateTyConDef -}           (TyConName `PairE` TyConDef)
@@ -784,12 +779,12 @@ applyUpdate e = \case
     let TyConBinding def methods = lookupEnvPure e name
     updateEnv name (TyConBinding def (methods <> DotMethods (M.singleton sn x))) e
 
-updateEnv :: Color c => Name c n -> Binding c n -> TopEnv n -> TopEnv n
+updateEnv :: Name n -> Binding n -> TopEnv n -> TopEnv n
 updateEnv v rhs env =
   env { envDefs = RecSubst $ updateSubstFrag v rhs bs }
   where (RecSubst bs) = envDefs env
 
-lookupEnvPure :: Color c => TopEnv n -> Name c n -> Binding c n
+lookupEnvPure :: TopEnv n -> Name n -> Binding n
 lookupEnvPure env v = lookupTerminalSubstFrag (fromRecSubst $ envDefs $ env) v
 
 instance GenericE Module where
@@ -934,12 +929,9 @@ instance Pretty (SolverBinding n) where
   pretty (SkolemBound  ty) = "Skolem variable of type:"      <+> pretty ty
   pretty (DictBound    ty) = "Dictionary variable of type:"  <+> pretty ty
 
-instance Pretty (Binding c n) where
+instance Pretty (Binding n) where
   pretty b = case b of
-    -- using `unsafeCoerceIRE` here because otherwise we don't have `IRRep`
-    -- TODO: can we avoid printing needing IRRep? Presumably it's related to
-    -- manipulating sets or something, which relies on Eq/Ord, which relies on renaming.
-    AtomNameBinding   info -> "Atom name:" <+> pretty (unsafeCoerceIRE @CoreIR info)
+    AtomNameBinding   info -> "Atom name:" <+> pretty info
     TyConBinding dataDef _ -> "Type constructor: " <+> pretty dataDef
     DataConBinding tyConName idx -> "Data constructor:" <+>
       pretty tyConName <+> "Constructor index:" <+> pretty idx
@@ -994,10 +986,10 @@ instance Pretty (TopFun n) where
          <> hardline <+> "lowering:" <+> pretty lowering
     FFITopFun f _ -> pretty f
 
-instance IRRep r => Pretty (TopLam r n) where
+instance Pretty (TopLam n) where
   pretty (TopLam _ _ lam) = pretty lam
 
-instance IRRep r => Pretty (AtomBinding r n) where
+instance Pretty (AtomBinding n) where
   pretty binding = case binding of
     LetBound    b -> pretty b
     MiscBound   t -> pretty t
@@ -1012,8 +1004,8 @@ instance Pretty (SpecializationSpec n) where
 instance Hashable a => Hashable (EvalStatus a)
 
 instance Store (SolverBinding n)
-instance IRRep r => Store (AtomBinding r n)
-instance IRRep r => Store (TopLam r n)
+instance Store (AtomBinding n)
+instance Store (TopLam n)
 instance Store (SynthCandidates n)
 instance Store (Module n)
 instance Store (ImportStatus n)
@@ -1021,7 +1013,7 @@ instance Store (TopFunLowerings n)
 instance Store a => Store (EvalStatus a)
 instance Store (TopFun n)
 instance Store (TopFunDef n)
-instance Color c => Store (Binding c n)
+instance Store (Binding n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
 instance Store (AtomRules n)
