@@ -82,7 +82,8 @@ library
                      , SourceIdTraversal
                      , TopLevel
                      -- , Transpose
-                     , Types.Core
+                     , Types.Simple
+                     , Types.Complicated
                      , Types.Imp
                      , Types.Primitives
                      , Types.Source

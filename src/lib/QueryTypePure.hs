@@ -7,7 +7,8 @@
 module QueryTypePure where
 
 import Types.Primitives
-import Types.Core
+import Types.Simple
+import Types.Complicated
 import Types.Top
 import Name
 

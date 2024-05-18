@@ -35,7 +35,8 @@ import qualified Data.Map.Strict       as M
 import Name
 import Err
 
-import Types.Core
+import Types.Complicated
+import Types.Simple
 import Types.Top
 import Types.Imp
 import Types.Primitives

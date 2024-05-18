@@ -26,13 +26,13 @@ import Util (FileHash, SnocList (..))
 import PPrint
 
 import Types.Primitives
-import Types.Core
+import Types.Complicated
+import Types.Simple
 import Types.Source
 import Types.Imp
 
 type TopBlock = TopLam -- used for nullary lambda
-type IsDestLam = Bool
-data TopLam (n::S) = TopLam IsDestLam (PiType n) (LamExpr n)
+data TopLam (n::S) = TopLam (PiType n) (LamExpr n)
      deriving (Show, Generic)
 type STopLam = TopLam
 type CTopLam = TopLam
@@ -59,12 +59,11 @@ newtype TopFunLowerings (n::S) = TopFunLowerings
   { topFunObjCode :: FunObjCodeName n } -- TODO: add optimized, imp etc. as needed
   deriving (Show, Generic, SinkableE, HoistableE, RenameE, AlphaEqE, AlphaHashableE, Pretty)
 
-data AtomBinding (n::S) where
- LetBound     :: DeclBinding  n  -> AtomBinding n
- MiscBound    :: Type         n  -> AtomBinding n
- SolverBound  :: SolverBinding n   -> AtomBinding n
- NoinlineFun  :: CType n -> CAtom n -> AtomBinding n
- FFIFunBound  :: CorePiType n -> TopFunName n -> AtomBinding n
+data AtomBinding (n::S) =
+   LetBound     (CExpr n)
+ | MiscBound    (Type n)
+ | SolverBound  (SolverBinding n)
+ | FFIFunBound  (CorePiType n) (TopFunName n)
 
 deriving instance Show (AtomBinding n)
 deriving via WrapE AtomBinding n instance Generic (AtomBinding n)
@@ -75,14 +74,7 @@ data SolverBinding (n::S) =
  | DictBound   (CType n)
    deriving (Show, Generic)
 
--- TODO: Use an IntMap
-newtype CustomRules (n::S) =
-  CustomRules { customRulesMap :: M.Map (AtomName n) (AtomRules n) }
-  deriving (Semigroup, Monoid, Store)
-data AtomRules (n::S) =
-  -- number of implicit args, number of explicit args, linearization function
-  CustomLinearize Int Int SymbolicZeros (CAtom n)
-  deriving (Generic)
+-- === top-level definitions  ===
 
 -- === envs and modules ===
 
@@ -99,7 +91,6 @@ newtype EnvFrag (n::S) (l::S) = EnvFrag (RecSubstFrag Binding n l)
 
 data TopEnv (n::S) = TopEnv
   { envDefs          :: RecSubst Binding n
-  , envCustomRules   :: CustomRules n
   , envCache         :: Cache n
   , envLoadedModules :: LoadedModules n
   , envLoadedObjects :: LoadedObjects n }
@@ -107,7 +98,6 @@ data TopEnv (n::S) = TopEnv
 
 data SerializedEnv n = SerializedEnv
   { serializedEnvDefs        :: RecSubst Binding n
-  , serializedEnvCustomRules :: CustomRules n
   , serializedEnvCache       :: Cache n }
   deriving (Generic)
 
@@ -124,6 +114,7 @@ data ModuleEnv (n::S) = ModuleEnv
   , envSynthCandidates :: SynthCandidates n }
   deriving (Generic)
 
+type ModuleName = Name
 data Module (n::S) = Module
   { moduleSourceName :: ModuleSourceName
   , moduleDirectDeps :: S.Set (ModuleName n)
@@ -163,15 +154,12 @@ data TopEnvFrag n l = TopEnvFrag (EnvFrag n l) (ModuleEnv l) (SnocList (TopEnvUp
 
 data TopEnvUpdate n =
    ExtendCache              (Cache n)
- | AddCustomRule            (CAtomName n) (AtomRules n)
  | UpdateLoadedModules      ModuleSourceName (ModuleName n)
  | UpdateLoadedObjects      (FunObjCodeName n) NativeFunction
- | FinishDictSpecialization (SpecDictName n) [STopLam n]
- | LowerDictSpecialization  (SpecDictName n) [STopLam n]
  | UpdateTopFunEvalStatus   (TopFunName n) (TopFunEvalStatus n)
  | UpdateInstanceDef        (InstanceName n) (InstanceDef n)
  | UpdateTyConDef           (TyConName n) (TyConDef n)
- | UpdateFieldDef           (TyConName n) SourceName (CAtomName n)
+ | UpdateFieldDef           (TyConName n) SourceName (Name n)
 
 -- TODO: we could add a lot more structure for querying by dict type, caching, etc.
 data SynthCandidates n = SynthCandidates
@@ -187,7 +175,6 @@ emptyImportStatus = ImportStatus mempty mempty
 
 data Cache (n::S) = Cache
   { specializationCache :: EMap SpecializationSpec TopFunName n
-  , ixDictCache :: EMap AbsDict SpecDictName n
   , linearizationCache :: EMap LinearizationSpec (PairE TopFunName TopFunName) n
   , transpositionCache :: EMap TopFunName TopFunName n
     -- This is memoizing `parseAndGetDeps :: Text -> [ModuleSourceName]`. But we
@@ -228,7 +215,7 @@ dynamicVarLinkMap dyvars = dyvars <&> \(v, ptr) -> (dynamicVarCName v, ptr)
 
 type Generalized (e::E) (n::S) = (Abstracted e n, [Atom n])
 type Abstracted (e::E) = Abs (Nest Binder) e
-type AbsDict = Abstracted CDict
+type AbsDict = Abstracted DictCon
 
 data SpecializedDictDef n =
    SpecializedDict
@@ -241,7 +228,7 @@ data SpecializedDictDef n =
 
 -- TODO: extend with AD-oriented specializations, backend-specific specializations etc.
 data SpecializationSpec (n::S) =
-   AppSpecialization (AtomVar n) (Abstracted (ListE CAtom) n)
+   AppSpecialization (Name n) (Abstracted (ListE CExpr) n)
    deriving (Show, Generic)
 
 type Active = Bool
@@ -268,12 +255,6 @@ data Binding (n::S) where
 
 -- === ToBinding ===
 
-atomBindingToBinding :: AtomBinding n -> Binding n
-atomBindingToBinding b = AtomNameBinding b
-
-bindingToAtomBinding :: Binding n -> AtomBinding n
-bindingToAtomBinding (AtomNameBinding b) = b
-
 class (RenameE e, SinkableE e) => ToBinding (e::E) where
   toBinding :: e n -> Binding n
 
@@ -281,10 +262,7 @@ instance ToBinding Binding where
   toBinding = id
 
 instance ToBinding AtomBinding where
-  toBinding = atomBindingToBinding
-
-instance ToBinding DeclBinding where
-  toBinding = toBinding . LetBound
+  toBinding = AtomNameBinding
 
 instance ToBinding Type where
   toBinding = toBinding . MiscBound
@@ -292,15 +270,9 @@ instance ToBinding Type where
 instance ToBinding SolverBinding where
   toBinding = toBinding . SolverBound
 
-instance ToBinding IxType where
-  toBinding (IxType t _) = toBinding t
-
 instance (ToBinding e1, ToBinding e2) => ToBinding (EitherE e1 e2) where
   toBinding (LeftE  e) = toBinding e
   toBinding (RightE e) = toBinding e
-
-instance ToBindersAbs TopLam Expr where
-  toAbs (TopLam _ _ lam) = toAbs lam
 
 -- === GenericE, GenericB ===
 
@@ -326,18 +298,17 @@ instance HasScope Env where
 
 instance OutMap Env where
   emptyOutMap =
-    Env (TopEnv (RecSubst emptyInFrag) mempty mempty emptyLoadedModules emptyLoadedObjects)
+    Env (TopEnv (RecSubst emptyInFrag) mempty emptyLoadedModules emptyLoadedObjects)
         emptyModuleEnv
   {-# INLINE emptyOutMap #-}
 
 instance ExtOutMap Env (RecSubstFrag Binding)  where
   -- TODO: We might want to reorganize this struct to make this
   -- do less explicit sinking etc. It's a hot operation!
-  extendOutMap (Env (TopEnv defs rules cache loadedM loadedO) moduleEnv) frag =
+  extendOutMap (Env (TopEnv defs cache loadedM loadedO) moduleEnv) frag =
     withExtEvidence frag $ Env
       (TopEnv
         (defs  `extendRecSubst` frag)
-        (sink rules)
         (sink cache)
         (sink loadedM)
         (sink loadedO))
@@ -355,29 +326,9 @@ extendEnv env (EnvFrag newEnv) = do
       Env envTop (ModuleEnv imports sm scs)
 {-# NOINLINE [1] extendEnv #-}
 
-
-instance GenericE AtomRules where
-  type RepE AtomRules = (LiftE (Int, Int, SymbolicZeros)) `PairE` CAtom
-  fromE (CustomLinearize ni ne sz a) = LiftE (ni, ne, sz) `PairE` a
-  toE (LiftE (ni, ne, sz) `PairE` a) = CustomLinearize ni ne sz a
-instance SinkableE AtomRules
-instance HoistableE AtomRules
-instance AlphaEqE AtomRules
-instance RenameE     AtomRules
-
-instance GenericE CustomRules where
-  type RepE CustomRules = ListE (PairE AtomName AtomRules)
-  fromE (CustomRules m) = ListE $ toPairE <$> M.toList m
-  toE (ListE l) = CustomRules $ M.fromList $ fromPairE <$> l
-instance SinkableE CustomRules
-instance HoistableE CustomRules
-instance AlphaEqE CustomRules
-instance RenameE     CustomRules
-
 instance GenericE Cache where
   type RepE Cache =
             EMap SpecializationSpec TopFunName
-    `PairE` EMap AbsDict SpecDictName
     `PairE` EMap LinearizationSpec (PairE TopFunName TopFunName)
     `PairE` EMap TopFunName TopFunName
     `PairE` LiftE (M.Map ModuleSourceName (FileHash, [ModuleSourceName]))
@@ -385,13 +336,13 @@ instance GenericE Cache where
                    `PairE` LiftE FileHash
                    `PairE` ListE ModuleName
                    `PairE` ModuleName)
-  fromE (Cache x y z w parseCache evalCache) =
-    x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE`
+  fromE (Cache x y z parseCache evalCache) =
+    x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE`
       ListE [LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
              | (sourceName, ((hashVal, deps), result)) <- M.toList evalCache ]
   {-# INLINE fromE #-}
-  toE   (x `PairE` y `PairE` z `PairE` w `PairE` LiftE parseCache `PairE` ListE evalCache) =
-    Cache x y z w parseCache
+  toE   (x `PairE` y `PairE` z `PairE` LiftE parseCache `PairE` ListE evalCache) =
+    Cache x y z parseCache
       (M.fromList
        [(sourceName, ((hashVal, deps), result))
        | LiftE sourceName `PairE` LiftE hashVal `PairE` ListE deps `PairE` result
@@ -405,13 +356,13 @@ instance RenameE     Cache
 instance Store (Cache n)
 
 instance Monoid (Cache n) where
-  mempty = Cache mempty mempty mempty mempty mempty mempty
+  mempty = Cache mempty mempty mempty mempty mempty
   mappend = (<>)
 
 instance Semigroup (Cache n) where
   -- right-biased instead of left-biased
-  Cache x1 x2 x3 x4 x5 x6 <> Cache y1 y2 y3 y4 y5 y6 =
-    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5) (x6<>y6)
+  Cache x1 x2 x3 x4 x5 <> Cache y1 y2 y3 y4 y5 =
+    Cache (y1<>x1) (y2<>x2) (y3<>x3) (y4<>x4) (x5<>y5)
 
 
 instance GenericE SynthCandidates where
@@ -432,33 +383,24 @@ instance RenameE        SynthCandidates
 
 instance GenericE AtomBinding where
   type RepE AtomBinding =
-     EitherE2 (EitherE3
-      DeclBinding              -- LetBound
-      Type                     -- MiscBound
-      (SolverBinding)          -- SolverBound
-     ) (EitherE2
-      ((PairE CType CAtom))               -- NoinlineFun
-      ((CorePiType `PairE` TopFunName))   -- FFIFunBound
-     )
+     EitherE4
+      CExpr           -- LetBound
+      Type            -- MiscBound
+      (SolverBinding) -- SolverBound
+      (CorePiType `PairE` TopFunName)   -- FFIFunBound
 
   fromE = \case
-    LetBound    x -> Case0 $ Case0 x
-    MiscBound   x -> Case0 $ Case1 x
-    SolverBound x -> Case0 $ Case2 $ x
-    NoinlineFun t x -> Case1 $ Case0 $ PairE t x
-    FFIFunBound t v -> Case1 $ Case1 $ t `PairE` v
+    LetBound    x -> Case0 x
+    MiscBound   x -> Case1 x
+    SolverBound x -> Case2 $ x
+    FFIFunBound t v -> Case3 $ t `PairE` v
   {-# INLINE fromE #-}
 
   toE = \case
-    Case0 x' -> case x' of
-      Case0 x -> LetBound x
-      Case1 x -> MiscBound x
-      Case2 x -> SolverBound x
-      _ -> error "impossible"
-    Case1 x' -> case x' of
-      Case0 (PairE t x)    -> NoinlineFun t x
-      Case1 (ty `PairE` v) -> FFIFunBound ty v
-      _ -> error "impossible"
+    Case0 x -> LetBound x
+    Case1 x -> MiscBound x
+    Case2 x -> SolverBound x
+    Case3 (ty `PairE` v) -> FFIFunBound ty v
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -468,6 +410,7 @@ instance HoistableE  AtomBinding
 instance RenameE     AtomBinding
 instance AlphaEqE       AtomBinding
 instance AlphaHashableE AtomBinding
+instance Store (AtomBinding n)
 
 instance GenericE TopFunDef where
   type RepE TopFunDef = EitherE3 SpecializationSpec LinearizationSpec LinearizationSpec
@@ -490,17 +433,17 @@ instance AlphaEqE       TopFunDef
 instance AlphaHashableE TopFunDef
 
 instance GenericE TopLam where
-  type RepE TopLam = LiftE Bool `PairE` PiType `PairE` LamExpr
-  fromE (TopLam d x y) = LiftE d `PairE` x `PairE` y
+  type RepE TopLam = PiType `PairE` LamExpr
+  fromE (TopLam x y) = x `PairE` y
   {-# INLINE fromE #-}
-  toE (LiftE d `PairE` x `PairE` y) = TopLam d x y
+  toE (x `PairE` y) = TopLam x y
   {-# INLINE toE #-}
-
 instance SinkableE      TopLam
 instance HoistableE     TopLam
 instance RenameE        TopLam
 instance AlphaEqE       TopLam
 instance AlphaHashableE TopLam
+instance Store (TopLam n)
 
 instance GenericE TopFun where
   type RepE TopFun = EitherE
@@ -523,7 +466,7 @@ instance AlphaHashableE TopFun
 
 instance GenericE SpecializationSpec where
   type RepE SpecializationSpec =
-         PairE AtomVar (Abs (Nest Binder) (ListE CAtom))
+         PairE Name (Abs (Nest Binder) (ListE CExpr))
   fromE (AppSpecialization fname (Abs bs args)) = PairE fname (Abs bs args)
   {-# INLINE fromE #-}
   toE   (PairE fname (Abs bs args)) = AppSpecialization fname (Abs bs args)
@@ -552,10 +495,7 @@ instance AlphaEqE       LinearizationSpec
 instance AlphaHashableE LinearizationSpec
 
 instance GenericE SolverBinding where
-  type RepE SolverBinding = EitherE3
-                                  CType
-                                  CType
-                                  CType
+  type RepE SolverBinding = EitherE3 CType CType CType
   fromE = \case
     InfVarBound ty -> Case0 ty
     SkolemBound ty -> Case1 ty
@@ -568,12 +508,12 @@ instance GenericE SolverBinding where
     Case2 ty -> DictBound   ty
     _ -> error "impossible"
   {-# INLINE toE #-}
-
 instance SinkableE   SolverBinding
 instance HoistableE  SolverBinding
 instance RenameE     SolverBinding
 instance AlphaEqE       SolverBinding
 instance AlphaHashableE SolverBinding
+instance Store (SolverBinding n)
 
 instance GenericE Binding where
   type RepE Binding =
@@ -628,6 +568,7 @@ instance GenericE Binding where
 instance SinkableE   Binding
 instance HoistableE  Binding
 instance RenameE     Binding
+instance Store (Binding n)
 
 instance Semigroup (SynthCandidates n) where
   SynthCandidates xs ys <> SynthCandidates xs' ys' =
@@ -649,45 +590,36 @@ instance RenameB     EnvFrag
 
 instance GenericE TopEnvUpdate where
   type RepE TopEnvUpdate = EitherE2 (
-      EitherE4
+      EitherE3
     {- ExtendCache -}              Cache
-    {- AddCustomRule -}            (CAtomName `PairE` AtomRules)
     {- UpdateLoadedModules -}      (LiftE ModuleSourceName `PairE` ModuleName)
     {- UpdateLoadedObjects -}      (FunObjCodeName `PairE` LiftE NativeFunction)
-      ) ( EitherE6
-    {- FinishDictSpecialization -} (SpecDictName `PairE` ListE STopLam)
-    {- LowerDictSpecialization -}  (SpecDictName `PairE` ListE STopLam)
+      ) ( EitherE4
     {- UpdateTopFunEvalStatus -}   (TopFunName `PairE` ComposeE EvalStatus TopFunLowerings)
     {- UpdateInstanceDef -}        (InstanceName `PairE` InstanceDef)
     {- UpdateTyConDef -}           (TyConName `PairE` TyConDef)
-    {- UpdateFieldDef -}           (TyConName `PairE` LiftE SourceName `PairE` CAtomName)
+    {- UpdateFieldDef -}           (TyConName `PairE` LiftE SourceName `PairE` Name)
         )
   fromE = \case
     ExtendCache x                -> Case0 $ Case0 x
-    AddCustomRule x y            -> Case0 $ Case1 (x `PairE` y)
-    UpdateLoadedModules x y      -> Case0 $ Case2 (LiftE x `PairE` y)
-    UpdateLoadedObjects x y      -> Case0 $ Case3 (x `PairE` LiftE y)
-    FinishDictSpecialization x y -> Case1 $ Case0 (x `PairE` ListE y)
-    LowerDictSpecialization x y  -> Case1 $ Case1 (x `PairE` ListE y)
-    UpdateTopFunEvalStatus x y   -> Case1 $ Case2 (x `PairE` ComposeE y)
-    UpdateInstanceDef x y        -> Case1 $ Case3 (x `PairE` y)
-    UpdateTyConDef x y           -> Case1 $ Case4 (x `PairE` y)
-    UpdateFieldDef x y z         -> Case1 $ Case5 (x `PairE` LiftE y `PairE` z)
+    UpdateLoadedModules x y      -> Case0 $ Case1 (LiftE x `PairE` y)
+    UpdateLoadedObjects x y      -> Case0 $ Case2 (x `PairE` LiftE y)
+    UpdateTopFunEvalStatus x y   -> Case1 $ Case0 (x `PairE` ComposeE y)
+    UpdateInstanceDef x y        -> Case1 $ Case1 (x `PairE` y)
+    UpdateTyConDef x y           -> Case1 $ Case2 (x `PairE` y)
+    UpdateFieldDef x y z         -> Case1 $ Case3 (x `PairE` LiftE y `PairE` z)
 
   toE = \case
     Case0 e -> case e of
       Case0 x                   -> ExtendCache x
-      Case1 (x `PairE` y)       -> AddCustomRule x y
-      Case2 (LiftE x `PairE` y) -> UpdateLoadedModules x y
-      Case3 (x `PairE` LiftE y) -> UpdateLoadedObjects x y
+      Case1 (LiftE x `PairE` y) -> UpdateLoadedModules x y
+      Case2 (x `PairE` LiftE y) -> UpdateLoadedObjects x y
       _ -> error "impossible"
     Case1 e -> case e of
-      Case0 (x `PairE` ListE y)           -> FinishDictSpecialization x y
-      Case1 (x `PairE` ListE y)           -> LowerDictSpecialization x y
-      Case2 (x `PairE` ComposeE y)        -> UpdateTopFunEvalStatus x y
-      Case3 (x `PairE` y)                 -> UpdateInstanceDef x y
-      Case4 (x `PairE` y)                 -> UpdateTyConDef x y
-      Case5 (x `PairE` LiftE y `PairE` z) -> UpdateFieldDef x y z
+      Case0 (x `PairE` ComposeE y)        -> UpdateTopFunEvalStatus x y
+      Case1 (x `PairE` y)                 -> UpdateInstanceDef x y
+      Case2 (x `PairE` y)                 -> UpdateTyConDef x y
+      Case3 (x `PairE` LiftE y `PairE` z) -> UpdateFieldDef x y z
       _ -> error "impossible"
     _ -> error "impossible"
 
@@ -726,11 +658,10 @@ instance ExtOutMap Env TopEnvFrag where
     let newerTopEnv = foldl applyUpdate newTopEnv otherUpdates
     Env newerTopEnv newModuleEnv
     where
-      Env (TopEnv defs rules cache loadedM loadedO) mEnv = env
+      Env (TopEnv defs cache loadedM loadedO) mEnv = env
 
       newTopEnv = withExtEvidence frag $ TopEnv
-        (defs `extendRecSubst` frag)
-        (sink rules) (sink cache) (sink loadedM) (sink loadedO)
+        (defs `extendRecSubst` frag) (sink cache) (sink loadedM) (sink loadedO)
 
       newModuleEnv =
         ModuleEnv
@@ -750,20 +681,8 @@ instance ExtOutMap Env TopEnvFrag where
 applyUpdate :: TopEnv n -> TopEnvUpdate n -> TopEnv n
 applyUpdate e = \case
   ExtendCache cache -> e { envCache = envCache e <> cache}
-  AddCustomRule x y       -> e { envCustomRules   = envCustomRules   e <> CustomRules   (M.singleton x y)}
   UpdateLoadedModules x y -> e { envLoadedModules = envLoadedModules e <> LoadedModules (M.singleton x y)}
   UpdateLoadedObjects x y -> e { envLoadedObjects = envLoadedObjects e <> LoadedObjects (M.singleton x y)}
-  FinishDictSpecialization dName methods -> do
-    let SpecializedDictBinding (SpecializedDict dAbs oldMethods) = lookupEnvPure e dName
-    case oldMethods of
-      Nothing -> do
-        let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
-        updateEnv dName newBinding e
-      Just _ -> error "shouldn't be adding methods if we already have them"
-  LowerDictSpecialization dName methods -> do
-    let SpecializedDictBinding (SpecializedDict dAbs _) = lookupEnvPure e dName
-    let newBinding = SpecializedDictBinding $ SpecializedDict dAbs (Just methods)
-    updateEnv dName newBinding e
   UpdateTopFunEvalStatus f s -> do
     case lookupEnvPure e f of
       TopFunBinding (DexTopFun def lam _) ->
@@ -895,20 +814,15 @@ instance Semigroup (LoadedObjects n) where
 instance Monoid (LoadedObjects n) where
   mempty = LoadedObjects mempty
 
-
 -- === instance ===
 
 prettyRecord :: [(String, Doc ann)] -> Doc ann
 prettyRecord xs = foldMap (\(name, val) -> pretty name <> indented val) xs
 
 instance Pretty (TopEnv n) where
-  pretty (TopEnv defs rules cache _ _) =
-    prettyRecord [ ("Defs"          , pretty defs)
-                 , ("Rules"         , pretty rules)
-                 , ("Cache"         , pretty cache) ]
-
-instance Pretty (CustomRules n) where
-  pretty _ = "TODO: Rule printing"
+  pretty (TopEnv defs cache _ _) =
+    prettyRecord [ ("Defs" , pretty defs)
+                 , ("Cache", pretty cache) ]
 
 instance Pretty (ImportStatus n) where
   pretty imports = pretty $ S.toList $ directImports imports
@@ -963,7 +877,7 @@ instance Pretty (EnvFrag n l) where
   pretty (EnvFrag bindings) = pretty bindings
 
 instance Pretty (Cache n) where
-  pretty (Cache _ _ _ _ _ _) = "<cache>" -- TODO
+  pretty (Cache _ _ _ _ _) = "<cache>" -- TODO
 
 instance Pretty (SynthCandidates n) where
   pretty scs = "instance dicts:" <+> pretty (M.toList $ instanceDicts scs)
@@ -987,7 +901,7 @@ instance Pretty (TopFun n) where
     FFITopFun f _ -> pretty f
 
 instance Pretty (TopLam n) where
-  pretty (TopLam _ _ lam) = pretty lam
+  pretty (TopLam _ lam) = pretty lam
 
 instance Pretty (AtomBinding n) where
   pretty binding = case binding of
@@ -995,7 +909,6 @@ instance Pretty (AtomBinding n) where
     MiscBound   t -> pretty t
     SolverBound b -> pretty b
     FFIFunBound s _ -> pretty s
-    NoinlineFun ty _ -> "Top function with type: " <+> pretty ty
 
 instance Pretty (SpecializationSpec n) where
   pretty (AppSpecialization f (Abs bs (ListE args))) =
@@ -1003,9 +916,6 @@ instance Pretty (SpecializationSpec n) where
 
 instance Hashable a => Hashable (EvalStatus a)
 
-instance Store (SolverBinding n)
-instance Store (AtomBinding n)
-instance Store (TopLam n)
 instance Store (SynthCandidates n)
 instance Store (Module n)
 instance Store (ImportStatus n)
@@ -1013,10 +923,8 @@ instance Store (TopFunLowerings n)
 instance Store a => Store (EvalStatus a)
 instance Store (TopFun n)
 instance Store (TopFunDef n)
-instance Store (Binding n)
 instance Store (ModuleEnv n)
 instance Store (SerializedEnv n)
-instance Store (AtomRules n)
 instance Store (LinearizationSpec n)
 instance Store (SpecializedDictDef n)
 instance Store (SpecializationSpec n)

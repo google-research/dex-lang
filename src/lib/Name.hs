@@ -23,10 +23,8 @@ import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
-import Data.Bits
 import Data.Functor ((<&>))
 import Data.Foldable (toList, foldl')
-import Data.Maybe (fromJust, catMaybes)
 import Data.Hashable
 import Data.Kind (Type)
 import Data.Function ((&))
@@ -2192,7 +2190,7 @@ absurdNameFunction :: Name VoidS -> a
 absurdNameFunction v = error $ "Void names shouldn't exist: " ++ show v
 
 scopeFragToSubstFrag :: forall v i i' o
-                      . (forall c. Name (i:=>:i') -> v o)
+                      . (Name (i:=>:i') -> v o)
                      -> ScopeFrag i i' -> SubstFrag v i i' o
 scopeFragToSubstFrag f (UnsafeScopeFromSubst m) = fmapSubstFrag (\n _ -> f n) m
 
@@ -2220,7 +2218,7 @@ newNames n = do
   let bs = unsafeListToNest $ map UnsafeMakeBinder ns
   unsafeCoerceE $ Abs bs $ ListE vs
 
-withFresh :: forall n c a. (Distinct n)
+withFresh :: forall n a. (Distinct n)
           => NameHint -> Scope n
           -> (forall l. DExt n l => NameBinder n l -> a) -> a
 withFresh hint (Scope (UnsafeMakeScopeFrag scope)) cont =
@@ -2749,7 +2747,7 @@ instance BindsNames (SubstPair v o) where
 
 -- === instances ===
 
-instance (forall c. Pretty (v n)) => Pretty (SubstItem v n) where
+instance Pretty (v n) => Pretty (SubstItem v n) where
   pretty (SubstItem _ val) = pretty val
 
 instance SinkableE v => SinkableE (SubstFrag v i i') where
