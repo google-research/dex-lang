@@ -1,0 +1,163 @@
+
+'## Graph casting
+There are three common representations of graphs:
+ - Adjacency matrices `n=>n=>Bool`: An `n` by `n` Boolean matrix where `True` means an edge.
+ - Edge lists `List (n & n)`: A list of pairs `(n & n)` meaning an edge from left to right.
+ - Adjacency or child lists `n=>List n`: A table of lists of each node's children.
+
+'Below are functions for all 6 combinations of casting from one
+representation to another.
+All can be paralellized by the compiler due to the use of the
+`accum` monoid.
+
+'### 1.Generating adjacency matrices.
+These first two functions start with an adjaceny matrix that has `False`,
+for every entry, and write a `True` for every edge in the list or lists.
+
+def edgeListToMatrix {n} [Ix n] (AsList _ edges: List (n & n)) : n=>n=>Bool =
+  yield_accum OrMonoid \adjmat.
+    for i.
+      (from, to) = edges.i
+      adjmat!from!to += True
+
+def childListsToMatrix {n} (lists:n=>List n) : n=>n=>Bool =
+  for i.
+    (AsList _ children) = lists.i
+    yield_accum OrMonoid \mRef.
+      for k.
+        mRef!(children.k) += True
+
+'### 2.Generating edge lists.
+These next two functions use the `List` monoid, meaning they
+start with the empty list, and append an element for every edge.
+
+def matrixToEdgeList {n} (mat:n=>n=>Bool) : List (n & n) =
+  yield_accum (ListMonoid (n & n)) \list.
+    for i j.
+      if mat.i.j then
+        append list (i, j)
+
+def childListsToEdgeList {n} (lists:n=>List n) : List (n & n) =
+  yield_accum (ListMonoid (n & n)) \list.
+    for i.
+      (AsList _ children) = lists.i
+      for_ j.
+        append list (i, children.j)
+
+
+'### 3.Generating child lists.
+This next function again uses the `List` monoid, once
+for each row of the adjacency matrix.
+
+def matrixToChildLists {n} (mat: n=>n=>Bool) : n=>List n =
+  for i.
+    yield_accum (ListMonoid n) \list.
+      for j.
+        if mat.i.j then
+          append list j
+
+'Finally, this last function has the most advanced use of
+  monoidal accumulation.  It appears to use the same `List`
+  monoid as the other examples, but produces a table of lists.
+This might appear to be a type error, but it's not.
+Just like for the adjacency matrices, Dex only requires a monoid
+on the innermost type being accumulated, and can automatically lift
+that monoid to operate on tables of that type.
+
+def edgeListToChildLists {n} [Ix n] ((AsList _ edges) : List (n & n)) : n=>List n =
+  yield_accum (ListMonoid n) \lists.
+    for i.
+      (from, to) = edges.i
+      append lists!from to
+
+
+'# Graph Operations
+
+def neighborhoodMap {n a} (lists:n=>List n) (f:(List n)->a) : n=>a =
+  map f lists
+
+def reverseEdgeList {n} (AsList _ edges: List (n & n)) : List (n & n) =
+  AsList _ for i.
+    (from, to) = edges.i
+    (to, from)
+
+def reverseChildLists {n} (lists:n=>List n) : n=>List n =
+  yield_accum (ListMonoid n) \outlists.
+    for from.
+      (AsList _ children) = lists.from
+      for_ j.
+        to = children.j
+        append outlists!to from -- todo: test
+
+def pass_messages {n in out}
+  (edges:n=>List n)
+  (params:in=>out=>Float)
+  (nodes:n=>in=>Float) : n=>out=>Float =
+    for i.
+      (AsList _ children) = edges.i
+      messages = for j.
+        sum for k. nodes.(children.j).k .* params.k
+      sum messages
+
+def graph_convnet {n layers d} (edges:n=>List n)
+  (params:layers=>d=>d=>Float)
+  (nodes:n=>d=>Float) : d=>Float =
+    update = \i x. pass_messages edges params.i x
+    penultimate_hiddens = fold nodes update
+    sum for n. penultimate_hiddens.n
+
+'## Tests
+
+test_edges = [[False, False, True, False],
+              [True, False, True, True],
+              [False, True, False, True],
+              [False, False, False, False]]
+
+:p matrixToEdgeList test_edges
+:p edgeListToMatrix $ matrixToEdgeList test_edges
+
+:p matrixToChildLists test_edges
+:p childListsToMatrix $ matrixToChildLists test_edges
+
+edgelist = (AsList 6 [ ((0@Fin 4), (2@Fin 4))
+, ((1@Fin 4), (0@Fin 4))
+, ((1@Fin 4), (2@Fin 4))
+, ((1@Fin 4), (3@Fin 4))
+, ((2@Fin 4), (1@Fin 4))
+, ((2@Fin 4), (3@Fin 4)) ])
+
+
+:p childListsToEdgeList $ matrixToChildLists test_edges
+:p edgeListToChildLists edgelist
+
+:p test_edges == (childListsToMatrix $
+                  edgeListToChildLists $
+                  matrixToEdgeList test_edges)
+:p test_edges == (edgeListToMatrix $
+                  childListsToEdgeList $
+                  matrixToChildLists test_edges)
+
+:p edgelist == matrixToEdgeList test_edges
+
+
+
+
+------------- Scratch ----------------
+
+--data DAGEdge n:Int =  -- Causes compiler bug.
+--  MkEdge left:(Fin n) right:(..left)
+
+-- data DirectedAcyclicGraph a:Type =
+--   MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>((a:n) ** (b:(..a)))
+
+data Graph a:Type =
+  MkGraph n:Type nodes:(n=>a) m:Type edges:(m=>(n & n))
+
+data EdgeList n:Type =
+  MkEdgeList list:(List (n & n))
+
+data AdjacencyMatrix n:Type =
+  MkAdjacencyMatrix matrix:(n=>n=>Bool)
+
+data AdjacencyLists n:Type =
+  MkChildLists children:(n=>List n)
