@@ -622,6 +622,10 @@ named-instance MulMonoid(a|Mul) -> Monoid(a)
   mempty = one
   def (<>)(x, y) = x * y
 
+instance Monoid((a, b)) given (a|Monoid, b|Monoid)
+  mempty = (mempty, mempty)
+  def (<>)(p1, p2) = (p1.0 <> p2.0, p1.1 <> p2.1)
+
 '## Effects
 
 def Ref(r:Heap, a:Type|Data) -> Type = %Ref(r, a)

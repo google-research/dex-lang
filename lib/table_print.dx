@@ -1,0 +1,85 @@
+-- Things that might be configurable
+-- - For each column, center, justify left, or justify right
+-- - For text columns, if there isn't enough width, whether to wrap or truncate 
+-- - Cell padding
+-- - Column separators (pandas to_string has no separators, though looks like 1 cell padding)
+
+-- Information that needs to travel across rows
+-- - For tuple rows, how wide is each field, because the tuple itself has to
+--   handle justifying its parts between the padding
+
+interface PrintableColumn(a, summary|Monoid)
+  summarize : (a) -> summary
+  render : (a, summary) -> String
+
+-- Single-line law for PrintableColumn: if 
+--   s = mconcat (for i. summarize(as[i]))
+-- then
+--   for each i, render(as[i], s) is a String of the same length with no newline characters
+
+interface BoundedBelow(a)
+  infimum : a
+
+instance BoundedBelow(Nat)
+  infimum = 0
+
+struct Max(a|BoundedBelow|Ord) = val: a
+
+instance Monoid(Max a) given (a|Data|BoundedBelow|Ord)
+  mempty = Max infimum
+  def (<>)(x, y) = Max(max(x.val, y.val))
+
+def pad_left(m|Ix, x:a, xs:n=>a) -> m=>a given (n|Ix, a) =
+  bound = size m -| size n
+  for i.
+    i' = ordinal i
+    case i' < bound of
+      True  -> x
+      False -> xs[(i' -| bound)@_]
+
+instance PrintableColumn(Float32, (Max Nat))
+  def summarize(x) = Max $ list_length $ show x
+  def render(a, summary) =
+    AsList(_, chars) = show a
+    AsList(_, pad_left(Fin summary.val, ' ', chars))
+
+-- Do we want to add this so we can write yield_accum
+-- without naming the monoid?
+named-instance TheMonoid(a|Monoid) -> Monoid(a)
+  mempty = mempty
+  def (<>)(x, y) = x <> y
+
+def mconcat(xs:n=>a) -> a given (n|Ix, a|Monoid) =
+  yield_accum (TheMonoid a) \ref.
+    for i. ref += xs[i]
+
+-- The alternative seems to be to write this
+-- def mconcat(xs:n=>a) -> a given (n|Ix, a) (m:Monoid a) =
+--   yield_accum m \ref.
+--     for i. ref += xs[i]
+
+-- TODO I'd like to be able to compute the summary type from `a`; how can we do that?
+def print_column(as:n=>a) -> String given (n|Ix, a, summary) (PrintableColumn a summary) =
+  -- TODO Why couldn't Dex infer the a=summary here?
+  summ = mconcat(a=summary, for i. summarize(as[i]))
+  -- TODO Do this in linear instead of quadratic time
+  result <- yield_accum (TheMonoid String)
+  for i.
+    if ordinal(i) > 0 then
+      result += "\n"
+    result += render(as[i], summ)
+
+-- Printing a single-column df seems to work
+unsafe_io $ \. print $
+  print_column([1.0, 3.14, 2.8], summary=Max(Nat))
+
+instance PrintableColumn((a, b), (summ_a, summ_b)) given (a, b, summ_a|Monoid, summ_b|Monoid) (PrintableColumn(a, summ_a), PrintableColumn(b, summ_b))
+  def summarize(pair) = (summarize(pair.0), summarize(pair.1))
+  def render(pair, pair_sum) =
+    render(pair.0, pair_sum.0) <> "  " <> render(pair.1, pair_sum.1)
+
+-- Printing a two-column df (zipped) seems to work too.
+-- Except for the column headings, and having to spell
+-- out the summary type explicitly.
+unsafe_io $ \. print $
+  print_column([(1.0, 1.42), (3.14, 2.0), (2.8, 3.0)], summary=(Max(Nat), Max(Nat)))
