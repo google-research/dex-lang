@@ -29,7 +29,7 @@ import Err
 import MonadUtil
 import PPrint ()
 
-import Types.Top hiding (DexDestructor)
+import Types.Top2
 import Types.Source  hiding (CInt)
 import Types.Primitives
 

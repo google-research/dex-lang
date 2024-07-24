@@ -52,9 +52,6 @@ class IsTree a where
 instance IsTree SourceBlock' where
   visit = \case
     TopDecl decl -> visit decl
-    Command _ g -> visit g
-    DeclareForeign v1 v2 g -> visit v1 >> visit v2 >> visit g
-    DeclareCustomLinearization v _ g -> visit v >> visit g
     Misc _ -> return ()
     UnParseable _ _ -> return ()
 

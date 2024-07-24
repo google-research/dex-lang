@@ -76,30 +76,30 @@ data Kind = DataKind | RefKind | TypeKind | FunKind | DictKind | OtherKind
 instance Store    Kind
 instance Hashable Kind
 
-type ClassName = Name
+type ClassName = TopName
 data DictType (n::S) =
-   DictType SourceName (ClassName n) [CExpr n]
+   DictType SourceName ClassName [CExpr n]
  | IxDictType   (CType n)
    deriving (Show, Generic)
 
-type InstanceName = Name
+type InstanceName = TopName
 data DictCon (n::S) =
-   InstanceDict (CType n) (InstanceName n) [CExpr n]
+   InstanceDict (CType n) InstanceName [CExpr n]
  | IxFin        (CExpr n)
    deriving (Show, Generic)
 
 -- Describes how to lift the "shallow" representation type to the newtype.
 data NewtypeCon (n::S) =
-   UserADTData SourceName (TyConName n) (TyConParams n) -- source name is for the type
+   UserADTData SourceName TyConName (TyConParams n) -- source name is for the type
  | NatCon
  | FinCon (CExpr n)
    deriving (Show, Generic)
 
-type TyConName = Name
+type TyConName = TopName
 data NewtypeTyCon (n::S) =
    Nat
  | Fin (CExpr n)
- | UserADTType SourceName (TyConName n) (TyConParams n)
+ | UserADTType SourceName TyConName (TyConParams n)
    deriving (Show, Generic)
 
 -- We track the explicitness information because we need it for the equality
@@ -127,7 +127,7 @@ instance Store    BuiltinClassName
 
 data InstanceDef (n::S) where
   InstanceDef
-    :: ClassName n1
+    :: ClassName
     -> [Explicitness]        -- parameter info
     -> Nest CBinder n1 n2    -- parameters (types and dictionaries)
     ->   [CExpr n2]          -- class parameters

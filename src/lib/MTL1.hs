@@ -17,8 +17,7 @@ import Data.Foldable (toList)
 
 import Name
 import Err
-import Types.Top (Env)
-import Core (EnvReader (..), EnvExtender (..))
+-- import Types.Top (Env)
 import Util (SnocList (..), snoc, emptySnocList)
 
 class MonadTrans11 (t :: MonadKind1 -> MonadKind1) where
@@ -69,26 +68,11 @@ instance Monoid1 w => MonadTrans11 (WriterT1 w) where
   lift11 = WrapWriterT1 . lift
   {-# INLINE lift11 #-}
 
-instance (SinkableE w, Monoid1 w, EnvReader m) => EnvReader (WriterT1 w m) where
-  unsafeGetEnv = lift11 unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
 instance (SinkableE w, Monoid1 w, ScopeReader m) => ScopeReader (WriterT1 w m) where
   unsafeGetScope = lift11 unsafeGetScope
   {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
   {-# INLINE getDistinct #-}
-
-instance ( SinkableE w, Monoid1 w
-         , HoistableState w, EnvExtender m)
-         => EnvExtender (WriterT1 w m) where
-  refreshAbs ab cont = WriterT1 \s -> do
-    (ans, Abs b new) <- refreshAbs ab \b e -> do
-      (ans, new) <- runWriterT1From (sink s) $ cont b e
-      return (ans, Abs b new)
-    let new' = hoistState s b new
-    return (ans, s <> new')
-  {-# INLINE refreshAbs #-}
 
 -------------------- ReaderT1 --------------------
 
@@ -115,11 +99,6 @@ instance (Monad1 m, Alternative1 m) => Alternative ((ReaderT1 r m) n) where
     ReaderT1 $ ReaderT \r -> m1 r <|> m2 r
   {-# INLINE (<|>) #-}
 
-
-instance (SinkableE r, EnvReader m) => EnvReader (ReaderT1 r m) where
-  unsafeGetEnv = lift11 unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
 instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
   unsafeGetScope = lift11 unsafeGetScope
   {-# INLINE unsafeGetScope #-}
@@ -129,10 +108,6 @@ instance (SinkableE r, ScopeReader m) => ScopeReader (ReaderT1 r m) where
 instance (SinkableE r, ScopeExtender m) => ScopeExtender (ReaderT1 r m) where
   refreshAbsScope ab cont = ReaderT1 $ ReaderT \r -> do
     refreshAbsScope ab \b e -> runReaderT1 (sink r) $ cont b e
-
-instance (SinkableE r, EnvExtender m) => EnvExtender (ReaderT1 r m) where
-  refreshAbs ab cont = ReaderT1 $ ReaderT \r -> do
-    refreshAbs ab \b e -> runReaderT1 (sink r) $ cont b e
 
 instance (Monad1 m, Fallible (m n)) => Fallible (ReaderT1 r m n) where
   throwErr = lift11 . throwErr
@@ -174,10 +149,6 @@ instance MonadTrans11 (StateT1 s) where
   lift11 = WrapStateT1 . lift
   {-# INLINE lift11 #-}
 
-instance (SinkableE s, EnvReader m) => EnvReader (StateT1 s m) where
-  unsafeGetEnv = lift11 unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
 instance (SinkableE s, ScopeReader m) => ScopeReader (StateT1 s m) where
   unsafeGetScope = lift11 unsafeGetScope
   {-# INLINE unsafeGetScope #-}
@@ -199,14 +170,6 @@ instance (Monad1 m, Alternative1 m) => Alternative ((StateT1 s m) n) where
 class HoistableState (s::E) where
   hoistState :: BindsNames b => s n -> b n l -> s l -> s n
 
-instance (SinkableE s, EnvExtender m, HoistableState s) => EnvExtender (StateT1 s m) where
-  refreshAbs ab cont = StateT1 \s -> do
-    (ans, Abs b s') <- refreshAbs ab \b e -> do
-      (ans, s') <- flip runStateT1 (sink s) $ cont b e
-      return (ans, Abs b s')
-    let s'' = hoistState s b s'
-    return (ans, s'')
-
 instance HoistableState (LiftE a) where
   hoistState _ _ (LiftE x) = LiftE x
   {-# INLINE hoistState #-}
@@ -224,7 +187,7 @@ instance Show a => HoistableState (NameMap a) where
 newtype ScopedT1 (s :: E) (m :: MonadKind1) (n :: S) (a :: *) =
   WrapScopedT1 { runScopedT1' :: StateT1 s m n a }
   deriving ( Functor, Monad, MonadState (s n), MonadFail
-           , MonadTrans11, EnvReader, ScopeReader )
+           , MonadTrans11, ScopeReader )
 
 -- This is entirely standard, but we implement it explicitly to encourage GHC to inline.
 instance (Monad (m n), Applicative (m n)) => Applicative (ScopedT1 s m n) where
@@ -245,11 +208,6 @@ runScopedT1 m s = fst <$> runStateT1 (runScopedT1' m) s
 
 deriving instance (Monad1 m, Fallible1 m) => Fallible (ScopedT1 s m n)
 deriving instance (Monad1 m, Catchable1 m) => Catchable (ScopedT1 s m n)
-
-instance (SinkableE s, EnvExtender m) => EnvExtender (ScopedT1 s m) where
-  refreshAbs ab cont = ScopedT1 \s -> do
-    ans <- refreshAbs ab \b e -> flip runScopedT1 (sink s) $ cont b e
-    return (ans, s)
 
 -------------------- MaybeT1 --------------------
 
@@ -272,19 +230,11 @@ instance Monad (m n) => MonadFail (MaybeT1 m n) where
 instance Monad (m n) => Fallible (MaybeT1 m n) where
   throwErr _ = empty
 
-instance EnvReader m => EnvReader (MaybeT1 m) where
-  unsafeGetEnv = lift11 unsafeGetEnv
-  {-# INLINE unsafeGetEnv #-}
-
 instance ScopeReader m => ScopeReader (MaybeT1 m) where
   unsafeGetScope = lift11 unsafeGetScope
   {-# INLINE unsafeGetScope #-}
   getDistinct = lift11 getDistinct
   {-# INLINE getDistinct #-}
-
-instance EnvExtender m => EnvExtender (MaybeT1 m) where
-  refreshAbs ab cont = MaybeT1 $ MaybeT $
-    refreshAbs ab \b e -> runMaybeT $ runMaybeT1' $ cont b e
 
 -------------------- StreamWriter --------------------
 
@@ -293,7 +243,7 @@ class Monad m => StreamWriter w m | m -> w where
 
 newtype StreamWriterT1 (w:: *) (m::MonadKind1) (n::S) (a:: *) =
   StreamWriterT1 { runStreamWriterT1' :: StateT1 (LiftE (SnocList w)) m n a }
-  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader)
+  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader)
 
 instance Monad1 m => StreamWriter w (StreamWriterT1 w m n) where
   writeStream w = StreamWriterT1 $ modify (\(LiftE ws) -> LiftE (ws `snoc` w))
@@ -312,7 +262,7 @@ class Monad m => StreamReader r m | m -> r where
 
 newtype StreamReaderT1 (r:: *) (m::MonadKind1) (n::S) (a:: *) =
   StreamReaderT1 { runStreamReaderT1' :: StateT1 (LiftE [r]) m n a }
-  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, EnvReader, MonadTrans11)
+  deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ScopeReader, MonadTrans11)
 
 instance Monad1 m => StreamReader r (StreamReaderT1 r m n) where
   readStream = StreamReaderT1 $ state \(LiftE rs) ->
@@ -327,89 +277,3 @@ runStreamReaderT1 rs m = do
   return (ans, rsRemaining)
 {-# INLINE runStreamReaderT1 #-}
 
--------------------- DiffState --------------------
-
-class MonoidE (d::E) where
-  emptyE :: d n
-  catE :: d n -> d n -> d n
-
-class MonoidE d => DiffStateE (s::E) (d::E) where
-  updateDiffStateE :: Distinct n => Env n -> s n -> d n -> s n
-
-newtype DiffStateT1 (s::E) (d::E) (m::MonadKind1) (n::S) (a:: *) =
-  DiffStateT1' { runDiffStateT1'' :: StateT (s n, d n) (m n) a }
-  deriving ( Functor, Applicative, Monad, MonadFail, MonadIO
-           , Fallible, Catchable)
-
-pattern DiffStateT1 :: ((s n, d n) -> m n (a, (s n, d n))) -> DiffStateT1 s d m n a
-pattern DiffStateT1 cont = DiffStateT1' (StateT cont)
-
-diffStateT1
-  :: (EnvReader m, DiffStateE s d, MonoidE d)
-  => (s n -> m n (a, d n)) -> DiffStateT1 s d m n a
-diffStateT1 cont = DiffStateT1 \(s, d) -> do
-  (ans, d') <- cont s
-  env <- unsafeGetEnv
-  Distinct <- getDistinct
-  return (ans, (updateDiffStateE env s d', catE d d'))
-{-# INLINE diffStateT1 #-}
-
-runDiffStateT1
-  :: (EnvReader m, DiffStateE s d, MonoidE d)
-  => s n -> DiffStateT1 s d m n a ->  m n (a, d n)
-runDiffStateT1 s (DiffStateT1' (StateT cont)) = do
-  (ans, (_, d)) <- cont (s, emptyE)
-  return (ans, d)
-{-# INLINE runDiffStateT1 #-}
-
-class (Monad1 m, MonoidE d)
-      => MonadDiffState1 (m::MonadKind1) (s::E) (d::E) | m -> s, m -> d where
-  withDiffState :: s n -> m n a -> m n (a, d n)
-  updateDiffStateM :: d n -> m n ()
-  getDiffState :: m n (s n)
-
-instance (EnvReader m, DiffStateE s d, MonoidE d) => MonadDiffState1 (DiffStateT1 s d m) s d where
-  getDiffState = DiffStateT1' $ fst <$> get
-  {-# INLINE getDiffState #-}
-
-  withDiffState s cont = DiffStateT1' do
-    (sOld, dOld) <- get
-    put (s, emptyE)
-    ans <- runDiffStateT1'' cont
-    (_, dLocal) <- get
-    put (sOld, dOld)
-    return (ans, dLocal)
-  {-# INLINE withDiffState #-}
-
-  updateDiffStateM d = DiffStateT1' do
-    (s, d') <- get
-    env <- lift unsafeGetEnv
-    Distinct <- lift getDistinct
-    put (updateDiffStateE env s d, catE d d')
-  {-# INLINE updateDiffStateM #-}
-
-instance MonoidE (ListE e) where
-  emptyE = mempty
-  catE = (<>)
-
-instance MonoidE (RListE e) where
-  emptyE = mempty
-  catE = (<>)
-
-instance (Monad1 m, Alternative1 m, MonoidE d) => Alternative ((DiffStateT1 s d m) n) where
-  empty = DiffStateT1' $ StateT \_ -> empty
-  {-# INLINE empty #-}
-  DiffStateT1' (StateT m1) <|> DiffStateT1' (StateT m2) = DiffStateT1' $ StateT \s ->
-    m1 s <|> m2 s
-  {-# INLINE (<|>) #-}
-
-instance (ScopeReader m, MonoidE d) => ScopeReader (DiffStateT1 s d m) where
-  unsafeGetScope = lift11 unsafeGetScope
-  getDistinct = lift11 getDistinct
-
-instance (EnvReader m, MonoidE d) => EnvReader (DiffStateT1 s d m) where
-  unsafeGetEnv = lift11 unsafeGetEnv
-
-instance MonadTrans11 (DiffStateT1 s d) where
-  lift11 m = DiffStateT1' $ lift m
-  {-# INLINE lift11 #-}

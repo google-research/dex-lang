@@ -41,19 +41,19 @@ flag debug
 
 library
   exposed-modules:     AbstractSyntax
-                     , Builder
-                     , CUDA
-                     , CheapReduction
+                     -- , Builder
+                     -- , CUDA
+                     -- , CheapReduction
                      -- , CheckType
                      , ConcreteSyntax
-                     , Core
-                     , DPS
+                     -- , Core
+                     -- , DPS
                      , Err
-                     , Generalize
-                     , Imp
-                     , ImpToLLVM
+                     -- , Generalize
+                     -- , Imp
+                     -- , ImpToLLVM
                      , IncState
-                     , Inference
+                     -- , Inference
                      -- , Inline
                      -- , JAX.Concrete
                      -- , JAX.Rename
@@ -73,29 +73,29 @@ library
                      -- , PeepholeOptimize
                      , PPrint
                      , RawName
-                     , Runtime
+                     -- , Runtime
                      -- , RuntimePrint
-                     , Serialize
-                     , Simplify
-                     , Subst
+                     -- , Serialize
+                     -- , Simplify
+                     -- , Subst
                      , SourceRename
                      , SourceIdTraversal
-                     , TopLevel
+                     , TopLevel2
                      -- , Transpose
                      , Types.Simple
                      , Types.Complicated
                      , Types.Imp
                      , Types.Primitives
                      , Types.Source
-                     , Types.Top
-                     , QueryType
-                     , QueryTypePure
+                     , Types.Top2
+                     -- , QueryType
+                     -- , QueryTypePure
                      , Util
                      -- , Vectorize
                      , Actor
-                     , Live.Eval
-                     , Live.Web
-                     , RenderHtml
+                     -- , Live.Eval
+                     -- , Live.Web
+                     -- , RenderHtml
   other-modules:       Paths_dex
   build-depends:       base
                      , bytestring

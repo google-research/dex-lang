@@ -39,11 +39,10 @@ import Types.Source
 -- === data types ===
 
 type ImpName = Name
-type PtrName = Name
-type ImpFunName = Name
+type PtrName = TopName
+type ImpFunName = TopName
 data IExpr n = ILit LitVal
              | IVar (ImpName n) BaseType
-             | IPtrVar (PtrName n) PtrType
                deriving (Show, Generic)
 
 data IBinder n l = IBinder (NameBinder n l) IType deriving (Show, Generic)
@@ -100,7 +99,7 @@ data CallingConvention =
  | MCThreadLaunch
    deriving (Show, Eq, Generic)
 
-data ImpFunction n = ImpFunction IFunType (Abs (Nest IBinder) ImpBlock n)
+data ImpFunction = ImpFunction IFunType (Abs (Nest IBinder) ImpBlock VoidS)
      deriving (Show, Generic)
 
 data ImpBlock n where
@@ -117,7 +116,7 @@ data ImpInstr n =
  | IQueryParallelism IFunVar (IExpr n) -- returns the number of available concurrent threads
  | ISyncWorkgroup
  | ILaunch IFunVar (Size n) [IExpr n]
- | ICall (ImpFunName n) [IExpr n]
+ | ICall ImpFunName [IExpr n]
  | Store (IExpr n) (IExpr n)           -- dest, val
  | Alloc AddressSpace IType (Size n)
  | StackAlloc IType (Size n)
@@ -174,22 +173,22 @@ data IFunBinder n l = IFunBinder (NameBinder n l) IFunType
 
 -- Imp function with link-time objects abstracted out, suitable for standalone
 -- compilation. TODO: enforce actual `VoidS` as the scope parameter.
-data ClosedImpFunction n where
-  ClosedImpFunction
-    :: Nest IFunBinder n1 n2 -- binders for required functions
-    -> Nest PtrBinder  n2 n3 -- binders for required data pointers
-    -> ImpFunction n3
-    -> ClosedImpFunction n1
+data ClosedImpFunction n = ClosedImpFunction -- where
+  -- ClosedImpFunction
+  --   :: Nest IFunBinder n1 n2 -- binders for required functions
+  --   -> Nest PtrBinder  n2 n3 -- binders for required data pointers
+  --   -> ImpFunction n3
+  --   -> ClosedImpFunction n1
 
 data PtrBinder n l = PtrBinder (NameBinder n l) PtrType
-type FunObjCodeName = Name
-data LinktimeNames n = LinktimeNames [FunObjCodeName n] [PtrName n]  deriving (Show, Generic)
-data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]            deriving (Show, Generic)
+type FunObjCodeName = TopName
+data LinktimeNames   = LinktimeNames [FunObjCodeName] [PtrName]  deriving (Show, Generic)
+data LinktimeVals    = LinktimeVals  [FunPtr ()] [Ptr ()]        deriving (Show, Generic)
 
-data CFunction (n::S) = CFunction
+data CFunction = CFunction
   { nameHint :: NameHint
   , objectCode :: FunObjCode
-  , linkerNames :: LinktimeNames n
+  , linkerNames :: LinktimeNames
   }
   deriving (Show, Generic)
 
@@ -249,7 +248,7 @@ instance GenericE ImpInstr where
     ) (EitherE4
   {- ISyncW -}  (UnitE)
   {- ILaunch -} (LiftE IFunVar `PairE` Size `PairE` ListE IExpr)
-  {- ICall -}   (ImpFunName `PairE` ListE IExpr)
+  {- ICall -}   (LiftE ImpFunName `PairE` ListE IExpr)
   {- Store -}   (IExpr `PairE` IExpr)
     ) (EitherE7
   {- Alloc -}   (LiftE (AddressSpace, IType) `PairE` Size)
@@ -283,7 +282,7 @@ instance GenericE ImpInstr where
 
     ISyncWorkgroup      -> Case1 $ Case0 UnitE
     ILaunch f n args    -> Case1 $ Case1 $ LiftE f `PairE` n `PairE` ListE args
-    ICall f args        -> Case1 $ Case2 $ f `PairE` ListE args
+    ICall f args        -> Case1 $ Case2 $ LiftE f `PairE` ListE args
     Store dest val      -> Case1 $ Case3 $ dest `PairE` val
 
     Alloc a t s            -> Case2 $ Case0 $ LiftE (a, t) `PairE` s
@@ -320,7 +319,7 @@ instance GenericE ImpInstr where
     Case1 instr' -> case instr' of
       Case0 UnitE                                     -> ISyncWorkgroup
       Case1 (LiftE f `PairE` n `PairE` ListE args)    -> ILaunch f n args
-      Case2 (f `PairE` ListE args)                    -> ICall f args
+      Case2 (LiftE f `PairE` ListE args)              -> ICall f args
       Case3 (dest `PairE` val )                       -> Store dest val
       _ -> error "impossible"
 
@@ -367,19 +366,16 @@ instance RenameE     ImpBlock
 deriving via WrapE ImpBlock n instance Generic (ImpBlock n)
 
 instance GenericE IExpr where
-  type RepE IExpr = EitherE3 (LiftE LitVal)
+  type RepE IExpr = EitherE2 (LiftE LitVal)
                              (PairE ImpName (LiftE BaseType))
-                             (PairE PtrName (LiftE PtrType))
   fromE iexpr = case iexpr of
     ILit x       -> Case0 (LiftE x)
     IVar    v ty -> Case1 (v `PairE` LiftE ty)
-    IPtrVar v ty -> Case2 (v `PairE` LiftE ty)
   {-# INLINE fromE #-}
 
   toE rep = case rep of
     Case0 (LiftE x) -> ILit x
     Case1 (v `PairE` LiftE ty) -> IVar    v ty
-    Case2 (v `PairE` LiftE ty) -> IPtrVar v ty
     _ -> error "impossible"
   {-# INLINE toE #-}
 
@@ -426,47 +422,6 @@ instance AlphaHashableB ImpDecl
 instance ProvesExt  ImpDecl
 instance BindsNames ImpDecl
 
-instance GenericE ImpFunction where
-  type RepE ImpFunction = LiftE IFunType `PairE` Abs (Nest IBinder) ImpBlock
-  fromE (ImpFunction ty ab) =LiftE ty `PairE` ab
-  {-# INLINE fromE #-}
-
-  toE (LiftE ty `PairE` ab) = ImpFunction ty ab
-  {-# INLINE toE #-}
-
-instance SinkableE ImpFunction
-instance HoistableE  ImpFunction
-instance AlphaEqE    ImpFunction
-instance AlphaHashableE    ImpFunction
-instance RenameE     ImpFunction
-
-instance GenericE LinktimeNames where
-  type RepE LinktimeNames = ListE  FunObjCodeName `PairE`  ListE  PtrName
-  fromE (LinktimeNames funs ptrs) = ListE funs `PairE` ListE ptrs
-  {-# INLINE fromE #-}
-  toE (ListE funs `PairE` ListE ptrs) = LinktimeNames funs ptrs
-  {-# INLINE toE #-}
-
-instance SinkableE      LinktimeNames
-instance HoistableE     LinktimeNames
-instance AlphaEqE       LinktimeNames
-instance AlphaHashableE LinktimeNames
-instance RenameE        LinktimeNames
-
-instance GenericE CFunction where
-  type RepE CFunction = (LiftE NameHint) `PairE`
-    (LiftE FunObjCode) `PairE` LinktimeNames
-  fromE (CFunction{..}) = LiftE nameHint `PairE`
-    LiftE objectCode `PairE` linkerNames
-  {-# INLINE fromE #-}
-  toE (LiftE nameHint `PairE` LiftE objectCode `PairE` linkerNames) =
-    CFunction{..}
-  {-# INLINE toE #-}
-
-instance SinkableE      CFunction
-instance HoistableE     CFunction
-instance RenameE        CFunction
-
 instance Store IsCUDARequired
 instance Store CallingConvention
 instance Store a => Store (WithCNameInterface a)
@@ -476,9 +431,9 @@ instance Store (IFunType)
 instance Store (ImpInstr n)
 instance Store (IExpr n)
 instance Store (ImpBlock n)
-instance Store (ImpFunction n)
-instance Store (LinktimeNames n)
-instance Store (CFunction n)
+instance Store ImpFunction
+instance Store LinktimeNames
+instance Store CFunction
 instance Store LinktimeVals
 
 instance Hashable IsCUDARequired
@@ -487,7 +442,7 @@ instance Hashable IFunType
 
 instance Pretty CallingConvention where pretty = fromString . show
 
-instance Pretty (ImpFunction n) where
+instance Pretty ImpFunction where
   pretty (ImpFunction (IFunType cc _ _) (Abs bs body)) =
     "impfun" <+> pretty cc <+> prettyBinderNest bs
     <> nest 2 (hardline <> pretty body) <> hardline
@@ -552,7 +507,6 @@ instance Pretty (IExpr n) where
   pretty = \case
     ILit v -> pretty v
     IVar v _ -> pretty v
-    IPtrVar v _ -> pretty v
 
 instance PrettyPrec (IExpr n) where prettyPrec = atPrec ArgPrec . pretty
 

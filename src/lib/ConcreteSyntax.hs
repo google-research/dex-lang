@@ -111,35 +111,15 @@ importModule = Misc . ImportModule . OrdinaryModule <$> do
   WithSrc _ s <- anyCaseName
   eol
   return s
-
-declareForeign :: Parser SourceBlock'
-declareForeign = do
-  keyWord ForeignKW
-  foreignName <- strLit
-  b <- anyName
-  void $ label "type annotation" $ sym ":"
-  ty <- cGroup
-  eol
-  return $ DeclareForeign (fmap fromString foreignName) b ty
-
-declareCustomLinearization :: Parser SourceBlock'
-declareCustomLinearization = do
-  zeros <- (keyWord CustomLinearizationSymbolicKW $> SymbolicZeros)
-       <|> (keyWord CustomLinearizationKW $> InstantiateZeros)
-  fun <- anyCaseName
-  linearization <- cGroup
-  eol
-  return $ DeclareCustomLinearization fun zeros linearization
-
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
-  <|> topLevelCommand
+  <|> importModule
   <|> liftM TopDecl topDecl
-  <|> topLetOrExpr <* eolf
+  <|> liftM TopDecl topLet <* eolf
   <|> hidden (some eol >> return (Misc EmptyLines))
   <|> hidden (sc >> eol >> return (Misc CommentLine))
 
@@ -158,15 +138,6 @@ proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $
   char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
 
-topLevelCommand :: Parser SourceBlock'
-topLevelCommand =
-      importModule
-  <|> declareForeign
-  <|> declareCustomLinearization
-  -- <|> (Misc . QueryEnv <$> envQuery)
-  <|> explicitCommand
-  <?> "top-level command"
-
 _envQuery :: Parser EnvQuery
 _envQuery = error "not implemented"
 -- string ":debug" >> sc >> (
@@ -177,25 +148,6 @@ _envQuery = error "not implemented"
 --   where
 --     rawName :: Parser RawName
 --     rawName = RawName <$> (fromString <$> anyName) <*> intLit
-
-explicitCommand :: Parser SourceBlock'
-explicitCommand = do
-  cmdName <- char ':' >> nameString
-  cmd <- case cmdName of
-    "p"       -> return $ EvalExpr (Printed Nothing)
-    "pp"      -> return $ EvalExpr (Printed (Just PrintHaskell))
-    "pcodegen"-> return $ EvalExpr (Printed (Just PrintCodegen))
-    "t"       -> return $ GetType
-    "html"    -> return $ EvalExpr RenderHtml
-    "export"  -> ExportFun <$> nameString
-    _ -> fail $ "unrecognized command: " ++ show cmdName
-  b <- cBlock <* eolf
-  e <- case b of
-    ExprBlock e -> return e
-    IndentedBlock sid decls -> withSrcs $ return $ CDo $ IndentedBlock sid decls
-  return $ case (e, cmd) of
-    (WithSrcs sid _ (CLeaf (CIdentifier v)), GetType) -> Misc $ GetNameType (WithSrc sid v)
-    _ -> Command cmd e
 
 type CDefBody = ([(SourceNameW, GroupW)], [(LetAnn, CDef)])
 structDef :: Parser CTopDecl
@@ -252,13 +204,6 @@ nameAndType = do
   sym ":"
   arg <- cGroup
   return (n, arg)
-
-topLetOrExpr :: Parser SourceBlock'
-topLetOrExpr = topLet >>= \case
-  WithSrcs _ _ (CSDecl ann (CExpr e)) -> do
-    when (ann /= PlainLet) $ fail "Cannot annotate expressions"
-    return $ Command (EvalExpr (Printed Nothing)) e
-  d -> return $ TopDecl d
 
 topLet :: Parser CTopDeclW
 topLet = withSrcs do

@@ -69,7 +69,7 @@ import Util
 parseExpr :: Fallible m => GroupW -> m (UExpr VoidS)
 parseExpr e = liftSyntaxM $ expr e
 
-parseDecl :: Fallible m => CTopDeclW -> m (UTopDecl VoidS VoidS)
+parseDecl :: Fallible m => CTopDeclW -> m UTopDecl
 parseDecl d = liftSyntaxM $ topDecl d
 
 parseBlock :: Fallible m => CSBlock -> m (UBlock VoidS)
@@ -93,9 +93,6 @@ checkSourceBlockParses = \case
     when (ann /= PlainLet) $ fail "Cannot annotate expressions"
     void $ expr e
   TopDecl d -> void $ topDecl d
-  Command _ b -> void $ expr b
-  DeclareForeign _ _ ty -> void $ expr ty
-  DeclareCustomLinearization _ _ body -> void $ expr body
   Misc _ -> return ()
   UnParseable _ _ -> return ()
 
@@ -103,36 +100,37 @@ checkSourceBlockParses = \case
 
 type SyntaxM = Except
 
-topDecl :: CTopDeclW -> SyntaxM (UTopDecl VoidS VoidS)
-topDecl (WithSrcs sid sids topDecl') = case topDecl' of
-  CSDecl ann d -> ULocalDecl <$> decl ann (WithSrcs sid sids d)
-  CData name tyConParams givens constructors -> do
-    tyConParams' <- fromMaybeM tyConParams Empty aExplicitParams
-    givens' <- aOptGivens givens
-    constructors' <- forM constructors \(v, ps) -> do
-      ps' <- fromMaybeM ps Empty \(WithSrcs _ _ ps') ->
-        toNest <$> mapM (tyOptBinder Explicit) ps'
-      return (v, ps')
-    return $ UDataDefDecl
-      (UDataDef (withoutSrc name) (givens' >>> tyConParams') $
-        map (\(name', cons) -> (withoutSrc name', UDataDefTrail cons)) constructors')
-      (fromSourceNameW name)
-      (toNest $ map (fromSourceNameW . fst) constructors')
-  CStruct name params givens fields defs -> do
-    params' <- fromMaybeM params Empty aExplicitParams
-    givens' <- aOptGivens givens
-    fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
-    methods <- forM defs \(ann, d) -> do
-      (WithSrc _ methodName, lam) <- aDef d
-      return (ann, methodName, Abs (WithSrcB sid (UBindSource "self")) lam)
-    return $ UStructDecl (fromSourceNameW name) (UStructDef (withoutSrc name) (givens' >>> params') fields' methods)
-  CInterface name params methods -> do
-    params' <- aExplicitParams params
-    (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
-      ty' <- expr ty
-      return (fromSourceNameW methodName, ty')
-    return $ UInterface params' methodTys (fromSourceNameW name) (toNest methodNames)
-  CInstanceDecl def -> aInstanceDef def
+topDecl :: CTopDeclW -> SyntaxM UTopDecl
+topDecl (WithSrcs sid sids topDecl') = undefined
+-- topDecl (WithSrcs sid sids topDecl') = case topDecl' of
+--   CSDecl ann d -> UTopLet <$> decl ann (WithSrcs sid sids d)
+--   CData name tyConParams givens constructors -> do
+--     tyConParams' <- fromMaybeM tyConParams Empty aExplicitParams
+--     givens' <- aOptGivens givens
+--     constructors' <- forM constructors \(v, ps) -> do
+--       ps' <- fromMaybeM ps Empty \(WithSrcs _ _ ps') ->
+--         toNest <$> mapM (tyOptBinder Explicit) ps'
+--       return (v, ps')
+--     return $ UDataDefDecl
+--       (UDataDef (withoutSrc name) (givens' >>> tyConParams') $
+--         map (\(name', cons) -> (withoutSrc name', UDataDefTrail cons)) constructors')
+--       (fromSourceNameW name)
+--       (toNest $ map (fromSourceNameW . fst) constructors')
+--   CStruct name params givens fields defs -> do
+--     params' <- fromMaybeM params Empty aExplicitParams
+--     givens' <- aOptGivens givens
+--     fields' <- forM fields \(v, ty) -> (v,) <$> expr ty
+--     methods <- forM defs \(ann, d) -> do
+--       (WithSrc _ methodName, lam) <- aDef d
+--       return (ann, methodName, Abs (WithSrcB sid (UBindSource "self")) lam)
+--     return $ UStructDecl (fromSourceNameW name) (UStructDef (withoutSrc name) (givens' >>> params') fields' methods)
+--   CInterface name params methods -> do
+--     params' <- aExplicitParams params
+--     (methodNames, methodTys) <- unzip <$> forM methods \(methodName, ty) -> do
+--       ty' <- expr ty
+--       return (fromSourceNameW methodName, ty')
+--     return $ UInterface params' methodTys (fromSourceNameW name) (toNest methodNames)
+--   CInstanceDecl def -> aInstanceDef def
 
 decl :: LetAnn -> CSDeclW -> SyntaxM (UDecl VoidS VoidS)
 decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
@@ -145,21 +143,22 @@ decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
   CExpr g -> UExprDecl <$> expr g
   CPass -> return UPass
 
-aInstanceDef :: CInstanceDef -> SyntaxM (UTopDecl VoidS VoidS)
-aInstanceDef (CInstanceDef (WithSrc clNameId clName) args givens methods instNameAndParams) = do
-  let clName' = SourceName clNameId clName
-  args' <- mapM expr args
-  givens' <- aOptGivens givens
-  methods' <- catMaybes <$> mapM aMethod methods
-  case instNameAndParams of
-    Nothing -> return $ UInstance clName' givens' args' methods' NothingB ImplicitApp
-    Just (WithSrc sid instName, optParams) -> do
-      let instName' = JustB $ WithSrcB sid $ UBindSource instName
-      case optParams of
-        Just params -> do
-          params' <- aExplicitParams params
-          return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
-        Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
+aInstanceDef :: CInstanceDef -> SyntaxM UTopDecl
+aInstanceDef = undefined
+-- aInstanceDef (CInstanceDef (WithSrc clNameId clName) args givens methods instNameAndParams) = do
+--   let clName' = SourceName clNameId clName
+--   args' <- mapM expr args
+--   givens' <- aOptGivens givens
+--   methods' <- catMaybes <$> mapM aMethod methods
+--   case instNameAndParams of
+--     Nothing -> return $ UInstance clName' givens' args' methods' NothingB ImplicitApp
+--     Just (WithSrc sid instName, optParams) -> do
+--       let instName' = JustB $ WithSrcB sid $ UBindSource instName
+--       case optParams of
+--         Just params -> do
+--           params' <- aExplicitParams params
+--           return $ UInstance clName' (givens' >>> params') args' methods' instName' ExplicitApp
+--         Nothing -> return $ UInstance clName' givens' args' methods' instName' ImplicitApp
 
 aDef :: CDef -> SyntaxM (SourceNameW, ULamExpr VoidS)
 aDef (CDef name params optRhs optGivens body) = do

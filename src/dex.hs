@@ -19,15 +19,12 @@ import qualified Data.Map.Strict as M
 import qualified System.Console.ANSI as ANSI
 import System.Console.ANSI hiding (Color)
 
-import TopLevel
+import Types.Source
+import TopLevel2
 import AbstractSyntax (parseTopDeclRepl)
 import ConcreteSyntax (keyWordStrs, preludeImportBlock)
-import Live.Web
+-- import Live.Web
 import PPrint  hiding (hardline)
-import Core
-import Types.Imp
-import Types.Source
-import Types.Top
 import MonadUtil
 import Util (readFileText)
 
@@ -45,7 +42,7 @@ data CmdOpts = CmdOpts EvalMode EvalConfig
 runMode :: CmdOpts -> IO ()
 runMode (CmdOpts evalMode cfg) = case evalMode of
   ScriptMode fname fmt -> do
-    env <- loadCache
+    env <- initTopState -- loadCache
     ((), finalEnv) <- runTopperM cfg stdOutLogger env do
       blocks <- parseSourceBlocks <$> readFileText fname
       forM_ blocks \block -> do
@@ -53,35 +50,36 @@ runMode (CmdOpts evalMode cfg) = case evalMode of
           ResultOnly -> return ()
           TextDoc    -> liftIO $ putStr $ pprint block
         evalSourceBlockRepl block
-    storeCache finalEnv
-  ReplMode -> do
-    env <- loadCache
-    void $ runTopperM cfg stdOutLogger env do
-      void $ evalSourceBlockRepl preludeImportBlock
-      forever do
-         block <- readSourceBlock
-         void $ evalSourceBlockRepl block
-  WebMode    fname -> do
-    env <- loadCache
-    runWeb fname cfg env
-  GenerateHTML fname dest -> do
-    env <- loadCache
-    generateHTML fname dest cfg env
-  ClearCache -> clearCache
+    return ()
+    -- storeCache finalEnv
+  -- ReplMode -> do
+  --   env <- loadCache
+  --   void $ runTopperM cfg stdOutLogger env do
+  --     void $ evalSourceBlockRepl preludeImportBlock
+  --     forever do
+  --        block <- readSourceBlock
+  --        void $ evalSourceBlockRepl block
+  -- WebMode    fname -> do
+  --   env <- loadCache
+  --   runWeb fname cfg env
+  -- GenerateHTML fname dest -> do
+  --   env <- loadCache
+  --   generateHTML fname dest cfg env
+  -- ClearCache -> clearCache
 
 stdOutLogger :: Outputs -> IO ()
 stdOutLogger (Outputs outs) = do
   isatty <- queryTerminal stdOutput
   forM_ outs \out -> putStr $ printOutput isatty out
 
-readSourceBlock :: (MonadIO (m n), EnvReader m) => m n SourceBlock
-readSourceBlock = do
-  sourceMap <- withEnv $ envSourceMap . moduleEnv
-  let filenameAndDexCompletions =
-        completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
-  let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
-  liftIO $ runInputT hasklineSettings $ readMultiline prompt (parseTopDeclRepl . T.pack)
-  where prompt = ">=> "
+-- readSourceBlock :: MonadIO (m n) => m n SourceBlock
+-- readSourceBlock = do
+--   sourceMap <- withEnv $ envSourceMap . moduleEnv
+--   let filenameAndDexCompletions =
+--         completeQuotedWord (Just '\\') "\"'" listFiles (dexCompletions sourceMap)
+--   let hasklineSettings = setComplete filenameAndDexCompletions defaultSettings
+--   liftIO $ runInputT hasklineSettings $ readMultiline prompt (parseTopDeclRepl . T.pack)
+--   where prompt = ">=> "
 
 dexCompletions :: Monad m => SourceMap n -> CompletionFunc m
 dexCompletions sourceMap (line, _) = do
@@ -145,8 +143,7 @@ enumOption optName prettyOptName defaultVal options = option
 
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
-  <$> enumOption "backend" "Backend" LLVM backends
-  <*> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
+  <$> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
     <> metavar "PATH" <> help "Library path")
   <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
   <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
@@ -155,8 +152,6 @@ parseEvalOpts = EvalConfig
   where
     printBackends = [ ("haskell", PrintHaskell)
                     , ("dex"    , PrintCodegen) ]
-    backends = [ ("llvm"   , LLVM  )
-               , ("llvm-mc", LLVMMC) ]
     logLevels = [ ("normal", NormalLogLevel)
                 , ("debug" , DebugLogLevel ) ]
 

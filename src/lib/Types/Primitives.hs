@@ -130,6 +130,15 @@ instance Store    a => Store    (RefOp a)
 
 -- === various things ===
 
+type TopNameHint = String
+type ModuleName = SourceName
+data TopName = TopGenName TopNameHint Int
+             | TopSourceName ModuleName SourceName
+             deriving (Show, Eq, Ord, Generic)
+instance Hashable TopName
+instance Store    TopName
+type TopBinder = TopName
+
 newtype SourceName = MkSourceName String  deriving (Show, Eq, Ord, Generic)
 
 newtype AlwaysEqual a = AlwaysEqual a
@@ -279,6 +288,9 @@ instance HasNameHint SourceName where
 
 instance Pretty SourceName where
   pretty (MkSourceName v) = pretty v
+
+instance Pretty TopName where
+  pretty _ = undefined
 
 instance IsString SourceName where
   fromString v = MkSourceName v

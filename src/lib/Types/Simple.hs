@@ -33,7 +33,7 @@ import Types.Imp
 
 data Expr (n::S) =
    Block  (Type n) (Block n)
- | TopApp (Type n) (TopFunName n) [Atom n]
+ | TopApp (Type n) TopName [Atom n]
  | Case   (Type n) (Atom n) [LamExpr n]
  | For    (Atom n) (LamExpr n)
  | While  (Expr n)
@@ -53,7 +53,7 @@ data Type (n::S) =
  | TabPi     (TabPiType n)
    deriving (Show, Generic)
 
-type TopFunName = Name
+type TopFunName = TopName
 type Binder = BinderP Type :: B
 data Decl (n::S) (l::S) = Let (NameBinder n l) (Expr n)
      deriving (Show, Generic)

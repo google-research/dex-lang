@@ -345,49 +345,52 @@ data UDepPairType (n::S) where
 
 type UConDef (n::S) (l::S) = (SourceName, Nest UAnnBinder n l)
 
-data UDataDef (n::S) where
+data UDataDef where
   UDataDef
     :: SourceName  -- source name for pretty printing
-    -> Nest UAnnBinder n l
+    -> Nest UAnnBinder VoidS l
     -> [(SourceName, UDataDefTrail l)] -- data constructor types
-    -> UDataDef n
+    -> UDataDef
 
-data UStructDef (n::S) where
+data UStructDef where
   UStructDef
     :: SourceName    -- source name for pretty printing
-    -> Nest UAnnBinder n l
+    -> Nest UAnnBinder VoidS l
     -> [(SourceNameW, UType l)]                    -- named payloads
     -> [(LetAnn, SourceName, Abs UBinder ULamExpr l)] -- named methods (initial binder is for `self`)
-    -> UStructDef n
+    -> UStructDef
 
 data UDataDefTrail (l::S) where
   UDataDefTrail :: Nest UAnnBinder l l' -> UDataDefTrail l
 
-data UTopDecl (n::S) (l::S) where
-  ULocalDecl :: UDecl n l -> UTopDecl n l
-  UDataDefDecl
-    :: UDataDef n               -- actual definition
-    -> UBinder n l'             -- type constructor name
-    ->   Nest UBinder l' l      -- data constructor names
-    -> UTopDecl n l
-  UStructDecl
-    :: UBinder n l              -- type constructor name
-    -> UStructDef l              -- actual definition
-    -> UTopDecl n l
-  UInterface
-    :: Nest UAnnBinder n p   -- parameter binders
-    ->   [UType p]           -- method types
-    -> UBinder n l'          -- class name
-    ->   Nest UBinder l' l   -- method names
-    -> UTopDecl n l
-  UInstance
-    :: SourceNameOr Name n  -- class name
-    -> Nest UAnnBinder n l'
+data UInterfaceDef where
+  UInterfaceDef
+    :: Nest UAnnBinder VoidS p   -- parameter binders
+    -> [UType p]                 -- method types
+    -> UInterfaceDef
+
+data UInstanceDef where
+  UInstanceDef
+    :: Nest UAnnBinder VoidS l'
     ->   [UExpr l']          -- class parameters
     ->   [UMethodDef l']     -- method definitions
-    -> MaybeB UBinder n l    -- optional instance name
-    -> AppExplicitness       -- explicitness (only relevant for named instances)
-    -> UTopDecl n l
+    -> UInstanceDef
+
+data UTopDecl =
+   UTopLet TopBinder (Maybe (UType VoidS)) (UExpr VoidS)
+ | UTopExpr (UExpr VoidS)
+ | UDataDefDecl
+     UDataDef
+     TopBinder               -- type constructor name
+     [TopBinder]             -- data constructor names
+ | UStructDecl
+     UStructDef
+     TopBinder              -- type constructor name
+ | UInterface
+    UInterfaceDef
+    TopBinder               -- class name
+    [TopBinder]             -- method names
+ | UInstance UInstanceDef
 
 type UType = UExpr
 type UConstraint = UExpr
@@ -558,17 +561,12 @@ data SymbolicZeros = SymbolicZeros | InstantiateZeros
 
 data SourceBlock'
   = TopDecl CTopDeclW
-  | Command CmdName GroupW
-  | DeclareForeign SourceNameW SourceNameW GroupW
-  | DeclareCustomLinearization SourceNameW SymbolicZeros GroupW
   | Misc SourceBlockMisc
   | UnParseable ReachedEOF String
   deriving (Show, Generic)
 
 data SourceBlockMisc
-  = GetNameType SourceNameW
-  | ImportModule ModuleSourceName
-  | QueryEnv EnvQuery
+  = ImportModule ModuleSourceName
   | ProseBlock Text
   | CommentLine
   | EmptyLines
@@ -863,9 +861,6 @@ instance SinkableE UBlock' where
 instance SinkableB UDecl where
   sinkingProofB _ _ _ = todoSinkableProof
 
-instance SinkableB UTopDecl where
-  sinkingProofB _ _ _ = todoSinkableProof
-
 instance Eq SourceBlock where
   x == y = sbText x == sbText y
 
@@ -888,8 +883,8 @@ deriving instance Show (ULamExpr n)
 deriving instance Show (UPiExpr n)
 deriving instance Show (UTabPiExpr n)
 deriving instance Show (UDepPairType n)
-deriving instance Show (UDataDef n)
-deriving instance Show (UStructDef n)
+deriving instance Show UDataDef
+deriving instance Show UStructDef
 deriving instance Show (UDecl' n l)
 deriving instance Show (UBlock' n)
 deriving instance Show (UForExpr n)
@@ -991,30 +986,31 @@ instance PrettyPrec (UPat' n l) where
 instance Pretty (UAlt n) where
   pretty (UAlt pat body) = pretty pat <+> "->" <+> pretty body
 
-instance Pretty (UTopDecl n l) where
-  pretty = \case
-    UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
-      "enum" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
-         (prettyLines (zip (toList $ unsafeFromNest bDataCons) dataCons))
-    UStructDecl bTyCon (UStructDef nm bs fields defs) ->
-      "struct" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
-        (prettyLines fields <> prettyLines defs)
-    UInterface params methodTys interfaceName methodNames ->
-      "interface" <+> p params <+> p interfaceName
-         <> hardline <> foldMap (<>hardline) methods
-      where
-        methods = [ p b <> ":" <> p (unsafeCoerceE ty)
-                  | (b, ty) <- zip (toList $ unsafeFromNest methodNames) methodTys]
-    UInstance className bs params methods (RightB UnitB) _ ->
-      "instance" <+> p bs <+> p className <+> spaced params <+>
-         prettyLines methods
-    UInstance className bs params methods (LeftB v) _ ->
-      "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
-        <> prettyLines methods
-    ULocalDecl decl -> p decl
-    where
-      p :: Pretty a => a -> Doc ann
-      p = pretty
+instance Pretty UTopDecl where
+  pretty = undefined
+  -- pretty = \case
+  --   UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
+  --     "enum" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
+  --        (prettyLines (zip (toList $ unsafeFromNest bDataCons) dataCons))
+  --   UStructDecl bTyCon (UStructDef nm bs fields defs) ->
+  --     "struct" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
+  --       (prettyLines fields <> prettyLines defs)
+  --   UInterface params methodTys interfaceName methodNames ->
+  --     "interface" <+> p params <+> p interfaceName
+  --        <> hardline <> foldMap (<>hardline) methods
+  --     where
+  --       methods = [ p b <> ":" <> p (unsafeCoerceE ty)
+  --                 | (b, ty) <- zip (toList $ unsafeFromNest methodNames) methodTys]
+  --   UInstance className bs params methods (RightB UnitB) _ ->
+  --     "instance" <+> p bs <+> p className <+> spaced params <+>
+  --        prettyLines methods
+  --   UInstance className bs params methods (LeftB v) _ ->
+  --     "named-instance" <+> p v <+> ":" <+> p bs <+> p className <+> p params
+  --       <> prettyLines methods
+  --   ULocalDecl decl -> p decl
+  --   where
+  --     p :: Pretty a => a -> Doc ann
+  --     p = pretty
 
 instance Pretty (UDecl' n l) where
   pretty = \case
