@@ -29,7 +29,6 @@ import Data.Hashable
 import Data.Kind (Type)
 import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Text.Prettyprint.Doc
 import GHC.Stack
 import GHC.Exts (Constraint)
 import qualified GHC.Exts as GHC.Exts
@@ -432,9 +431,6 @@ type EqB b = (forall (n::S) (l::S). Eq (b n l)) :: Constraint
 
 type OrdE e = (forall (n::S).        Ord (e n))   :: Constraint
 type OrdB b = (forall (n::S) (l::S). Ord (b n l)) :: Constraint
-
-type PrettyPrecE e = (forall (n::S)       . PrettyPrec (e n  )) :: Constraint
-type PrettyPrecB b = (forall (n::S) (l::S). PrettyPrec (b n l)) :: Constraint
 
 type HashableE (e::E) = forall n. Hashable (e n)
 
@@ -1891,27 +1887,28 @@ instance RenameE e => RenameE (NonEmptyListE e) where
   renameE env (NonEmptyListE xs) = NonEmptyListE $ fmap (renameE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
-  pretty (Abs b body) = group $
-    "(Abs " <> nest 2 (pretty b <> line <> pretty body) <> line <> ")"
+  pr (Abs b body) = undefined
+  -- group $
+  --   "(Abs " <> nest 2 (pr b <> line <> pr body) <> line <> ")"
 
 instance Pretty a => Pretty (LiftE a n) where
-  pretty (LiftE x) = pretty x
+  pr (LiftE x) = pr x
 
 instance Pretty (UnitE n) where
-  pretty UnitE = ""
+  pr UnitE = ""
 
 instance (PrettyE e1, PrettyE e2) => Pretty (PairE e1 e2 n) where
-  pretty (PairE e1 e2) = pretty (e1, e2)
+  pr (PairE e1 e2) = pr (e1, e2)
 
 instance (PrettyE e1, PrettyE e2) => Pretty (EitherE e1 e2 n) where
-  pretty (LeftE  e) = "LeftE"  <+> pretty e
-  pretty (RightE e) = "RightE" <+> pretty e
+  pr (LeftE  e) = hcat ["LeftE " , pr e]
+  pr (RightE e) = hcat ["RightE ", pr e]
 
 instance PrettyE e => Pretty (ListE e n) where
-  pretty (ListE e) = pretty e
+  pr (ListE e) = pr e
 
 instance PrettyE e => Pretty (RListE e n) where
-  pretty (RListE e) = pretty $ unsnoc e
+  pr (RListE e) = pr $ unsnoc e
 
 deriving instance (forall n. Pretty (v n)) => Pretty (RecSubst v o)
 
@@ -2748,7 +2745,7 @@ instance BindsNames (SubstPair v o) where
 -- === instances ===
 
 instance Pretty (v n) => Pretty (SubstItem v n) where
-  pretty (SubstItem _ val) = pretty val
+  pr (SubstItem _ val) = pr val
 
 instance SinkableE v => SinkableE (SubstFrag v i i') where
   sinkingProofE fresh m = fmapSubstFrag (\(UnsafeMakeName _) v -> sinkingProofE fresh v) m
@@ -2789,13 +2786,14 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall (n'::S) (l'::S). Pretty (b n' l')) => Pretty (Nest b n l) where
-  pretty Empty = ""
-  pretty ns = group $ line' <> go ns
-    where
-      go :: (forall (n'::S) (l'::S). Pretty (b n' l')) => Nest b n l -> Doc ann
-      go Empty = ""
-      go (Nest b Empty) = pretty b
-      go (Nest b rest) = pretty b <> line <> pretty rest
+  pr Empty = ""
+  pr ns = undefined
+    -- group $ line' <> go ns
+    -- where
+    --   go :: (forall (n'::S) (l'::S). Pretty (b n' l')) => Nest b n l -> Doc ann
+    --   go Empty = ""
+    --   go (Nest b Empty) = pretty b
+    --   go (Nest b rest) = pretty b <> line <> pretty rest
 
 instance SinkableB b => SinkableB (Nest b) where
   sinkingProofB fresh Empty cont = cont fresh Empty
@@ -2820,8 +2818,8 @@ instance HoistableB b => HoistableB (RNest b) where
   freeVarsB (RNest rest b) = freeVarsB (PairB rest b)
 
 instance (forall n. Pretty (v n)) => Pretty (SubstFrag v i i' o) where
-  pretty (UnsafeMakeSubst m) =
-    vcat [ pretty v <+> "@>" <+> pretty x | (v, SubstItem _ x) <- R.toList m ]
+  pr (UnsafeMakeSubst m) =
+    vcat [ hcat [pr v, " @> ", pr x] | (v, SubstItem _ x) <- R.toList m ]
 
 instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
   type Rep (Nest b n l) = Rep [b UnsafeS UnsafeS]
@@ -3013,10 +3011,8 @@ hoistNameMap b = ignoreHoistFailure . hoistNameMapE b
 
 -- === Pretty instances ===
 
-instance PrettyPrec (Name n) where prettyPrec = atPrec ArgPrec . pretty
-
 instance PrettyE ann => Pretty (BinderP ann n l)
-  where pretty (b:>ty) = pretty b <> ":" <> pretty ty
+  where pr (b:>ty) = hcat [pr b, ":", pr ty]
 
 -- === notes ===
 

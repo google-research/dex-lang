@@ -23,7 +23,7 @@ import Data.Char
 import Data.Bits
 import Data.Coerce
 import Data.Store
-import Data.Text.Prettyprint.Doc  hiding (nest)
+import PPrint
 import GHC.Generics (Generic)
 import Data.String
 
@@ -175,7 +175,7 @@ instance HasNameHint a => HasNameHint (Maybe a) where
   getNameHint (Nothing) = noHint
 
 instance Pretty RawName where
-  pretty = unsafeViaShow
+  pr x = pr $ show x
 
 instance Show RawName where
   show (RawName n) = case isStringName n of

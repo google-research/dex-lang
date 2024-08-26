@@ -29,10 +29,12 @@ import Types.Primitives
 import Types.Complicated
 import Types.Simple
 import Types.Source
-import Types.Imp
 
 data TopState = TopState
-     deriving (Show, Generic)
+  { topNames :: M.Map SourceName TopNameDef }
+    deriving (Show, Generic)
+
+type TopNameDef = ()
 
 -- type TopBlock = TopLam -- used for nullary lambda
 data TopLam = TopLam (PiType VoidS) (LamExpr VoidS)

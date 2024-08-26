@@ -126,3 +126,20 @@ instance HasType Expr where
 --       let PtrTy (_, t) = getType ptr
 --       toType $ BaseType t
 --     PtrStore _ _ -> UnitTy
+
+-- === Complicated IR ===
+
+class HasCType (e::E) where
+  getCType :: e n -> CType n
+
+instance HasCType CExpr where
+  getCType = \case
+    CBlock ty _ -> ty
+    CVar   _ ty -> ty
+    CLit   l    -> CTyCon $ CBaseType $ litType l
+    -- CPrimOp (CType n) (PrimOp (CExpr n))
+    -- CTyCon  (CTyCon n)
+    -- Lam         (CoreLamExpr n)
+    -- NewtypeCon  (NewtypeCon n) (CExpr n)
+    -- Dict        (DictCon n)
+

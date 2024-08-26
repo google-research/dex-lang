@@ -137,7 +137,6 @@ data TopName = TopGenName TopNameHint Int
              deriving (Show, Eq, Ord, Generic)
 instance Hashable TopName
 instance Store    TopName
-type TopBinder = TopName
 
 newtype SourceName = MkSourceName String  deriving (Show, Eq, Ord, Generic)
 
@@ -287,10 +286,10 @@ instance HasNameHint SourceName where
   getNameHint (MkSourceName v) = getNameHint v
 
 instance Pretty SourceName where
-  pretty (MkSourceName v) = pretty v
+  pr (MkSourceName v) = pr v
 
 instance Pretty TopName where
-  pretty _ = undefined
+  pr _ = undefined
 
 instance IsString SourceName where
   fromString v = MkSourceName v
@@ -326,11 +325,11 @@ instance Hashable RequiredMethodAccess
 -- === Pretty instances ===
 
 instance Pretty AppExplicitness where
-  pretty ExplicitApp = "->"
-  pretty ImplicitApp = "->>"
+  pr ExplicitApp = "->"
+  pr ImplicitApp = "->>"
 
 instance Pretty LetAnn where
-  pretty ann = case ann of
+  pr ann = case ann of
     PlainLet        -> ""
     InlineLet       -> "%inline"
     NoInlineLet     -> "%noinline"
@@ -338,46 +337,42 @@ instance Pretty LetAnn where
     -- OccInfoPure   u -> pretty u <> hardline
     -- OccInfoImpure u -> pretty u <> ", impure" <> hardline
 
-instance PrettyPrec Direction where
-  prettyPrec d = atPrec ArgPrec $ case d of
+instance Pretty Direction where
+  pr d = case d of
     Fwd -> "fwd"
     Rev -> "rev"
 
-printDouble :: Double -> Doc ann
-printDouble x = pretty (double2Float x)
+printDouble :: Double -> Doc
+printDouble x = pr (double2Float x)
 
-printFloat :: Float -> Doc ann
-printFloat x = pretty $ reverse $ dropWhile (=='0') $ reverse $
+printFloat :: Float -> Doc
+printFloat x = pr $ reverse $ dropWhile (=='0') $ reverse $
   showFFloat (Just 6) x ""
 
-instance Pretty LitVal where pretty = prettyFromPrettyPrec
-instance PrettyPrec LitVal where
-  prettyPrec = \case
-    Int64Lit   x -> atPrec ArgPrec $ p x
-    Int32Lit   x -> atPrec ArgPrec $ p x
-    Float64Lit x -> atPrec ArgPrec $ printDouble x
-    Float32Lit x -> atPrec ArgPrec $ printFloat  x
-    Word8Lit   x -> atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral x
-    Word32Lit  x -> atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-    Word64Lit  x -> atPrec ArgPrec $ p $ "0x" ++ showHex x ""
-    PtrLit ty (PtrLitVal x) -> atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
-    PtrLit _ NullPtr -> atPrec ArgPrec $ "NullPtr"
-    PtrLit _ (PtrSnapshot _) -> atPrec ArgPrec "<ptr snapshot>"
-    where p :: Pretty a => a -> Doc ann
-          p = pretty
+instance Pretty LitVal where
+  pr = \case
+    Int64Lit   x -> pr x
+    Int32Lit   x -> pr x
+    Float64Lit x -> printDouble x
+    Float32Lit x -> printFloat  x
+    Word8Lit   x -> pr $ show $ toEnum @Char $ fromIntegral x
+    Word32Lit  x -> pr $ "0x" ++ showHex x ""
+    Word64Lit  x -> pr $ "0x" ++ showHex x ""
+    PtrLit ty (PtrLitVal x) -> app "Ptr" [pr ty, pr (show x)]
+    PtrLit _ NullPtr -> "NullPtr"
+    PtrLit _ (PtrSnapshot _) -> "<ptr snapshot>"
 
-instance Pretty Device where pretty = fromString . show
+instance Pretty Device where
+  pr = fromString . show
 
-instance Pretty BaseType where pretty = prettyFromPrettyPrec
-instance PrettyPrec BaseType where
-  prettyPrec b = case b of
-    Scalar sb -> prettyPrec sb
-    Vector shape sb -> atPrec ArgPrec $ encloseSep "<" ">" "x" $ (pretty <$> shape) ++ [pretty sb]
-    PtrType ty -> atPrec AppPrec $ "Ptr" <+> pretty ty
+instance Pretty BaseType where
+  pr b = case b of
+    Scalar sb -> pr sb
+    Vector _ _ -> undefined
+    PtrType ty -> app "Ptr" [pr ty]
 
-instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
-instance PrettyPrec ScalarBaseType where
-  prettyPrec sb = atPrec ArgPrec $ case sb of
+instance Pretty ScalarBaseType where
+  pr sb = case sb of
     Int64Type   -> "Int64"
     Int32Type   -> "Int32"
     Float64Type -> "Float64"
@@ -386,42 +381,36 @@ instance PrettyPrec ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance PrettyPrec a => Pretty (PrimOp a) where pretty = prettyFromPrettyPrec
-instance PrettyPrec a => PrettyPrec (PrimOp a) where
-  prettyPrec = \case
-    MemOp    op -> prettyPrec op
-    VectorOp op -> prettyPrec op
-    RefOp ref eff -> atPrec LowestPrec case eff of
-      MGet        -> "get" <+> pApp ref
-      MPut x      -> pApp ref <+> ":=" <+> pApp x
-      IndexRef i -> pApp ref <+> "!" <+> pApp i
-      ProjRef i   -> "proj_ref" <+> pApp ref <+> p i
+instance Pretty a => Pretty (PrimOp a) where
+  pr = \case
+    MemOp    op -> pr op
+    VectorOp op -> pr op
+    RefOp ref eff -> case eff of
+      MGet        -> app "get" [pr ref]
+      MPut x      -> app "(:=)" [pr ref, pr x]
+      IndexRef i  -> app "(!)"  [pr ref, pr i]
+      ProjRef i   -> app "proj_ref" [pr ref, pr i]
     UnOp  op x   -> undefined
     BinOp op x y -> undefined
     MiscOp op -> undefined
-    where
-      p :: forall a ann. Pretty a => a -> Doc ann
-      p = pretty
 
 instance Pretty Projection where
-  pretty = \case
+  pr = \case
     UnwrapNewtype -> "u"
-    ProjectProduct i -> pretty i
+    ProjectProduct i -> pr i
 
-instance PrettyPrec a => Pretty (MemOp a) where pretty = prettyFromPrettyPrec
-instance PrettyPrec a => PrettyPrec (MemOp a) where
-  prettyPrec = \case
-    PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
-    PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
+instance Pretty a => Pretty (MemOp a) where
+  pr = \case
+    PtrOffset ptr idx -> app "(+>)" [pr idx]
+    PtrLoad   ptr     -> app "load" [pr ptr]
     op -> undefined
 
-instance PrettyPrec a => Pretty (VectorOp a) where pretty = prettyFromPrettyPrec
-instance PrettyPrec a => PrettyPrec (VectorOp a) where
-  prettyPrec = \case
-    VectorBroadcast v -> atPrec LowestPrec $ "vbroadcast" <+> pApp v
-    VectorIota -> atPrec LowestPrec $ "viota"
-    VectorIdx tbl i -> atPrec LowestPrec $ "vslice" <+> pApp tbl <+> pApp i
-    VectorSubref ref i -> atPrec LowestPrec $ "vrefslice" <+> pApp ref <+> pApp i
+instance Pretty a => Pretty (VectorOp a) where
+  pr = \case
+    VectorBroadcast v -> app "vbroadcast"  [pr v]
+    VectorIota -> app "viota" []
+    VectorIdx tbl i -> app "vslice" [pr tbl, pr i]
+    VectorSubref ref i -> app "vrefslice" [pr ref, pr i]
 
 instance Pretty Explicitness where
-  pretty expl = pretty (show expl)
+  pr expl = pr (show expl)

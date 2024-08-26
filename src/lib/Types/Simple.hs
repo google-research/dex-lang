@@ -14,7 +14,6 @@ import Data.Word
 import Data.Foldable (toList)
 import Data.Hashable
 import Data.String (fromString)
-import Data.Text.Prettyprint.Doc
 import Data.Text (Text, unsnoc, uncons)
 import qualified Data.Map.Strict       as M
 
@@ -27,7 +26,6 @@ import PPrint
 
 import Types.Primitives
 import Types.Source (HasSourceName (..))
-import Types.Imp
 
 -- === SimpIR ===
 

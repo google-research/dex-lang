@@ -573,7 +573,7 @@ instance Catchable m => Catchable (StateT s m) where
     f s `catchErr` \e -> runStateT (handler e) s
 
 instance Pretty Err where
-  pretty e = pretty $ printErr e
+  pr e = pr $ printErr e
 
 instance ToJSON SrcId
 

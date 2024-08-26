@@ -4,123 +4,96 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE IncoherentInstances #-}  -- due to `ConRef`
-{-# LANGUAGE UndecidableInstances #-}
+module PPrint (Pretty (..), Doc (..), indent, hcat, vcat, pprint, app) where
 
-module PPrint (
-  Pretty (..), Doc, DocPrec, (<+>), pprint, pprintList, asStr , atPrec,
-  pAppArg, pApp, pArg, hardline, PrettyPrec(..), PrecedenceLevel (..),
-  docAsStr, parensSep, prettyLines, sep, pLowest, prettyFromPrettyPrec,
-  indented, commaSep, spaced, spaceIfColinear, encloseSep) where
-
-import Data.Foldable (toList, fold)
-import Data.Text.Prettyprint.Doc.Render.Text
-import Data.Text.Prettyprint.Doc
-import Data.Text (unpack)
-import System.IO.Unsafe
-import qualified System.Environment as E
-
--- === small pretty-printing utils ===
+import Data.Int
+import Data.String
+import Control.Monad.Reader
+import Control.Monad.State.Strict
 
 pprint :: Pretty a => a -> String
-pprint x = docAsStr $ pretty x
+pprint x = printDoc  $ pr x
 {-# SCC pprint #-}
 
-docAsStr :: Doc ann -> String
-docAsStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
+-- === printing doc ===
 
-layout :: LayoutOptions
-layout = if unbounded then LayoutOptions Unbounded else defaultLayoutOptions
-  where unbounded = unsafePerformIO $ (Just "1"==) <$> E.lookupEnv "DEX_PPRINT_UNBOUNDED"
+newtype PrinterM a = PrinterM { runPrinterM :: ReaderT Int (State [(Int, String)]) a }
+        deriving (Functor, Applicative, Monad)
 
--- === DocPrec ===
+runPrinter :: PrinterM a -> String
+runPrinter cont = do
+  let indentedLines = reverse $ execState (runReaderT (runPrinterM cont) 0) []
+  concat [replicate (2 * indents) ' ' <> s | (indents, s) <- indentedLines]
 
--- A DocPrec is a slightly context-aware Doc, specifically one that
--- knows the precedence level of the immediately enclosing operation,
--- and can decide to parenthesize itself accordingly.
--- For example, when printing `x = f (g 1)`, we know that
--- - We need parens around `(g 1)` because applying `f` binds
---   tighter than applying `g` (because application is left-associative)
--- - We do not need parens around `g` or 1, because there is nothing
---   there that may bind less tightly than the function applications.
--- - We also do not need parens around the whole RHS `f (g 1)`, because
---   the `=` binds less tightly than applying `f`.
---
--- This is accomplished in the `Expr` instance of `PrettyPrec` by
--- coding function application to require `ArgPrec` from the arguments
--- (via the default behavior of `prettyFromPrettyPrec`), but to
--- provide only `AppPrec` for the application expression itself.  The
--- outer application is not wrapped in parens because the let binding
--- prints its RHS at `LowestPrec`.
-type DocPrec ann = PrecedenceLevel -> Doc ann
+printDoc :: Doc -> String
+printDoc d = runPrinter $ printDocM d
 
--- Specifies what kinds of operations are allowed to be printed at
--- this point without wrapping in parens.
-data PrecedenceLevel =
-    -- Any subexpression is allowed without parens
-    LowestPrec
-    -- Function application is allowed without parens, but nothing
-    -- that binds less tightly
-  | AppPrec
-    -- Only single symbols and parens allowed
-  | ArgPrec
-  deriving (Eq, Ord)
+emitLine :: String -> PrinterM ()
+emitLine s = do
+  curIndent <- PrinterM ask
+  PrinterM $ modify \indentedLines -> (curIndent, s) : indentedLines
 
-class PrettyPrec a where
-  prettyPrec :: a -> DocPrec ann
+increaseIndent :: PrinterM a -> PrinterM a
+increaseIndent cont = PrinterM $ local (+ 1) $ runPrinterM cont
 
--- `atPrec prec doc` will ensure that the precedence level is at most
--- `prec` when running `doc`, wrapping with parentheses if needed.
--- To wit,
--- - `atPrec LowestPrec` means "wrap unless the context permits all
---   subexpressions unwrapped"
--- - `atPrec AppPrec` means "wrap iff the context requires ArgPrec"
--- - `atPrec ArgPrec` means "never wrap" (unless the
---   `PrecedenceLevel` ADT is extended later).
-atPrec :: PrecedenceLevel -> Doc ann -> DocPrec ann
-atPrec prec doc requestedPrec =
-  if requestedPrec > prec then parens (align doc) else doc
+printDocM :: Doc -> PrinterM ()
+printDocM = \case
+  DocLine s -> emitLine s
+  DocIndent d -> increaseIndent $ printDocM d
+  DocItems ds -> mapM_ printDocM ds
 
-prettyFromPrettyPrec :: PrettyPrec a => a -> Doc ann
-prettyFromPrettyPrec = pArg
+-- === constructing doc ===
 
-pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
-pAppArg name as = align $ name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
+class Pretty a where
+  pr :: a -> Doc
 
-pprintList :: Pretty a => [a] -> String
-pprintList xs = asStr $ vsep $ punctuate "," (map pretty xs)
+  prList :: [a] -> Doc
+  prList xs = hlist "[,]" $ map pr xs
 
-asStr :: Doc ann -> String
-asStr doc = unpack $ renderStrict $ layoutPretty layout $ doc
+data Doc =
+   DocLine   String
+ | DocItems  [Doc]
+ | DocIndent Doc
 
-pLowest :: PrettyPrec a => a -> Doc ann
-pLowest a = prettyPrec a LowestPrec
+vcat :: [Doc] -> Doc
+vcat = DocItems
 
-pApp :: PrettyPrec a => a -> Doc ann
-pApp a = prettyPrec a AppPrec
+hlist :: String -> [Doc] -> Doc
+hlist [l,sep,r] xs = undefined
+hlist _ _ = error "expected left bracket, separator, right bracket"
 
-pArg :: PrettyPrec a => a -> Doc ann
-pArg a = prettyPrec a ArgPrec
+hcat :: [Doc] -> Doc
+hcat docs = rec "" docs
+ where
+  rec :: String -> [Doc] -> Doc
+  rec s = \case
+    [] -> DocLine s
+    d:ds -> case d of
+      DocLine s' -> rec (s <> s') ds
+      _ -> vcat [DocLine s, d, hcat ds]
 
-prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
-prettyLines xs = foldMap (\d -> hardline <> pretty d) $ toList xs
+indent :: Doc -> Doc
+indent = DocIndent
 
-parensSep :: Doc ann -> [Doc ann] -> Doc ann
-parensSep separator items = encloseSep "(" ")" separator items
+app :: Doc -> [Doc] -> Doc
+app f xs = hcat [f, hlist "(,)" xs]
 
-spaceIfColinear :: Doc ann
-spaceIfColinear = flatAlt "" space
+-- === instances
 
-instance PrettyPrec a => PrettyPrec [a] where
-  prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest xs
+instance IsString Doc where
+  fromString = DocLine
 
-instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty
+instance Pretty Char where
+  pr c = DocLine [c]
+  prList = DocLine
 
-spaced :: (Foldable f, Pretty a) => f a -> Doc ann
-spaced xs = hsep $ map pretty $ toList xs
+instance Pretty a => Pretty [a] where
+  pr xs = prList xs
 
-commaSep :: (Foldable f, Pretty a) => f a -> Doc ann
-commaSep xs = fold $ punctuate "," $ map pretty $ toList xs
+instance (Pretty a, Pretty b) => Pretty (a, b) where
+  pr (x, y) = hcat ["(", pr x, ", ", pr y, ")"]
 
-indented :: Doc ann -> Doc ann
-indented doc = nest 2 (hardline <> doc) <> hardline
+instance Pretty Int   where pr x = pr $ show x
+instance Pretty Int32 where pr x = pr $ show x
+instance Pretty Int64 where pr x = pr $ show x
+instance Pretty Float where pr x = pr $ show x

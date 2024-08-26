@@ -13,7 +13,6 @@ import Data.Word
 import Data.Foldable (toList)
 import Data.Hashable
 import Data.String (fromString)
-import Data.Text.Prettyprint.Doc
 import Data.Text (Text, unsnoc, uncons)
 import qualified Data.Map.Strict       as M
 
@@ -54,6 +53,24 @@ data CTyCon (n::S) =
 type CType = CExpr
 
 type CBinder = BinderP CType :: B
+
+type TopBinder = SourceName
+
+type CTopExpr = CExpr VoidS
+data CTopDecl =
+   CTopLet (Maybe TopBinder) CTopExpr
+ -- | CDataDefDecl
+ --     DataDef
+ --     TopBinder               -- type constructor name
+ --     [TopBinder]             -- data constructor names
+ -- | CStructDecl
+ --     UStructDef
+ --     TopBinder              -- type constructor name
+ | CInterface
+    (ClassDef VoidS)
+    TopBinder               -- class name
+    [TopBinder]             -- method names
+ | CInstance (InstanceDef VoidS)
 
 data CDecl (n::S) (l::S) = CLet (NameBinder n l) (CExpr n) deriving (Show, Generic)
 type CBlock = Abs (Nest CDecl) CExpr
@@ -356,3 +373,10 @@ instance AlphaHashableB CDecl
 instance ProvesExt      CDecl
 instance BindsNames     CDecl
 instance Store (CDecl n l)
+
+instance Pretty CTopDecl where
+  pr = \case
+    CTopLet b e -> case b of
+      Nothing -> pr e
+      Just b' -> hcat [pr b', " = ", pr e]
+

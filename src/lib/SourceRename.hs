@@ -24,37 +24,9 @@ import Types.Source
 import Types.Primitives
 import Types.Top2
 
-renameSourceNames
-  :: (Fallible1 m, ScopeReader m, TopLogger1 m)
-  => TopNameDescription -> UTopDecl -> m n () -- (Abs UTopDecl SourceMap n)
-renameSourceNames desc decl = undefined
--- renameSourceNamesTopUDecl desc decl = do
---   Distinct <- getDistinct
---   Abs renamedDecl sourceMapLocalNames <- liftRenamer $ sourceRenameTopUDecl decl
---   let sourceMap = SourceMap $ fmap (fmap (\(LocalVar _ v) -> ModuleVar desc (Just v))) $
---                     fromSourceMap sourceMapLocalNames
---   return $ Abs renamedDecl sourceMap
--- {-# SCC renameSourceNamesTopUDecl #-}
-
-uDeclErrSourceMap:: TopNameDescription -> UTopDecl -> SourceMap n
-uDeclErrSourceMap desc decl = undefined
-  -- SourceMap $ M.fromSet (const [ModuleVar desc Nothing]) (sourceNames decl)
-{-# SCC uDeclErrSourceMap #-}
-
-renameSourceNamesUExpr :: (Fallible1 m, ScopeReader m, TopLogger1 m) => UExpr VoidS -> m n (UExpr n)
-renameSourceNamesUExpr expr = do
-  Distinct <- getDistinct
-  liftRenamer $ sourceRenameE expr
-{-# SCC renameSourceNamesUExpr #-}
-
--- sourceRenameTopUDecl
---   :: (Renamer m, Distinct o)
---   => UTopDecl i i' -> m o (Abs UTopDecl SourceMap o)
--- sourceRenameTopUDecl udecl =
---   sourceRenameB udecl \udecl' -> do
---     SourceMap fullSourceMap <- askSourceMap
---     let partialSourceMap = fullSourceMap `M.restrictKeys` sourceNames udecl
---     return $ Abs udecl' $ SourceMap partialSourceMap
+renameSourceNames :: (Fallible m, TopLogger m) => UTopDecl -> m UTopDecl
+renameSourceNames decl = liftRenamer $ sourceRenameTop decl
+{-# SCC renameSourceNames #-}
 
 data RenamerSubst n = RenamerSubst { renamerSourceMap :: SourceMap n
                                    , renamerMayShadow :: Bool }
@@ -64,15 +36,12 @@ newtype RenamerM (n::S) (a:: *) =
   deriving ( Functor, Applicative, Monad, MonadFail, Fallible
            , ScopeReader, ScopeExtender)
 
-liftRenamer :: (ScopeReader m, Fallible1 m, SinkableE e, TopLogger1 m) => RenamerM n (e n) -> m n (e n)
-liftRenamer cont = undefined
--- liftRenamer cont = do
---   sm <- withEnv $ envSourceMap . moduleEnv
---   Distinct <- getDistinct
---   m <- liftScopeReaderT $ runReaderT1 (RenamerSubst sm False) $ runRenamerM $ cont
---   let (ans, namingInfo) = runState (runExceptT m) mempty
---   emitLog $ Outputs [SourceInfo $ SINamingInfo namingInfo]
---   liftExcept ans
+liftRenamer :: (Fallible m, TopLogger m) => RenamerM VoidS a -> m a
+liftRenamer cont = do
+  let m = runScopeReaderT emptyOutMap $ runReaderT1 (RenamerSubst mempty False) $ runRenamerM $ cont
+  let (ans, namingInfo) = runState (runExceptT m) mempty
+  emitLog $ Outputs [SourceInfo $ SINamingInfo namingInfo]
+  liftExcept ans
 
 class ( Monad1 m, ScopeReader m
       , ScopeExtender m, Fallible1 m) => Renamer m where
@@ -280,6 +249,20 @@ sourceRenameUBinder (WithSrcB sid ubinder) cont = case ubinder of
         cont $ WithSrcB sid $ UBind b name
   UBind _ _ -> error "Shouldn't be source-renaming internal names"
   UIgnore -> cont $ WithSrcB sid $ UIgnore
+
+instance SourceRenamableTop UTopDecl where
+  sourceRenameTop = \case
+    UTopLet b ty e -> UTopLet b <$> mapM sourceRenameE ty <*> sourceRenameE e
+    UTopExpr e -> UTopExpr <$> sourceRenameE e
+    UStructDecl def b -> UStructDecl <$> sourceRenameTop def <*> pure b
+    UInterface def b bs -> UInterface <$> sourceRenameTop def <*> pure b <*> pure bs
+    UInstance def -> UInstance <$> sourceRenameTop def
+
+instance SourceRenamableTop UInterfaceDef where
+  sourceRenameTop = undefined
+
+instance SourceRenamableTop UInstanceDef where
+  sourceRenameTop = undefined
 
 instance SourceRenamableTop UDataDef where
   sourceRenameTop (UDataDef tyConName paramBs dataCons) = do

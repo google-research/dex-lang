@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module ConcreteSyntax (
-  mustParseit, sourceBlocks, sourceBlock,
+  parseSourceBlocks, mustParseit, sourceBlocks, sourceBlock,
   keyWordStrs, showPrimName,
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
@@ -30,6 +30,9 @@ import Lexing
 import Types.Source
 import Types.Primitives
 import Util
+
+parseSourceBlocks :: T.Text -> [SourceBlock]
+parseSourceBlocks source = uModuleSourceBlocks $ parseUModule Main source
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
@@ -56,7 +59,8 @@ parseUModule name s = do
 {-# SCC parseUModule #-}
 
 preludeImportBlock :: SourceBlock
-preludeImportBlock = SourceBlock 0 0 "" mempty (Misc $ ImportModule Prelude)
+preludeImportBlock = SourceBlock 0 0 "" mempty (Misc EmptyLines)
+-- preludeImportBlock = SourceBlock 0 0 "" mempty (Misc $ ImportModule Prelude)
 
 sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof

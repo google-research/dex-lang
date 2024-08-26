@@ -53,14 +53,14 @@ library
                      -- , Imp
                      -- , ImpToLLVM
                      , IncState
-                     -- , Inference
+                     , Inference
                      -- , Inline
                      -- , JAX.Concrete
                      -- , JAX.Rename
                      -- , JAX.ToSimp
                      , LLVM.Link
                      , LLVM.Compile
-                     , LLVM.CUDA
+                     -- , LLVM.CUDA
                      , LLVM.Shims
                      , Lexing
                      -- , Linearize
@@ -77,19 +77,19 @@ library
                      -- , RuntimePrint
                      -- , Serialize
                      -- , Simplify
-                     -- , Subst
+                      , Subst
                      , SourceRename
                      , SourceIdTraversal
                      , TopLevel2
                      -- , Transpose
                      , Types.Simple
                      , Types.Complicated
-                     , Types.Imp
+                     -- , Types.Imp
                      , Types.Primitives
                      , Types.Source
                      , Types.Top2
                      -- , QueryType
-                     -- , QueryTypePure
+                     , QueryTypePure
                      , Util
                      -- , Vectorize
                      , Actor

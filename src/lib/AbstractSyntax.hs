@@ -101,9 +101,8 @@ checkSourceBlockParses = \case
 type SyntaxM = Except
 
 topDecl :: CTopDeclW -> SyntaxM UTopDecl
-topDecl (WithSrcs sid sids topDecl') = undefined
--- topDecl (WithSrcs sid sids topDecl') = case topDecl' of
---   CSDecl ann d -> UTopLet <$> decl ann (WithSrcs sid sids d)
+topDecl (WithSrcs sid sids topDecl') = case topDecl' of
+  CSDecl ann d -> topCSDecl ann (WithSrcs sid sids d)
 --   CData name tyConParams givens constructors -> do
 --     tyConParams' <- fromMaybeM tyConParams Empty aExplicitParams
 --     givens' <- aOptGivens givens
@@ -131,6 +130,29 @@ topDecl (WithSrcs sid sids topDecl') = undefined
 --       return (fromSourceNameW methodName, ty')
 --     return $ UInterface params' methodTys (fromSourceNameW name) (toNest methodNames)
 --   CInstanceDecl def -> aInstanceDef def
+
+topCSDecl :: LetAnn -> CSDeclW -> SyntaxM UTopDecl
+topCSDecl ann (WithSrcs sid _ d) = case d of
+  CLet binder rhs -> do
+    (b, ann) <- topBinderOptAnn binder
+    UTopLet b ann <$> (asExpr <$> block rhs)
+  CDefDecl def -> do
+    (name, lam) <- aDef def
+    return $ UTopLet (fromSourceNameW name) Nothing (WithSrcE sid (ULam lam))
+  CExpr g -> UTopExpr <$> expr g
+  CPass -> error "not implemented"
+
+-- Binder pattern with an optional type annotation
+topBinderOptAnn :: GroupW -> SyntaxM (TopBinder, Maybe (UType VoidS))
+topBinderOptAnn = \case
+  WithSrcs _ _ (CBin Colon lhs typeAnn) -> (,) <$> topBinder lhs <*> (Just <$> expr typeAnn)
+  WithSrcs _ _ (CParens [g]) -> topBinderOptAnn g
+  g -> (,Nothing) <$> topBinder g
+
+topBinder :: GroupW -> SyntaxM TopBinder
+topBinder (WithSrcs sid _ b) = case b of
+  CLeaf (CIdentifier name) -> return $ fromSourceNameW $ WithSrc sid name
+  _ -> throw sid UnexpectedBinder
 
 decl :: LetAnn -> CSDeclW -> SyntaxM (UDecl VoidS VoidS)
 decl ann (WithSrcs sid _ d) = WithSrcB sid <$> case d of
