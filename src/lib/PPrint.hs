@@ -4,9 +4,11 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module PPrint (Pretty (..), Doc (..), indent, hcat, vcat, pprint, app) where
+module PPrint (Pretty (..), Doc (..), indent, hcat, hlist, vcat, pprint, app) where
 
 import Data.Int
+import Data.Word
+import Data.List (intersperse)
 import Data.String
 import Control.Monad.Reader
 import Control.Monad.State.Strict
@@ -59,7 +61,8 @@ vcat :: [Doc] -> Doc
 vcat = DocItems
 
 hlist :: String -> [Doc] -> Doc
-hlist [l,sep,r] xs = undefined
+hlist [l,sep,r] xs = hcat [pr l, hcat (intersperse (pr sep) xs), pr r]
+
 hlist _ _ = error "expected left bracket, separator, right bracket"
 
 hcat :: [Doc] -> Doc
@@ -78,7 +81,7 @@ indent = DocIndent
 app :: Doc -> [Doc] -> Doc
 app f xs = hcat [f, hlist "(,)" xs]
 
--- === instances
+-- === instances ===
 
 instance IsString Doc where
   fromString = DocLine
@@ -93,7 +96,14 @@ instance Pretty a => Pretty [a] where
 instance (Pretty a, Pretty b) => Pretty (a, b) where
   pr (x, y) = hcat ["(", pr x, ", ", pr y, ")"]
 
-instance Pretty Int   where pr x = pr $ show x
-instance Pretty Int32 where pr x = pr $ show x
-instance Pretty Int64 where pr x = pr $ show x
-instance Pretty Float where pr x = pr $ show x
+instance Pretty a => Pretty (Maybe a) where
+  pr = \case
+    Nothing -> ""
+    Just x -> pr x
+
+instance Pretty Int    where pr x = pr $ show x
+instance Pretty Int32  where pr x = pr $ show x
+instance Pretty Int64  where pr x = pr $ show x
+instance Pretty Float  where pr x = pr $ show x
+instance Pretty Double where pr x = pr $ show x
+instance Pretty Word64 where pr x = pr $ show x

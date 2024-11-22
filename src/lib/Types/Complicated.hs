@@ -176,7 +176,18 @@ data DataConDef n =
 
 instance GenericE CExpr where
   type RepE CExpr = UnitE
-instance Pretty (CExpr n)
+
+instance Pretty (CExpr n) where
+  pr = \case
+    CBlock  _ b -> pr b
+    CVar v _ -> pr v
+    CLit l -> pr l
+    CPrimOp _ op -> pr op
+    CTyCon _ -> undefined
+    Lam _ -> undefined
+    NewtypeCon _ _ -> undefined
+    Dict _ -> undefined
+
 instance SinkableE      CExpr
 instance HoistableE     CExpr
 instance RenameE        CExpr

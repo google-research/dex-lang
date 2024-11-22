@@ -905,9 +905,18 @@ instance Pretty CSBlock where
   pr (ExprBlock g) = pr g
 
 instance Pretty Group where
-  pr = undefined
-  -- prettyPrec (CIdentifier n) = atPrec ArgPrec $ fromString n
-  -- prettyPrec (CPrim prim args) = prettyOpDefault prim args
+  pr = \case
+    CLeaf leaf -> pr leaf
+    CPrim prim args -> app (pr prim) (map pr args)
+
+
+-- prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
+-- prettyOpDefault name args =
+--   case length args of
+--     0 -> atPrec ArgPrec primName
+--     _ -> atPrec AppPrec $ pAppArg primName args
+--   where primName = pretty name
+    
   -- prettyPrec (CParens blk)  =
   --   atPrec ArgPrec $ "(" <> p blk <> ")"
   -- prettyPrec (CBrackets g) = atPrec ArgPrec $ pretty g
@@ -918,6 +927,16 @@ instance Pretty Group where
   -- prettyPrec (CCase scrut alts) =
   --   atPrec LowestPrec $ "case " <> p scrut <> " of " <> prettyLines alts
   -- prettyPrec g = atPrec ArgPrec $ fromString $ show g
+
+instance Pretty CLeaf where
+  pr = \case
+    CIdentifier s -> pr s
+    CNat n -> pr n
+    CInt n -> pr n
+    CString s -> pr $ show s
+    CChar c -> pr $ show c
+    CFloat f -> pr f
+    CHole -> "_"
 
 instance Pretty Bin where
   pr = \case
@@ -945,8 +964,7 @@ instance Pretty CTopDecl where
   pr d = fromString $ show d
 
 instance Pretty CSDecl where
-  pr = undefined
-  -- pr (CLet pat blk) = pArg pat <+> "=" <+> p blk
+  pr (CLet pat blk) = hcat [pr pat, "=", pr blk]
   -- pr (CDefDecl (CDef name args maybeAnn blk)) =
   --   "def " <> fromString name <> " " <> prParamGroups args <+> annDoc
   --     <> nest 2 (hardline <> p blk)
@@ -990,8 +1008,9 @@ instance Pretty (UAlt n) where
   pr (UAlt pat body) = undefined -- pr pat <+> "->" <+> pr body
 
 instance Pretty UTopDecl where
-  pr = undefined
-  -- pretty = \case
+  pr = \case
+    UTopLet b _ expr -> hcat [pr b, " = ", pr expr]
+     -- (Maybe (UType VoidS)) (UExpr VoidS)
   --   UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
   --     "enum" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2
   --        (prettyLines (zip (toList $ unsafeFromNest bDataCons) dataCons))
@@ -1056,11 +1075,9 @@ instance Pretty (UBlock' n) where
   --   prettyLines (unsafeFromNest decls) <> hardline <> pLowest result
 
 instance Pretty (UExpr' n) where
-  pr = undefined
--- instance PrettyPrec (UExpr' n) where
---   prettyPrec expr = case expr of
---     ULit l -> prettyPrec l
---     UVar v -> atPrec ArgPrec $ p v
+  pr = \case
+    ULit l -> pr l
+    UVar v -> pr v
 --     ULam lam -> prettyPrec lam
 --     UApp    f xs named -> atPrec AppPrec $ pAppArg (pApp f) xs <+> p named
 --     UTabApp f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
@@ -1078,20 +1095,20 @@ instance Pretty (UExpr' n) where
 --     UTypeAnn v ty -> atPrec LowestPrec $
 --       group $ pApp v <> line <> ":" <+> pApp ty
 --     UTabCon xs -> atPrec ArgPrec $ p xs
---     UPrim prim xs -> atPrec AppPrec $ p (show prim) <+> p xs
+    UPrim prim xs -> app (pr prim) (map pr xs)
 --     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
 --       nest 2 (prettyLines alts)
 --     UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f
---     UNatLit   v -> atPrec ArgPrec $ p v
---     UIntLit   v -> atPrec ArgPrec $ p v
---     UFloatLit v -> atPrec ArgPrec $ p v
+    UNatLit   v -> pr v
+    UIntLit   v -> pr v
+    UFloatLit v -> pr v
 --     UDo block -> atPrec LowestPrec $ p block
 --     where
 --       p :: Pretty a => a -> Doc ann
 --       p = pretty
 
 instance Pretty SourceBlock where
-  pr block = undefined
+  pr block = pr $ sbContents block
     -- pr $ ensureNewline (sbText block) where
     -- -- Force the SourceBlock to end in a newline for echoing, even if
     -- -- it was terminated with EOF in the original program.
@@ -1105,7 +1122,7 @@ instance Pretty Output where
     TextOut s -> pr s
     HtmlOut _ -> "<html output>"
     SourceInfo _ -> ""
-    PassResult _ s -> undefined -- pr s
+    PassResult _ s -> pr s
     MiscLog s -> pr s
     Error e -> pr e
 
@@ -1122,10 +1139,3 @@ instance Pretty FieldName' where
   pr = \case
     FieldName s -> pr s
     FieldNum n  -> pr n
-
--- prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
--- prettyOpDefault name args =
---   case length args of
---     0 -> atPrec ArgPrec primName
---     _ -> atPrec AppPrec $ pAppArg primName args
---   where primName = pretty name

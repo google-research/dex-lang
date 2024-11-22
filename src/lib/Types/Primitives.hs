@@ -381,6 +381,9 @@ instance Pretty ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
+instance Pretty BinOp where pr x = pr $ show x
+instance Pretty UnOp  where pr x = pr $ show x
+
 instance Pretty a => Pretty (PrimOp a) where
   pr = \case
     MemOp    op -> pr op
@@ -390,8 +393,8 @@ instance Pretty a => Pretty (PrimOp a) where
       MPut x      -> app "(:=)" [pr ref, pr x]
       IndexRef i  -> app "(!)"  [pr ref, pr i]
       ProjRef i   -> app "proj_ref" [pr ref, pr i]
-    UnOp  op x   -> undefined
-    BinOp op x y -> undefined
+    UnOp  op x   -> app (pr op) [pr x]
+    BinOp op x y -> app (pr op) [pr x, pr y]
     MiscOp op -> undefined
 
 instance Pretty Projection where

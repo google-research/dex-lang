@@ -28,11 +28,11 @@ import qualified Data.Text.Encoding as T
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
-import Data.Text.Prettyprint.Doc (Pretty (..), pretty)
 import Data.List.NonEmpty (NonEmpty (..))
 import GHC.Generics (Generic)
 
 import Err
+import PPrint
 
 class IsBool a where
   toBool :: a -> Bool
@@ -365,9 +365,9 @@ zipTrees (Branch xs) (Branch ys) | length xs == length ys = Branch $ zipWith zip
 zipTrees _ _ = error "zip error"
 
 instance Pretty a => Pretty (Tree a) where
-  pretty = \case
-    Leaf x -> pretty x
-    Branch xs -> pretty xs
+  pr = \case
+    Leaf x -> pr x
+    Branch xs -> pr xs
 
 readFileText :: MonadIO m => FilePath -> m T.Text
 readFileText fname = liftIO $ T.decodeUtf8 <$> BS.readFile fname

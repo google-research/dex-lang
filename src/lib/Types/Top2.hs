@@ -13,7 +13,6 @@ module Types.Top2 where
 
 import Data.Functor ((<&>))
 import Data.Hashable
-import Data.Text.Prettyprint.Doc
 import qualified Data.Map.Strict       as M
 import qualified Data.Set              as S
 

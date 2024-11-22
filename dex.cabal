@@ -114,7 +114,7 @@ library
                      , megaparsec
                      , parser-combinators
                        -- Text output
-                     , prettyprinter
+                     -- , prettyprinter
                      , text
                        -- Portable system utilities
                      , directory
@@ -232,7 +232,7 @@ executable dex
                      , haskeline
                      , mtl
                      , optparse-applicative
-                     , prettyprinter
+                     -- , prettyprinter
                      , store
                      , text
                      , unix
