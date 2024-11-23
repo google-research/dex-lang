@@ -36,7 +36,7 @@ import Types.Primitives
 import qualified Types.Source as S
 import Subst
 import Types.Source hiding (ConName (..), TCName (..), CTopDecl)
-import Types.Top2
+import Types.Top
 import Util hiding (group)
 
 -- === Top-level interface ===

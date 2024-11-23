@@ -16,7 +16,7 @@ import qualified System.Console.ANSI as ANSI
 import System.Console.ANSI hiding (Color)
 
 import Types.Source
-import TopLevel2
+import TopLevel
 import ConcreteSyntax (parseSourceBlocks)
 import PPrint
 import Util (readFileText)

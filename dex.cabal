@@ -27,10 +27,6 @@ flag optimized
   description:         Enables GHC optimizations
   default:             False
 
-flag llvm-head
-  description:         Use the bleeding-edge version of LLVM
-  default:             False
-
 flag foreign
   description:         Build the C interface to Dex
   default:             False
@@ -42,7 +38,6 @@ flag debug
 library
   exposed-modules:     AbstractSyntax
                      -- , Builder
-                     -- , CUDA
                      -- , CheapReduction
                      -- , CheckType
                      , ConcreteSyntax
@@ -50,44 +45,28 @@ library
                      -- , DPS
                      , Err
                      -- , Generalize
-                     -- , Imp
-                     -- , ImpToLLVM
                      , IncState
                      , Inference
                      -- , Inline
-                     -- , JAX.Concrete
-                     -- , JAX.Rename
-                     -- , JAX.ToSimp
-                     -- , LLVM.Link
-                     -- , LLVM.Compile
-                     -- , LLVM.CUDA
-                     -- , LLVM.Shims
                      , Lexing
-                     -- , Linearize
                      , MonadUtil
                      , MTL1
                      , Name
-                     -- , Occurrence
-                     -- , OccAnalysis
-                     -- , Optimize
-                     -- , PeepholeOptimize
                      , PPrint
                      , RawName
-                     -- , Runtime
                      -- , RuntimePrint
                      -- , Serialize
                      -- , Simplify
-                      , Subst
+                     , Subst
                      , SourceRename
                      , SourceIdTraversal
-                     , TopLevel2
+                     , TopLevel
                      -- , Transpose
                      , Types.Simple
                      , Types.Complicated
-                     -- , Types.Imp
                      , Types.Primitives
                      , Types.Source
-                     , Types.Top2
+                     , Types.Top
                      -- , QueryType
                      , QueryTypePure
                      , Util
@@ -103,8 +82,6 @@ library
                      , cryptonite
                      , exceptions
                      , hashable
-                     , llvm-hs
-                     , llvm-hs-pure
                      , mtl
                      , scientific
                      , transformers
@@ -272,7 +249,6 @@ foreign-library Dex
                      , base
                      , bytestring
                      , containers
-                     , llvm-hs
                      , mtl
                      , random
                      , text

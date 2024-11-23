@@ -9,7 +9,7 @@ module QueryTypePure where
 import Types.Primitives
 import Types.Simple
 import Types.Complicated
-import Types.Top2
+import Types.Top
 import Name
 
 class HasType (e::E) where

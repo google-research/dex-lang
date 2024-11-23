@@ -9,7 +9,7 @@
 
 -- Top-level data types
 
-module Types.Top2 where
+module Types.Top where
 
 import Data.Functor ((<&>))
 import Data.Hashable

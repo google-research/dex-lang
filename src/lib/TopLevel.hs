@@ -6,7 +6,7 @@
 
 {-# LANGUAGE UndecidableInstances #-}
 
-module TopLevel2 (
+module TopLevel (
   EvalConfig (..), TopperM, runTopperM, evalSourceBlockRepl, OptLevel (..),
   LibPath (..), initTopState, ExitStatus (..)) where
 
@@ -25,7 +25,7 @@ import PPrint
 import Types.Complicated
 import Types.Primitives
 import Types.Source hiding (CTopDecl)
-import Types.Top2
+import Types.Top
 
 -- === top-level monad ===
 

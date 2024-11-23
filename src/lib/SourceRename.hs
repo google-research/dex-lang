@@ -22,7 +22,7 @@ import MTL1
 import PPrint
 import Types.Source
 import Types.Primitives
-import Types.Top2
+import Types.Top
 
 renameSourceNames :: (Fallible m, TopLogger m) => UTopDecl -> m UTopDecl
 renameSourceNames decl = liftRenamer $ sourceRenameTop decl
