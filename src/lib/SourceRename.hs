@@ -10,6 +10,7 @@ module SourceRename ( renameSourceNames ) where
 
 import Prelude hiding (id, (.))
 import Control.Category
+import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import qualified Data.Set        as S

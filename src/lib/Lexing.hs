@@ -6,6 +6,7 @@
 
 module Lexing where
 
+import Control.Monad
 import Control.Monad.State.Strict
 import Data.Char
 import Data.HashSet qualified as HS

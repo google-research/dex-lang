@@ -91,7 +91,6 @@ library
                      , megaparsec
                      , parser-combinators
                        -- Text output
-                     -- , prettyprinter
                      , text
                        -- Portable system utilities
                      , directory
@@ -103,8 +102,6 @@ library
                      , aeson
                      , store
                      , time
-                       -- Floating-point pedanticness (correcting for GHC < 9.2.2)
-                     , floating-bits
                      , binary
                      , blaze-html
                      , blaze-markup
@@ -209,7 +206,6 @@ executable dex
                      , haskeline
                      , mtl
                      , optparse-applicative
-                     -- , prettyprinter
                      , store
                      , text
                      , unix

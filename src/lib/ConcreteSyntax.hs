@@ -11,6 +11,7 @@ module ConcreteSyntax (
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
   pattern Identifier) where
 
+import Control.Monad
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
 import Data.Char
