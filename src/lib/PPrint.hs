@@ -10,11 +10,12 @@ import Data.Int
 import Data.Word
 import Data.List (intersperse)
 import Data.String
+import Data.Text (Text, unpack)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 
 pprint :: Pretty a => a -> String
-pprint x = printDoc  $ pr x
+pprint x = printDoc $ pr x
 {-# SCC pprint #-}
 
 -- === printing doc ===
@@ -25,7 +26,7 @@ newtype PrinterM a = PrinterM { runPrinterM :: ReaderT Int (State [(Int, String)
 runPrinter :: PrinterM a -> String
 runPrinter cont = do
   let indentedLines = reverse $ execState (runReaderT (runPrinterM cont) 0) []
-  concat [replicate (2 * indents) ' ' <> s | (indents, s) <- indentedLines]
+  concat [replicate (2 * indents) ' ' <> s <> "\n"| (indents, s) <- indentedLines]
 
 printDoc :: Doc -> String
 printDoc d = runPrinter $ printDocM d
@@ -56,6 +57,7 @@ data Doc =
    DocLine   String
  | DocItems  [Doc]
  | DocIndent Doc
+   deriving (Show)
 
 vcat :: [Doc] -> Doc
 vcat = DocItems
@@ -107,3 +109,4 @@ instance Pretty Int64  where pr x = pr $ show x
 instance Pretty Float  where pr x = pr $ show x
 instance Pretty Double where pr x = pr $ show x
 instance Pretty Word64 where pr x = pr $ show x
+instance Pretty Text   where pr x = pr $ unpack x

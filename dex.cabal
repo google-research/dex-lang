@@ -58,10 +58,10 @@ library
                      -- , JAX.Concrete
                      -- , JAX.Rename
                      -- , JAX.ToSimp
-                     , LLVM.Link
-                     , LLVM.Compile
+                     -- , LLVM.Link
+                     -- , LLVM.Compile
                      -- , LLVM.CUDA
-                     , LLVM.Shims
+                     -- , LLVM.Shims
                      , Lexing
                      -- , Linearize
                      , MonadUtil

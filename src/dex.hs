@@ -43,7 +43,18 @@ runMode (CmdOpts evalMode cfg) = case evalMode of
 stdOutLogger :: Outputs -> IO ()
 stdOutLogger (Outputs outs) = do
   isatty <- queryTerminal stdOutput
-  forM_ outs \out -> putStr $ printOutput isatty out
+  forM_ outs \out -> do
+    when (outputPrintFilter out) do
+      putStr $ printOutput isatty out
+
+outputPrintFilter :: Output -> Bool
+outputPrintFilter = \case
+  TextOut _      -> True
+  HtmlOut _      -> False
+  SourceInfo _   -> False
+  PassResult _ _ -> True
+  MiscLog _      -> True
+  Error _        -> True
 
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
@@ -91,7 +102,7 @@ parseEvalOpts = EvalConfig
 printOutput :: Bool -> Output -> String
 printOutput isatty out = case out of
   Error _ -> addColor isatty Red $ addPrefix ">" $ pprint out
-  _       -> addPrefix (addColor isatty Cyan ">") $ pprint $ out
+  _       -> addPrefix (addColor isatty Cyan ">") $ pprint out
 
 addPrefix :: String -> String -> String
 addPrefix prefix s = unlines $ map prefixLine $ lines s

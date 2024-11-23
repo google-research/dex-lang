@@ -168,8 +168,7 @@ data DataConDefs n =
 
 data DataConDef n =
   -- Name for pretty printing, constructor elements, representation type,
-  -- list of projection indices that recovers elements from the representation.
-  DataConDef SourceName (EmptyAbs (Nest CBinder) n) (CType n) [[Projection]]
+  DataConDef SourceName (EmptyAbs (Nest CBinder) n) (CType n)
   deriving (Show, Generic)
 
 -- === type classes ===

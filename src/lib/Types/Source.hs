@@ -953,8 +953,8 @@ instance Pretty Bin where
     CSEqual -> "="
 
 instance Pretty SourceBlock' where
-  pr (TopDecl decl) = pr decl
-  pr d = fromString $ show d
+  pr = \case
+    TopDecl decl -> pr decl
 
 instance Pretty CTopDecl where
   pr (CSDecl ann decl) = hcat [annDoc, pr decl]
@@ -1108,21 +1108,14 @@ instance Pretty (UExpr' n) where
 --       p = pretty
 
 instance Pretty SourceBlock where
-  pr block = pr $ sbContents block
-    -- pr $ ensureNewline (sbText block) where
-    -- -- Force the SourceBlock to end in a newline for echoing, even if
-    -- -- it was terminated with EOF in the original program.
-    -- ensureNewline t = case unsnoc t of
-    --   Nothing -> t
-    --   Just (_, '\n') -> t
-    --   _ -> t `snoc` '\n'
+  pr block = pr $ sbText block
 
 instance Pretty Output where
   pr = \case
     TextOut s -> pr s
     HtmlOut _ -> "<html output>"
-    SourceInfo _ -> ""
-    PassResult _ s -> pr s
+    SourceInfo _ -> "<source info>"
+    PassResult name s -> vcat [hcat [" === ", pr name, " ==="], pr s]
     MiscLog s -> pr s
     Error e -> pr e
 

@@ -122,10 +122,7 @@ logTop :: TopLogger m => Output -> m ()
 logTop x = emitLog $ Outputs [x]
 
 logPass :: Pretty a => PassName -> a -> TopperM ()
-logPass passName result = do
-  getLogLevel >>= \case
-    NormalLogLevel -> logTop $ PassResult passName Nothing
-    DebugLogLevel  -> logTop $ PassResult passName  $ Just (pprint result)
+logPass passName result = logTop $ PassResult passName $ Just (pprint result)
 
 -- === helpers ===
 
@@ -144,7 +141,6 @@ instance Logger Outputs TopperM where
   emitLog x = do
     logger <- getIOLogAction
     liftIO $ logger x
-  getLogLevel = return DebugLogLevel
 
 instance HasIOLogger Outputs TopperM where
   getIOLogAction = TopperM $ asks topperLogAction

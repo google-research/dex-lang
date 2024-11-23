@@ -19,8 +19,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 
 module Types.Primitives (
-  module Types.Primitives, UnOp (..), BinOp (..),
-  CmpOp (..), Projection (..)) where
+  module Types.Primitives, UnOp (..), BinOp (..), CmpOp (..)) where
 
 import qualified Data.ByteString       as BS
 import Data.Int
@@ -59,13 +58,6 @@ data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
      deriving (Show, Eq, Ord, Generic)
 instance Hashable CmpOp
 instance Store    CmpOp
-
-data Projection =
-   UnwrapNewtype -- TODO: add `HasCore r` constraint
- | ProjectProduct Int
-   deriving (Show, Eq, Ord, Generic)
-instance Hashable Projection
-instance Store    Projection
 
 data PrimOp a =
    UnOp     UnOp   a
@@ -123,7 +115,6 @@ data RefOp a =
    MGet
  | MPut a
  | IndexRef a
- | ProjRef Projection
    deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
 instance Hashable a => Hashable (RefOp a)
 instance Store    a => Store    (RefOp a)
@@ -392,15 +383,9 @@ instance Pretty a => Pretty (PrimOp a) where
       MGet        -> app "get" [pr ref]
       MPut x      -> app "(:=)" [pr ref, pr x]
       IndexRef i  -> app "(!)"  [pr ref, pr i]
-      ProjRef i   -> app "proj_ref" [pr ref, pr i]
     UnOp  op x   -> app (pr op) [pr x]
     BinOp op x y -> app (pr op) [pr x, pr y]
     MiscOp op -> undefined
-
-instance Pretty Projection where
-  pr = \case
-    UnwrapNewtype -> "u"
-    ProjectProduct i -> pr i
 
 instance Pretty a => Pretty (MemOp a) where
   pr = \case
