@@ -1010,6 +1010,7 @@ instance Pretty (UAlt n) where
 instance Pretty UTopDecl where
   pr = \case
     UTopLet b _ expr -> hcat [pr b, " = ", pr expr]
+    UTopExpr expr -> pr expr
      -- (Maybe (UType VoidS)) (UExpr VoidS)
   --   UDataDefDecl (UDataDef nm bs dataCons) bTyCon bDataCons ->
   --     "enum" <+> p bTyCon <+> p nm <+> spaced (unsafeFromNest bs) <+> "where" <> nest 2

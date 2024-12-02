@@ -22,6 +22,7 @@ import MonadUtil
 import SourceRename
 import SourceIdTraversal
 import PPrint
+import Simplify
 import Types.Complicated
 import Types.Primitives
 import Types.Source hiding (CTopDecl)
@@ -95,8 +96,11 @@ execUDecl decl = do
   logPass Parse decl
   renamed <- renameSourceNames decl
   logPass RenamePass renamed
-  typedDecl <- checkPass TypePass $ inferTopUDecl renamed
-  execCDecl typedDecl
+  CTopLet Nothing expr <- checkPass TypePass $ inferTopUDecl renamed
+  simpFun <- simplifyTopFun (exprAsNullaryFun expr)
+  logPass SimpPass simpFun
+  return ()
+  -- execCDecl typedDecl
 
 execCDecl :: CTopDecl -> TopperM ()
 execCDecl = \case

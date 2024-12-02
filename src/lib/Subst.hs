@@ -240,12 +240,11 @@ renameM e = do
 --   refreshAbs ab \b' subst -> cont subst b'
 -- {-# INLINE substBindersFrag #-}
 
--- -- === atom subst vals ===
+-- === atom subst vals ===
 
--- data SubstVal (atom::E) (n::S) =
---    SubstVal (atom n)
---  | Rename (Name n)
--- type AtomSubstVal = SubstVal Atom
+data SubstVal (atom::E) (n::S) =
+   SubstVal (atom n)
+ | Rename (Name n)
 
 -- instance FromName (SubstVal atom) where
 --   fromName = Rename
@@ -400,10 +399,10 @@ instance (Monad1 m, MonadReader (r o) (m o)) => MonadReader (r o) (SubstReaderT 
 
 -- -- === instances ===
 
--- instance SinkableE atom => SinkableE (SubstVal atom) where
---   sinkingProofE fresh substVal = case substVal of
---     Rename name  -> Rename   $ sinkingProofE fresh name
---     SubstVal val -> SubstVal $ sinkingProofE fresh val
+instance SinkableE atom => SinkableE (SubstVal atom) where
+  sinkingProofE fresh substVal = case substVal of
+    Rename name  -> Rename   $ sinkingProofE fresh name
+    SubstVal val -> SubstVal $ sinkingProofE fresh val
 
 -- instance (SubstB v b, SubstE v e) => SubstE v (Abs b e) where
 --   substE env (Abs b body) = do

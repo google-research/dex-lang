@@ -46,6 +46,9 @@ inferTopUDecl decl = liftInfererM $ case decl of
   UTopLet (WithSrc _ b) maybeTy expr -> do
      expr' <- checkMaybeAnnExpr maybeTy expr
      return $ CTopLet (Just b) expr'
+  UTopExpr expr -> do
+     expr' <- checkMaybeAnnExpr Nothing expr
+     return $ CTopLet Nothing expr'
 
 
 -- (UStructDecl tc def) result = undefined

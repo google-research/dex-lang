@@ -55,6 +55,7 @@ type TopFunName = TopName
 type Binder = BinderP Type :: B
 data Decl (n::S) (l::S) = Let (NameBinder n l) (Expr n)
      deriving (Show, Generic)
+type Decls = Nest Decl
 type Block = Abs (Nest Decl) Expr
 
 data TabPiType (n::S) = TabPiType (Atom n) (Abs Binder Type n) -- length, element type
@@ -68,7 +69,15 @@ type PiType = Abs (Nest Binder) Type :: E
 
 instance GenericE Expr where
   type RepE Expr = UnitE
-instance Pretty (Expr n)
+instance Pretty (Expr n) where
+  pr = \case
+    Block _ b -> pr b
+    TopApp _ _ _ -> undefined
+    Case   _ _ _ -> undefined
+    For    _ _ -> undefined
+    While  _ -> undefined
+    PrimOp _ _ -> undefined
+
 instance SinkableE      Expr
 instance HoistableE     Expr
 instance RenameE        Expr

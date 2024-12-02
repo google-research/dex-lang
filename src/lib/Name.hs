@@ -70,6 +70,9 @@ envFromFrag frag = Subst absurdNameFunction frag
 idSubst :: forall v n. FromName v => Subst v n n
 idSubst = UnsafeMakeIdentitySubst
 
+voidSubst :: Subst v VoidS VoidS
+voidSubst = Subst absurdNameFunction emptyInFrag
+
 idSubstFrag :: (BindsNames b, FromName v) => b n l -> SubstFrag v n l l
 idSubstFrag b =
   scopeFragToSubstFrag (\v -> fromName $ sinkR v) (toScopeFrag b)
@@ -1503,108 +1506,6 @@ instance ( ExtOutMap bindings decls, BindsNames decls, SinkableB decls
   liftIO = lift1 . liftIO
   {-# INLINE liftIO #-}
 
--- === DoubleInplaceT ===
-
--- Allows emitting `d1` decls at the top level, if hoisting succeeds.
-
--- The ScopeFrag in the StateT tracks the initial names in scope, plus the names
--- introduced by the `d1` top decls. We use it for the hoisting check: if an
--- E-kinded thing mentions those names and no others, then we can safely hoist
--- it above the names introduced by `d2` and the names in `bindings` from use of
--- `EnvExtender`. Alternatively, we could maintain a
--- `ScopeFrag hidden_initial_scope n` to do the hoisting but then we couldn't
--- safely implement `liftDoubleInplaceT` because it wouldn't be extended
--- correctly.
-newtype DoubleInplaceT (bindings::E) (d1::B) (d2::B) (m::MonadKind) (n::S) (a :: *) =
-  UnsafeMakeDoubleInplaceT
-  { unsafeRunDoubleInplaceT
-    :: StateT (Scope UnsafeS, d1 UnsafeS UnsafeS) (InplaceT bindings d2 m n) a }
-  deriving ( Functor, Applicative, Monad, MonadFail, Fallible
-           , MonadWriter w, MonadReader r, MonadIO, Catchable)
-
-liftDoubleInplaceT
-  :: (Monad m, ExtOutMap bindings d2, OutFrag d2)
-  => InplaceT bindings d2 m n a -> DoubleInplaceT bindings d1 d2 m n a
-liftDoubleInplaceT m = UnsafeMakeDoubleInplaceT $ lift m
-
--- Emits top-level bindings, `d1`, failing if it can't be hoisted to the top,
--- and sinks an expression, `e`, that may mention those bindings, back to the
--- local scope (often `e` is just a name that the `d1` defines).
--- TODO: should we give this a distinctness constraint and avoid the refreshing?
-emitDoubleInplaceTHoisted
-  :: ( Monad m, ExtOutMap b d1, OutFrag d1
-     , ExtOutMap b d2, OutFrag d2
-     , HoistableE e, RenameE e, RenameB d1, HoistableB d1)
-  => Abs d1 e n -> DoubleInplaceT b d1 d2 m n (Maybe (e n))
-emitDoubleInplaceTHoisted emission = do
-  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
-  if R.containedIn (fromNameSet $ freeVarsE emission) topScopeFrag
-    then do
-      scope <- unsafeGetScope
-      Distinct <- getDistinct
-      refreshAbsPure scope emission \_ d e -> do
-        unsafeEmitDoubleInplaceTHoisted $ unsafeCoerceB d
-        return $ Just $ unsafeCoerceE e
-    else
-      return Nothing
-
-canHoistToTopDoubleInplaceT
-  :: ( Monad m, ExtOutMap b d1, OutFrag d1
-     , ExtOutMap b d2, OutFrag d2, HoistableE e)
-  => e n -> DoubleInplaceT b d1 d2 m n Bool
-canHoistToTopDoubleInplaceT e = do
-  Scope ~(UnsafeMakeScopeFrag topScopeFrag) <- UnsafeMakeDoubleInplaceT $ fst <$> get
-  return $ R.containedIn (fromNameSet $ freeVarsE e) topScopeFrag
-
-unsafeEmitDoubleInplaceTHoisted
-  :: ( Monad m, ExtOutMap b d1, OutFrag d1
-     , ExtOutMap b d2, OutFrag d2
-     , RenameB d1, HoistableB d1)
-  => d1 UnsafeS UnsafeS -> DoubleInplaceT b d1 d2 m n ()
-unsafeEmitDoubleInplaceTHoisted d1 = do
-  UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
-    UnsafeMakeInplaceT \env d2 -> do
-      withFabricatedDistinct @UnsafeS do
-        let topScopeNew = extendOutMap topScope (toScopeFrag $ unsafeCoerceB d1)
-        let envNew = extendOutMap env (unsafeCoerceB d1)
-        let d1New = catOutFrags d1Prev d1
-        return (((), (topScopeNew, d1New)), d2, envNew)
-
-data DoubleInplaceTResult (d::B) (e::E) (n::S) =
-  DoubleInplaceTResult (d n n) (e n)
-
-runDoubleInplaceT
-  :: (ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2, Monad m)
-  => Distinct n
-  => b n
-  -> (forall l. DExt n l => DoubleInplaceT b d1 d2 m l (e l))
-  -> m (Abs d1 (DoubleInplaceTResult d2 e) n)
-runDoubleInplaceT env cont = do
-  let scope = unsafeCoerceE $ (toScope env) :: Scope UnsafeS
-  (d2, (result, (_, d1))) <- runInplaceT env $
-    runStateT (unsafeRunDoubleInplaceT cont) (scope, emptyOutFrag)
-  return $ Abs (unsafeCoerceB d1) $ unsafeCoerceE $ DoubleInplaceTResult d2 result
-
-instance ( ExtOutMap b d1, OutFrag d1
-         , ExtOutMap b d2, OutFrag d2
-         , Monad m)
-          => ScopeReader (DoubleInplaceT b d1 d2 m) where
-  getDistinct = liftDoubleInplaceT getDistinct
-  {-# INLINE getDistinct #-}
-  unsafeGetScope = liftDoubleInplaceT unsafeGetScope
-  {-# INLINE unsafeGetScope #-}
-
-extendDoubleInplaceTLocal
-  :: (ExtOutMap b d1, ExtOutMap b d2, OutFrag d1, OutFrag d2, Monad m)
-  => (b n -> b n)
-  -> DoubleInplaceT b d1 d2 m n a
-  -> DoubleInplaceT b d1 d2 m n a
-extendDoubleInplaceTLocal f cont =
-  UnsafeMakeDoubleInplaceT $ StateT \(topScope, d1Prev) ->
-    UnsafeMakeInplaceT \env d2 ->
-      unsafeRunInplaceT (runStateT (unsafeRunDoubleInplaceT cont) (topScope, d1Prev)) (f env) d2
-{-# INLINE extendDoubleInplaceTLocal #-}
-
 -- === name hints ===
 
 instance HasNameHint (BinderP ann n l) where
@@ -1888,9 +1789,7 @@ instance RenameE e => RenameE (NonEmptyListE e) where
   renameE env (NonEmptyListE xs) = NonEmptyListE $ fmap (renameE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
-  pr (Abs b body) = undefined
-  -- group $
-  --   "(Abs " <> nest 2 (pr b <> line <> pr body) <> line <> ")"
+  pr (Abs b body) = hcat [pr b, indent (pr body)]
 
 instance Pretty a => Pretty (LiftE a n) where
   pr (LiftE x) = pr x
