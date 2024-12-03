@@ -48,7 +48,7 @@ instance Hashable BinOp
 instance Store    BinOp
 
 data UnOp =
-   Exp | Exp2 | Log | Log2 | Log10 | Log1p | Sin | Cos | Tan | Sqrt | Floor
+   Identity | Exp | Exp2 | Log | Log2 | Log10 | Log1p | Sin | Cos | Tan | Sqrt | Floor
  | Ceil | Round | LGamma | Erf | Erfc | FNeg | BNot
  deriving (Show, Eq, Ord, Generic)
 instance Hashable UnOp

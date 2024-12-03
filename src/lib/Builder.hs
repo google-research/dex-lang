@@ -29,23 +29,9 @@ import PPrint
 import QueryTypePure
 import Util (enumerate, transitiveClosureM, bindM2, toSnocList, popList)
 import Types.Simple
+import Types.Primitives
 
--- -- temporary stub
--- peepholeExpr :: a -> a
--- peepholeExpr = id
-
--- -- === ToExpr ===
-
--- class ToExpr (e::E) where
---   toExpr :: e n -> Expr n
-
--- instance ToExpr (Expr    ) where toExpr = id
--- instance ToExpr (Atom    ) where toExpr = Atom
--- instance ToExpr (Con     ) where toExpr = Atom . Con
--- instance ToExpr (AtomVar ) where toExpr = toExpr . toAtom
--- instance ToExpr (TypedHof) where toExpr = Hof
-
--- === Ordinary (local) builder class ===
+-- === builder class ===
 
 class Fallible1 m => Builder (m::MonadKind1) where
   rawEmitDecl :: Emits n => NameHint -> Expr n -> m n (Name n)
@@ -54,32 +40,43 @@ class Builder m => ScopableBuilder (m::MonadKind1) where
   buildScopedAndThen
     :: SinkableE e
     => (forall l. (Emits l, DExt n l) => m l (e l))
-    -> (forall l.           DExt n l  => Nest Decl n l -> e l -> m l a)
+    -> (forall l.           DExt n l  => RNest Decl n l -> e l -> m l a)
     -> m n a
-
-buildScoped
- :: (ScopableBuilder m, SinkableE e)
- => (forall l. (Emits l, DExt n l) => m l (e l))
- -> m n (Abs (Nest Decl) e n)
-buildScoped cont = buildScopedAndThen cont \decls body -> return $ Abs decls body
-
 
 type Builder2         (m :: MonadKind2) = forall i. Builder         (m i)
 type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
 
--- emitDecl :: (Builder m, Emits n) => NameHint -> LetAnn -> Expr n -> m n (AtomVar n)
--- emitDecl _ _ (Atom (Stuck _ (Var n))) = return n
--- emitDecl hint ann expr = rawEmitDecl hint ann expr
--- {-# INLINE emitDecl #-}
+emitDecl :: (Builder m, Emits n) => NameHint -> Expr n -> m n (Name n)
+emitDecl hint expr = rawEmitDecl hint expr
+{-# INLINE emitDecl #-}
 
--- emit :: (Builder m, ToExpr e, Emits n) => e n -> m n (Atom n)
--- emit e = case toExpr e of
---   Atom x -> return x
---   Block _ block -> emitDecls block >>= emit
---   expr -> do
---     v <- emitDecl noHint PlainLet $ peepholeExpr expr
---     return $ toAtom v
--- {-# INLINE emit #-}
+emit :: (Builder m, Emits n) => Expr n -> m n (Atom n)
+emit e = case e of
+  Block _ block -> emitDecls block >>= emit
+  expr -> do
+    v <- emitDecl noHint expr
+    return $ Var v (getType expr)
+{-# INLINE emit #-}
+
+idExpr :: Atom n -> Expr n
+idExpr x = PrimOp (getType x) (UnOp Identity x)
+
+declsToExpr :: RNest Decl n l -> Atom l -> Expr n
+declsToExpr (RNest ds (Let b e)) (Var v _) | v == binderName b = maybeBlock ds e
+declsToExpr ds x = maybeBlock ds (idExpr x)
+
+maybeBlock :: RNest Decl n l -> Expr l -> Expr n
+maybeBlock REmpty expr = expr
+maybeBlock rdecls expr = Block ty $ Abs decls expr
+  where ty = hoistType decls (getType expr)
+        decls = unRNest rdecls
+
+-- TODO: if hoisting fails, push the decls into the data parts of the type
+hoistType :: Nest Decl n l -> Type l -> Type n
+hoistType decls ty = ignoreHoistFailure $ hoist decls ty
+
+-- if final decl matches var then
+--    if there's only one de
 
 -- emitUnOp :: (Builder m, Emits n) => UnOp -> Atom n -> m n (Atom n)
 -- emitUnOp op x = emit $ PrimOp resultTy $ UnOp op x
@@ -99,8 +96,10 @@ type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
 --   atom -> emitDecl noHint PlainLet (toExpr atom)
 -- {-# INLINE emitToVar #-}
 
--- emitDecls :: (Builder m, Emits n, RenameE e, SinkableE e)
---           => WithDecls e n -> m n (e n)
+emitDecls :: (Builder m, Emits n, RenameE e, SinkableE e)
+          => Abs Decls e n -> m n (e n)
+emitDecls (Abs decls result) = undefined
+-- runSubstReaderT idSubst $ go decls result where
 -- emitDecls (Abs decls result) = runSubstReaderT idSubst $ go decls result where
 --   go :: (Builder m, Emits o, RenameE e, SinkableE e)
 --      => Nest Decl i i' -> e i' -> SubstReaderT Name m i o (e o)
@@ -125,7 +124,7 @@ type ScopableBuilder2 (m :: MonadKind2) = forall i. ScopableBuilder (m i)
 type BuilderEmissions = RNest Decl
 
 newtype BuilderT (m::MonadKind) (n::S) (a:: *) =
-  BuilderT { runBuilderT' :: InplaceT Scope BuilderEmissions m n a }
+  BuilderT { runBuilderT' :: InplaceT BuilderEmissions m n a }
   deriving ( Functor, Applicative, Monad, MonadTrans1, MonadFail, Fallible
            , Catchable, ScopeReader, Alternative
            , MonadWriter w, MonadReader r')
@@ -145,7 +144,7 @@ instance (MonadState s m) => MonadState s (BuilderT m n) where
 
 liftBuilderT :: (Fallible m, ScopeReader m') => BuilderT m n a -> m' n (m a)
 liftBuilderT cont = do
-  env <- unsafeGetEnv
+  env <- unsafeGetScope
   Distinct <- getDistinct
   return do
     (REmpty, result) <- runInplaceT env $ runBuilderT' cont
@@ -156,43 +155,44 @@ liftBuilder :: (ScopeReader m) => BuilderM n a -> m n a
 liftBuilder cont = liftM runHardFail $ liftBuilderT cont
 {-# INLINE liftBuilder #-}
 
--- TODO: This should not fabricate Emits evidence!!
--- XXX: this uses unsafe functions in its implementations. It should be safe to
--- use, but be careful changing it.
-liftEmitBuilder :: (Builder m, SinkableE e, RenameE e)
-                => BuilderM n (e n) -> m n (e n)
-liftEmitBuilder cont = do
-  env <- unsafeGetEnv
-  Distinct <- getDistinct
-  let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env emptyOutFrag
-  Emits <- fabricateEmitsEvidenceM
-  emitDecls $ Abs (unsafeCoerceB $ unRNest decls) result
+-- -- TODO: This should not fabricate Emits evidence!!
+-- -- XXX: this uses unsafe functions in its implementations. It should be safe to
+-- -- use, but be careful changing it.
+-- liftEmitBuilder :: (Builder m, SinkableE e, RenameE e)
+--                 => BuilderM n (e n) -> m n (e n)
+-- liftEmitBuilder cont = do
+--   env <- unsafeGetScope
+--   Distinct <- getDistinct
+--   let (result, decls, _) = runHardFail $ unsafeRunInplaceT (runBuilderT' cont) env emptyOutFrag
+--   Emits <- fabricateEmitsEvidenceM
+--   emitDecls $ Abs (unsafeCoerceB $ unRNest decls) result
 
--- instance (Fallible m) => ScopableBuilder (BuilderT m) where
---   buildScopedAndThen cont1 cont2 = BuilderT $ locallyMutableInplaceT
---     (runBuilderT' do
---        Emits <- fabricateEmitsEvidenceM
---        cont1 )
---     (\rdecls e -> runBuilderT' $ cont2 (unRNest rdecls) e)
---   {-# INLINE buildScopedAndThen #-}
+instance (Fallible m) => ScopableBuilder (BuilderT m) where
+  buildScopedAndThen cont1 cont2 = BuilderT $ locallyMutableInplaceT
+    (runBuilderT' do
+       Emits <- fabricateEmitsEvidenceM
+       cont1 )
+    (\rdecls e -> runBuilderT' $ cont2 rdecls e)
+  {-# INLINE buildScopedAndThen #-}
 
--- newtype BuilderDeclEmission (n::S) (l::S) = BuilderDeclEmission (Decl n l)
--- instance ExtOutMap Env BuilderDeclEmission where
---   extendOutMap env (BuilderDeclEmission d) = env `extendOutMap` toEnvFrag d
---   {-# INLINE extendOutMap #-}
--- instance ExtOutFrag BuilderEmissions BuilderDeclEmission where
---   extendOutFrag rn (BuilderDeclEmission d) = RNest rn d
---   {-# INLINE extendOutFrag #-}
+newtype BuilderDeclEmission (n::S) (l::S) = BuilderDeclEmission (Decl n l)
 
--- instance Fallible m => Builder (BuilderT m) where
---   rawEmitDecl hint ann expr = do
---     ty <- return $ getType expr
---     v <- BuilderT $ freshExtendSubInplaceT hint \b ->
---            (BuilderDeclEmission $ Let b $ DeclBinding ann expr, binderName b)
---     -- -- Debugging snippet
---     -- traceM $ pprint v ++ " = " ++ pprint expr
---     return $ AtomVar v ty
---   {-# INLINE rawEmitDecl #-}
+instance ProvesExt BuilderDeclEmission where
+  toExtEvidence (BuilderDeclEmission d) = toExtEvidence d
+
+instance BindsNames BuilderDeclEmission where
+  toScopeFrag (BuilderDeclEmission d) = toScopeFrag d
+  {-# INLINE toScopeFrag #-}
+
+instance ExtOutFrag BuilderEmissions BuilderDeclEmission where
+  extendOutFrag rn (BuilderDeclEmission d) = RNest rn d
+  {-# INLINE extendOutFrag #-}
+
+instance Fallible m => Builder (BuilderT m) where
+  rawEmitDecl hint expr = do
+    BuilderT $ freshExtendSubInplaceT hint \b ->
+           (BuilderDeclEmission $ Let b expr, binderName b)
+  -- {-# INLINE rawEmitDecl #-}
 
 -- instance Fallible m => EnvReader (BuilderT m) where
 --   unsafeGetEnv = BuilderT $ getOutMapInplaceT
@@ -202,16 +202,16 @@ liftEmitBuilder cont = do
 --   refreshAbs ab cont = BuilderT $ refreshAbs ab \b e -> runBuilderT' $ cont b e
 --   {-# INLINE refreshAbs #-}
 
--- instance (SinkableE v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
---   buildScopedAndThen cont1 cont2 = SubstReaderT \env ->
---     buildScopedAndThen
---       (runReaderT (runSubstReaderT' cont1) (sink env))
---       (\d e -> runReaderT (runSubstReaderT' $ cont2 d e) (sink env))
---   {-# INLINE buildScopedAndThen #-}
+instance (SinkableE v, ScopableBuilder m) => ScopableBuilder (SubstReaderT v m i) where
+  buildScopedAndThen cont1 cont2 = SubstReaderT \env ->
+    buildScopedAndThen
+      (runReaderT (runSubstReaderT' cont1) (sink env))
+      (\d e -> runReaderT (runSubstReaderT' $ cont2 d e) (sink env))
+  {-# INLINE buildScopedAndThen #-}
 
--- instance (SinkableE v, Builder m) => Builder (SubstReaderT v m i) where
---   rawEmitDecl hint ann expr = liftSubstReaderT $ emitDecl hint ann expr
---   {-# INLINE rawEmitDecl #-}
+instance (SinkableE v, Builder m) => Builder (SubstReaderT v m i) where
+  rawEmitDecl hint expr = liftSubstReaderT $ emitDecl hint expr
+  {-# INLINE rawEmitDecl #-}
 
 -- instance (SinkableE e, ScopableBuilder m) => ScopableBuilder (ReaderT1 e m) where
 --   buildScopedAndThen cont1 cont2 = ReaderT1 $ ReaderT \env ->
@@ -296,10 +296,11 @@ newtype WrapWithEmits n r =
 -- -- === lambda-like things ===
 
 buildBlock
-  :: (ScopableBuilder m, HasNamesE e)
+  :: (ScopableBuilder m)
   => (forall l. (Emits l, DExt n l) => m l (Atom l))
   -> m n (Expr n)
-buildBlock cont = mkBlock =<< buildScoped cont
+buildBlock cont = buildScopedAndThen cont \decls result ->
+  return $ declsToExpr decls result
 {-# INLINE buildBlock #-}
 
 -- buildCoreLam
@@ -685,8 +686,7 @@ buildBlock cont = mkBlock =<< buildScoped cont
 --     ProjectProduct i -> reduceProj i x'
 --     UnwrapNewtype    -> reduceUnwrap x'
 
-mkBlock :: Abs Decls Atom n -> m n (Expr n)
-mkBlock (Abs Empty expr) = undefined -- return $ toExpr expr
+-- mkBlock :: Abs Decls Atom n -> m n (Expr n)
 -- mkBlock (Abs decls body) = do
 --   let block = Abs decls (toExpr body)
 --   effTy <- blockEffTy block

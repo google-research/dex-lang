@@ -37,10 +37,9 @@ simplifyTopFun f = liftSimplifyM $ simplifyLam f
 -- === Simplification monad ===
 
 newtype SimplifyM (i::S) (o::S) (a:: *) = SimplifyM
-  { runSimplifyM'
-    :: SubstReaderT SimpSubstVal (ScopeReaderT HardFailM) i o a }
-  deriving ( Functor, Applicative, Monad, ScopeReader
-           , SubstReader SimpSubstVal, MonadFail)
+  { runSimplifyM' :: SubstReaderT SimpSubstVal BuilderM i o a }
+  deriving ( Functor, Applicative, Monad, ScopeReader, ScopableBuilder
+           , Builder, SubstReader SimpSubstVal, Fallible, MonadFail)
 
 data SimpVal (n::S) =
    SimpAtom (Atom n)             -- local data vars
@@ -57,8 +56,8 @@ instance SinkableE SimpVal where
   sinkingProofE _ = undefined
 
 liftSimplifyM :: Monad m => SimplifyM VoidS VoidS a -> m a
-liftSimplifyM cont = return $ runHardFail $
-  runScopeReaderT emptyOutMap $ runSubstReaderT voidSubst $ runSimplifyM' cont
+liftSimplifyM cont = runScopeReaderT emptyOutMap $ liftBuilder $
+  runSubstReaderT voidSubst $ runSimplifyM' cont
 {-# INLINE liftSimplifyM #-}
 
 -- liftDoubleBuilderToSimplifyM :: DoubleBuilder o a -> SimplifyM i o a
@@ -372,7 +371,18 @@ simplifyLam (CoreLamExpr _ ab) = go ab
    go (Abs Empty body) = liftM (Abs Empty) $ buildBlock $ simplifyExpr body
 
 simplifyExpr :: Emits o => CExpr i -> SimplifyM i o (Atom o)
-simplifyExpr = undefined
+simplifyExpr = \case
+  CLit val -> return $ Lit val
+  CPrimOp ty op -> do
+    op' <- mapM simplifyExpr op
+    ty <- simplifyType ty
+    emit $ PrimOp ty op'
+  e -> error $ show e
+
+simplifyType :: CType i -> SimplifyM i o (Type o)
+simplifyType = \case
+  CTyCon con -> case con of
+    CBaseType t -> return $ BaseType t
 
 -- simplifyLam (LamExpr bsTop body) = case bsTop of
 --   Nest b bs -> withSimplifiedBinder b \b' -> do

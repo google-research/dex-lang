@@ -76,7 +76,7 @@ instance Pretty (Expr n) where
     Case   _ _ _ -> undefined
     For    _ _ -> undefined
     While  _ -> undefined
-    PrimOp _ _ -> undefined
+    PrimOp _ op -> pr op
 
 instance SinkableE      Expr
 instance HoistableE     Expr
@@ -87,7 +87,12 @@ instance Store (Expr n)
 
 instance GenericE Atom where
   type RepE Atom = UnitE
-instance Pretty (Atom n)
+
+instance Pretty (Atom n) where
+  pr = \case
+    Var v _ -> pr v
+    Lit l -> pr l
+
 instance SinkableE      Atom
 instance HoistableE     Atom
 instance RenameE        Atom

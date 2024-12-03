@@ -102,20 +102,13 @@ getSuperclassType bsAbove (Nest b@(_:>t) bs) = \case
   i -> getSuperclassType (RNest bsAbove b) bs (i-1)
 
 instance HasType Expr where
-  getType expr = undefined
-  -- getType expr = case expr of
-    -- App (EffTy _ ty) _ _ -> ty
-    -- TopApp (EffTy _ ty) _ _ -> ty
-    -- TabApp t _ _ -> t
-    -- Atom x   -> getType x
-    -- Block (EffTy _ ty) _ -> ty
-    -- TabCon ty _ -> ty
-    -- PrimOp ty _ -> ty
-    -- Case _ _ (EffTy _ resultTy) -> resultTy
-    -- ApplyMethod (EffTy _ t) _ _ _ -> t
-    -- Project t _ _ -> t
-    -- Unwrap t _ -> t
-    -- Hof  (TypedHof (EffTy _ ty) _) -> ty
+  getType = \case
+    Block ty _ -> ty
+    TopApp ty _ _ -> ty
+    PrimOp ty _ -> ty
+    Case ty _ _ -> ty
+    For _ _ -> undefined
+    While _ -> undefined
 
 -- instance HasType MemOp where
 --   getType = \case
