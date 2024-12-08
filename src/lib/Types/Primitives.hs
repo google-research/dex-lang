@@ -23,10 +23,14 @@ module Types.Primitives (
 
 import qualified Data.ByteString       as BS
 import Data.Int
+import qualified Data.Map.Strict       as M
 import Data.String (IsString (..))
+import Data.Functor (void)
+import Data.Foldable (toList)
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
+import Data.Tuple (swap)
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import Numeric
@@ -93,6 +97,7 @@ data MiscOp a =
  -- Create an enum (payload-free ADT) from a Word8
  | ToEnum a
  -- printing
+ | DebugPrintInt a -- side-effecting op that prints directly. Useful when everything is broken.
  | OutputStream
  | ShowAny a    -- implemented in Simplify
  | ShowScalar a -- Implemented in Imp. Result is a pair of an `IdxRepValTy`
@@ -376,29 +381,101 @@ instance Pretty BinOp where pr x = pr $ show x
 instance Pretty UnOp  where pr x = pr $ show x
 
 instance Pretty a => Pretty (PrimOp a) where
-  pr = \case
-    MemOp    op -> pr op
-    VectorOp op -> pr op
-    RefOp ref eff -> case eff of
-      MGet        -> app "get" [pr ref]
-      MPut x      -> app "(:=)" [pr ref, pr x]
-      IndexRef i  -> app "(!)"  [pr ref, pr i]
-    UnOp  op x   -> app (pr op) [pr x]
-    BinOp op x y -> app (pr op) [pr x, pr y]
-    MiscOp op -> undefined
+  pr op = app (pr $ primNameToStr (void op)) (map pr $ toList op)
 
 instance Pretty a => Pretty (MemOp a) where
-  pr = \case
-    PtrOffset ptr idx -> app "(+>)" [pr idx]
-    PtrLoad   ptr     -> app "load" [pr ptr]
-    op -> undefined
+  pr op = pr $ MemOp op
 
 instance Pretty a => Pretty (VectorOp a) where
-  pr = \case
-    VectorBroadcast v -> app "vbroadcast"  [pr v]
-    VectorIota -> app "viota" []
-    VectorIdx tbl i -> app "vslice" [pr tbl, pr i]
-    VectorSubref ref i -> app "vrefslice" [pr ref, pr i]
+  pr op = pr $ VectorOp op
 
 instance Pretty Explicitness where
   pr expl = pr (show expl)
+
+-- === Primitive names ===
+
+type PrimName = PrimOp ()
+
+strToPrimName :: String -> Maybe PrimName
+strToPrimName s = M.lookup s primNames
+
+primNameToStr :: PrimName -> String
+primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
+  Just s  -> s
+  Nothing -> show prim
+{-# NOINLINE primNameToStr #-}
+
+primNames :: M.Map String PrimName
+primNames = M.fromList
+  [
+  --   ("get"      , UMGet), ("put"    , UMPut)
+  -- , ("while"    , UWhile)
+  -- , ("linearize", ULinearize), ("linearTranspose", UTranspose)
+    ("iadd" , binary IAdd),  ("isub"  , binary ISub)
+  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
+  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
+  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
+  , ("irem" , binary IRem)
+  , ("fpow" , binary FPow)
+  , ("and"  , binary BAnd),  ("or"    , binary BOr )
+  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
+  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
+  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
+  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
+  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
+  , ("fneg" , unary  FNeg)
+  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
+  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
+  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
+  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
+  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
+  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
+  , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
+  -- , ("TyKind"    , UPrimTC $ TypeKind)
+  -- , ("Float64"   , baseTy $ Scalar Float64Type)
+  -- , ("Float32"   , baseTy $ Scalar Float32Type)
+  -- , ("Int64"     , baseTy $ Scalar Int64Type)
+  -- , ("Int32"     , baseTy $ Scalar Int32Type)
+  -- , ("Word8"     , baseTy $ Scalar Word8Type)
+  -- , ("Word32"    , baseTy $ Scalar Word32Type)
+  -- , ("Word64"    , baseTy $ Scalar Word64Type)
+  -- , ("Int32Ptr"  , baseTy $ ptrTy $ Scalar Int32Type)
+  -- , ("Word8Ptr"  , baseTy $ ptrTy $ Scalar Word8Type)
+  -- , ("Word32Ptr" , baseTy $ ptrTy $ Scalar Word32Type)
+  -- , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
+  -- , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
+  -- , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
+  -- , ("Nat"           , UNat)
+  -- , ("Fin"           , UFin)
+  -- , ("NatCon"        , UNatCon)
+  -- , ("Ref"        , UPrimTC $ RefType)
+  -- , ("indexRef"   , UIndexRef)
+  , ("alloc"    , memOp $ IOAlloc ())
+  , ("free"     , memOp $ IOFree ())
+  , ("ptrOffset", memOp $ PtrOffset () ())
+  , ("ptrLoad"  , memOp $ PtrLoad ())
+  , ("ptrStore" , memOp $ PtrStore () ())
+  , ("throwError"    , miscOp $ ThrowError)
+  , ("dataConTag"    , miscOp $ SumTag ())
+  , ("toEnum"        , miscOp $ ToEnum ())
+  , ("outputStream"  , miscOp $ OutputStream)
+  , ("cast"          , miscOp $ CastOp ())
+  , ("bitcast"       , miscOp $ BitcastOp ())
+  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce ())
+  , ("garbageVal"    , miscOp $ GarbageVal)
+  , ("select"        , miscOp $ Select () () ())
+  , ("showAny"       , miscOp $ ShowAny ())
+  , ("showScalar"    , miscOp $ ShowScalar ())
+  , ("debugPrintInt" , miscOp $ DebugPrintInt ())
+  -- , ("projNewtype" , UProjNewtype)
+  -- , ("applyMethod0" , UApplyMethod 0)
+  -- , ("applyMethod1" , UApplyMethod 1)
+  -- , ("applyMethod2" , UApplyMethod 2)
+  -- , ("explicitApply", UExplicitApply)
+  -- , ("monoLit", UMonoLiteral)
+  ]
+  where
+    binary op = BinOp  op () ()
+    unary  op = UnOp   op ()
+    miscOp op = MiscOp op
+    memOp  op = MemOp  op

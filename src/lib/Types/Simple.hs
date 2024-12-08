@@ -68,10 +68,26 @@ type PiType = Abs (Nest Binder) Type :: E
 -- === type classes ===
 
 instance GenericE Expr where
-  type RepE Expr = UnitE
+  type RepE Expr = EitherE6
+  {- Block  -} (Type `PairE` Block)
+  {- TopApp -} (Type `PairE` LiftE TopName `PairE` ListE Atom)
+  {- Case   -} (Type `PairE` Atom          `PairE` ListE LamExpr)
+  {- For    -} (Atom `PairE` LamExpr)
+  {- While  -} (Expr)
+  {- PrimOp -} (Type `PairE` ComposeE PrimOp Atom)
+  fromE = \case
+    Block  t b    -> Case0 $ t `PairE` b
+    TopApp t f xs -> Case1 $ t `PairE` LiftE f `PairE` ListE xs
+    Case   t x fs -> Case2 $ t `PairE` x `PairE` ListE fs
+    For    n f    -> Case3 $ n `PairE` f
+    While  e      -> Case4 e
+    PrimOp t op   -> Case5 $ t `PairE` ComposeE op
+  {-# INLINE fromE #-}
+
 instance Pretty (Expr n) where
   pr = \case
-    Block _ b -> pr b
+    Block _ (Abs decls result) ->
+      vcat (nestToList' pr decls ++ [pr result])
     TopApp _ _ _ -> undefined
     Case   _ _ _ -> undefined
     For    _ _ -> undefined
@@ -86,7 +102,7 @@ instance AlphaHashableE Expr
 instance Store (Expr n)
 
 instance GenericE Atom where
-  type RepE Atom = UnitE
+  type RepE Atom = EitherE (LiftE LitVal) (Name `PairE` Type)
 
 instance Pretty (Atom n) where
   pr = \case
@@ -101,7 +117,21 @@ instance AlphaHashableE Atom
 instance Store (Atom n)
 
 instance GenericE Type where
-  type RepE Type = UnitE
+  type RepE Type = EitherE6
+ {- BaseType  -} (LiftE BaseType)
+ {- ProdType  -} (ListE Type)
+ {- SumType   -} (ListE Type)
+ {- RefType   -} (Type)
+ {- DepPairTy -} (DepPairType)
+ {- TabPi     -} (TabPiType)
+  fromE = \case
+    BaseType t  -> Case0 $ LiftE t
+    ProdType ts -> Case1 $ ListE ts
+    SumType ts  -> Case2 $ ListE ts
+    RefType t   -> Case3 $ t
+    DepPairTy p -> Case4 $ p
+    TabPi t     -> Case5 $ t
+
 instance Pretty (Type n)
 instance SinkableE      Type
 instance HoistableE     Type
@@ -126,7 +156,10 @@ instance GenericB Decl where
   {-# INLINE fromB #-}
   toB   (b :> expr) = Let b expr
   {-# INLINE toB #-}
-instance Pretty (Decl n l)
+
+instance Pretty (Decl n l) where
+  pr (Let b expr) = hcat [pr b, " = ", pr expr]
+
 instance SinkableB      Decl
 instance HoistableB     Decl
 instance RenameB        Decl

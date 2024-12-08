@@ -614,122 +614,6 @@ data EnvQuery =
  | SourceNameInfo   SourceName
    deriving (Show, Generic)
 
--- === Primitive names ===
-
-data PrimName =
-   UBaseType BaseType
- | UPrimTC   TCName
- | UCon      ConName
- | UMemOp    MemOpName
- | UVectorOp VectorOpName
- | UMiscOp   MiscOpName
- | UUnOp     UnOp
- | UBinOp    BinOp
- | UMGet | UMPut
- | UWhile | ULinearize | UTranspose
- | UProjNewtype | UExplicitApply | UMonoLiteral
- | UIndexRef | UApplyMethod Int
- | UNat | UNatCon | UFin
- | UTuple -- overloaded for type constructor and data constructor, resolved in inference
-   deriving (Show, Eq, Generic)
-
-data TCName = ProdType | SumType | RefType | TypeKind  deriving (Show, Eq, Generic)
-data ConName = ProdCon | SumCon Int  deriving (Show, Eq, Generic)
-
-type MemOpName = MemOp ()
-type VectorOpName = VectorOp ()
-type MiscOpName = MiscOp ()
-
--- === primitive constructors and operators ===
-
-strToPrimName :: String -> Maybe PrimName
-strToPrimName s = M.lookup s primNames
-
-primNameToStr :: PrimName -> String
-primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
-  Just s  -> s
-  Nothing -> show prim
-
-showPrimName :: PrimName -> String
-showPrimName prim = primNameToStr prim
-{-# NOINLINE showPrimName #-}
-
-primNames :: M.Map String PrimName
-primNames = M.fromList
-  [ ("get"      , UMGet), ("put"    , UMPut)
-  , ("while"    , UWhile)
-  , ("linearize", ULinearize), ("linearTranspose", UTranspose)
-  , ("iadd" , binary IAdd),  ("isub"  , binary ISub)
-  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
-  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
-  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
-  , ("irem" , binary IRem)
-  , ("fpow" , binary FPow)
-  , ("and"  , binary BAnd),  ("or"    , binary BOr )
-  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
-  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
-  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
-  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
-  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
-  , ("fneg" , unary  FNeg)
-  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
-  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
-  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
-  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
-  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
-  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
-  , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  , ("TyKind"    , UPrimTC $ TypeKind)
-  , ("Float64"   , baseTy $ Scalar Float64Type)
-  , ("Float32"   , baseTy $ Scalar Float32Type)
-  , ("Int64"     , baseTy $ Scalar Int64Type)
-  , ("Int32"     , baseTy $ Scalar Int32Type)
-  , ("Word8"     , baseTy $ Scalar Word8Type)
-  , ("Word32"    , baseTy $ Scalar Word32Type)
-  , ("Word64"    , baseTy $ Scalar Word64Type)
-  , ("Int32Ptr"  , baseTy $ ptrTy $ Scalar Int32Type)
-  , ("Word8Ptr"  , baseTy $ ptrTy $ Scalar Word8Type)
-  , ("Word32Ptr" , baseTy $ ptrTy $ Scalar Word32Type)
-  , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
-  , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
-  , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
-  , ("Nat"           , UNat)
-  , ("Fin"           , UFin)
-  , ("NatCon"        , UNatCon)
-  , ("Ref"        , UPrimTC $ RefType)
-  , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ IOAlloc ())
-  , ("free"     , memOp $ IOFree ())
-  , ("ptrOffset", memOp $ PtrOffset () ())
-  , ("ptrLoad"  , memOp $ PtrLoad ())
-  , ("ptrStore" , memOp $ PtrStore () ())
-  , ("throwError"    , miscOp $ ThrowError)
-  , ("dataConTag"    , miscOp $ SumTag ())
-  , ("toEnum"        , miscOp $ ToEnum ())
-  , ("outputStream"  , miscOp $ OutputStream)
-  , ("cast"          , miscOp $ CastOp ())
-  , ("bitcast"       , miscOp $ BitcastOp ())
-  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce ())
-  , ("garbageVal"    , miscOp $ GarbageVal)
-  , ("select"        , miscOp $ Select () () ())
-  , ("showAny"       , miscOp $ ShowAny ())
-  , ("showScalar"    , miscOp $ ShowScalar ())
-  , ("projNewtype" , UProjNewtype)
-  , ("applyMethod0" , UApplyMethod 0)
-  , ("applyMethod1" , UApplyMethod 1)
-  , ("applyMethod2" , UApplyMethod 2)
-  , ("explicitApply", UExplicitApply)
-  , ("monoLit", UMonoLiteral)
-  ]
-  where
-    binary op = UBinOp op
-    baseTy b  = UBaseType b
-    memOp op  = UMemOp op
-    unary  op = UUnOp  op
-    ptrTy  ty = PtrType (CPU, ty)
-    miscOp op = UMiscOp op
-
-
 -- === instances ===
 
 instance Semigroup (SourceMap n) where
@@ -907,7 +791,7 @@ instance Pretty CSBlock where
 instance Pretty Group where
   pr = \case
     CLeaf leaf -> pr leaf
-    CPrim prim args -> app (pr prim) (map pr args)
+    CPrim prim args -> app (pr $ primNameToStr prim) (map pr args)
 
 
 -- prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
@@ -916,7 +800,6 @@ instance Pretty Group where
 --     0 -> atPrec ArgPrec primName
 --     _ -> atPrec AppPrec $ pAppArg primName args
 --   where primName = pretty name
-    
   -- prettyPrec (CParens blk)  =
   --   atPrec ArgPrec $ "(" <> p blk <> ")"
   -- prettyPrec (CBrackets g) = atPrec ArgPrec $ pretty g
@@ -976,9 +859,6 @@ instance Pretty CSDecl where
   --     Nothing  -> "instance "
   --     (Just n) -> "named-instance " <> p n <> " "
   -- pr (CExpr e) = p e
-
-instance Pretty PrimName where
-   pr primName = pr $ "%" ++ showPrimName primName
 
 instance Pretty (UDataDefTrail n) where
   pr (UDataDefTrail bs) = pr $ unsafeFromNest bs
@@ -1096,7 +976,7 @@ instance Pretty (UExpr' n) where
 --     UTypeAnn v ty -> atPrec LowestPrec $
 --       group $ pApp v <> line <> ":" <+> pApp ty
 --     UTabCon xs -> atPrec ArgPrec $ p xs
-    UPrim prim xs -> app (pr prim) (map pr xs)
+    UPrim prim xs -> app (pr (primNameToStr prim)) (map pr xs)
 --     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
 --       nest 2 (prettyLines alts)
 --     UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f

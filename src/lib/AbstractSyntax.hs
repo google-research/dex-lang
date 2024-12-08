@@ -416,7 +416,7 @@ expr (WithSrcs sid sids grp) = WithSrcE sid <$> case grp of
   CParens [g] -> do
     WithSrcE _ result <- expr g
     return result
-  CParens gs -> UPrim UTuple <$> mapM expr gs
+  CParens gs -> undefined -- UPrim UTuple <$> mapM expr gs
   -- Table constructors here.  Other uses of square brackets
   -- should be detected upstream, before calling expr.
   CBrackets gs -> UTabCon <$> mapM expr gs
@@ -542,7 +542,7 @@ charExpr :: Char -> (UExpr' VoidS)
 charExpr c = ULit $ Word8Lit $ fromIntegral $ fromEnum c
 
 unitExpr :: SrcId -> UExpr VoidS
-unitExpr sid = WithSrcE sid $ UPrim (UCon $ S.ProdCon) []
+unitExpr sid = undefined -- WithSrcE sid $ UPrim (UCon $ S.ProdCon) []
 
 -- === Builders ===
 

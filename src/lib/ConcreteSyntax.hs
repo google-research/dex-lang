@@ -5,8 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module ConcreteSyntax (
-  parseSourceBlocks, mustParseit, sourceBlocks, sourceBlock,
-  keyWordStrs, showPrimName,
+  parseSourceBlocks, mustParseit, sourceBlocks, sourceBlock, keyWordStrs,
   parseUModule, parseUModuleDeps,
   finishUModuleParse, preludeImportBlock, mustParseSourceBlock,
   pattern Identifier) where

@@ -383,7 +383,7 @@ simplifyType :: CType i -> SimplifyM i o (Type o)
 simplifyType = \case
   CTyCon con -> case con of
     CBaseType t -> return $ BaseType t
-
+    CProdType ts -> ProdType <$> mapM simplifyType ts
 -- simplifyLam (LamExpr bsTop body) = case bsTop of
 --   Nest b bs -> withSimplifiedBinder b \b' -> do
 --     LamExpr bs' body' <- simplifyLam $ LamExpr bs body

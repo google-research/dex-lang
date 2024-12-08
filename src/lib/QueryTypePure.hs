@@ -130,7 +130,7 @@ instance HasCType CExpr where
     CBlock ty _ -> ty
     CVar   _ ty -> ty
     CLit   l    -> CTyCon $ CBaseType $ litType l
-    -- CPrimOp (CType n) (PrimOp (CExpr n))
+    CPrimOp ty _ -> ty
     -- CTyCon  (CTyCon n)
     -- Lam         (CoreLamExpr n)
     -- NewtypeCon  (NewtypeCon n) (CExpr n)

@@ -2639,14 +2639,7 @@ instance (forall n' l'. Show (b n' l')) => Show (Nest b n l) where
   show (Nest b rest) = "(Nest " <> show b <> " in " <> show rest <> ")"
 
 instance (forall (n'::S) (l'::S). Pretty (b n' l')) => Pretty (Nest b n l) where
-  pr Empty = ""
-  pr ns = undefined
-    -- group $ line' <> go ns
-    -- where
-    --   go :: (forall (n'::S) (l'::S). Pretty (b n' l')) => Nest b n l -> Doc ann
-    --   go Empty = ""
-    --   go (Nest b Empty) = pretty b
-    --   go (Nest b rest) = pretty b <> line <> pretty rest
+  pr xs = hlist "[,]" (nestToList' pr xs)
 
 instance SinkableB b => SinkableB (Nest b) where
   sinkingProofB fresh Empty cont = cont fresh Empty

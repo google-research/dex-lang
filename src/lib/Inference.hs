@@ -988,7 +988,7 @@ checkOrInferApp appSrcId funSrcId f' posArgs namedArgs reqTy = undefined
 --   when (not $ null unrecognizedNames) do
 --     throw sid $ UnrecognizedOptionalArgs (map pprint unrecognizedNames) (map pprint acceptedNames)
 
-matchPrimApp :: PrimName -> [CAtom o] -> InfererM i o (CAtom o)
+matchPrimApp :: PrimName -> [CAtom o] -> InfererM i o (CExpr o)
 matchPrimApp = \case
 --  UNat                -> \case ~[]  -> return $ toAtom $ NewtypeTyCon Nat
 --  UFin                -> \case ~[n] -> return $ toAtom $ NewtypeTyCon (Fin n)
@@ -1002,10 +1002,10 @@ matchPrimApp = \case
 --  UCon con -> case con of
 --    S.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
 --    S.SumCon _ -> error "not supported"
---  -- UMiscOp op -> \x -> emit =<< MiscOp <$> matchGenericOp op x
---  -- UMemOp  op -> \x -> emit =<< MemOp  <$> matchGenericOp op x
- UBinOp op -> \case ~[x, y] -> return $ CPrimOp (getCType x) $ BinOp op x y
---  UUnOp  op -> \case ~[x]    -> emitUnOp  op x
+ MiscOp op -> \xs -> matchMiscOp op xs
+ -- MemOp  op -> \xs -> CPrimOp <$> MemOp  <$> matchGenericOp op xs
+ UnOp  op ()    -> \case ~[x]    -> return $ CPrimOp (getCType x) $ UnOp op x
+ BinOp op () () -> \case ~[x, y] -> return $ CPrimOp (getCType x) $ BinOp op x y
 --  UMGet      -> \case ~[r]    -> emitRefOp r MGet
 --  UMPut      -> \case ~[r, x] -> emitRefOp r $ MPut x
 --  UIndexRef  -> \case ~[r, i] -> indexRef r i
@@ -1013,30 +1013,38 @@ matchPrimApp = \case
 --  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
 --  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
 --  p -> \case xs -> throwInternal $ "Bad primitive application: " ++ show (p, xs)
---  where
---    lam2 :: Fallible m => CAtom n -> m (LamExpr n)
---    lam2 x = do
---      ExplicitCoreLam (BinaryNest b1 b2) body <- return x
---      return $ BinaryLamExpr b1 b2 body
 
---    lam1 :: Fallible m => CAtom n -> m (LamExpr n)
---    lam1 x = do
---      ExplicitCoreLam (UnaryNest b) body <- return x
---      return $ UnaryLamExpr b body
+cUnitTy :: CType n
+cUnitTy = CTyCon $ CProdType []
 
---    -- matchGenericOp :: GenericOp op => OpConst op -> [CAtom n] -> InfererM i n (op n)
---    -- matchGenericOp op xs = do
---    --   (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
---    --     case getType x of
---    --       TyCon (Kind TypeKind) -> do
---    --         Just x' <- return $ toMaybeType x
---    --         return $ Left x'
---    --       _ -> return $ Right x
---    --   let tyArgs' = case tyArgs of
---    --         [] -> Nothing
---    --         [t] -> Just t
---    --         _ -> error "Expected at most one type arg"
---    --   return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
+matchMiscOp :: MiscOp () -> [CAtom o] -> InfererM i o (CExpr o)
+matchMiscOp = \case
+  DebugPrintInt () -> \case ~[x] -> return $ CPrimOp cUnitTy $ MiscOp $ DebugPrintInt x
+--                            where
+-- --    lam2 :: Fallible m => CAtom n -> m (LamExpr n)
+-- --    lam2 x = do
+-- --      ExplicitCoreLam (BinaryNest b1 b2) body <- return x
+-- --      return $ BinaryLamExpr b1 b2 body
+
+-- --    lam1 :: Fallible m => CAtom n -> m (LamExpr n)
+-- --    lam1 x = do
+-- --      ExplicitCoreLam (UnaryNest b) body <- return x
+-- --      return $ UnaryLamExpr b body
+
+--    matchGenericOp :: Functor op => op () -> [CAtom n] -> InfererM i n (op (CAtom n))
+--    matchGenericOp op xs = undefined
+-- do
+--      (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
+--        case getType x of
+--          TyCon (Kind TypeKind) -> do
+--            Just x' <- return $ toMaybeType x
+--            return $ Left x'
+--          _ -> return $ Right x
+--      let tyArgs' = case tyArgs of
+--            [] -> Nothing
+--            [t] -> Just t
+--            _ -> error "Expected at most one type arg"
+--      return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
 
 -- pattern ExplicitCoreLam :: Nest CBinder n l -> CExpr l -> CAtom n
 -- pattern ExplicitCoreLam bs body <- Con (Lam (CoreLamExpr _ (LamExpr bs body)))
