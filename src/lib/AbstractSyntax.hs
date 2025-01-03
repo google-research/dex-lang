@@ -52,8 +52,7 @@ import Control.Monad (forM, when)
 import Data.Functor
 import Data.Either
 import Data.Maybe (catMaybes)
--- import Data.Set qualified as S
-import Data.Text (Text)
+import qualified Data.ByteString as BS
 
 import ConcreteSyntax
 import Err
@@ -78,7 +77,7 @@ parseBlock b = liftSyntaxM $ block b
 liftSyntaxM :: Fallible m => SyntaxM a -> m a
 liftSyntaxM cont = liftExcept cont
 
-parseTopDeclRepl :: Text -> Maybe SourceBlock
+parseTopDeclRepl :: BString -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
   _ -> case checkSourceBlockParses $ sbContents b of
@@ -370,7 +369,7 @@ singleArg = \case
     ((,) <$> withoutSrc <$> identifier "named argument" lhs <*> expr rhs)
   g -> Left <$> expr g
 
-identifier :: String -> GroupW -> SyntaxM SourceNameW
+identifier :: BString -> GroupW -> SyntaxM SourceNameW
 identifier ctx (WithSrcs sid _ g) = case g of
   CLeaf (CIdentifier name) -> return $ WithSrc sid name
   _ -> throw sid $ ExpectedIdentifier ctx
@@ -530,10 +529,11 @@ leaf sid = \case
   CIdentifier name  -> return $ fromSourceNameW $ WithSrc sid name
   CNat word         -> return $ UNatLit word
   CInt int          -> return $ UIntLit int
-  CString str       -> do
-    xs <- return $ map (WithSrcE sid . charExpr) str
-    let toListVar = mkUVar sid "to_list"
-    return $ explicitApp toListVar [WithSrcE sid (UTabCon xs)]
+  CString str       -> undefined
+  -- CString str       -> do
+  --   xs <- return $ map (WithSrcE sid . charExpr) $ BS.unpack str
+  --   let toListVar = mkUVar sid "to_list"
+  --   return $ explicitApp toListVar [WithSrcE sid (UTabCon xs)]
   CChar char        -> return $ charExpr char
   CFloat num        -> return $ UFloatLit num
   CHole             -> return   UHole

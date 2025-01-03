@@ -26,6 +26,7 @@ import Data.Store
 import PPrint
 import GHC.Generics (Generic)
 import Data.String
+import Util (BString, bs2str)
 
 -- === RawName ===
 
@@ -150,6 +151,9 @@ instance HasNameHint RawName where
 
 instance HasNameHint String where
   getNameHint = hintFromString
+
+instance HasNameHint BString where
+  getNameHint = hintFromString . bs2str
 
 instance IsString NameHint where
   fromString = hintFromString

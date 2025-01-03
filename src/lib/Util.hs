@@ -19,20 +19,20 @@ import System.CPUTime
 import GHC.Base (getTag)
 import GHC.Exts ((==#), tagToEnum#)
 import Crypto.Hash
+import qualified Data.ByteString as BS
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (catMaybes, mapMaybe)
 import Data.List (sort)
 import Data.Hashable (Hashable)
 import Data.Store (Store)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
+import Data.String (fromString)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.ByteString    as BS
 import Data.Foldable
 import Data.List.NonEmpty (NonEmpty (..))
 import GHC.Generics (Generic)
+import GHC.Stack
 
-import Err
 import PPrint
 
 class IsBool a where
@@ -284,31 +284,6 @@ liftMaybe Nothing = empty
 liftMaybe (Just x) = pure x
 {-# INLINE liftMaybe #-}
 
--- === zippable class ===
-
-class Zippable f where
-  zipWithZ :: MonadFail m => (a -> b -> m c) -> f a -> f b -> m (f c)
-
-instance Zippable [] where
-  zipWithZ _ [] [] = return []
-  zipWithZ f (x:xs) (y:ys) = (:) <$> f x y <*> zipWithZ f xs ys
-  zipWithZ _ _ _ = zipErr
-
-instance Zippable NE.NonEmpty where
-  zipWithZ f xs ys = NE.fromList <$> zipWithZ f (NE.toList xs) (NE.toList ys)
-
-zipWithZ_ :: Zippable f => MonadFail m => (a -> b -> m c) -> f a -> f b -> m ()
-zipWithZ_ f xs ys = zipWithZ f xs ys >> return ()
-
-zipErr :: MonadFail m => m a
-zipErr = fail $ "zip error. Call stack:\n" ++ printCurrentCallStack (getCurrentCallStack ())
-
-forMZipped :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m (f c)
-forMZipped xs ys f = zipWithZ f xs ys
-
-forMZipped_ :: Zippable f => MonadFail m => f a -> f b -> (a -> b -> m c) -> m ()
-forMZipped_ xs ys f = void $ forMZipped xs ys f
-
 getAlternative :: Alternative m => [a] -> m a
 getAlternative xs = asum $ map pure xs
 {-# INLINE getAlternative #-}
@@ -370,8 +345,24 @@ instance Pretty a => Pretty (Tree a) where
     Leaf x -> pr x
     Branch xs -> pr xs
 
-readFileText :: MonadIO m => FilePath -> m T.Text
-readFileText fname = liftIO $ T.decodeUtf8 <$> BS.readFile fname
+readFileText :: MonadIO m => FilePath -> m BString
+readFileText fname = liftIO $ BS.readFile fname
+
+-- === bytestring <-> string conversion ===
+
+type BString = BS.ByteString
+
+showbs :: Show a => a -> BString
+showbs x = fromString $ show x
+
+errorbs :: HasCallStack => BString -> a
+errorbs s = error $ bs2str s
+
+bs2str :: BString -> String
+bs2str = undefined
+
+str2bs :: String -> BString
+str2bs = fromString
 
 -- === bytestrings paired with their hash digest ===
 

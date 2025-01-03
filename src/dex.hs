@@ -7,11 +7,12 @@
 import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative hiding (Success, Failure)
-import Text.PrettyPrint.ANSI.Leijen (text, hardline)
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
 
+import Data.String (fromString)
 import Data.List
+import qualified Data.ByteString.Char8 as BS
 import qualified System.Console.ANSI as ANSI
 import System.Console.ANSI hiding (Color)
 
@@ -19,13 +20,15 @@ import Types.Source
 import TopLevel
 import ConcreteSyntax (parseSourceBlocks)
 import PPrint
-import Util (readFileText)
+import Util (readFileText, BString)
+
 
 data EvalMode = ReplMode
               | ScriptMode FilePath
               | WebMode    FilePath
               | GenerateHTML FilePath FilePath
               | ClearCache
+              | Doit  -- for ad-hoc haskell code
 
 data CmdOpts = CmdOpts EvalMode EvalConfig
 
@@ -36,16 +39,16 @@ runMode (CmdOpts evalMode cfg) = case evalMode of
     void $ runTopperM cfg stdOutLogger env do
       blocks <- parseSourceBlocks <$> readFileText fname
       forM_ blocks \block -> do
-        liftIO $ putStr $ pprint block
+        liftIO $ BS.putStr $ pprint block
         evalSourceBlockRepl block
-  _ -> error "not implemented"
+  Doit -> error "This is an entry point for running ad-hoc Haskell code."
 
 stdOutLogger :: Outputs -> IO ()
 stdOutLogger (Outputs outs) = do
   isatty <- queryTerminal stdOutput
   forM_ outs \out -> do
     when (outputPrintFilter out) do
-      putStr $ printOutput isatty out
+      BS.putStr $ printOutput isatty out
 
 outputPrintFilter :: Output -> Bool
 outputPrintFilter = \case
@@ -63,8 +66,7 @@ parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
 helpOption :: String -> String -> Mod f a
-helpOption optionName options =
-  helpDoc (Just (text optionName <> hardline <> text options))
+helpOption optionName options = help $ optionName <> "\n" <> options
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
@@ -73,6 +75,7 @@ parseMode = subparser $
   <> command "generate-html" (simpleInfo (GenerateHTML <$> sourceFileInfo <*> destFileInfo))
   <> command "clean"  (simpleInfo (pure ClearCache))
   <> command "script" (simpleInfo (ScriptMode <$> sourceFileInfo))
+  <> command "doit" (simpleInfo (pure Doit))
   where
     sourceFileInfo = argument str (metavar "FILE"    <> help "Source program")
     destFileInfo   = argument str (metavar "OUTFILE" <> help "Output path")
@@ -86,48 +89,33 @@ enumOption :: String -> String -> a -> [(String, a)] -> Parser a
 enumOption optName prettyOptName defaultVal options = option
   (optionList options)
   (long optName <> value defaultVal <>
-     helpOption prettyOptName (intercalate " | " $ fst <$> options))
+     helpOption prettyOptName (fromString (intercalate " | " $ fst <$> options)))
 
 parseEvalOpts :: Parser EvalConfig
-parseEvalOpts = EvalConfig
-  <$> (option pathOption $ long "lib-path" <> value [LibBuiltinPath]
-    <> metavar "PATH" <> help "Library path")
-  <*> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
+parseEvalOpts = EvalConfig [LibBuiltinPath]
+  <$> optional (strOption $ long "prelude" <> metavar "FILE" <> help "Prelude file")
   <*> flag NoOptimize Optimize (short 'O' <> help "Optimize generated code")
   <*> enumOption "print" "Print backend" PrintCodegen printBackends
   where
     printBackends = [ ("haskell", PrintHaskell)
                     , ("dex"    , PrintCodegen) ]
 
-printOutput :: Bool -> Output -> String
+printOutput :: Bool -> Output -> BString
 printOutput isatty out = case out of
   Error _ -> addColor isatty Red $ addPrefix ">" $ pprint out
   _       -> addPrefix (addColor isatty Cyan ">") $ pprint out
 
-addPrefix :: String -> String -> String
-addPrefix prefix s = unlines $ map prefixLine $ lines s
-  where prefixLine :: String -> String
+addPrefix :: BString -> BString -> BString
+addPrefix prefix s = BS.unlines $ map prefixLine $ BS.lines s
+  where prefixLine :: BString -> BString
         prefixLine l = case l of "" -> prefix
-                                 _  -> prefix ++ " " ++ l
+                                 _  -> prefix <> " " <> l
 
-addColor :: Bool -> ANSI.Color -> String -> String
+addColor :: Bool -> ANSI.Color -> BString -> BString
 addColor False _ s = s
 addColor True c s =
-  setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
-  ++ s ++ setSGRCode [Reset]
-
-pathOption :: ReadM [LibPath]
-pathOption = splitPaths [] <$> str
-  where
-    splitPaths :: [LibPath] -> String -> [LibPath]
-    splitPaths revAcc = \case
-      []  -> reverse revAcc
-      s -> let (p,t) = break (==':') s in
-             splitPaths (parseLibPath p:revAcc) (dropWhile (==':') t)
-
-    parseLibPath = \case
-      "BUILTIN_LIBRARIES" -> LibBuiltinPath
-      path -> LibDirectory path
+  fromString (setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c])
+  <> s <> fromString (setSGRCode [Reset])
 
 main :: IO ()
 main = execParser parseOpts >>= runMode

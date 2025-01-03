@@ -40,6 +40,7 @@ library
                      , Builder
                      -- , CheapReduction
                      -- , CheckType
+                     , ToLLVM
                      , ConcreteSyntax
                      -- , Core
                      -- , DPS
@@ -49,6 +50,7 @@ library
                      , Inference
                      -- , Inline
                      , Lexing
+                     , LLVMFFI
                      , MonadUtil
                      , MTL1
                      , Name
@@ -62,6 +64,7 @@ library
                      , SourceIdTraversal
                      , TopLevel
                      -- , Transpose
+                     , Types.LLVM
                      , Types.Simple
                      , Types.Complicated
                      , Types.Primitives
@@ -90,8 +93,6 @@ library
                        -- Parsing
                      , megaparsec
                      , parser-combinators
-                       -- Text output
-                     , text
                        -- Portable system utilities
                      , directory
                      , filepath
@@ -109,6 +110,7 @@ library
                      , http-types
                      , wai
                      , warp
+                     , word8
   if flag(debug)
     cpp-options:       -DDEX_DEBUG
   default-language:    Haskell2010
@@ -152,6 +154,7 @@ library
                      , NamedFieldPuns
                      , NamedWildCards
                      , NumericUnderscores
+                     , OverloadedRecordDot
                      , PatternGuards
                      , PolyKinds
                      , PostfixOperators

@@ -23,6 +23,9 @@ import SourceRename
 import SourceIdTraversal
 import PPrint
 import Simplify
+import LLVMFFI
+import ToLLVM
+import Types.LLVM
 import Types.Complicated
 import Types.Primitives
 import Types.Source hiding (CTopDecl)
@@ -43,9 +46,10 @@ class Monad m => ConfigReader m where
   getConfig :: m EvalConfig
 
 data TopperReaderData = TopperReaderData
-  { topperEvalConfig :: EvalConfig
-  , topperLogAction  :: LogAction
-  , topperTopState   :: IORef TopState }
+  { topperEvalConfig  :: EvalConfig
+  , topperLogAction   :: LogAction
+  , topperTopState    :: IORef TopState
+  , topperLLVMContext :: LLVMContext }
 
 newtype TopperM a = TopperM
   { runTopperM'
@@ -59,7 +63,8 @@ runTopperM
   -> IO (a, TopState)
 runTopperM cfg logAction initState cont = do
   stateRef <- newIORef initState
-  result <- flip runReaderT (TopperReaderData cfg logAction stateRef) $ runTopperM' cont
+  llvm <- initializeLLVM
+  result <- flip runReaderT (TopperReaderData cfg logAction stateRef llvm) $ runTopperM' cont
   finalState <- readIORef stateRef
   return (result, finalState)
 
@@ -99,8 +104,15 @@ execUDecl decl = do
   CTopLet Nothing expr <- checkPass TypePass $ inferTopUDecl renamed
   simpFun <- simplifyTopFun (exprAsNullaryFun expr)
   logPass SimpPass simpFun
+  let tempFunName = "main" -- TODO: need to get a name
+  llvmContext <- TopperM $ asks topperLLVMContext
+  llvmFun <- toLLVMEntryFun tempFunName simpFun
+  logPass LLVMPass llvmFun
+  liftIO do
+    compileLLVM llvmContext llvmFun
+    f <- getFunctionPtr llvmContext tempFunName
+    callEntryFun f []
   return ()
-  -- execCDecl typedDecl
 
 execCDecl :: CTopDecl -> TopperM ()
 execCDecl = \case

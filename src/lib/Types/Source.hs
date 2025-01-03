@@ -24,10 +24,7 @@ import Data.Aeson (ToJSON (..))
 import Data.Hashable
 import Data.Foldable
 import qualified Data.Map.Strict       as M
-import qualified Data.Text             as T
-import Data.Text (Text)
 import Data.Word
-import Data.Text (snoc, unsnoc)
 import Data.Tuple (swap)
 
 import GHC.Generics (Generic (..))
@@ -38,7 +35,7 @@ import Err
 import PPrint
 import Name
 import MonadUtil
-import Util (File (..), SnocList)
+import Util (BString, File (..), SnocList)
 
 import Types.Primitives
 
@@ -110,19 +107,19 @@ newtype NamingInfo = NamingInfo (M.Map SrcId NameInfo)
 data NameInfo =
    LocalBinder [SrcId] -- src ids of groups for which this binder is in scope
  | LocalOcc SrcId      -- src id of this occ's binder
- | TopOcc String
+ | TopOcc BString
  deriving (Show, Eq, Generic)
 
 newtype TypingInfo = TypingInfo (M.Map SrcId TypeInfo)
         deriving (Show, Eq, Semigroup, Monoid, Generic)
-type TypeStr = String
-type ExprStr = String
+type TypeStr = BString
+type ExprStr = BString
 data TypeInfo =
    ExprType TypeStr      -- type of arbitrary expression
  | BinderType TypeStr
  | AppType
     TypeStr             -- type of whole application expression
-    [(String, TypeStr)] -- names and inferred types of implicit args
+    [(BString, TypeStr)] -- names and inferred types of implicit args
     [ExprStr]           -- values of synthesized dictionaries
     [SrcId]             -- binder srcIds for vars ocurring in terms produce by inference
   deriving (Show, Eq, Generic)
@@ -136,11 +133,11 @@ type LitProg = [(SourceBlock, Outputs)]
 
 newtype Outputs = Outputs [Output] deriving (Show, Eq, Generic, Semigroup, Monoid)
 data Output =
-    TextOut String
-  | HtmlOut String
+    TextOut BString
+  | HtmlOut BString
   | SourceInfo SourceInfo       -- hovertips etc
-  | PassResult PassName (Maybe String)
-  | MiscLog String
+  | PassResult PassName (Maybe BString)
+  | MiscLog BString
   | Error Err
     deriving (Show, Eq, Generic)
 
@@ -231,7 +228,7 @@ data CLeaf
   = CIdentifier SourceName
   | CNat Word64
   | CInt Int
-  | CString String
+  | CString BString
   | CChar Char
   | CFloat Double
   | CHole
@@ -515,7 +512,7 @@ instance FromSourceNameW (b n l) => FromSourceNameW (WithSrcB b n l) where
 -- TODO: line in module where it's defined
 data TopNameDescription = TopNameDescription
   { tndModuleName  :: ModuleSourceName
-  , tndTextSummary :: String }
+  , tndTextSummary :: BString }
     deriving (Show, Eq, Ord, Generic)
 
 data SourceNameDef n =
@@ -529,7 +526,7 @@ data SourceMap (n::S) = SourceMap
   deriving Show
 
 makeTopNameDescription :: ModuleSourceName -> SourceBlock -> TopNameDescription
-makeTopNameDescription mname sb = TopNameDescription mname (T.unpack $ sbText sb)
+makeTopNameDescription mname sb = TopNameDescription mname sb.sbText
 
 -- === Source modules ===
 
@@ -554,7 +551,7 @@ data UModule = UModule
 data SourceBlock = SourceBlock
   { sbLine       :: Int
   , sbOffset     :: Int
-  , sbText       :: Text
+  , sbText       :: BString
   , sbLexemeInfo :: LexemeInfo
   , sbContents   :: SourceBlock' }
   deriving (Show, Generic)
@@ -567,17 +564,17 @@ data SymbolicZeros = SymbolicZeros | InstantiateZeros
 data SourceBlock'
   = TopDecl CTopDeclW
   | Misc SourceBlockMisc
-  | UnParseable ReachedEOF String
+  | UnParseable ReachedEOF BString
   deriving (Show, Generic)
 
 data SourceBlockMisc
   = ImportModule ModuleSourceName
-  | ProseBlock Text
+  | ProseBlock BString
   | CommentLine
   | EmptyLines
   deriving (Show, Generic)
 
-data CmdName = GetType | EvalExpr OutFormat | ExportFun String
+data CmdName = GetType | EvalExpr OutFormat | ExportFun BString
                deriving  (Show, Generic)
 
 data PrintBackend =
@@ -591,7 +588,7 @@ data PrintBackend =
 
 data OutFormat = Printed (Maybe PrintBackend) | RenderHtml  deriving (Show, Eq, Generic)
 
-data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | JitPass
+data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | JitPass | LLVMPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
               | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass | OccAnalysisPass
               | InlinePass

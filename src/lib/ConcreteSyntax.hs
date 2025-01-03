@@ -13,17 +13,16 @@ module ConcreteSyntax (
 import Control.Monad
 import Control.Monad.Combinators.Expr qualified as Expr
 import Control.Monad.Reader
-import Data.Char
+import qualified Data.ByteString as BS
+import Data.ByteString.Internal (c2w, w2c)
+import Data.Word8
 import Data.Either
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.String (fromString)
-import Data.Text (Text)
-import Data.Text          qualified as T
-import Data.Text.Encoding qualified as T
 import Data.Void
 import Text.Megaparsec hiding (Label, State)
-import Text.Megaparsec.Char hiding (space, eol)
+import Text.Megaparsec.Byte hiding (space, eol)
 
 import Err
 import Lexing
@@ -31,21 +30,21 @@ import Types.Source
 import Types.Primitives
 import Util
 
-parseSourceBlocks :: T.Text -> [SourceBlock]
+parseSourceBlocks :: BString -> [SourceBlock]
 parseSourceBlocks source = uModuleSourceBlocks $ parseUModule Main source
 
 -- TODO: implement this more efficiently rather than just parsing the whole
 -- thing and then extracting the deps.
 parseUModuleDeps :: ModuleSourceName -> File -> [ModuleSourceName]
 parseUModuleDeps name file = deps
-  where UModule _ deps _ = parseUModule name $ T.decodeUtf8 $ fContents file
+  where UModule _ deps _ = parseUModule name $ fContents file
 {-# SCC parseUModuleDeps #-}
 
 finishUModuleParse :: UModulePartialParse -> UModule
 finishUModuleParse (UModulePartialParse name _ file) =
-  parseUModule name (T.decodeUtf8 $ fContents file)
+  parseUModule name (fContents file)
 
-parseUModule :: ModuleSourceName -> Text -> UModule
+parseUModule :: ModuleSourceName -> BString -> UModule
 parseUModule name s = do
   let blocks = mustParseit s sourceBlocks
   let preamble = case name of
@@ -66,12 +65,12 @@ sourceBlocks :: Parser [SourceBlock]
 sourceBlocks = manyTill (sourceBlock <* outputLines) eof
 {-# SCC sourceBlocks #-}
 
-mustParseSourceBlock :: Text -> SourceBlock
+mustParseSourceBlock :: BString -> SourceBlock
 mustParseSourceBlock s = mustParseit s sourceBlock
 
 -- === helpers for target ADT ===
 
-interpOperator :: SrcId -> String -> ([SrcId], Bin)
+interpOperator :: SrcId -> BString -> ([SrcId], Bin)
 interpOperator sid = \case
   "&>"  -> atomic DepAmpersand
   "."   -> atomic Dot
@@ -82,7 +81,7 @@ interpOperator sid = \case
   "->>" -> atomic ImplicitArrow
   "=>"  -> atomic FatArrow
   "="   -> atomic CSEqual
-  name  -> ([], EvalBinOp $ WithSrc sid $ fromString $ "(" <> name <> ")")
+  name  -> ([], EvalBinOp $ WithSrc sid $ MkSourceName $ "(" <> name <> ")")
   where
     atomic :: Bin -> ([SrcId], Bin)
     atomic b = ([sid], b)
@@ -100,14 +99,14 @@ sourceBlock = do
   let lexInfo' = lexInfo { lexemeInfo = lexemeInfo lexInfo <&> \(t, (l, r)) -> (t, (l-offset, r-offset))}
   return $ SourceBlock (unPos (sourceLine pos)) offset src lexInfo' b
 
-recover :: ParseError Text Void -> Parser SourceBlock'
+recover :: ParseError BString Void -> Parser SourceBlock'
 recover e = do
   pos <- liftM statePosState getParserState
   reachedEOF <-  try (mayBreak sc >> eof >> return True)
              <|> return False
   consumeTillBreak
   let errmsg = errorBundlePretty (ParseErrorBundle (e :| []) pos)
-  return $ UnParseable reachedEOF errmsg
+  return $ UnParseable reachedEOF $ fromString errmsg
 
 importModule :: Parser SourceBlock'
 importModule = Misc . ImportModule . OrdinaryModule <$> do
@@ -140,7 +139,7 @@ topDecl' =
 
 proseBlock :: Parser SourceBlock'
 proseBlock = label "prose block" $
-  char '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
+  cchar '\'' >> fmap (Misc . ProseBlock . fst) (withSource consumeTillBreak)
 
 _envQuery :: Parser EnvQuery
 _envQuery = error "not implemented"
@@ -217,7 +216,7 @@ topLet = withSrcs do
 
 topLetAnn :: Parser LetAnn
 topLetAnn = do
-  void $ char '@'
+  void $ cchar '@'
   ann <-  (string "inline"   $> InlineLet)
       <|> (string "noinline" $> NoInlineLet)
   nextLine
@@ -247,7 +246,7 @@ simpleLet :: Parser CSDecl
 simpleLet = do
   lhs <- cGroupNoEqual
   next <- nextChar
-  case next of
+  case w2c next of
     '=' -> sym  "=" >> CLet  lhs <$> cBlock
     _   -> return $ CExpr lhs
 
@@ -294,7 +293,8 @@ argList = do
 
 immediateLParen :: Parser ()
 immediateLParen = label "'(' (without preceding whitespace)" do
-  nextChar >>= \case
+  c <- nextChar
+  case w2c c of
     '(' -> precededByWhitespace >>= \case
       True -> empty
       False -> lParen
@@ -432,7 +432,7 @@ thenNewLine = withIndent $ do
       alt <- do
         -- With `mayNotBreak`, this just forbids inline else
         noElse ("Same-line `else` may not follow indented consequent;"
-                ++ " put the `else` on the next line.")
+                <> " put the `else` on the next line.")
         optional $ do
           void $ try $ nextLine >> keyWord ElseKW
           cBlock
@@ -453,7 +453,7 @@ leafGroup = leafGroup' >>= appendPostfixGroups
   leafGroup' :: Parser GroupW
   leafGroup' = do
     next <- nextChar
-    case next of
+    case w2c next of
       '_'  ->  withSrcs $ CLeaf <$> (underscore >> pure CHole)
       '('  ->  toCLeaf CIdentifier <$> symName
            <|> cParens
@@ -464,7 +464,7 @@ leafGroup = leafGroup' >>= appendPostfixGroups
         WithSrc sid name <- primName
         case strToPrimName name of
           Just prim -> WithSrcs sid [] <$> CPrim prim <$> argList
-          Nothing   -> fail $ "Unrecognized primitive: " ++ name
+          Nothing   -> fail $ "Unrecognized primitive: " ++ bs2str name
       _ | isDigit next -> (    toCLeaf CNat   <$> natLit
                            <|> toCLeaf CFloat <$> doubleLit)
       '\\' -> withSrcs (cNullaryLam <|> cLam)
@@ -590,18 +590,18 @@ anySymOp = Expr.InfixL $ binApp do
   WithSrc sid s <- label "infix operator" (mayBreak anySym)
   return $ interpOperator sid s
 
-symOpN :: String -> (SourceName, Expr.Operator Parser GroupW)
-symOpN s = (fromString s, Expr.InfixN $ symOp s)
+symOpN :: BString -> (SourceName, Expr.Operator Parser GroupW)
+symOpN s = (MkSourceName s, Expr.InfixN $ symOp s)
 
-symOpL :: String -> (SourceName, Expr.Operator Parser GroupW)
-symOpL s = (fromString s, Expr.InfixL $ symOp s)
+symOpL :: BString -> (SourceName, Expr.Operator Parser GroupW)
+symOpL s = (MkSourceName s, Expr.InfixL $ symOp s)
 
-symOpR :: String -> (SourceName, Expr.Operator Parser GroupW)
-symOpR s = (fromString s, Expr.InfixR $ symOp s)
+symOpR :: BString -> (SourceName, Expr.Operator Parser GroupW)
+symOpR s = (MkSourceName s, Expr.InfixR $ symOp s)
 
-symOp :: String -> Parser (GroupW -> GroupW -> GroupW)
+symOp :: BString -> Parser (GroupW -> GroupW -> GroupW)
 symOp s = binApp do
-  sid <- label "infix operator" (mayBreak $ symWithId $ T.pack s)
+  sid <- label "infix operator" (mayBreak $ symWithId s)
   return $ interpOperator sid s
 
 arrowOp :: Parser (GroupW -> GroupW -> GroupW)
@@ -609,13 +609,13 @@ arrowOp = addSrcIdToBinOp do
   sid <- symWithId "->"
   return \lhs rhs -> ([sid], CArrow lhs rhs)
 
-unOpPre :: String -> (SourceName, Expr.Operator Parser GroupW)
-unOpPre s = (fromString s, Expr.Prefix $ prefixOp s)
+unOpPre :: BString -> (SourceName, Expr.Operator Parser GroupW)
+unOpPre s = (MkSourceName s, Expr.Prefix $ prefixOp s)
 
-prefixOp :: String -> Parser (GroupW -> GroupW)
+prefixOp :: BString -> Parser (GroupW -> GroupW)
 prefixOp s = addSrcIdToUnOp do
-  symId <- symWithId (fromString s)
-  return $ CPrefix (WithSrc symId $ fromString s)
+  symId <- symWithId s
+  return $ CPrefix (WithSrc symId $ MkSourceName s)
 
 binApp :: Parser ([SrcId], Bin) -> Parser (GroupW -> GroupW -> GroupW)
 binApp f = addSrcIdToBinOp do

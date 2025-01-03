@@ -41,6 +41,7 @@ import GHC.Generics (Generic (..))
 import PPrint
 -- import Occurrence
 import Name
+import Util (BString)
 
 -- === Primitive ops ===
 
@@ -126,7 +127,7 @@ instance Store    a => Store    (RefOp a)
 
 -- === various things ===
 
-type TopNameHint = String
+type TopNameHint = BString
 type ModuleName = SourceName
 data TopName = TopGenName TopNameHint Int
              | TopSourceName ModuleName SourceName
@@ -134,7 +135,7 @@ data TopName = TopGenName TopNameHint Int
 instance Hashable TopName
 instance Store    TopName
 
-newtype SourceName = MkSourceName String  deriving (Show, Eq, Ord, Generic)
+newtype SourceName = MkSourceName BString  deriving (Show, Eq, Ord, Generic)
 
 newtype AlwaysEqual a = AlwaysEqual a
         deriving (Show, Generic, Functor, Foldable, Traversable, Hashable, Store)
@@ -288,7 +289,7 @@ instance Pretty TopName where
   pr _ = undefined
 
 instance IsString SourceName where
-  fromString v = MkSourceName v
+  fromString v = MkSourceName $ fromString v
 
 instance Store SourceName
 instance Store RequiredMethodAccess
@@ -396,16 +397,16 @@ instance Pretty Explicitness where
 
 type PrimName = PrimOp ()
 
-strToPrimName :: String -> Maybe PrimName
+strToPrimName :: BString -> Maybe PrimName
 strToPrimName s = M.lookup s primNames
 
-primNameToStr :: PrimName -> String
+primNameToStr :: PrimName -> BString
 primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
   Just s  -> s
-  Nothing -> show prim
+  Nothing -> fromString $ show prim
 {-# NOINLINE primNameToStr #-}
 
-primNames :: M.Map String PrimName
+primNames :: M.Map BString PrimName
 primNames = M.fromList
   [
   --   ("get"      , UMGet), ("put"    , UMPut)

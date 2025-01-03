@@ -10,7 +10,7 @@ module Err (
   Err (..), Except (..), ToErr (..), PrintableErr (..),
   ParseErr (..), SyntaxErr (..), NameErr (..), TypeErr (..), MiscErr (..),
   Fallible (..), Catchable (..), catchErrExcept,
-  HardFailM (..), runHardFail, throw,
+  HardFailM (..), runHardFail, throw, zipErr,
   catchIOExcept, liftExcept, liftExceptAlt,
   ignoreExcept, getCurrentCallStack, printCurrentCallStack,
   ExceptT (..), rootSrcId, SrcId (..), assertEq, throwInternal,
@@ -23,16 +23,20 @@ import Control.Monad.Identity
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS
 import Data.Aeson (ToJSON)
 import Data.Coerce
 import Data.Hashable
 import Data.List (sort)
 import Data.Foldable (fold)
 import Data.Store (Store (..))
+import Data.String (fromString)
 import GHC.Stack
 import GHC.Generics
 
 import PPrint
+import Util
 
 -- === source info ===
 
@@ -57,11 +61,11 @@ getErrSrcId = \case
   RuntimeErr -> Nothing
   MiscErr _  -> Nothing
 
--- === core errro type ===
+-- === core error type ===
 
 data Err =
-   SearchFailure String      -- used as the identity for `Alternative` instances and for MonadFail.
- | InternalErr String
+   SearchFailure BString      -- used as the identity for `Alternative` instances and for MonadFail.
+ | InternalErr BString
  | ParseErr  ParseErr
  | SyntaxErr SrcId SyntaxErr
  | NameErr   SrcId NameErr
@@ -70,9 +74,9 @@ data Err =
  | MiscErr MiscErr
    deriving (Show, Eq)
 
-type MsgStr  = String
-type VarStr  = String
-type TypeStr = String
+type MsgStr  = BString
+type VarStr  = BString
+type TypeStr = BString
 
 data ParseErr =
   MiscParseErr MsgStr
@@ -86,7 +90,7 @@ data SyntaxErr =
  | OnlyUnaryWithoutParens
  | IllegalPattern
  | UnexpectedConstraint
- | ExpectedIdentifier String
+ | ExpectedIdentifier BString
  | UnexpectedEffectForm
  | UnexpectedMethodDef
  | BlockWithoutFinalExpr
@@ -109,7 +113,7 @@ data NameErr =
  | NotADataCon VarStr
  | NotAClassName VarStr
  | NotAMethodName VarStr
- | AmbiguousVarErr VarStr [String]
+ | AmbiguousVarErr VarStr [BString]
  | VarDefErr VarStr
    deriving (Show, Eq)
 
@@ -121,18 +125,18 @@ data TypeErr =
  | CantUnifySkolem
  | OccursCheckFailure VarStr TypeStr
  | UnificationFailure TypeStr TypeStr [VarStr]  -- expected, actual, inference vars
- | DisallowedEffects  String String  -- allowed, actual
+ | DisallowedEffects  BString BString  -- allowed, actual
  | InferEmptyTable
  | ArityErr        Int Int  -- expected, actual
  | PatternArityErr Int Int  -- expected, actual
  | SumTypeCantFail
- | PatTypeErr String String  -- expected type constructor (from pattern), actual type (from rhs)
- | EliminationErr String String  -- expected type constructor, actual type
+ | PatTypeErr BString BString  -- expected type constructor (from pattern), actual type (from rhs)
+ | EliminationErr BString BString  -- expected type constructor, actual type
  | IllFormedCasePattern
  | NotAMethod VarStr VarStr
  | DuplicateMethod VarStr
  | MissingMethod   VarStr
- | WrongArrowErr String String
+ | WrongArrowErr BString BString
  | AnnotationRequired
  | NotAUnaryConstraint TypeStr
  | InterfacesNoImplicitParams
@@ -143,7 +147,7 @@ data TypeErr =
  | InferHoleErr
  | InferDepPairErr
  | InferEmptyCaseEff
- | UnexpectedTerm String TypeStr
+ | UnexpectedTerm BString TypeStr
  | CantFindField VarStr TypeStr [VarStr]  -- field name, field type, known fields
  | TupleLengthMismatch Int Int
  | CantReduceType TypeStr
@@ -162,11 +166,11 @@ data MiscErr =
    deriving (Show, Eq)
 
 -- name of function, name of arg
-type InferenceArgDesc = (String, String)
+type InferenceArgDesc = (BString, BString)
 data InfVarDesc =
    ImplicitArgInfVar InferenceArgDesc
- | AnnotationInfVar String -- name of binder
- | TypeInstantiationInfVar String -- name of type
+ | AnnotationInfVar BString -- name of binder
+ | TypeInstantiationInfVar BString -- name of type
  | MiscInfVar
    deriving (Show, Generic, Eq, Ord)
 
@@ -182,18 +186,18 @@ instance ToErr TypeErr   where toErr = TypeErr
 -- === Error messages ===
 
 class PrintableErr a where
-  printErr :: a -> String
+  printErr :: a -> BString
 
 instance PrintableErr Err where
   printErr = \case
-    SearchFailure s -> "Internal search failure: " ++ s
-    InternalErr s -> "Internal compiler error: " ++ s ++ "\n" ++
+    SearchFailure s -> "Internal search failure: " <> s
+    InternalErr s -> "Internal compiler error: " <> s <> "\n" <>
       "Please report this at github.com/google-research/dex-lang/issues\n"
-    ParseErr    e -> "Parse error: "  ++ printErr e
-    SyntaxErr _ e -> "Syntax error: " ++ printErr e
-    NameErr   _ e -> "Name error: "   ++ printErr e
-    TypeErr   _ e -> "Type error: "   ++ printErr e
-    MiscErr     e -> "Error: "        ++ printErr e
+    ParseErr    e -> "Parse error: "  <> printErr e
+    SyntaxErr _ e -> "Syntax error: " <> printErr e
+    NameErr   _ e -> "Name error: "   <> printErr e
+    TypeErr   _ e -> "Type error: "   <> printErr e
+    MiscErr     e -> "Error: "        <> printErr e
     RuntimeErr    -> "Runtime error"
 
 instance PrintableErr ParseErr where
@@ -210,10 +214,10 @@ instance PrintableErr SyntaxErr where
     OnlyUnaryWithoutParens ->"only unary constructors can form patterns without parens"
     IllegalPattern -> "illegal pattern"
     UnexpectedConstraint -> "unexpected constraint"
-    ExpectedIdentifier ctx -> "expected " ++ ctx ++ " to be an identifier"
+    ExpectedIdentifier ctx -> "expected " <> ctx <> " to be an identifier"
     UnexpectedEffectForm ->
       "unexpected effect form; expected one of `Read h`, `Accum h`, `State h`, `Except`, `IO`, "
-       ++ "or the name of a user-defined effect."
+       <> "or the name of a user-defined effect."
     UnexpectedMethodDef -> "unexpected method definition. Expected `def` or `x = ...`."
     BlockWithoutFinalExpr -> "block must end in expression"
     UnexpectedGivenClause -> "unexpected `given` clause"
@@ -221,79 +225,79 @@ instance PrintableErr SyntaxErr where
     BadEqualSign -> "equal sign must be used as a separator for labels or binders, not a standalone operator"
     BadColon ->
       "colon separates binders from their type annotations, is not a standalone operator.\n"
-      ++ " If you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
+      <> " If you are trying to write a dependent type, use parens: (i:Fin 4) => (..i)"
     ExpectedAnnBinder -> "expected an annotated binder"
     BadField -> "field must be a name or an integer"
-    BadPrefix name -> "prefix (" ++ name ++ ") not legal as a bare expression"
+    BadPrefix name -> "prefix (" <> name <> ") not legal as a bare expression"
 
 instance PrintableErr NameErr where
   printErr = \case
     MiscNameErr s -> s
-    UnboundVarErr v     -> "variable not in scope: " ++ v
-    EscapedNameErr vs   -> "leaked local variables: " ++ unwords vs
-    RepeatedPatVarErr v -> "variable already defined within pattern: " ++ v
-    RepeatedVarErr    v -> "variable already defined : " ++ v
-    NotAnOrdinaryVar v -> "not an ordinary variable: " ++ v
-    NotADataCon      v -> "not a data constructor: "   ++ v
-    NotAClassName    v -> "not a class name: "         ++ v
-    NotAMethodName   v -> "not a method name: "        ++ v
+    UnboundVarErr v     -> "variable not in scope: " <> v
+    EscapedNameErr vs   -> "leaked local variables: " <> BS.unwords vs
+    RepeatedPatVarErr v -> "variable already defined within pattern: " <> v
+    RepeatedVarErr    v -> "variable already defined : " <> v
+    NotAnOrdinaryVar v -> "not an ordinary variable: " <> v
+    NotADataCon      v -> "not a data constructor: "   <> v
+    NotAClassName    v -> "not a class name: "         <> v
+    NotAMethodName   v -> "not a method name: "        <> v
     -- we sort the lines to make the result a bit more deterministic for quine tests
     AmbiguousVarErr v defs ->
-      "ambiguous occurrence: " ++ v ++ " is defined:\n"
-      ++ unlines (sort defs)
+      "ambiguous occurrence: " <> v <> " is defined:\n"
+      <> BS.unlines (sort defs)
     -- TODO: we see this message a lot. We should improve it by including more information.
     -- Ideally we'd provide a link to where the original error happened."
-    VarDefErr v -> "error in (earlier) definition of variable: " ++ v
+    VarDefErr v -> "error in (earlier) definition of variable: " <> v
 
 instance PrintableErr TypeErr where
   printErr = \case
     MiscTypeErr s -> s
-    FFIResultTyErr t    -> "FFI result type should be scalar or pair. Got: " ++ t
-    FFIArgTyNotScalar t -> "FFI function arguments should be scalar. Got: " ++ t
-    CantSynthDict t     -> "can't synthesize a class dictionary for: " ++ t
-    CantSynthInfVars t  -> "can't synthesize a class dictionary for a type with inference vars: " ++ t
-    NotASynthType t     -> "can't synthesize terms of type: " ++ t
+    FFIResultTyErr t    -> "FFI result type should be scalar or pair. Got: " <> t
+    FFIArgTyNotScalar t -> "FFI function arguments should be scalar. Got: " <> t
+    CantSynthDict t     -> "can't synthesize a class dictionary for: " <> t
+    CantSynthInfVars t  -> "can't synthesize a class dictionary for a type with inference vars: " <> t
+    NotASynthType t     -> "can't synthesize terms of type: " <> t
     CantUnifySkolem     -> "can't unify with skolem vars"
-    OccursCheckFailure v t -> "occurs check failure: " ++ v ++ " occurs in " ++ t
-    DisallowedEffects r1 r2 -> "\nAllowed:   " ++ pprint r1 ++
-                               "\nRequested: " ++ pprint r2
-    UnificationFailure t1 t2 vs -> "\nExpected: " ++ t1
-                                ++ "\nActual: " ++ t2 ++ case vs of
+    OccursCheckFailure v t -> "occurs check failure: " <> v <> " occurs in " <> t
+    DisallowedEffects r1 r2 -> "\nAllowed:   " <> r1 <>
+                               "\nRequested: " <> r2
+    UnificationFailure t1 t2 vs -> "\nExpected: " <> t1
+                                <> "\nActual: " <> t2 <> case vs of
                                                           [] -> ""
-                                                          _  -> "\n(Solving for: " ++ unwords vs ++ ")"
+                                                          _  -> "\n(Solving for: " <> BS.unwords vs <> ")"
     InferEmptyTable       -> "can't infer type of empty table"
-    ArityErr n1 n2 -> "wrong number of positional arguments provided. Expected " ++ show n1 ++ " but got " ++ show n2
-    PatternArityErr n1 n2 -> "unexpected number of pattern binders. Expected "   ++ show n1 ++ " but got " ++ show n2
+    ArityErr n1 n2 -> "wrong number of positional arguments provided. Expected " <> showbs n1 <> " but got " <> showbs n2
+    PatternArityErr n1 n2 -> "unexpected number of pattern binders. Expected "   <> showbs n1 <> " but got " <> showbs n2
     SumTypeCantFail               -> "sum type constructor in can't-fail pattern"
-    PatTypeErr patTy rhsTy        -> "pattern is for a " ++ patTy ++ "but we're matching against a " ++ rhsTy
-    EliminationErr expected ty    -> "expected a " ++ expected ++ ". Got: " ++ ty
+    PatTypeErr patTy rhsTy        -> "pattern is for a " <> patTy <> "but we're matching against a " <> rhsTy
+    EliminationErr expected ty    -> "expected a " <> expected <> ". Got: " <> ty
     IllFormedCasePattern          -> "case patterns must start with a data constructor or variant pattern"
-    NotAMethod method className   -> "unexpected method: " ++ method ++ " is not a method of " ++ className
-    DuplicateMethod method        -> "duplicate method: " ++ method
-    MissingMethod   method        -> "missing method: "   ++ method
-    WrongArrowErr expected actual -> "wrong arrow. Expected " ++ expected ++ " got " ++ actual
+    NotAMethod method className   -> "unexpected method: " <> method <> " is not a method of " <> className
+    DuplicateMethod method        -> "duplicate method: " <> method
+    MissingMethod   method        -> "missing method: "   <> method
+    WrongArrowErr expected actual -> "wrong arrow. Expected " <> expected <> " got " <> actual
     AnnotationRequired            -> "type annotation or constraint required"
-    NotAUnaryConstraint ty        -> "constraint should be a unary function. Got: " ++ ty
+    NotAUnaryConstraint ty        -> "constraint should be a unary function. Got: " <> ty
     InterfacesNoImplicitParams    -> "interfaces can't have implicit parameters"
-    RepeatedOptionalArgs vs       -> "repeated names offered:" ++ unwords vs
-    UnrecognizedOptionalArgs vs accepted -> "unrecognized named arguments: " ++ unwords vs
-                                       ++ ". Should be one of: " ++ pprint accepted
-    NoFields ty -> "can't get fields for type " ++ pprint ty
-    TypeMismatch expected actual -> "\nExpected: " ++ expected ++
-                                    "\nActual:   " ++ actual
+    RepeatedOptionalArgs vs       -> "repeated names offered:" <> BS.unwords vs
+    UnrecognizedOptionalArgs vs accepted -> "unrecognized named arguments: " <> BS.unwords vs
+                                       <> ". Should be one of: " <> BS.unwords accepted
+    NoFields ty -> "can't get fields for type " <> pprint ty
+    TypeMismatch expected actual -> "\nExpected: " <> expected <>
+                                    "\nActual:   " <> actual
     InferHoleErr -> "can't infer value of hole"
     InferDepPairErr -> "can't infer the type of a dependent pair; please annotate its type"
     InferEmptyCaseEff -> "can't infer empty case expressions"
-    UnexpectedTerm term ty -> "unexpected " ++ term ++ ". Expected: " ++ ty
+    UnexpectedTerm term ty -> "unexpected " <> term <> ". Expected: " <> ty
     CantFindField field fieldTy knownFields ->
-      "can't resolve field " ++ field ++ " of type " ++ fieldTy ++
-      "\nKnown fields are: " ++ unwords knownFields
+      "can't resolve field " <> field <> " of type " <> fieldTy <>
+      "\nKnown fields are: " <> BS.unwords knownFields
     TupleLengthMismatch req actual -> do
-        "tuple length mismatch. Expected: " ++ show req ++ " but got " ++ show actual
-    CantReduceType  ty -> "Can't reduce type expression: " ++ ty
+        "tuple length mismatch. Expected: " <> showbs req <> " but got " <> showbs actual
+    CantReduceType  ty -> "Can't reduce type expression: " <> ty
     CantReduceDict -> "Can't reduce dict"
     CantReduceDependentArg ->
-      "dependent functions can only be applied to fully evaluated expressions. " ++
+      "dependent functions can only be applied to fully evaluated expressions. " <>
       "Bind the argument to a name before you apply the function."
     AmbiguousInferenceVar infVar ty desc -> case desc of
        AnnotationInfVar v ->
@@ -303,15 +307,15 @@ instance PrintableErr TypeErr where
        TypeInstantiationInfVar t ->
          "couldn't infer instantiation of type " <> t
        MiscInfVar ->
-         "ambiguous type variable: " ++ infVar ++ ": " ++ ty
-    ExpectedAType t -> "Expected a type, got a: " ++ t
+         "ambiguous type variable: " <> infVar <> ": " <> ty
+    ExpectedAType t -> "Expected a type, got a: " <> t
 
 instance PrintableErr MiscErr where
   printErr = \case
     MiscMiscErr s -> s
-    ModuleImportErr v -> "couldn't import " ++ v
+    ModuleImportErr v -> "couldn't import " <> v
     CantFindModuleSource v ->
-      "couldn't find a source file for module " ++ v ++
+      "couldn't find a source file for module " <> v <>
       "\nHint: Consider extending --lib-path"
 
 -- === monads and helpers ===
@@ -363,7 +367,7 @@ instance Monad m => Monad (ExceptT m) where
   {-# INLINE (>>=) #-}
 
 instance Monad m => MonadFail (ExceptT m) where
-  fail s = ExceptT $ return $ Failure $ SearchFailure s
+  fail s = ExceptT $ return $ Failure $ SearchFailure $ fromString s
   {-# INLINE fail #-}
 
 instance Monad m => Fallible (ExceptT m) where
@@ -472,7 +476,7 @@ instance MonadFail HardFailM where
   {-# INLINE fail #-}
 
 instance Fallible HardFailM where
-  throwErr errs = error $ pprint errs
+  throwErr errs = error $ bs2str $ pprint errs
   {-# INLINE throwErr #-}
 
 -- === convenience layer ===
@@ -481,7 +485,7 @@ throw :: (ToErr e, Fallible m) => SrcId -> e -> m a
 throw sid e = throwErr $ toErr sid e
 {-# INLINE throw #-}
 
-getCurrentCallStack :: () -> Maybe [String]
+getCurrentCallStack :: () -> Maybe [BString]
 getCurrentCallStack () =
 #ifdef DEX_DEBUG
   case reverse (unsafePerformIO currentCallStack) of
@@ -492,19 +496,19 @@ getCurrentCallStack () =
 #endif
 {-# NOINLINE getCurrentCallStack #-}
 
-printCurrentCallStack :: Maybe [String] -> String
+printCurrentCallStack :: Maybe [BString] -> BString
 printCurrentCallStack Nothing = "<no call stack available>"
 printCurrentCallStack (Just frames) = fold frames
 
 catchIOExcept :: MonadIO m => IO a -> m (Except a)
 catchIOExcept m = liftIO $ (liftM Success m) `catches`
   [ Handler \(e::Err)           -> return $ Failure e
-  , Handler \(e::IOError)        -> return $ Failure $ MiscErr $ MiscMiscErr $ show e
+  , Handler \(e::IOError)        -> return $ Failure $ MiscErr $ MiscMiscErr $ showbs e
   -- Propagate asynchronous exceptions like ThreadKilled; they are
   -- part of normal operation (of the live evaluation modes), not
   -- compiler bugs.
   , Handler \(e::AsyncException) -> liftIO $ throwIO e
-  , Handler \(e::SomeException)  -> return $ Failure $ InternalErr $ show e
+  , Handler \(e::SomeException)  -> return $ Failure $ InternalErr $ showbs e
   ]
 
 liftExcept :: Fallible m => Except a -> m a
@@ -519,18 +523,22 @@ liftExceptAlt = \case
 {-# INLINE liftExceptAlt #-}
 
 ignoreExcept :: HasCallStack => Except a -> a
-ignoreExcept (Failure e) = error $ pprint e
+ignoreExcept (Failure e) = error $ bs2str $ pprint e
 ignoreExcept (Success x) = x
 {-# INLINE ignoreExcept #-}
 
-assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
+zipErr :: MonadFail m => m a
+zipErr = fail $ bs2str $ "zip error. Call stack:\n" <> printCurrentCallStack (getCurrentCallStack ())
+
+assertEq :: (HasCallStack, Fallible m, Show a, Pretty a, Eq a) => a -> a -> BString -> m ()
 assertEq x y s = if x == y then return ()
                            else throwInternal msg
-  where msg = "assertion failure (" ++ s ++ "):\n"
-              ++ pprint x ++ " != " ++ pprint y
+  where msg = "assertion failure (" <> s <> "):\n"
+              <> pprint x <> " != " <> pprint y
 
-throwInternal :: (HasCallStack, Fallible m) => String -> m a
-throwInternal s = throwErr $ InternalErr $ s ++ "\n" ++ prettyCallStack callStack ++ "\n"
+throwInternal :: (HasCallStack, Fallible m) => BString -> m a
+throwInternal s = throwErr $ InternalErr $
+  s <> "\n" <> fromString (prettyCallStack callStack) <> "\n"
 
 instance (Monoid w, Fallible m) => Fallible (WriterT w m) where
   throwErr errs = lift $ throwErr errs
@@ -551,7 +559,7 @@ instance Fallible Except where
   {-# INLINE throwErr #-}
 
 instance MonadFail Except where
-  fail s = Failure $ SearchFailure s
+  fail s = Failure $ SearchFailure $ fromString s
   {-# INLINE fail #-}
 
 instance Exception Err

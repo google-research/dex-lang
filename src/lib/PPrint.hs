@@ -9,39 +9,40 @@ module PPrint (Pretty (..), Doc (..), indent, hcat, hlist, vcat, pprint, app) wh
 import Data.Int
 import Data.Word
 import Data.List (intersperse)
+import qualified Data.ByteString as BS
 import Data.String
-import Data.Text (Text, unpack)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 
-pprint :: Pretty a => a -> String
+pprint :: Pretty a => a -> BString
 pprint x = printDoc $ pr x
 {-# SCC pprint #-}
 
 -- === printing doc ===
 
-newtype PrinterM a = PrinterM { runPrinterM :: ReaderT Int (State [(Int, String)]) a }
+type BString = BS.ByteString
+
+type Indent = BString
+
+newtype PrinterM a = PrinterM { runPrinterM :: ReaderT Indent (State [(Indent, BString)]) a }
         deriving (Functor, Applicative, Monad)
 
-runPrinter :: PrinterM a -> String
+runPrinter :: PrinterM a -> BString
 runPrinter cont = do
-  let indentedLines = reverse $ execState (runReaderT (runPrinterM cont) 0) []
-  concat [replicate (2 * indents) ' ' <> s <> "\n"| (indents, s) <- indentedLines]
+  let indentedLines = reverse $ execState (runReaderT (runPrinterM cont) "") []
+  BS.concat [indent <> s <> "\n"| (indent, s) <- indentedLines]
 
-printDoc :: Doc -> String
+printDoc :: Doc -> BString
 printDoc d = runPrinter $ printDocM d
 
-emitLine :: String -> PrinterM ()
-emitLine s = do
-  curIndent <- PrinterM ask
-  PrinterM $ modify \indentedLines -> (curIndent, s) : indentedLines
-
 increaseIndent :: PrinterM a -> PrinterM a
-increaseIndent cont = PrinterM $ local (+ 1) $ runPrinterM cont
+increaseIndent cont = PrinterM $ local (<> "  ") $ runPrinterM cont
 
 printDocM :: Doc -> PrinterM ()
 printDocM = \case
-  DocLine s -> emitLine s
+  DocLine s -> do
+    curIndent <- PrinterM ask
+    PrinterM $ modify \indentedLines -> (curIndent, s) : indentedLines
   DocIndent d -> increaseIndent $ printDocM d
   DocItems ds -> mapM_ printDocM ds
 
@@ -54,7 +55,7 @@ class Pretty a where
   prList xs = hlist "[,]" $ map pr xs
 
 data Doc =
-   DocLine   String
+   DocLine BString
  | DocItems  [Doc]
  | DocIndent Doc
    deriving (Show)
@@ -70,7 +71,7 @@ hlist _ _ = error "expected left bracket, separator, right bracket"
 hcat :: [Doc] -> Doc
 hcat docs = rec "" docs
  where
-  rec :: String -> [Doc] -> Doc
+  rec :: BString -> [Doc] -> Doc
   rec s = \case
     [] -> DocLine s
     d:ds -> case d of
@@ -86,14 +87,17 @@ app f xs = hcat [f, hlist "(,)" xs]
 -- === instances ===
 
 instance IsString Doc where
-  fromString = DocLine
+  fromString s = DocLine $ fromString s
 
 instance Pretty Char where
-  pr c = DocLine [c]
-  prList = DocLine
+  pr c = DocLine $ fromString [c]
+  prList s = DocLine $ fromString s
 
 instance Pretty a => Pretty [a] where
   pr xs = prList xs
+
+instance Pretty BString where
+  pr s = DocLine s
 
 instance (Pretty a, Pretty b) => Pretty (a, b) where
   pr (x, y) = hcat ["(", pr x, ", ", pr y, ")"]
@@ -109,4 +113,3 @@ instance Pretty Int64  where pr x = pr $ show x
 instance Pretty Float  where pr x = pr $ show x
 instance Pretty Double where pr x = pr $ show x
 instance Pretty Word64 where pr x = pr $ show x
-instance Pretty Text   where pr x = pr $ unpack x

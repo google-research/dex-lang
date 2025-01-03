@@ -18,13 +18,12 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.IORef
-import Data.Text (Text)
 import System.Directory (getModificationTime)
 import GHC.Generics
 
 import IncState
 import MonadUtil
-import Util (readFileText)
+import Util (readFileText, BString)
 
 -- === Actor implementation ===
 
@@ -186,12 +185,12 @@ launchClock intervalMicroseconds mailbox =
 
 -- === File watcher ===
 
-type SourceFileContents = Text
+type SourceFileContents = BString
 type FileWatcher = StateServer (Overwritable SourceFileContents)
 
 data FileWatcherMsg =
    ClockSignal_FW ()
- | Subscribe_FW (SubscribeMsg (Overwritable Text))
+ | Subscribe_FW (SubscribeMsg (Overwritable BString))
    deriving (Show)
 
 launchFileWatcher :: MonadIO m => FilePath -> m FileWatcher

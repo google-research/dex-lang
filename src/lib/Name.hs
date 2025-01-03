@@ -41,7 +41,7 @@ import qualified Unsafe.Coerce as TrulyUnsafe
 import RawName ( RawNameMap, RawName, NameHint, HasNameHint (..)
                , freshRawName, rawNameFromHint, rawNames, noHint)
 import qualified RawName as R
-import Util ( zipErr, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
+import Util ( BString, onFst, onSnd, transitiveClosure, SnocList (..), unsnoc )
 import PPrint
 import Err
 
@@ -2268,7 +2268,7 @@ canonicalizeForPrinting e cont = do
     ClosedWithScope scope e' ->
       cont $ renameE (scope, newSubst id) e'
 
-pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> String
+pprintCanonicalized :: (HoistableE e, RenameE e, PrettyE e) => e n -> BString
 pprintCanonicalized e = canonicalizeForPrinting e \e' -> pprint e'
 
 liftHoistExcept :: Fallible m => SrcId -> HoistExcept a -> m a
