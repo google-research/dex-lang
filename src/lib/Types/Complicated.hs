@@ -19,7 +19,6 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Name
-import Util (Tree (..))
 import PPrint
 
 import Types.Source (HasSourceName (..))

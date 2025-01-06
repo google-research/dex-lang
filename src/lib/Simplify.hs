@@ -31,8 +31,8 @@ exprAsNullaryFun :: CExpr VoidS -> CoreLamExpr VoidS
 exprAsNullaryFun expr = CoreLamExpr piType (Abs Empty expr)
   where piType = CorePiType ExplicitApp [] (Abs Empty (getCType expr))
 
-simplifyTopFun :: Monad m => CoreLamExpr VoidS -> m (LamExpr VoidS)
-simplifyTopFun f = liftSimplifyM $ simplifyLam f
+simplifyTopFun :: Monad m => CoreLamExpr VoidS -> m TopLamExpr
+simplifyTopFun f = liftSimplifyM $ TopLamExpr <$> simplifyLam f
 
 -- === Simplification monad ===
 

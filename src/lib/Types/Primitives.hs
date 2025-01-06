@@ -339,22 +339,22 @@ instance Pretty Direction where
     Fwd -> "fwd"
     Rev -> "rev"
 
-printDouble :: Double -> Doc
-printDouble x = pr (double2Float x)
+printDouble :: Double -> String
+printDouble x = printFloat $ double2Float x
 
-printFloat :: Float -> Doc
-printFloat x = pr $ reverse $ dropWhile (=='0') $ reverse $
+printFloat :: Float -> String
+printFloat x = fromString $ reverse $ dropWhile (=='0') $ reverse $
   showFFloat (Just 6) x ""
 
 instance Pretty LitVal where
   pr = \case
     Int64Lit   x -> pr x
     Int32Lit   x -> pr x
-    Float64Lit x -> printDouble x
-    Float32Lit x -> printFloat  x
-    Word8Lit   x -> pr $ show $ toEnum @Char $ fromIntegral x
-    Word32Lit  x -> pr $ "0x" ++ showHex x ""
-    Word64Lit  x -> pr $ "0x" ++ showHex x ""
+    Float64Lit x -> fromString $ printDouble x
+    Float32Lit x -> fromString $ printFloat  x
+    Word8Lit   x -> fromString $ show $ toEnum @Char $ fromIntegral x
+    Word32Lit  x -> fromString $ "0x" ++ showHex x ""
+    Word64Lit  x -> fromString $ "0x" ++ showHex x ""
     PtrLit ty (PtrLitVal x) -> app "Ptr" [pr ty, pr (show x)]
     PtrLit _ NullPtr -> "NullPtr"
     PtrLit _ (PtrSnapshot _) -> "<ptr snapshot>"

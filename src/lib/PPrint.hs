@@ -4,100 +4,95 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module PPrint (Pretty (..), Doc (..), indent, hcat, hlist, vcat, pprint, app) where
+{-# LANGUAGE NoFieldSelectors #-}
+
+module PPrint (
+  Pretty (..), indent, emitLine, hcat, hlist, pprint, app,
+  (<+>), BSBuilder, forceOneLine) where
 
 import Data.Int
 import Data.Word
 import Data.List (intersperse)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BS
 import Data.String
-import Control.Monad.Reader
 import Control.Monad.State.Strict
 
 pprint :: Pretty a => a -> BString
-pprint x = printDoc $ pr x
+pprint x = runPrinter $ prLines x
 {-# SCC pprint #-}
 
 -- === printing doc ===
 
 type BString = BS.ByteString
+type Indent = BS.Builder
+type BSBuilder = BS.Builder
 
-type Indent = BString
-
-newtype PrinterM a = PrinterM { runPrinterM :: ReaderT Indent (State [(Indent, BString)]) a }
+data PrinterState = PrinterState {indent :: Indent, curString  :: BS.Builder }
+newtype PrinterM a = PrinterM { inner :: State PrinterState a }
         deriving (Functor, Applicative, Monad)
 
-runPrinter :: PrinterM a -> BString
-runPrinter cont = do
-  let indentedLines = reverse $ execState (runReaderT (runPrinterM cont) "") []
-  BS.concat [indent <> s <> "\n"| (indent, s) <- indentedLines]
-
-printDoc :: Doc -> BString
-printDoc d = runPrinter $ printDocM d
-
-increaseIndent :: PrinterM a -> PrinterM a
-increaseIndent cont = PrinterM $ local (<> "  ") $ runPrinterM cont
-
-printDocM :: Doc -> PrinterM ()
-printDocM = \case
-  DocLine s -> do
-    curIndent <- PrinterM ask
-    PrinterM $ modify \indentedLines -> (curIndent, s) : indentedLines
-  DocIndent d -> increaseIndent $ printDocM d
-  DocItems ds -> mapM_ printDocM ds
-
--- === constructing doc ===
-
+-- Instances should define either `pr` (if they're expected to be one-liners
+-- most of the time) or `prLines`.
 class Pretty a where
-  pr :: a -> Doc
+  pr :: a -> BSBuilder
+  pr x = forceOneLine $ prLines x
 
-  prList :: [a] -> Doc
+  prLines :: a -> PrinterM ()
+  prLines x = emitLine $ pr x
+
+  prList :: [a] -> BS.Builder
   prList xs = hlist "[,]" $ map pr xs
 
-data Doc =
-   DocLine BString
- | DocItems  [Doc]
- | DocIndent Doc
-   deriving (Show)
+runPrinter :: PrinterM a -> BString
+runPrinter cont = BS.toStrict $ BS.toLazyByteString $ (.curString) $
+  execState cont.inner $ PrinterState mempty mempty
 
-vcat :: [Doc] -> Doc
-vcat = DocItems
+-- This is a fallback and we shouldn't see its output much
+forceOneLine :: PrinterM () -> BSBuilder
+forceOneLine x = "\n{" <> BS.byteString (runPrinter x) <> "}\n"
 
-hlist :: String -> [Doc] -> Doc
+indent :: PrinterM a -> PrinterM a
+indent cont = PrinterM do
+  prev <- gets (.indent)
+  modify \s -> s {indent = prev <> "  "}
+  ans <- cont.inner
+  modify \s -> s {indent = prev}
+  return ans
+
+emitLine :: BS.Builder -> PrinterM ()
+emitLine b = PrinterM do
+  s <- get
+  put $ s {curString = s.curString <> "\n" <> s.indent <> b}
+
+hlist :: String -> [BS.Builder] -> BS.Builder
 hlist [l,sep,r] xs = hcat [pr l, hcat (intersperse (pr sep) xs), pr r]
-
 hlist _ _ = error "expected left bracket, separator, right bracket"
 
-hcat :: [Doc] -> Doc
-hcat docs = rec "" docs
- where
-  rec :: BString -> [Doc] -> Doc
-  rec s = \case
-    [] -> DocLine s
-    d:ds -> case d of
-      DocLine s' -> rec (s <> s') ds
-      _ -> vcat [DocLine s, d, hcat ds]
+hcat :: [BS.Builder] -> BS.Builder
+hcat = mconcat
 
-indent :: Doc -> Doc
-indent = DocIndent
-
-app :: Doc -> [Doc] -> Doc
+app :: BS.Builder -> [BS.Builder] -> BS.Builder
 app f xs = hcat [f, hlist "(,)" xs]
+
+infixr 6 <+>
+(<+>) :: BS.Builder -> BS.Builder -> BS.Builder
+(<+>) x y = hcat [x, " ", y]
 
 -- === instances ===
 
-instance IsString Doc where
-  fromString s = DocLine $ fromString s
+instance IsString (PrinterM ()) where
+  fromString s = emitLine $ fromString s
 
 instance Pretty Char where
-  pr c = DocLine $ fromString [c]
-  prList s = DocLine $ fromString s
+  pr c = fromString [c]
+  prList s = fromString s
 
 instance Pretty a => Pretty [a] where
   pr xs = prList xs
 
 instance Pretty BString where
-  pr s = DocLine s
+  pr s = BS.byteString s
 
 instance (Pretty a, Pretty b) => Pretty (a, b) where
   pr (x, y) = hcat ["(", pr x, ", ", pr y, ")"]

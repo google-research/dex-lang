@@ -1742,7 +1742,7 @@ instance RenameE e => RenameE (NonEmptyListE e) where
   renameE env (NonEmptyListE xs) = NonEmptyListE $ fmap (renameE env) xs
 
 instance (PrettyB b, PrettyE e) => Pretty (Abs b e n) where
-  pr (Abs b body) = hcat [pr b, indent (pr body)]
+  pr (Abs b body) = pr b <+> pr body
 
 instance Pretty a => Pretty (LiftE a n) where
   pr (LiftE x) = pr x
@@ -2665,7 +2665,7 @@ instance HoistableB b => HoistableB (RNest b) where
 
 instance (forall n. Pretty (v n)) => Pretty (SubstFrag v i i' o) where
   pr (UnsafeMakeSubst m) =
-    vcat [ hcat [pr v, " @> ", pr x] | (v, SubstItem _ x) <- R.toList m ]
+    hcat [ hcat [pr v, " @> ", pr x] | (v, SubstItem _ x) <- R.toList m ]
 
 instance (Generic (b UnsafeS UnsafeS)) => Generic (Nest b n l) where
   type Rep (Nest b n l) = Rep [b UnsafeS UnsafeS]

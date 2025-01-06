@@ -11,6 +11,7 @@ module Util where
 import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
+import Data.ByteString.Internal (w2c)
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
@@ -328,27 +329,10 @@ tryUnsnoc (ReversedList []) = Nothing
 tryUnsnoc (ReversedList (x:xs)) = Just (ReversedList xs, x)
 {-# INLINE tryUnsnoc #-}
 
--- === generic tree ===
-
-data Tree a = Leaf a | Branch [Tree a]
-     deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Store a => Store (Tree a)
-instance Hashable a => Hashable (Tree a)
-
-zipTrees :: Tree a -> Tree b -> Tree (a, b)
-zipTrees (Leaf x) (Leaf y) = Leaf (x, y)
-zipTrees (Branch xs) (Branch ys) | length xs == length ys = Branch $ zipWith zipTrees xs ys
-zipTrees _ _ = error "zip error"
-
-instance Pretty a => Pretty (Tree a) where
-  pr = \case
-    Leaf x -> pr x
-    Branch xs -> pr xs
+-- === bytestring <-> string conversion ===
 
 readFileText :: MonadIO m => FilePath -> m BString
 readFileText fname = liftIO $ BS.readFile fname
-
--- === bytestring <-> string conversion ===
 
 type BString = BS.ByteString
 
@@ -359,7 +343,7 @@ errorbs :: HasCallStack => BString -> a
 errorbs s = error $ bs2str s
 
 bs2str :: BString -> String
-bs2str = undefined
+bs2str s = map w2c $ BS.unpack s
 
 str2bs :: String -> BString
 str2bs = fromString

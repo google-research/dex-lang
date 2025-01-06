@@ -108,10 +108,10 @@ execUDecl decl = do
   llvmContext <- TopperM $ asks topperLLVMContext
   llvmFun <- toLLVMEntryFun tempFunName simpFun
   logPass LLVMPass llvmFun
-  liftIO do
-    compileLLVM llvmContext llvmFun
-    f <- getFunctionPtr llvmContext tempFunName
-    callEntryFun f []
+  -- liftIO do
+  --   compileLLVM llvmContext llvmFun
+  --   f <- getFunctionPtr llvmContext tempFunName
+  --   callEntryFun f []
   return ()
 
 execCDecl :: CTopDecl -> TopperM ()

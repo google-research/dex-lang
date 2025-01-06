@@ -1,4 +1,3 @@
-
 -- Copyright 2022 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
@@ -10,6 +9,7 @@
 
 module Types.Simple (module Types.Simple) where
 
+import Control.Monad
 import Data.Word
 import Data.Foldable (toList)
 import Data.Hashable
@@ -20,13 +20,14 @@ import GHC.Generics (Generic (..))
 import Data.Store (Store (..))
 
 import Name
-import Util (Tree (..))
 import PPrint
 
 import Types.Primitives
 import Types.Source (HasSourceName (..))
 
 -- === SimpIR ===
+
+data TopLamExpr = TopLamExpr (LamExpr VoidS)
 
 data Expr (n::S) =
    Block  (Type n) (Block n)
@@ -66,6 +67,11 @@ type PiType = Abs (Nest Binder) Type :: E
 
 -- === type classes ===
 
+instance Pretty TopLamExpr where
+  prLines (TopLamExpr (Abs bs body)) = do
+    emitLine (pr bs <> ".")
+    indent $ prLines body
+
 instance GenericE Expr where
   type RepE Expr = EitherE6
   {- Block  -} (Type `PairE` Block)
@@ -85,13 +91,22 @@ instance GenericE Expr where
 
 instance Pretty (Expr n) where
   pr = \case
-    Block _ (Abs decls result) ->
-      vcat (nestToList' pr decls ++ [pr result])
+    Block _ (Abs decls result) -> undefined
     TopApp _ _ _ -> undefined
     Case   _ _ _ -> undefined
     For    _ _ -> undefined
     While  _ -> undefined
     PrimOp _ op -> pr op
+
+  prLines = \case
+    Block _ (Abs decls result) -> do
+      forM_ (nestToList' pr decls) emitLine
+      emitLine $ pr result
+    TopApp _ _ _ -> undefined
+    Case   _ _ _ -> undefined
+    For    _ _ -> undefined
+    While  _ -> undefined
+    PrimOp _ op -> prLines op
 
 instance SinkableE      Expr
 instance HoistableE     Expr

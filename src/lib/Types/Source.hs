@@ -989,13 +989,15 @@ instance Pretty SourceBlock where
   pr block = pr $ sbText block
 
 instance Pretty Output where
-  pr = \case
-    TextOut s -> pr s
+  prLines = \case
+    TextOut s -> prLines s
     HtmlOut _ -> "<html output>"
     SourceInfo _ -> "<source info>"
-    PassResult name s -> vcat [hcat [" === ", pr name, " ==="], pr s]
-    MiscLog s -> pr s
-    Error e -> pr e
+    PassResult name s -> do
+      emitLine $ hcat [" === ", pr name, " ==="]
+      prLines s
+    MiscLog s -> prLines s
+    Error e -> prLines e
 
 instance Pretty PassName where
   pr x = pr $ show x
