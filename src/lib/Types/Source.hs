@@ -588,7 +588,7 @@ data PrintBackend =
 
 data OutFormat = Printed (Maybe PrintBackend) | RenderHtml  deriving (Show, Eq, Generic)
 
-data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | JitPass | LLVMPass
+data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | LLVMPass
               | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval | LowerOptPass | LowerPass
               | ResultPass | JaxprAndHLO | EarlyOptPass | OptPass | VectPass | OccAnalysisPass
               | InlinePass
@@ -597,13 +597,13 @@ data PassName = Parse | RenamePass | TypePass | SimpPass | ImpPass | JitPass | L
 instance Show PassName where
   show p = case p of
     Parse    -> "parse" ; RenamePass -> "rename"; TypePass -> "typed"
-    SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass   -> "llvm"
+    SimpPass -> "simp"  ; ImpPass  -> "imp"
     LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
     LowerOptPass -> "lower-opt"; LowerPass -> "lower"
     EarlyOptPass -> "early-opt"; OptPass -> "opt"; OccAnalysisPass -> "occ-analysis"
-    VectPass -> "vect"; InlinePass -> "inline"
+    VectPass -> "vect"; InlinePass -> "inline"; LLVMPass -> "llvm"
 
 data EnvQuery =
    DumpSubst

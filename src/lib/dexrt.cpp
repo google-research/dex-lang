@@ -9,23 +9,23 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
+// #include <thread>
 #include <vector>
 #include <cctype>
 
 #include <type_traits>
 #include <cstdint>
 
-#if defined(__linux__)
-static_assert(std::is_same<pthread_key_t, std::uint32_t>::value,
-              "On linux, expected pthread_key_t to be an uint32_t");
-#elif defined(__APPLE__)
-static_assert(std::is_same<pthread_key_t, unsigned long>::value,
-              "On macOS, Expected pthread_key_t to be an unsigned long");
-static_assert(sizeof(unsigned long) == 8, "Expected 64-bit unsigned long");
-#else
-# error Unsupported OS
-#endif
+// #if defined(__linux__)
+// static_assert(std::is_same<pthread_key_t, std::uint32_t>::value,
+//               "On linux, expected pthread_key_t to be an uint32_t");
+// #elif defined(__APPLE__)
+// static_assert(std::is_same<pthread_key_t, unsigned long>::value,
+//               "On macOS, Expected pthread_key_t to be an unsigned long");
+// static_assert(sizeof(unsigned long) == 8, "Expected 64-bit unsigned long");
+// #else
+// # error Unsupported OS
+// #endif
 
 #ifdef DEX_LIVE
 #include <png.h>
@@ -39,6 +39,15 @@ extern "C" {
 
 // XXX: Changes to this value might require additional changes to parameter attributes in LLVM
 const int64_t alignment = 64;
+
+
+  // initialize LLVM, return a handle to the context
+  // 
+
+int64_t doit_cpp(int64_t nbytes) {
+  fprintf(stderr, "Hello from C++");
+  return 0;
+}
 
 char* malloc_dex(int64_t nbytes) {
   // reserves `alignment` bytes before the data region to store the size of the allocation
@@ -60,12 +69,12 @@ int64_t dex_allocation_size (char* ptr) {
   return *(reinterpret_cast<int64_t*>(ptr - alignment));
 }
 
-void* dex_pthread_key_create () {
-  pthread_key_t* key_ptr = (pthread_key_t*) malloc(sizeof(pthread_key_t));
-  // TODO(dougalm): add destructor. It's not urgent because we only call this once per process at the moment.
-  pthread_key_create(key_ptr, NULL);
-  return (void*) key_ptr;
-}
+// void* dex_pthread_key_create () {
+//   pthread_key_t* key_ptr = (pthread_key_t*) malloc(sizeof(pthread_key_t));
+//   // TODO(dougalm): add destructor. It's not urgent because we only call this once per process at the moment.
+//   pthread_key_create(key_ptr, NULL);
+//   return (void*) key_ptr;
+// }
 
 void* fdopen_w(int fd) {
   return fdopen(fd, "w");
@@ -393,26 +402,26 @@ void dex_get_cuda_architecture(int device, char* arch) {
 
 #endif // DEX_CUDA
 
-int32_t dex_queryParallelismMC(int64_t iters) {
-  int32_t nthreads = std::thread::hardware_concurrency();
-  if (iters < nthreads) {
-    nthreads = iters;
-  }
-  return nthreads;
-}
+// int32_t dex_queryParallelismMC(int64_t iters) {
+//   int32_t nthreads = std::thread::hardware_concurrency();
+//   if (iters < nthreads) {
+//     nthreads = iters;
+//   }
+//   return nthreads;
+// }
 
-void dex_launchKernelMC(char *function_ptr, int64_t size, char **args) {
-  auto function = reinterpret_cast<void (*)(int32_t, int32_t, char**)>(function_ptr);
-  int32_t nthreads = dex_queryParallelismMC(size);
-  std::vector<std::thread> threads(nthreads);
-  for (int32_t tid = 0; tid < nthreads; ++tid) {
-    threads[tid] = std::thread([function, args, tid, nthreads]() {
-      function(tid, nthreads, args);
-    });
-  }
-  for (auto& thread : threads) {
-    thread.join();
-  }
-}
+// void dex_launchKernelMC(char *function_ptr, int64_t size, char **args) {
+//   auto function = reinterpret_cast<void (*)(int32_t, int32_t, char**)>(function_ptr);
+//   int32_t nthreads = dex_queryParallelismMC(size);
+//   std::vector<std::thread> threads(nthreads);
+//   for (int32_t tid = 0; tid < nthreads; ++tid) {
+//     threads[tid] = std::thread([function, args, tid, nthreads]() {
+//       function(tid, nthreads, args);
+//     });
+//   }
+//   for (auto& thread : threads) {
+//     thread.join();
+//   }
+// }
 
 } // end extern "C"

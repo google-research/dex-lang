@@ -7,9 +7,10 @@
 {-# LANGUAGE NoFieldSelectors #-}
 
 module PPrint (
-  Pretty (..), indent, emitLine, hcat, hlist, pprint, app,
+  Pretty (..), indent, emitLine, hcat, hlist, pprint, app, pprintStr,
   (<+>), BSBuilder, forceOneLine) where
 
+import Data.ByteString.Internal (w2c)
 import Data.Int
 import Data.Word
 import Data.List (intersperse)
@@ -22,6 +23,12 @@ pprint :: Pretty a => a -> BString
 pprint x = runPrinter $ prLines x
 {-# SCC pprint #-}
 
+pprintStr :: Pretty a => a -> String
+pprintStr x = bs2str $ pprint x
+
+bs2str :: BString -> String
+bs2str s = map w2c $ BS.unpack s
+
 -- === printing doc ===
 
 type BString = BS.ByteString
@@ -32,11 +39,8 @@ data PrinterState = PrinterState {indent :: Indent, curString  :: BS.Builder }
 newtype PrinterM a = PrinterM { inner :: State PrinterState a }
         deriving (Functor, Applicative, Monad)
 
--- Instances should define either `pr` (if they're expected to be one-liners
--- most of the time) or `prLines`.
 class Pretty a where
   pr :: a -> BSBuilder
-  pr x = forceOneLine $ prLines x
 
   prLines :: a -> PrinterM ()
   prLines x = emitLine $ pr x

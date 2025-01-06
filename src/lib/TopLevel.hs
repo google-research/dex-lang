@@ -25,7 +25,7 @@ import PPrint
 import Simplify
 import LLVMFFI
 import ToLLVM
-import Types.LLVM
+import qualified Types.LLVM as L
 import Types.Complicated
 import Types.Primitives
 import Types.Source hiding (CTopDecl)
@@ -104,7 +104,7 @@ execUDecl decl = do
   CTopLet Nothing expr <- checkPass TypePass $ inferTopUDecl renamed
   simpFun <- simplifyTopFun (exprAsNullaryFun expr)
   logPass SimpPass simpFun
-  let tempFunName = "main" -- TODO: need to get a name
+  let tempFunName = L.Name "main" -- TODO: need to get a name
   llvmContext <- TopperM $ asks topperLLVMContext
   llvmFun <- toLLVMEntryFun tempFunName simpFun
   logPass LLVMPass llvmFun

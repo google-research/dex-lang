@@ -146,7 +146,15 @@ instance GenericE Type where
     DepPairTy p -> Case4 $ p
     TabPi t     -> Case5 $ t
 
-instance Pretty (Type n)
+instance Pretty (Type n) where
+  pr = \case
+    BaseType b -> pr b
+    ProdType _ -> undefined
+    SumType _ -> undefined
+    RefType _ -> undefined
+    DepPairTy _ -> undefined
+    TabPi _ -> undefined
+
 instance SinkableE      Type
 instance HoistableE     Type
 instance RenameE        Type
