@@ -104,14 +104,14 @@ execUDecl decl = do
   CTopLet Nothing expr <- checkPass TypePass $ inferTopUDecl renamed
   simpFun <- simplifyTopFun (exprAsNullaryFun expr)
   logPass SimpPass simpFun
-  let tempFunName = L.Name "main" -- TODO: need to get a name
+  let tempFunName = L.Name "__top_level_expr__" -- TODO: need to get a name
   llvmContext <- TopperM $ asks topperLLVMContext
   llvmFun <- toLLVMEntryFun tempFunName simpFun
   logPass LLVMPass llvmFun
-  -- liftIO do
-  --   compileLLVM llvmContext llvmFun
-  --   f <- getFunctionPtr llvmContext tempFunName
-  --   callEntryFun f []
+  liftIO do
+    compileLLVM llvmContext llvmFun
+    f <- liftIO $ getFunctionPtr llvmContext tempFunName
+    callEntryFun f []
   return ()
 
 execCDecl :: CTopDecl -> TopperM ()

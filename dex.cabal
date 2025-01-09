@@ -19,10 +19,6 @@ data-files:          lib/*.dx
                    , static/style.css
                    , src/lib/dexrt.bc
 
-flag cuda
-  description:         Enables building with CUDA support
-  default:             False
-
 flag optimized
   description:         Enables GHC optimizations
   default:             False
@@ -57,7 +53,7 @@ library
                      , PPrint
                      , RawName
                      -- , RuntimePrint
-                     -- , Serialize
+                     , Serialize
                      , Simplify
                      , Subst
                      , SourceRename
@@ -119,8 +115,8 @@ library
                        -Wno-unticked-promoted-constructors
                        -fPIC
                        -optP-Wno-nonportable-include-path
-  cxx-sources:         src/lib/dexrt.cpp
-  cxx-options:         -std=c++11 -fPIC
+  cxx-sources:         src/lib/dexllvm.cpp
+  cxx-options:         -std=c++17 -fPIC
                        -- Mimicking -XGHC2021 in GHC 8.10.1
   default-extensions:  BangPatterns
                      , BinaryLiterals
@@ -186,15 +182,12 @@ library
                      , ViewPatterns
 
   pkgconfig-depends:   libpng
-  if flag(cuda)
-    include-dirs:      /usr/local/cuda/include
-    extra-libraries:   cuda
-    cxx-options:       -DDEX_CUDA
-    cpp-options:       -DDEX_CUDA
+  extra-libraries:   stdc++ LLVM-16
   if flag(optimized)
     ghc-options:       -O3
   else
     ghc-options:       -O0
+  extra-lib-dirs:   /usr/lib/llvm-16/lib
 
 executable dex
   main-is:             dex.hs
@@ -224,8 +217,7 @@ executable dex
                      , LambdaCase
                      , OverloadedStrings
                      , BlockArguments
-  if flag(cuda)
-    cpp-options:       -DDEX_CUDA
+  extra-libraries:   stdc++ LLVM-16
   if flag(optimized)
     ghc-options:       -O3
   else
@@ -253,7 +245,7 @@ foreign-library Dex
                      , text
   hs-source-dirs:      src/
   c-sources:           src/Dex/Foreign/rts.c
-  cc-options:          -std=c11 -fPIC
+  cc-options:          -std=c17 -fPIC
   ghc-options:         -Wall
                        -fPIC
                        -optP-Wno-nonportable-include-path

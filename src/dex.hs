@@ -22,7 +22,6 @@ import ConcreteSyntax (parseSourceBlocks)
 import PPrint
 import Util (readFileText, BString)
 
-
 data EvalMode = ReplMode
               | ScriptMode FilePath
               | WebMode    FilePath
@@ -41,7 +40,8 @@ runMode (CmdOpts evalMode cfg) = case evalMode of
       forM_ blocks \block -> do
         liftIO $ BS.putStr $ pprint block
         evalSourceBlockRepl block
-  Doit -> error "This is an entry point for running ad-hoc Haskell code."
+  Doit -> undefined  -- do whatever you want
+
 
 stdOutLogger :: Outputs -> IO ()
 stdOutLogger (Outputs outs) = do

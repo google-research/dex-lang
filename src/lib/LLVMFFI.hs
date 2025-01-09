@@ -7,24 +7,37 @@
 module LLVMFFI (LLVMContext, initializeLLVM, compileLLVM, getFunctionPtr,
                 callEntryFun) where
 
+import Control.Monad
+import qualified Data.ByteString as BS
+import Foreign.Ptr
+import qualified Types.LLVM as L
 import Data.Int
-import Util (BString)
+import PPrint
 
-foreign import ccall "doit_cpp"  doit_cpp    :: Int64  -> IO Int64
+foreign import ccall "initialize_jit" initialize_jit :: IO Int
+foreign import ccall "add_to_jit" add_to_jit :: Ptr () -> Int64 -> IO Int
+foreign import ccall "get_function_ptr" get_function_ptr :: Ptr () -> Int64 -> IO (Ptr ())
+foreign import ccall "call_function_ptr" call_function_ptr :: Ptr () -> IO (Ptr ())
 
-type FunctionPtr = ()
 type LLVMContext = ()
-type DataPtr = ()
-type DataListPtr = ()
+type FunctionPtr = Ptr ()
+type DataPtr = Ptr ()
+type DataListPtr = Ptr ()
 
 initializeLLVM :: IO LLVMContext
-initializeLLVM = return undefined
+initializeLLVM = initialize_jit >> return ()
 
-compileLLVM :: LLVMContext -> BString  -> IO ()
-compileLLVM _ _ = return undefined
+compileLLVM :: LLVMContext -> L.Module  -> IO ()
+compileLLVM _ f = do
+  BS.useAsCStringLen (pprint f) \(ptr, n) ->
+    void $ add_to_jit (castPtr ptr) (fromIntegral n)
 
-getFunctionPtr :: LLVMContext -> BString -> IO FunctionPtr
-getFunctionPtr _ _ = return undefined
+getFunctionPtr :: LLVMContext -> L.Name -> IO FunctionPtr
+getFunctionPtr _ fname = do
+  BS.useAsCStringLen fname.val \(ptr, n) ->
+    castPtr <$> get_function_ptr(castPtr ptr) (fromIntegral n)
 
-callEntryFun :: FunctionPtr -> [DataPtr] -> IO DataPtr
-callEntryFun _ _ = return undefined
+callEntryFun :: FunctionPtr -> [DataPtr] -> IO ()
+callEntryFun fPtr [] = do
+  call_function_ptr fPtr
+  return ()

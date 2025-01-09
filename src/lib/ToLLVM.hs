@@ -24,13 +24,22 @@ import Util
 
 -- === entrypoint ===
 
-toLLVMEntryFun :: Monad m => L.Name -> TopLamExpr -> m L.Function
+toLLVMEntryFun :: Monad m => L.Name -> TopLamExpr -> m L.Module
 toLLVMEntryFun fname fun = do
   finalState <- runTranslateM do
     toLLVMEntryFun' fun
     startNewBlock $ L.Name "__unused__"
   let blocks = reverse finalState.basicBlocks
-  return $ L.Function fname [] blocks
+  let decl = L.FunctionDef $ L.Function fname [] blocks
+  return $ L.Module $ libDecls ++ [decl]
+
+libDecls :: [L.TopDecl]
+libDecls = [
+  L.FunctionDecl floatTy "printfloat" [floatTy]
+           ]
+
+floatTy :: L.Type
+floatTy = L.BaseType $ Scalar Float32Type
 
 -- === monad for the translation ===
 
@@ -71,6 +80,10 @@ extendEnv b x cont = TranslateM do
   put $ updateSubst newState prevState.subst
   return ans
 
+-- lowering of ()
+unitOperand :: L.Operand
+unitOperand = L.Operand (L.Lit (Int32Lit 0)) (L.BaseType $ Scalar Int32Type)
+
 lookupEnv :: Name i -> TranslateM i L.Operand
 lookupEnv v = TranslateM do
   env <- gets (.subst)
@@ -98,8 +111,8 @@ startNewBlock blockName = TranslateM $ modify \state -> do
 
 toLLVMEntryFun' :: TopLamExpr -> TranslateM VoidS ()
 toLLVMEntryFun' (TopLamExpr (Abs Empty body)) = do
-  trExpr body
-  return ()
+  ans <- trExpr body
+  emitStatement $ L.Return ans
 
 trExpr :: Expr i -> TranslateM i L.Operand
 trExpr = \case
@@ -134,4 +147,6 @@ trPrimOp resultTy op = case op of
   BinOp b x y -> case b of
     FAdd -> emitInstr resultTy $ L.FAdd x y
   MiscOp op' -> case op' of
-    DebugPrintInt x -> undefined
+    DebugPrintInt x -> do
+      emitStatement $ L.Call floatTy  "printfloat" [x]
+      return unitOperand
