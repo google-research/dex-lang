@@ -34,17 +34,11 @@ flag debug
 library
   exposed-modules:     AbstractSyntax
                      , Builder
-                     -- , CheapReduction
-                     -- , CheckType
                      , ToLLVM
                      , ConcreteSyntax
-                     -- , Core
-                     -- , DPS
                      , Err
-                     -- , Generalize
                      , IncState
                      , Inference
-                     -- , Inline
                      , Lexing
                      , LLVMFFI
                      , MonadUtil
@@ -52,28 +46,19 @@ library
                      , Name
                      , PPrint
                      , RawName
-                     -- , RuntimePrint
-                     , Serialize
                      , Simplify
                      , Subst
                      , SourceRename
                      , SourceIdTraversal
                      , TopLevel
-                     -- , Transpose
                      , Types.LLVM
                      , Types.Simple
                      , Types.Complicated
                      , Types.Primitives
                      , Types.Source
                      , Types.Top
-                     -- , QueryType
                      , QueryTypePure
                      , Util
-                     -- , Vectorize
-                     , Actor
-                     -- , Live.Eval
-                     -- , Live.Web
-                     -- , RenderHtml
   other-modules:       Paths_dex
   build-depends:       base
                      , bytestring
