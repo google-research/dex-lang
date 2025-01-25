@@ -541,9 +541,7 @@ bottomUpExplicit (WithSrcE sid expr) = case expr of
 --   UPrim UProjNewtype [x] -> do
 --     x' <- bottomUp x >>= unwrapNewtype
 --     return $ SigmaAtom Nothing x'
-  UPrim prim xs -> do
-    xs' <- mapM bottomUp xs
-    liftM (SigmaAtom Nothing) $ matchPrimApp prim xs'
+  UPrim prim xs -> throw sid $ MiscTypeErr "primitive ops must have result type annotations"
   -- UNatLit l -> liftM (SigmaAtom Nothing) $ fromNatLit sid l NatTy
   -- UIntLit l -> liftM (SigmaAtom Nothing) $ fromIntLit sid l (BaseTy $ Scalar Int32Type)
   UFloatLit x -> return $ SigmaAtom Nothing $ CLit  $ Float32Lit $ realToFrac x
@@ -988,66 +986,8 @@ checkOrInferApp appSrcId funSrcId f' posArgs namedArgs reqTy = undefined
 --   when (not $ null unrecognizedNames) do
 --     throw sid $ UnrecognizedOptionalArgs (map pprint unrecognizedNames) (map pprint acceptedNames)
 
-matchPrimApp :: PrimName -> [CAtom o] -> InfererM i o (CExpr o)
-matchPrimApp = \case
---  UNat                -> \case ~[]  -> return $ toAtom $ NewtypeTyCon Nat
---  UFin                -> \case ~[n] -> return $ toAtom $ NewtypeTyCon (Fin n)
---  UBaseType b         -> \case ~[]  -> return $ toAtomR $ BaseType b
---  UNatCon             -> \case ~[x] -> return $ toAtom $ NewtypeCon NatCon x
---  UPrimTC tc -> case tc of
---    S.ProdType -> \ts -> return $ toAtom $ ProdType $ map (fromJust . toMaybeType) ts
---    S.SumType  -> \ts -> return $ toAtom $ SumType  $ map (fromJust . toMaybeType) ts
---    S.RefType  -> \case ~[h, a] -> undefined -- return $ toAtom $ RefType h (fromJust $ toMaybeType a)
---    S.TypeKind -> \case ~[] -> return $ toAtom $ Kind $ TypeKind
---  UCon con -> case con of
---    S.ProdCon -> \xs -> return $ toAtom $ ProdCon xs
---    S.SumCon _ -> error "not supported"
- MiscOp op -> \xs -> matchMiscOp op xs
- -- MemOp  op -> \xs -> CPrimOp <$> MemOp  <$> matchGenericOp op xs
- UnOp  op ()    -> \case ~[x]    -> return $ CPrimOp (getCType x) $ UnOp op x
- BinOp op () () -> \case ~[x, y] -> return $ CPrimOp (getCType x) $ BinOp op x y
---  UMGet      -> \case ~[r]    -> emitRefOp r MGet
---  UMPut      -> \case ~[r, x] -> emitRefOp r $ MPut x
---  UIndexRef  -> \case ~[r, i] -> indexRef r i
---  UApplyMethod i -> \case ~(d:args) -> emit =<< mkApplyMethod (fromJust $ toMaybeDict d) i args
---  ULinearize -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Linearize f' x
---  UTranspose -> \case ~[f, x]  -> do f' <- lam1 f; emitHof $ Transpose f' x
---  p -> \case xs -> throwInternal $ "Bad primitive application: " ++ show (p, xs)
-
-cUnitTy :: CType n
-cUnitTy = CTyCon $ CProdType []
-
-matchMiscOp :: MiscOp () -> [CAtom o] -> InfererM i o (CExpr o)
-matchMiscOp = \case
-  DebugPrintInt () -> \case ~[x] -> return $ CPrimOp cUnitTy $ MiscOp $ DebugPrintInt x
---                            where
--- --    lam2 :: Fallible m => CAtom n -> m (LamExpr n)
--- --    lam2 x = do
--- --      ExplicitCoreLam (BinaryNest b1 b2) body <- return x
--- --      return $ BinaryLamExpr b1 b2 body
-
--- --    lam1 :: Fallible m => CAtom n -> m (LamExpr n)
--- --    lam1 x = do
--- --      ExplicitCoreLam (UnaryNest b) body <- return x
--- --      return $ UnaryLamExpr b body
-
---    matchGenericOp :: Functor op => op () -> [CAtom n] -> InfererM i n (op (CAtom n))
---    matchGenericOp op xs = undefined
--- do
---      (tyArgs, dataArgs) <- partitionEithers <$> forM xs \x -> do
---        case getType x of
---          TyCon (Kind TypeKind) -> do
---            Just x' <- return $ toMaybeType x
---            return $ Left x'
---          _ -> return $ Right x
---      let tyArgs' = case tyArgs of
---            [] -> Nothing
---            [t] -> Just t
---            _ -> error "Expected at most one type arg"
---      return $ fromJust $ toOp $ GenericOpRep op tyArgs' dataArgs
-
--- pattern ExplicitCoreLam :: Nest CBinder n l -> CExpr l -> CAtom n
--- pattern ExplicitCoreLam bs body <- Con (Lam (CoreLamExpr _ (LamExpr bs body)))
+matchPrimApp :: PrimOp -> [CAtom o] -> InfererM i o (CExpr o)
+matchPrimApp = undefined
 
 -- -- === n-ary applications ===
 

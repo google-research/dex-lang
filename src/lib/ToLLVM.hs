@@ -18,6 +18,7 @@ import Types.Simple
 import Types.Primitives
 import PPrint
 
+import Err
 import Debug.Trace
 import QueryTypePure
 import Util
@@ -52,13 +53,13 @@ data TranslateState i = TranslateState
 type TranslateSubst i = Subst (LiftE L.Operand) i VoidS
 
 newtype TranslateM (i::S) (a:: *) =
-  TranslateM { inner :: State (TranslateState i) a }
-  deriving (Functor, Applicative, Monad)
+  TranslateM { inner :: StateT (TranslateState i) Except a }
+  deriving (Functor, Applicative, Monad, MonadFail)
 
 runTranslateM :: Monad m => TranslateM VoidS a -> m (TranslateState VoidS)
 runTranslateM cont = do
   let initState = TranslateState [] [] (L.Name "__entry__") 0 voidSubst
-  return $ execState cont.inner initState
+  return $ ignoreExcept $ execStateT cont.inner initState
 
 emitInstr :: L.Type -> L.Instruction -> TranslateM i L.Operand
 emitInstr resultTy instr = do
@@ -76,7 +77,7 @@ extendEnv :: NameBinder i i' -> L.Operand -> TranslateM i' a -> TranslateM i a
 extendEnv b x cont = TranslateM do
   prevState <- get
   let subst' = prevState.subst <>> (b @> LiftE x)
-  let (ans, newState) = runState (cont.inner) $ updateSubst prevState subst'
+  let (ans, newState) = ignoreExcept $ runStateT (cont.inner) $ updateSubst prevState subst'
   put $ updateSubst newState prevState.subst
   return ans
 
@@ -117,10 +118,10 @@ toLLVMEntryFun' (TopLamExpr (Abs Empty body)) = do
 trExpr :: Expr i -> TranslateM i L.Operand
 trExpr = \case
   Block resultTy block -> trBlock block
-  PrimOp resultTy op -> do
+  PrimOp resultTy op xs -> do
     resultTy' <- trType resultTy
-    op' <- forM op trAtom
-    trPrimOp resultTy' op'
+    xs' <- forM xs trAtom
+    trPrimOp resultTy' op xs'
 
 trType :: Type i -> TranslateM i L.Type
 trType = \case
@@ -142,11 +143,12 @@ trBlock (Abs decls result) = case decls of
     val <- trExpr expr
     extendEnv b val $ trBlock $ Abs rest result
 
-trPrimOp :: L.Type -> PrimOp L.Operand -> TranslateM i L.Operand
-trPrimOp resultTy op = case op of
-  BinOp b x y -> case b of
-    FAdd -> emitInstr resultTy $ L.FAdd x y
-  MiscOp op' -> case op' of
-    DebugPrintInt x -> do
-      emitStatement $ L.Call floatTy  "printfloat" [x]
-      return unitOperand
+trPrimOp :: L.Type -> PrimOp -> [L.Operand] -> TranslateM i L.Operand
+trPrimOp resultTy op xs = case op of
+  FAdd -> do
+    [x, y] <- return xs
+    emitInstr resultTy $ L.FAdd x y
+  DebugPrintInt -> do
+    [x] <- return xs
+    emitStatement $ L.Call floatTy  "printfloat" [x]
+    return unitOperand

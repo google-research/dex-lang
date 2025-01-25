@@ -373,10 +373,10 @@ simplifyLam (CoreLamExpr _ ab) = go ab
 simplifyExpr :: Emits o => CExpr i -> SimplifyM i o (Atom o)
 simplifyExpr = \case
   CLit val -> return $ Lit val
-  CPrimOp ty op -> do
-    op' <- mapM simplifyExpr op
+  CPrimOp ty op xs -> do
+    xs' <- mapM simplifyExpr xs
     ty <- simplifyType ty
-    emit $ PrimOp ty op'
+    emit $ PrimOp ty op xs'
   e -> error $ show e
 
 simplifyType :: CType i -> SimplifyM i o (Type o)

@@ -208,7 +208,7 @@ data CInstanceDef = CInstanceDef
 
 data Group
   = CLeaf CLeaf
-  | CPrim PrimName [GroupW]
+  | CPrim PrimOp [GroupW]
   | CParens   [GroupW]
   | CBrackets [GroupW]
   | CBin Bin GroupW GroupW
@@ -311,7 +311,7 @@ data UExpr' (n::S) =
  | UHole
  | UTypeAnn (UExpr n) (UExpr n)
  | UTabCon [UExpr n]
- | UPrim PrimName [UExpr n]
+ | UPrim PrimOp [UExpr n]
  | UFieldAccess (UExpr n) FieldName
  | UNatLit   Word64
  | UIntLit   Int
@@ -788,7 +788,8 @@ instance Pretty CSBlock where
 instance Pretty Group where
   pr = \case
     CLeaf leaf -> pr leaf
-    CPrim prim args -> app (pr $ primNameToStr prim) (map pr args)
+    CPrim prim args -> app (pr prim) (map pr args)
+
 
 
 -- prettyOpDefault :: PrettyPrec a => PrimName -> [a] -> DocPrec ann
@@ -973,7 +974,7 @@ instance Pretty (UExpr' n) where
 --     UTypeAnn v ty -> atPrec LowestPrec $
 --       group $ pApp v <> line <> ":" <+> pApp ty
 --     UTabCon xs -> atPrec ArgPrec $ p xs
-    UPrim prim xs -> app (pr (primNameToStr prim)) (map pr xs)
+    UPrim prim xs -> app (pr prim) (map pr xs)
 --     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
 --       nest 2 (prettyLines alts)
 --     UFieldAccess x (WithSrc _ f) -> atPrec AppPrec $ p x <> "~" <> p f

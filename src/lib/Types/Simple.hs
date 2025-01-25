@@ -35,7 +35,7 @@ data Expr (n::S) =
  | Case   (Type n) (Atom n) [LamExpr n]
  | For    (Atom n) (LamExpr n)
  | While  (Expr n)
- | PrimOp (Type n) (PrimOp (Atom n))
+ | PrimOp (Type n) PrimOp [Atom n]
    deriving (Show, Generic)
 
 data Atom (n::S) =
@@ -79,14 +79,14 @@ instance GenericE Expr where
   {- Case   -} (Type `PairE` Atom          `PairE` ListE LamExpr)
   {- For    -} (Atom `PairE` LamExpr)
   {- While  -} (Expr)
-  {- PrimOp -} (Type `PairE` ComposeE PrimOp Atom)
+  {- PrimOp -} (Type `PairE` LiftE PrimOp `PairE` ListE Atom)
   fromE = \case
     Block  t b    -> Case0 $ t `PairE` b
     TopApp t f xs -> Case1 $ t `PairE` LiftE f `PairE` ListE xs
     Case   t x fs -> Case2 $ t `PairE` x `PairE` ListE fs
     For    n f    -> Case3 $ n `PairE` f
     While  e      -> Case4 e
-    PrimOp t op   -> Case5 $ t `PairE` ComposeE op
+    PrimOp t f xs -> Case5 $ t `PairE` LiftE f `PairE` ListE xs
   {-# INLINE fromE #-}
 
 instance Pretty (Expr n) where
@@ -96,7 +96,7 @@ instance Pretty (Expr n) where
     Case   _ _ _ -> undefined
     For    _ _ -> undefined
     While  _ -> undefined
-    PrimOp _ op -> pr op
+    PrimOp _ op xs -> app (pr op) (map pr xs)
 
   prLines = \case
     Block _ (Abs decls result) -> do
@@ -106,7 +106,7 @@ instance Pretty (Expr n) where
     Case   _ _ _ -> undefined
     For    _ _ -> undefined
     While  _ -> undefined
-    PrimOp _ op -> prLines op
+    PrimOp _ op xs -> undefined
 
 instance SinkableE      Expr
 instance HoistableE     Expr

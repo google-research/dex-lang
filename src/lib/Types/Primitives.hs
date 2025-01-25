@@ -4,33 +4,14 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StrictData #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE DefaultSignatures #-}
-
-module Types.Primitives (
-  module Types.Primitives, UnOp (..), BinOp (..), CmpOp (..)) where
+module Types.Primitives where
 
 import qualified Data.ByteString       as BS
 import Data.Int
-import qualified Data.Map.Strict       as M
 import Data.String (IsString (..))
-import Data.Functor (void)
-import Data.Foldable (toList)
 import Data.Word
 import Data.Hashable
 import Data.Store (Store (..))
-import Data.Tuple (swap)
 import qualified Data.Store.Internal as SI
 import Foreign.Ptr
 import Numeric
@@ -45,85 +26,68 @@ import Util (BString)
 
 -- === Primitive ops ===
 
-data BinOp =
-   IAdd | ISub | IMul | IDiv | ICmp CmpOp | FAdd | FSub | FMul
- | FDiv | FCmp CmpOp | FPow | BAnd | BOr | BShL | BShR | IRem | BXor
- deriving (Show, Eq, Ord, Generic)
-instance Hashable BinOp
-instance Store    BinOp
-
-data UnOp =
-   Identity | Exp | Exp2 | Log | Log2 | Log10 | Log1p | Sin | Cos | Tan | Sqrt | Floor
- | Ceil | Round | LGamma | Erf | Erfc | FNeg | BNot
- deriving (Show, Eq, Ord, Generic)
-instance Hashable UnOp
-instance Store    UnOp
-
-data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
-     deriving (Show, Eq, Ord, Generic)
-instance Hashable CmpOp
-instance Store    CmpOp
-
-data PrimOp a =
-   UnOp     UnOp   a
- | BinOp    BinOp a a
- | MemOp    (MemOp a)
- | VectorOp (VectorOp a)
- | MiscOp   (MiscOp a)
- | RefOp    a (RefOp a)
-   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Hashable a => Hashable (PrimOp a)
-instance Store    a => Store    (PrimOp a)
-
-data MemOp a =
-   IOAlloc a
- | IOFree a
- | PtrOffset a a
- | PtrLoad a
- | PtrStore a a
-   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Hashable a => Hashable (MemOp a)
-instance Store    a => Store    (MemOp a)
-
-data MiscOp a =
-   Select a a a        -- (3) predicate, val-if-true, val-if-false
- | CastOp a                              -- (2) See CheckType.hs for valid coercions.
- | BitcastOp a                -- (2) See CheckType.hs for valid coercions.
- | UnsafeCoerce a             -- type, then value. Assumes runtime representation is the same.
- | GarbageVal                          -- (TODO: redundant with NewRef)
- | NewRef
+data PrimOp =
+ -- unary ops
+   Identity
+ | Exp
+ | Exp2
+ | Log
+ | Log2
+ | Log10
+ | Log1p
+ | Sin
+ | Cos
+ | Tan
+ | Sqrt
+ | Floor
+ | Ceil
+ | Round
+ | LGamma
+ | Erf
+ | Erfc
+ | FNeg
+ | BNot
+ -- binary ops
+ | IAdd
+ | ISub
+ | IMul
+ | IDiv
+ | FAdd
+ | FSub
+ | FMul
+ | FDiv
+ | FPow
+ | BAnd
+ | BOr
+ | BShL
+ | BShR
+ | IRem
+ | BXor
+ | Less
+ | Greater
+ | Equal
+ | LessEqual
+ | GreaterEqual
+ -- memory ops
+ | Alloc
+ | Free
+ | PtrOffset
+ | PtrLoad
+ | PtrStore
+ -- misc ops
+ | Select
+ | CastOp
+ | BitcastOp
+ | UnsafeCoerce
  | ThrowError
- -- Tag of a sum type
- | SumTag a
- -- Create an enum (payload-free ADT) from a Word8
- | ToEnum a
+ | SumTag          -- Tag of a sum type
+ | ToEnum          -- Create an enum (payload-free ADT) from a Word8
  -- printing
- | DebugPrintInt a -- side-effecting op that prints directly. Useful when everything is broken.
- | OutputStream
- | ShowAny a    -- implemented in Simplify
- | ShowScalar a -- Implemented in Imp. Result is a pair of an `IdxRepValTy`
-                -- giving the logical size of the result and a fixed-size table,
-                -- `Fin showStringBufferSize => Char`, assumed to have sufficient space.
-   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Hashable a => Hashable (MiscOp a)
-instance Store    a => Store    (MiscOp a)
+ | DebugPrintInt  -- side-effecting op that prints directly. Useful when everything is broken.
+   deriving (Show, Eq, Ord, Generic)
 
-data VectorOp a =
-   VectorBroadcast a
- | VectorIota
- | VectorIdx a a             -- table, base ix
- | VectorSubref a a          -- ref, base ix
-   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Hashable a => Hashable (VectorOp a)
-instance Store    a => Store    (VectorOp a)
-
-data RefOp a =
-   MGet
- | MPut a
- | IndexRef a
-   deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
-instance Hashable a => Hashable (RefOp a)
-instance Store    a => Store    (RefOp a)
+instance Hashable PrimOp
+instance Store    PrimOp
 
 -- === various things ===
 
@@ -378,105 +342,8 @@ instance Pretty ScalarBaseType where
     Word32Type  -> "Word32"
     Word64Type  -> "Word64"
 
-instance Pretty BinOp where pr x = pr $ show x
-instance Pretty UnOp  where pr x = pr $ show x
-
-instance Pretty a => Pretty (PrimOp a) where
-  pr op = app (pr $ primNameToStr (void op)) (map pr $ toList op)
-
-instance Pretty a => Pretty (MemOp a) where
-  pr op = pr $ MemOp op
-
-instance Pretty a => Pretty (VectorOp a) where
-  pr op = pr $ VectorOp op
+instance Pretty PrimOp where
+  pr op = pr ("%" <> show op)
 
 instance Pretty Explicitness where
   pr expl = pr (show expl)
-
--- === Primitive names ===
-
-type PrimName = PrimOp ()
-
-strToPrimName :: BString -> Maybe PrimName
-strToPrimName s = M.lookup s primNames
-
-primNameToStr :: PrimName -> BString
-primNameToStr prim = case lookup prim $ map swap $ M.toList primNames of
-  Just s  -> s
-  Nothing -> fromString $ show prim
-{-# NOINLINE primNameToStr #-}
-
-primNames :: M.Map BString PrimName
-primNames = M.fromList
-  [
-  --   ("get"      , UMGet), ("put"    , UMPut)
-  -- , ("while"    , UWhile)
-  -- , ("linearize", ULinearize), ("linearTranspose", UTranspose)
-    ("iadd" , binary IAdd),  ("isub"  , binary ISub)
-  , ("imul" , binary IMul),  ("fdiv"  , binary FDiv)
-  , ("fadd" , binary FAdd),  ("fsub"  , binary FSub)
-  , ("fmul" , binary FMul),  ("idiv"  , binary IDiv)
-  , ("irem" , binary IRem)
-  , ("fpow" , binary FPow)
-  , ("and"  , binary BAnd),  ("or"    , binary BOr )
-  , ("not"  , unary  BNot),  ("xor"   , binary BXor)
-  , ("shl"  , binary BShL),  ("shr"   , binary BShR)
-  , ("ieq"  , binary (ICmp Equal)),   ("feq", binary (FCmp Equal))
-  , ("igt"  , binary (ICmp Greater)), ("fgt", binary (FCmp Greater))
-  , ("ilt"  , binary (ICmp Less)),    ("flt", binary (FCmp Less))
-  , ("fneg" , unary  FNeg)
-  , ("exp"  , unary  Exp),   ("exp2"  , unary Exp2)
-  , ("log"  , unary  Log),   ("log2"  , unary Log2), ("log10" , unary Log10)
-  , ("sin"  , unary  Sin),   ("cos"   , unary Cos)
-  , ("tan"  , unary  Tan),   ("sqrt"  , unary Sqrt)
-  , ("floor", unary  Floor), ("ceil"  , unary Ceil), ("round", unary Round)
-  , ("log1p", unary  Log1p), ("lgamma", unary LGamma)
-  , ("erf"  , unary Erf),    ("erfc"  , unary Erfc)
-  -- , ("TyKind"    , UPrimTC $ TypeKind)
-  -- , ("Float64"   , baseTy $ Scalar Float64Type)
-  -- , ("Float32"   , baseTy $ Scalar Float32Type)
-  -- , ("Int64"     , baseTy $ Scalar Int64Type)
-  -- , ("Int32"     , baseTy $ Scalar Int32Type)
-  -- , ("Word8"     , baseTy $ Scalar Word8Type)
-  -- , ("Word32"    , baseTy $ Scalar Word32Type)
-  -- , ("Word64"    , baseTy $ Scalar Word64Type)
-  -- , ("Int32Ptr"  , baseTy $ ptrTy $ Scalar Int32Type)
-  -- , ("Word8Ptr"  , baseTy $ ptrTy $ Scalar Word8Type)
-  -- , ("Word32Ptr" , baseTy $ ptrTy $ Scalar Word32Type)
-  -- , ("Word64Ptr" , baseTy $ ptrTy $ Scalar Word64Type)
-  -- , ("Float32Ptr", baseTy $ ptrTy $ Scalar Float32Type)
-  -- , ("PtrPtr"    , baseTy $ ptrTy $ ptrTy $ Scalar Word8Type)
-  -- , ("Nat"           , UNat)
-  -- , ("Fin"           , UFin)
-  -- , ("NatCon"        , UNatCon)
-  -- , ("Ref"        , UPrimTC $ RefType)
-  -- , ("indexRef"   , UIndexRef)
-  , ("alloc"    , memOp $ IOAlloc ())
-  , ("free"     , memOp $ IOFree ())
-  , ("ptrOffset", memOp $ PtrOffset () ())
-  , ("ptrLoad"  , memOp $ PtrLoad ())
-  , ("ptrStore" , memOp $ PtrStore () ())
-  , ("throwError"    , miscOp $ ThrowError)
-  , ("dataConTag"    , miscOp $ SumTag ())
-  , ("toEnum"        , miscOp $ ToEnum ())
-  , ("outputStream"  , miscOp $ OutputStream)
-  , ("cast"          , miscOp $ CastOp ())
-  , ("bitcast"       , miscOp $ BitcastOp ())
-  , ("unsafeCoerce"  , miscOp $ UnsafeCoerce ())
-  , ("garbageVal"    , miscOp $ GarbageVal)
-  , ("select"        , miscOp $ Select () () ())
-  , ("showAny"       , miscOp $ ShowAny ())
-  , ("showScalar"    , miscOp $ ShowScalar ())
-  , ("debugPrintInt" , miscOp $ DebugPrintInt ())
-  -- , ("projNewtype" , UProjNewtype)
-  -- , ("applyMethod0" , UApplyMethod 0)
-  -- , ("applyMethod1" , UApplyMethod 1)
-  -- , ("applyMethod2" , UApplyMethod 2)
-  -- , ("explicitApply", UExplicitApply)
-  -- , ("monoLit", UMonoLiteral)
-  ]
-  where
-    binary op = BinOp  op () ()
-    unary  op = UnOp   op ()
-    miscOp op = MiscOp op
-    memOp  op = MemOp  op

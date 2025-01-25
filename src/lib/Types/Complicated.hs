@@ -28,7 +28,7 @@ data CExpr (n::S) =
    CBlock  (CType n) (CBlock n)
  | CVar    (Name n) (CType n)
  | CLit    LitVal
- | CPrimOp (CType n) (PrimOp (CExpr n))
+ | CPrimOp (CType n) PrimOp [CExpr n]
  | CTyCon  (CTyCon n)
  | Lam         (CoreLamExpr n)
  | NewtypeCon  (NewtypeCon n) (CExpr n)
@@ -179,7 +179,7 @@ instance Pretty (CExpr n) where
     CBlock  _ b -> pr b
     CVar v _ -> pr v
     CLit l -> pr l
-    CPrimOp _ op -> pr op
+    CPrimOp _ op args -> app (pr op) (map pr args)
     CTyCon _ -> undefined
     Lam _ -> undefined
     NewtypeCon _ _ -> undefined

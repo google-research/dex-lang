@@ -28,23 +28,6 @@ litType v = case v of
   Float32Lit _ -> Scalar Float32Type
   PtrLit ty _  -> PtrType ty
 
-typeBinOp :: BinOp -> BaseType -> BaseType
-typeBinOp binop xTy = case binop of
-  IAdd   -> xTy;  ISub   -> xTy
-  IMul   -> xTy;  IDiv   -> xTy
-  IRem   -> xTy;
-  ICmp _ -> Scalar Word8Type
-  FAdd   -> xTy;  FSub   -> xTy
-  FMul   -> xTy;  FDiv   -> xTy;
-  FPow   -> xTy
-  FCmp _ -> Scalar Word8Type
-  BAnd   -> xTy;  BOr    -> xTy
-  BXor   -> xTy
-  BShL   -> xTy;  BShR   -> xTy
-
-typeUnOp :: UnOp -> BaseType -> BaseType
-typeUnOp = const id  -- All unary ops preserve the type of the input
-
 getKind :: Type n -> Kind
 getKind = undefined
 -- getKind = \case
@@ -105,7 +88,7 @@ instance HasType Expr where
   getType = \case
     Block ty _ -> ty
     TopApp ty _ _ -> ty
-    PrimOp ty _ -> ty
+    PrimOp ty _ _ -> ty
     Case ty _ _ -> ty
     For _ _ -> undefined
     While _ -> undefined
@@ -130,7 +113,7 @@ instance HasCType CExpr where
     CBlock ty _ -> ty
     CVar   _ ty -> ty
     CLit   l    -> CTyCon $ CBaseType $ litType l
-    CPrimOp ty _ -> ty
+    CPrimOp ty _ _ -> ty
     -- CTyCon  (CTyCon n)
     -- Lam         (CoreLamExpr n)
     -- NewtypeCon  (NewtypeCon n) (CExpr n)

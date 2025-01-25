@@ -460,11 +460,11 @@ leafGroup = leafGroup' >>= appendPostfixGroups
       '['  -> cBrackets
       '\"' -> toCLeaf CString <$> strLit
       '\'' -> toCLeaf CChar   <$> charLit
-      '%'  -> do
-        WithSrc sid name <- primName
-        case strToPrimName name of
-          Just prim -> WithSrcs sid [] <$> CPrim prim <$> argList
-          Nothing   -> fail $ "Unrecognized primitive: " ++ bs2str name
+      '%'  -> undefined
+        -- WithSrc sid name <- primName
+        -- case strToPrimName name of
+        --   Just prim -> WithSrcs sid [] <$> CPrim prim <$> argList
+        --   Nothing   -> fail $ "Unrecognized primitive: " ++ bs2str name
       _ | isDigit next -> (    toCLeaf CNat   <$> natLit
                            <|> toCLeaf CFloat <$> doubleLit)
       '\\' -> withSrcs (cNullaryLam <|> cLam)

@@ -59,7 +59,7 @@ emit e = case e of
 {-# INLINE emit #-}
 
 idExpr :: Atom n -> Expr n
-idExpr x = PrimOp (getType x) (UnOp Identity x)
+idExpr x = PrimOp (getType x) Identity [x]
 
 declsToExpr :: RNest Decl n l -> Atom l -> Expr n
 declsToExpr (RNest ds (Let b e)) (Var v _) | v == binderName b = maybeBlock ds e
