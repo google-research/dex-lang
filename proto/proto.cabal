@@ -1,0 +1,29 @@
+cabal-version:       3.4
+
+name:                proto
+version:             0.1.0.0
+author:              Dougal Maclaurin
+maintainer:          dougalm@google.com
+license-file:        LICENSE
+build-type:          Simple
+
+library
+  exposed-modules:     Proto
+  hs-source-dirs:      src/lib
+  build-depends:       base, bytestring, containers, mtl
+  ghc-options:         -Wall
+  other-modules:       Proto.Monad, Proto.Parser, Proto.Doc, Proto.Util, Proto.Testing
+  default-extensions:  BlockArguments, GADTs, LambdaCase, OverloadedStrings,
+                       GeneralizedNewtypeDeriving,
+                       OverloadedRecordDot, NoFieldSelectors, DuplicateRecordFields, DerivingVia,
+                       RankNTypes, TypeApplications, DeriveFunctor
+
+executable utlc
+  main-is:             utlc.hs
+  hs-source-dirs:      lang/utlc
+  build-depends:       proto, base, bytestring, containers, mtl
+  ghc-options:         -Wall
+  default-extensions:  BlockArguments, GADTs, LambdaCase, OverloadedStrings,
+                       GeneralizedNewtypeDeriving,
+                       OverloadedRecordDot, NoFieldSelectors, DuplicateRecordFields, DerivingVia,
+                       RankNTypes, TypeApplications

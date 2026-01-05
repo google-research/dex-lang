@@ -1,0 +1,31 @@
+% test_1
+1 + 2 * (3 + 4)
+> 15
+
+% test_2
+(1 + 2) * (3 + 4)
+> 21
+
+% test_3
+1 + 2 * 3 + 4
+> 11
+
+% parser_error_1
+1 2 * 3 + 4
+> Parse error, line 1:
+>   Expected: <EOF>
+>   Got:      2
+
+# % parser_error_2
+# 1 + 2) * 3 + 4
+# > 1 + 2) * 3 + 4
+# >      ^
+# > Parse error, line 1:
+# >   Expected: <EOF>
+# >   Got:      )
+
+# # todo
+# #  * lexer errors
+# #  * parser errors
+# #  * AST errors
+# #  * type errors
